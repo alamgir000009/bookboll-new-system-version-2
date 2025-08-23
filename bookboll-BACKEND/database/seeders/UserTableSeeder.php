@@ -11,7 +11,7 @@ class UserTableSeeder extends Seeder
         $users = [
             [
                 'name'     => 'Admin User',
-                'email'    => 'admin@gmail.com',
+                'email'    => 'admin@bookboll.com',
                 'password' => '12345678',
             ],
         ];
