@@ -45,4 +45,16 @@ class UserService
         return sendSuccess("Logout successfully");
     }
 
+    public function loginUser()
+    {
+        $user     = auth()->user();
+        $roles    = $user->getRoleNames();
+        $response = [
+            'user'  => $user->setHidden(['roles']),
+            'roles' => $roles,
+        ];
+
+        return sendSuccess("Logged in user fetched susccessfully", $response);
+    }
+
 }
