@@ -12,7 +12,7 @@ if (! function_exists('sendSuccess')) {
 }
 
 if (! function_exists('sendError')) {
-    function sendError(string $message = 'Error', array $errors = [], int $code = 500)
+    function sendError(string $message = 'Error', array $errors = [], int $code = 400)
     {
         return response()->json([
             'success'  => false,

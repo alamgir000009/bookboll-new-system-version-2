@@ -1,9 +1,10 @@
 <?php
 
+use App\Http\Controllers\PostCategoryController;
+use App\Http\Controllers\PostController;
 use App\Http\Controllers\UserController;
-use Illuminate\Http\Request;
+use App\Http\Controllers\VenueController;
 use Illuminate\Support\Facades\Route;
-
 
 Route::post('login', [UserController::class, 'login']);
 Route::post('logout', [UserController::class, 'logout']);
@@ -11,5 +12,16 @@ Route::post('logout', [UserController::class, 'logout']);
 Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::get('/me', [UserController::class, 'me']);
+
+    Route::prefix('admin')->group(function () {
+
+        Route::apiResource('post-category', PostCategoryController::class);
+
+        Route::apiResource('post', PostController::class);
+        Route::post('post/change-status', [PostController::class, 'changeStatus']);
+
+        Route::apiResource('venue', VenueController::class);
+
+    });
 
 });

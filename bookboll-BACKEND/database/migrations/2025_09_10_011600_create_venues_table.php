@@ -1,0 +1,34 @@
+<?php
+
+use App\Models\Venue;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('venues', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->enum('status', [Venue::ACTIVE, Venue::INACTIVE])->default(Venue::ACTIVE);
+            $table->string('maps_url')->nullable();
+            $table->text('description')->nullable();
+            $table->integer('min_advance_booking')->default(2);
+            $table->integer('max_bookings_per_slot')->default(1);
+            $table->timestamps();
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('venues');
+    }
+};
