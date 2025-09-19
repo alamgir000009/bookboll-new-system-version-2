@@ -29,13 +29,33 @@ class UserController extends Controller
         return $this->userService->loginUser();
     }
 
+    public function updateProfile(Request $request)
+    {
+        return $this->userService->updateProfile($request, auth()->id());
+    }
+
     public function requiredDataForUser()
     {
         return $this->userService->requiredDataForUser();
     }
 
+    public function index(Request $request)
+    {
+        return $this->userService->list($request);
+    }
+
     public function store(Request $request)
     {
         return $this->userService->createUser($request);
+    }
+
+    public function update(Request $request, $id)
+    {
+        return $this->userService->updateUser($request, $id);
+    }
+
+    public function destroy($id)
+    {
+        return $this->userService->deleteUser($id);
     }
 }
