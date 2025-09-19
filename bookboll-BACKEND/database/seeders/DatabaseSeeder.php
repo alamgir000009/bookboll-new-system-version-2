@@ -11,6 +11,9 @@ class DatabaseSeeder extends Seeder
             UserTableSeeder::class,
             RolePermissionSeeder::class,
             SettingTableSeeder::class,
+            SportsCategoryTableSeeder::class,
+            GiftCardTableSeeder::class,
+            ResourceTableSeeder::class,
         ]);
     }
 }
