@@ -3,6 +3,7 @@
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\SettingController;
+use App\Http\Controllers\SportsCategoryController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VenueController;
 use Illuminate\Support\Facades\Route;
@@ -30,6 +31,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('settings', [SettingController::class, 'index']);
         Route::post('settings/{key}', [SettingController::class, 'updateSingle']);
         Route::post('settings', [SettingController::class, 'update']);
+
+        Route::apiResource('sports-categories', SportsCategoryController::class);
+        Route::get('sports-categories/popular-emojis', [SportsCategoryController::class, 'popularEmojis']);
 
     });
 
