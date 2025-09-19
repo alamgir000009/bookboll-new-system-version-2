@@ -131,7 +131,7 @@ class UserService
 
             DB::commit();
 
-            Mail::to($user->email)->send(new UserWelcomeMail($user, $formData['password']));
+            Mail::to($user->email)->queue(new UserWelcomeMail($user, $formData['password']));
 
             $user->load(['roles', 'venues']);
             $user->makeHidden('roles');
