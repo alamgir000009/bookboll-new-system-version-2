@@ -21,4 +21,9 @@ class Venue extends Model
     {
         return $this->hasMany(VenueSchedule::class);
     }
+
+    public function users()
+    {
+        return $this->belongsToMany(User::class);
+    }
 }

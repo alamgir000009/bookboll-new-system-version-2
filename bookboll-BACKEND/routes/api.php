@@ -22,6 +22,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::apiResource('venue', VenueController::class);
 
+        Route::get('users/required-data', [UserController::class, 'requiredDataForUser']);
+
+        Route::apiResource('users', UserController::class);
+
     });
 
 });
