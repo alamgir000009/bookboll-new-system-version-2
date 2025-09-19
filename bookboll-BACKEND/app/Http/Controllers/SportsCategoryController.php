@@ -22,49 +22,9 @@ class SportsCategoryController extends Controller
         return $this->sportCategoryService->create($request);
     }
 
-    /**
-     * Update sports category (PUT /api/sports-categories/{id})
-     */
     public function update(Request $request, $id)
     {
-        try {
-            $category = SportsCategory::findOrFail($id);
-
-            $validated = $request->validate([
-                'name' => 'required|string|max:255|unique:sports_categories,name,' . $id,
-                'description' => 'nullable|string|max:1000',
-                'icon' => 'nullable|string|max:10',
-                'custom_icon' => 'nullable|file|mimes:png,jpg,svg|max:1024|dimensions:min_width=64,min_height=64',
-                'status' => 'required|in:active,inactive',
-            ]);
-
-            // Handle icon update
-            $icon = $validated['icon'] ?? $category->icon;
-
-            if ($request->hasFile('custom_icon')) {
-                // Delete old icon if it was a file
-                if (str_starts_with($category->icon, 'public/icons/sports/')) {
-                    Storage::delete($category->icon);
-                }
-
-                $file = $request->file('custom_icon');
-                $filename = Str::slug($validated['name']) . '.' . $file->getClientOriginalExtension();
-                $path = $file->storeAs('public/icons/sports', $filename);
-                $icon = $path;
-            }
-
-            $category->update([
-                'name' => $validated['name'],
-                'description' => $validated['description'],
-                'icon' => $icon,
-                'status' => $validated['status'],
-            ]);
-
-            return sendSuccess('Sports category updated successfully', $category->load('icon_url'));
-        } catch (\Exception $e) {
-            Log::error('Failed to update sports category: ' . $e->getMessage());
-            return sendError('Failed to update sports category: ' . $e->getMessage());
-        }
+        return $this->sportCategoryService->update($request, $id);
     }
 
     public function destroy($id)

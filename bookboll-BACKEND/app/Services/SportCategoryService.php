@@ -60,6 +60,59 @@ class SportCategoryService
         }
     }
 
+    public function update($request, $id)
+    {
+        $category = SportsCategory::findOrFail($id);
+
+        $validated = $request->validate([
+            'name'        => 'required|string|max:255|unique:sports_categories,name,' . $id,
+            'description' => 'nullable|string|max:1000',
+            'icon'        => 'nullable|string|max:10',
+            'custom_icon' => 'nullable|file|mimes:png,jpg,svg|max:1024|dimensions:min_width=64,min_height=64',
+            'status'      => 'required|in:active,inactive',
+        ]);
+
+        try {
+
+            $icon  = $validated['icon'] ?? $category->icon;
+            $image = $validated['image'] ?? $category->image;
+
+            if ($request->hasFile('custom_icon')) {
+                if (str_starts_with($category->icon, 'public/icons/sports/')) {
+                    Storage::delete($category->icon);
+                }
+
+                $file     = $request->file('custom_icon');
+                $filename = Str::slug($validated['name']) . '.' . $file->getClientOriginalExtension();
+                $icon     = $file->storeAs('public/icons/sports', $filename);
+            }
+
+            if ($request->hasFile('image')) {
+                if (str_starts_with($category->icon, 'public/images/sports/')) {
+                    Storage::delete($category->icon);
+                }
+
+                $file     = $request->file('image');
+                $filename = Str::slug($validated['name']) . '.' . $file->getClientOriginalExtension();
+                $path     = $file->storeAs('public/images/sports', $filename);
+                $icon     = $path;
+            }
+
+            $category->update([
+                'icon'        => $icon,
+                'image'       => $image,
+                'name'        => $validated['name'],
+                'status'      => $validated['status'],
+                'description' => $validated['description'],
+            ]);
+
+            return sendSuccess('Sports category updated successfully', compact('category'));
+        } catch (\Exception $e) {
+            Log::error('Failed to update sports category: ' . $e->getMessage());
+            return sendError('Failed to update sports category: ' . $e->getMessage());
+        }
+    }
+
     public function delete($id)
     {
         try {
