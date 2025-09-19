@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\SettingController;
@@ -34,6 +35,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::apiResource('sports-categories', SportsCategoryController::class);
         Route::get('sports-categories/popular-emojis', [SportsCategoryController::class, 'popularEmojis']);
+
+        Route::apiResource('gift-cards', GiftCardController::class);
 
     });
 
