@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AddOnController;
+use App\Http\Controllers\HelperController;
 use App\Http\Controllers\PromocodeController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\GiftCardController;
@@ -59,6 +60,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply']);
         Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues']);
         Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings']);
+
+        Route::get('extra-data', [HelperController::class, 'extraData']);
+        Route::get('extra-customers', [HelperController::class, 'extraCustomers']);
 
     });
 

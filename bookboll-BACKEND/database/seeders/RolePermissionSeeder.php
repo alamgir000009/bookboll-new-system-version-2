@@ -83,6 +83,20 @@ class RolePermissionSeeder extends Seeder
                     'calendar' => 'read_only',
                 ],
             ],
+
+            'customer'        => [
+                'modules'         => [
+                    'calendar', 'bookings',
+                ],
+                'actions'         => [
+                    'read',
+                ],
+                'venueRestricted' => true,
+                'restrictions'    => [
+                    'bookings' => 'verification_view_only',
+                    'calendar' => 'read_only',
+                ],
+            ],
         ];
 
         foreach ($rolePermissions as $roleName => $details) {
@@ -107,5 +121,8 @@ class RolePermissionSeeder extends Seeder
 
         $user = User::find(1);
         $user->assignRole('super_admin');
+
+        $user = User::find(2);
+        $user->assignRole('customer');
     }
 }

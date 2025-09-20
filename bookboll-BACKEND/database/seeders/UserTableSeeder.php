@@ -14,6 +14,11 @@ class UserTableSeeder extends Seeder
                 'email'    => 'admin@bookboll.com',
                 'password' => '12345678',
             ],
+            [
+                'name'     => 'Customer User',
+                'email'    => 'customer@bookboll.com',
+                'password' => '12345678',
+            ],
         ];
 
         foreach ($users as $user) {
