@@ -1,6 +1,5 @@
 <?php
 
-use App\Models\User;
 use App\Services\AuditLogService;
 
 if (! function_exists('sendSuccess')) {
@@ -108,6 +107,11 @@ if (! function_exists('getResourceFromRoute')) {
             'sports-categories.update'  => 'Sports Category',
             'sports-categories.destroy' => 'Sports Category',
 
+            // Add-Ons
+            'add-ons.store'   => 'Sports Category',
+            'add-ons.update'  => 'Sports Category',
+            'add-ons.destroy' => 'Sports Category',
+
             // Settings
             'settings.update'           => 'Setting',
         ];
@@ -167,6 +171,7 @@ if (! function_exists('extractSuccessDetails')) {
                 'resources.store' => "Created resource #{$id}",
                 'gift-cards.store' => "Created gift card #{$id}",
                 'sports-categories.store' => "Created sports category #{$id}",
+                'add-ons.store' => "Created Add-On #{$id}",
             ];
 
             foreach ($detailsMap as $routePattern => $detail) {
