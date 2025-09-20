@@ -19,11 +19,16 @@ class Venue extends Model
 
     public function schedules()
     {
-        return $this->hasMany(VenueSchedule::class);
+        return $this->hasMany(Schedule::class);
     }
 
     public function users()
     {
         return $this->belongsToMany(User::class);
+    }
+
+    public function listings()
+    {
+        return $this->hasMany(Listing::class);
     }
 }

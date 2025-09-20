@@ -108,9 +108,14 @@ if (! function_exists('getResourceFromRoute')) {
             'sports-categories.destroy' => 'Sports Category',
 
             // Add-Ons
-            'add-ons.store'   => 'Sports Category',
-            'add-ons.update'  => 'Sports Category',
-            'add-ons.destroy' => 'Sports Category',
+            'add-ons.store'             => 'Sports Category',
+            'add-ons.update'            => 'Sports Category',
+            'add-ons.destroy'           => 'Sports Category',
+
+            // Listings
+            'listings.store'            => 'Sports Category',
+            'listings.update'           => 'Sports Category',
+            'listings.destroy'          => 'Sports Category',
 
             // Settings
             'settings.update'           => 'Setting',
