@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
@@ -24,7 +25,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('post', PostController::class);
         Route::post('post/change-status', [PostController::class, 'changeStatus']);
 
-        Route::apiResource('venue', VenueController::class);
+        Route::apiResource('venues', VenueController::class);
 
         Route::apiResource('users', UserController::class);
         Route::get('users/required-data', [UserController::class, 'requiredDataForUser']);
@@ -40,6 +41,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('gift-cards', GiftCardController::class);
 
         Route::apiResource('resources', ResourceController::class);
+
+        Route::get('audit-logs', [AuditLogController::class, 'index']);
+        Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
+        Route::get('audit-logs/export', [AuditLogController::class, 'export']);
 
     });
 
