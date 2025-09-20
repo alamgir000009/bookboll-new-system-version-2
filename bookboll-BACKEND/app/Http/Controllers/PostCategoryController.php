@@ -3,31 +3,25 @@ namespace App\Http\Controllers;
 
 use App\Models\Post;
 use App\Models\PostCategory;
+use App\Services\PostCategoryService;
 use Illuminate\Http\Request;
 
 class PostCategoryController extends Controller
 {
+    public function __construct(protected PostCategoryService $postCategoryService){}
+
     public function index()
     {
-        $categories = PostCategory::all();
-        return sendSuccess("Category saved successfully", ["categories" => $categories]);
+        return $this->postCategoryService->all();
     }
 
     public function store(Request $request)
     {
-        $formData = $request->validate([
-            "name"        => "required|max:255",
-            "slug"        => "required|max:255|unique:post_categories",
-            "description" => "nullable|max:500",
-        ]);
-
-        $postCategory = PostCategory::create($formData);
-        return sendSuccess("Category saved successfully", ["category" => $postCategory]);
+        return $this->postCategoryService->create($request);
     }
 
-    public function destroy(PostCategory $postCategory)
+    public function destroy($id)
     {
-        $postCategory->delete();
-        return sendSuccess('Category deleted successfully');
+        return $this->postCategoryService->delete($id);
     }
 }
