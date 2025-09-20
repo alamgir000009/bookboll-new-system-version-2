@@ -15,6 +15,9 @@ class DatabaseSeeder extends Seeder
             GiftCardTableSeeder::class,
             ResourceTableSeeder::class,
             AddOnTableSeeder::class,
+            VenueTableSeeder::class,
+            ListingTableSeeder::class,
+            PromocodeTableSeeder::class
         ]);
     }
 }

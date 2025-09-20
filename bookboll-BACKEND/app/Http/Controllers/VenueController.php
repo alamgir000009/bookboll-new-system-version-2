@@ -2,37 +2,20 @@
 namespace App\Http\Controllers;
 
 use App\Models\Venue;
+use App\VenueService;
 use Illuminate\Http\Request;
 
 class VenueController extends Controller
 {
+    public function __construct(protected VenueService $venueService){}
+
+    public function index(Request $request)
+    {
+        return $this->venueService->all($request);
+    }
     public function store(Request $request)
     {
-        $formData = $request->validate([
-            'name'                  => ['required', 'string', 'max:255'],
-            'status'                => ['required', 'in:active,inactive'],
-            'maps_url'              => ['required', 'url'],
-            'description'           => ['nullable', 'string'],
-            'min_advance_booking'   => ['required', 'integer', 'min:0'],
-            'max_bookings_per_slot' => ['required', 'integer', 'min:1'],
-            'schedule'              => ['required', 'array'],
-            'schedule.*.day'        => ['required', 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
-            'schedule.*.is_open'    => ['required', 'boolean'],
-            'schedule.*.from_time'  => ['required_if:schedule.*.open,true', 'string', 'regex:/^\d{2}:\d{2}$/'],
-            'schedule.*.to_time'    => ['required_if:schedule.*.open,true', 'string', 'regex:/^\d{2}:\d{2}$/', 'after:schedule.*.from'],
-        ]);
-
-        $schedules = $formData['schedule'];
-        unset($formData['schedule']);
-
-        $venue = Venue::create($formData);
-
-        foreach ($schedules as $schedule) {
-            $venue->schedules()->create($schedule);
-        }
-        $venue->load('schedules');
-
-        return sendSuccess('Venue added successfully', compact('venue'));
+        return $this->venueService->create($request);
     }
 
     public function update(Request $request, Venue $venue)

@@ -1,9 +1,10 @@
 <?php
 
 use App\Http\Controllers\AddOnController;
-use App\Http\Controllers\ListingController;
+use App\Http\Controllers\PromocodeController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\GiftCardController;
+use App\Http\Controllers\ListingController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\ResourceController;
@@ -51,6 +52,13 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('add-ons', AddOnController::class);
 
         Route::apiResource('listings', ListingController::class);
+
+        Route::apiResource('promocodes', PromocodeController::class);
+
+        Route::post('promocodes/{promocode}/validate', [PromocodeController::class, 'validate']);
+        Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply']);
+        Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues']);
+        Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings']);
 
     });
 

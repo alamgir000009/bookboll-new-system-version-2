@@ -117,6 +117,11 @@ if (! function_exists('getResourceFromRoute')) {
             'listings.update'           => 'Sports Category',
             'listings.destroy'          => 'Sports Category',
 
+            // Promocode
+            'promocodes.store'          => 'Sports Category',
+            'promocodes.update'         => 'Sports Category',
+            'promocodes.destroy'        => 'Sports Category',
+
             // Settings
             'settings.update'           => 'Setting',
         ];

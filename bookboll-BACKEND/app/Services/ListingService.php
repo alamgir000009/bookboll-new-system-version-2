@@ -98,9 +98,6 @@ class ListingService
 
             return sendSuccess('Listing created successfully', compact('listing'));
 
-        } catch (ValidationException $e) {
-            DB::rollBack();
-            return sendError('Validation failed: ' . $e->getMessage(), $e->errors());
         } catch (\Exception $e) {
             DB::rollBack();
             return sendError('Failed to create listing: ' . $e->getMessage());
@@ -171,19 +168,15 @@ class ListingService
 
     public function delete($id)
     {
-        try {
-            $listing = $this->listingModel->findOrFail($id);
+        $listing = $this->listingModel->findOrFail($id);
 
-            $this->deleteOldImages($listing->image_urls);
-            $listing->schedules()->delete();
-            $listing->pricingGroups()->delete();
+        $this->deleteOldImages($listing->image_urls);
+        $listing->schedules()->delete();
+        $listing->pricingGroups()->delete();
 
-            $listing->delete();
+        $listing->delete();
 
-            return sendSuccess('Listing deleted successfully');
-        } catch (\Exception $e) {
-            return sendError('Failed to delete listing: ' . $e->getMessage());
-        }
+        return sendSuccess('Listing deleted successfully');
     }
 
     public function isAvailable(Listing $listing, $day, $time)
