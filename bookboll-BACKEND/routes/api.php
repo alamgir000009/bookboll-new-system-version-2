@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AddOnController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\PostCategoryController;
@@ -45,6 +46,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('audit-logs', [AuditLogController::class, 'index']);
         Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
         Route::get('audit-logs/export', [AuditLogController::class, 'export']);
+
+        Route::apiResource('add-ons', AddOnController::class);
 
     });
 
