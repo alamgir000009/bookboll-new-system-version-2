@@ -2,9 +2,6 @@
 namespace App\Services;
 
 use App\Models\AddOn;
-use App\Models\AuditLog;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 
 class AddOnService
 {
@@ -63,26 +60,5 @@ class AddOnService
         $addOn = $this->addOnModel->findOrFail($id);
         $addOn->delete();
         return sendSuccess('Add-On deleted successfully');
-    }
-
-    protected function logActivity(string $action, AddOn $addOn): void
-    {
-        $user = Auth::user();
-
-        AuditLog::create([
-            'timestamp'   => now(),
-            'actor_email' => $user ? $user->email : 'system',
-            'action'      => $action,
-            'resource'    => 'add-on',
-            'resource_id' => $addOn->id,
-            'details'     => json_encode([
-                'name'   => $addOn->name,
-                'price'  => $addOn->price,
-                'status' => $addOn->status,
-                // Add more details if needed
-            ]),
-            'ip_address'  => request()->ip(),
-            'device'      => request()->userAgent(),
-        ]);
     }
 }

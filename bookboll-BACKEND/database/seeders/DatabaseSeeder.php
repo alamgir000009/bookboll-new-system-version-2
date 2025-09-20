@@ -14,6 +14,7 @@ class DatabaseSeeder extends Seeder
             SportsCategoryTableSeeder::class,
             GiftCardTableSeeder::class,
             ResourceTableSeeder::class,
+            AddOnTableSeeder::class,
         ]);
     }
 }
