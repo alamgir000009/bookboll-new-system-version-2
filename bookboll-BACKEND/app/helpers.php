@@ -81,6 +81,7 @@ if (! function_exists('getResourceFromRoute')) {
             'bookings.store'            => 'Booking',
             'bookings.update'           => 'Booking',
             'bookings.destroy'          => 'Booking',
+            'bookings.cancel'           => 'Booking',
 
             // Users
             'users.store'               => 'User',
