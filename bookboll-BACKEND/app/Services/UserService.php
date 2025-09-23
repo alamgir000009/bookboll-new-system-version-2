@@ -29,9 +29,10 @@ class UserService
             $roles = $user->getRoleNames();
 
             $response = [
-                'token' => $token,
-                'user'  => $user->setHidden(['roles']),
-                'roles' => $roles,
+                'token'           => $token,
+                'user'            => $user->setHidden(['roles']),
+                'roles'           => $roles,
+                'assigned_venues' => $user->venues,
             ];
 
             return sendSuccess('Login successful', $response);
@@ -145,16 +146,32 @@ class UserService
     public function list($request)
     {
         $search = $request->search ?? null;
-        $users  = $this->userModel->latest()
+
+        $users = $this->userModel->latest()
+            ->with(['roles', 'venues'])
             ->when($search, function ($query, $search) {
                 $query->where("name", "LIKE", "%{$search}%")
                     ->orWhere("email", "LIKE", "%{$search}%")
-                    ->orWhere("role", "LIKE", "%{$search}%")
                     ->orWhere("status", "LIKE", "%{$search}%")
                     ->orWhere("created_at", "LIKE", "%{$search}%");
-            })->get();
+            })
+            ->get()
+            ->map(function ($user) {
+                return [
+                    'id'         => $user->id,
+                    'name'       => $user->name,
+                    'email'      => $user->email,
+                    'status'     => $user->status,
+                    'created_at' => $user->created_at,
+                    'roles'      => $user->getRoleNames(),
+                    'venues'     => $user->venues,
+                ];
+            });
 
-        return sendSuccess("Users fetched successfully", compact('users', 'search'));
+        $roles  = Role::get(['id', 'name']);
+        $venues = Venue::get(['id', 'name']);
+
+        return sendSuccess("Users fetched successfully", compact('users', 'roles', 'venues', 'search'));
     }
 
     public function createUser($request)
@@ -162,7 +179,7 @@ class UserService
         $formData = $request->validate([
             'name'     => 'required|string|max:100',
             'email'    => 'required|email|unique:users,email',
-            'role'     => 'required|numeric|exists:roles,id',
+            'role'     => 'required|exists:roles,name',
             'status'   => 'required|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
             'password' => 'required|min:8',
             'venues'   => 'nullable|array',
@@ -173,7 +190,9 @@ class UserService
 
             DB::beginTransaction();
 
-            $isSuperAdminOrAdmin = in_array($formData['role'], [1, 2]);
+            $role = Role::where('name', $formData['role'])->firstOrFail();
+
+            $isSuperAdminOrAdmin = in_array($role->id, [1, 2]);
 
             if ($isSuperAdminOrAdmin) {
                 $allVenues          = Venue::pluck('id')->toArray();
@@ -186,8 +205,6 @@ class UserService
                 'status'   => $formData['status'],
                 'password' => $formData['password'],
             ]);
-
-            $role = Role::find($formData['role']);
 
             if (! $role) {
                 throw new Exception("Role not found");
@@ -231,7 +248,7 @@ class UserService
         $updatableFields = [
             'name'     => 'sometimes|string|max:100',
             'email'    => 'sometimes|email|unique:users,email,' . $user->id,
-            'role'     => 'sometimes|numeric|exists:roles,id',
+            'role'     => 'sometimes|exists:roles,name',
             'status'   => 'sometimes|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
             'password' => 'sometimes|min:5',
             'venues'   => 'sometimes|nullable|array',
@@ -259,7 +276,8 @@ class UserService
             $user->update($updateData);
 
             if (isset($formData['role'])) {
-                $role = Role::find($formData['role']);
+
+                $role = Role::where('name', $formData['role'])->firstOrFail();
 
                 if (! $role) {
                     throw new Exception("Role not found");
