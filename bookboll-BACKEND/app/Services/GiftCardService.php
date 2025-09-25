@@ -32,7 +32,7 @@ class GiftCardService
             'description'     => 'nullable|string|max:1000',
             'points_required' => 'required|integer|min:1',
             'value'           => 'required|numeric|min:0.01',
-            'currency'        => 'required|max:100',
+            'currency'        => 'nullable|max:100',
             'status'          => 'required|in:active,inactive',
         ]);
 
@@ -49,7 +49,7 @@ class GiftCardService
             'description'     => 'nullable|string|max:1000',
             'points_required' => 'required|integer|min:1',
             'value'           => 'required|numeric|min:0.01',
-            'currency'        => 'required|max:100',
+            'currency'        => 'nullable|max:100',
             'status'          => 'required|in:active,inactive',
         ]);
 

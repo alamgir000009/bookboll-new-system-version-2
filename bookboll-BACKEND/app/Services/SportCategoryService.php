@@ -36,17 +36,19 @@ class SportCategoryService
             if ($request->hasFile('custom_icon')) {
                 $file     = $request->file('custom_icon');
                 $filename = Str::slug($validated['name']) . '.' . $file->getClientOriginalExtension();
-                $icon     = $file->storeAs('public/icons/sports', $filename);
+                // $icon     = $file->storeAs('public/icons/sports', $filename);
+                $icon     = $file->store('public/icons/sports', 'public');
             }
 
             if ($request->hasFile('image')) {
                 $file     = $request->file('image');
                 $filename = Str::slug($validated['name']) . '.' . $file->getClientOriginalExtension();
-                $image    = $file->storeAs('public/images/sports', $filename);
+                // $image    = $file->storeAs('public/images/sports', $filename);
+                $image     = $file->store('public/images/sports', 'public');
             }
 
             $category = SportsCategory::create([
-                'icon'        => $icon,
+                'icon'        => !$image ? $icon : null,
                 'image'       => $image,
                 'name'        => $validated['name'],
                 'status'      => $validated['status'],
@@ -84,7 +86,8 @@ class SportCategoryService
 
                 $file     = $request->file('custom_icon');
                 $filename = Str::slug($validated['name']) . '.' . $file->getClientOriginalExtension();
-                $icon     = $file->storeAs('public/icons/sports', $filename);
+                // $icon     = $file->storeAs('public/icons/sports', $filename);
+                $icon     = $file->store('public/icons/sports', 'public');
             }
 
             if ($request->hasFile('image')) {
@@ -94,12 +97,12 @@ class SportCategoryService
 
                 $file     = $request->file('image');
                 $filename = Str::slug($validated['name']) . '.' . $file->getClientOriginalExtension();
-                $path     = $file->storeAs('public/images/sports', $filename);
-                $icon     = $path;
+                // $image     = $file->storeAs('public/images/sports', $filename);
+                $image     = $file->store('public/images/sports', 'public');
             }
 
             $category->update([
-                'icon'        => $icon,
+                'icon'        => !$image ? $icon : null,
                 'image'       => $image,
                 'name'        => $validated['name'],
                 'status'      => $validated['status'],

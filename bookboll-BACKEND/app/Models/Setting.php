@@ -20,7 +20,7 @@ class Setting extends Model
 
     protected $casts = [
         'encrypted' => 'boolean',
-        'value' => 'string',
+        'value'     => 'string',
     ];
 
     public function getValueAttribute($value)
@@ -97,10 +97,10 @@ class Setting extends Model
 
     public function getRawValueAttribute()
     {
-        if ($this->encrypted && $this->attributes['value']) {
+        if ($this->encrypted && ! empty($this->attributes['value'])) {
             return decrypt($this->attributes['value']);
         }
-        return $this->attributes['value'];
+        return $this->attributes['value'] ?? null;
     }
 
     public function setRawValueAttribute($value)

@@ -14,7 +14,7 @@ class ResourceService
     {
         $search = $request->search ?? null;
 
-        $resources = $this->resourceModel::latest()
+        $resources = $this->resourceModel::latest('id')
             ->when($search, function ($query, $search) {
                 $query->where('name', 'LIKE', "%{$search}%")
                     ->where('total_quantity', 'LIKE', "%{$search}%")
