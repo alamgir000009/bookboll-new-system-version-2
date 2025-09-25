@@ -11,14 +11,14 @@ class SettingTableSeeder extends Seeder
         $defaults = [
             // Stripe
             [
-                'key'         => 'stripe.publishable_key',
+                'key'         => 'stripe_publishable_key',
                 'value'       => '',
                 'type'        => 'string',
                 'description' =>
                 'Stripe Publishable Key',
             ],
             [
-                'key'         => 'stripe.secret_key',
+                'key'         => 'stripe_secret_key',
                 'value'       => null,
                 'type'        => 'string',
                 'encrypted'   => true,
@@ -27,19 +27,19 @@ class SettingTableSeeder extends Seeder
 
             // Booking
             [
-                'key'         => 'booking.min_advance_hours',
+                'key'         => 'min_advance_hours',
                 'value'       => 2,
                 'type'        => 'integer',
                 'description' => 'Default minimum advance booking hours',
             ],
             [
-                'key'         => 'booking.max_per_slot',
+                'key'         => 'max_per_slot',
                 'value'       => 1,
                 'type'        => 'integer',
                 'description' => 'Default maximum bookings per slot',
             ],
             [
-                'key'         => 'booking.auto_confirm',
+                'key'         => 'auto_confirm',
                 'value'       => 1,
                 'type'        => 'boolean',
                 'description' => 'Auto-confirm new bookings',
@@ -47,25 +47,25 @@ class SettingTableSeeder extends Seeder
 
             // Modules
             [
-                'key'         => 'modules.loyalty',
+                'key'         => 'loyalty',
                 'value'       => 1,
                 'type'        => 'boolean',
                 'description' => 'Enable loyalty system',
             ],
             [
-                'key'         => 'modules.special_days',
+                'key'         => 'special_days',
                 'value'       => 1,
                 'type'        => 'boolean',
                 'description' => 'Enable special days',
             ],
             [
-                'key'         => 'modules.addons',
+                'key'         => 'addons',
                 'value'       => 0,
                 'type'        => 'boolean',
                 'description' => 'Enable add-ons',
             ],
             [
-                'key'         => 'modules.resource_management',
+                'key'         => 'resource_management',
                 'value'       => 0,
                 'type'        => 'boolean',
                 'description' => 'Enable resource management',

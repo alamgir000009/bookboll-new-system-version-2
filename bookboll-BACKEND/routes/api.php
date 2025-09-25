@@ -64,6 +64,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::get('extra-data', [HelperController::class, 'extraData']);
         Route::get('extra-customers', [HelperController::class, 'extraCustomers']);
+        Route::post('test-email', [SettingController::class, 'sendTestEmail']);
 
         Route::apiResource('bookings', BookingController::class);
         Route::post('bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
