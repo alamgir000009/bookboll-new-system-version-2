@@ -17,6 +17,7 @@ class PostService
         $search           = $request->search ?? null;
 
         $posts = $this->postModel->latest()
+            ->with(['author', 'category', 'tags'])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('title', 'LIKE', "%{$search}%")
@@ -42,9 +43,13 @@ class PostService
             })
             ->paginate($records_per_page);
 
-        $categories = $this->postCategoryModel::latest()->get();
+        return sendSuccess('Posts fetched successfully', compact('posts'));
+    }
 
-        return sendSuccess('Posts fetched successfully', compact('posts', 'categories'));
+    public function tagsList()
+    {
+        $tags = Tag::latest()->get();
+        return sendSuccess('Tags fetched successfully', compact('tags'));
     }
 
     public function create($request)
@@ -98,6 +103,12 @@ class PostService
         $post->load('tags', 'category');
 
         return sendSuccess('Post created successfully', compact('post'), 201);
+    }
+
+    public function getPost($id)
+    {
+        $post = $this->postModel::with(['author', 'category', 'tags'])->findOrFail($id);
+        return sendSuccess('Post fetched successfully', compact('post'));
     }
 
     public function update($request, $id)

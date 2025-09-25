@@ -16,9 +16,19 @@ class PostController extends Controller
     {
         return $this->postService->list($request);
     }
+
+    public function postTagsList()
+    {
+        return $this->postService->tagsList();
+    }
     public function store(Request $request)
     {
        return $this->postService->create($request);
+    }
+
+    public function show($id)
+    {
+        return $this->postService->getPost($id);
     }
 
     public function update(Request $request, $id)

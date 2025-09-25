@@ -25,10 +25,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::prefix('admin')->group(function () {
 
-        Route::apiResource('post-category', PostCategoryController::class);
-
-        Route::apiResource('post', PostController::class);
-        Route::post('post/change-status', [PostController::class, 'changeStatus']);
+        Route::apiResource('post-categories', PostCategoryController::class);
+        Route::apiResource('posts', PostController::class);
+        Route::post('posts/change-status', [PostController::class, 'changeStatus']);
+        Route::get('posts-tags', [PostController::class, 'postTagsList']);
 
         Route::apiResource('venues', VenueController::class);
 
