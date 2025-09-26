@@ -9,6 +9,13 @@ class ListingTableSeeder extends Seeder
 {
     public function run(): void
     {
+        for ($i = 0; $i < 5; $i++) {
+            $this->createListingData();
+        }
+    }
+
+    private function createListingData()
+    {
         $paymentOptionsJson = str_replace("'", '"', "{'cash_on_arrival':true,'deposit':{'amount':50.00,'percentage':50}}");
         $paymentOptions     = json_decode($paymentOptionsJson, true) ?: [];
 

@@ -122,7 +122,9 @@ class RolePermissionSeeder extends Seeder
         $user = User::find(1);
         $user->assignRole('super_admin');
 
-        $user = User::find(2);
-        $user->assignRole('customer');
+        $customers = User::whereIn('id', [2, 3, 4, 5])->get();
+        foreach ($customers as $customer) {
+            $customer->assignRole('customer');
+        }
     }
 }

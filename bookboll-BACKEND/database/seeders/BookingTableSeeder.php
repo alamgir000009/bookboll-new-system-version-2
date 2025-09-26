@@ -14,6 +14,13 @@ class BookingTableSeeder extends Seeder
 {
     public function run(): void
     {
+        for ($i = 0; $i < 5; $i++) {
+            $this->createBookingData();
+        }
+    }
+
+    private function createBookingData()
+    {
         $currentDate = Carbon::parse('2025-09-21');
 
         $users      = User::limit(5)->get();

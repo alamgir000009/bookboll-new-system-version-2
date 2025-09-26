@@ -15,8 +15,23 @@ class UserTableSeeder extends Seeder
                 'password' => '12345678',
             ],
             [
-                'name'     => 'Customer User',
+                'name'     => 'Customer',
                 'email'    => 'customer@bookboll.com',
+                'password' => '12345678',
+            ],
+            [
+                'name'     => 'Customer 1',
+                'email'    => 'customer1@bookboll.com',
+                'password' => '12345678',
+            ],
+            [
+                'name'     => 'Customer 2',
+                'email'    => 'customer2@bookboll.com',
+                'password' => '12345678',
+            ],
+            [
+                'name'     => 'Customer 3',
+                'email'    => 'customer3@bookboll.com',
                 'password' => '12345678',
             ],
         ];

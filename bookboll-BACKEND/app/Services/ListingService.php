@@ -29,6 +29,7 @@ class ListingService
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
+                        ->orWhere('venue_id', 'LIKE', "%{$search}%")
                         ->orWhere('sports_type', 'LIKE', "%{$search}%")
                         ->orWhere('status', 'LIKE', "%{$search}%")
                         ->orWhere('description', 'LIKE', "%{$search}%")
