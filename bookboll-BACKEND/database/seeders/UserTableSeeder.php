@@ -10,8 +10,28 @@ class UserTableSeeder extends Seeder
     {
         $users = [
             [
-                'name'     => 'Admin User',
+                'name'     => 'Super Admin',
+                'email'    => 'super_admin@bookboll.com',
+                'password' => '12345678',
+            ],
+            [
+                'name'     => 'Admin Admin',
                 'email'    => 'admin@bookboll.com',
+                'password' => '12345678',
+            ],
+            [
+                'name'     => 'Senior Employee',
+                'email'    => 'senior_employee@bookboll.com',
+                'password' => '12345678',
+            ],
+            [
+                'name'     => 'Junior Employee',
+                'email'    => 'junior_employee@bookboll.com',
+                'password' => '12345678',
+            ],
+            [
+                'name'     => 'Guard User',
+                'email'    => 'guard@bookboll.com',
                 'password' => '12345678',
             ],
             [

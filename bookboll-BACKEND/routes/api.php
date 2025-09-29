@@ -3,6 +3,7 @@
 use App\Http\Controllers\AddOnController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\BookingController;
+use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
@@ -11,6 +12,7 @@ use App\Http\Controllers\PostController;
 use App\Http\Controllers\PromocodeController;
 use App\Http\Controllers\ResourceController;
 use App\Http\Controllers\SettingController;
+use App\Http\Controllers\SpecialDayController;
 use App\Http\Controllers\SportsCategoryController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VenueController;
@@ -64,10 +66,22 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::get('extra-data', [HelperController::class, 'extraData']);
         Route::get('extra-customers', [HelperController::class, 'extraCustomers']);
+        Route::get('extra-resources', [HelperController::class, 'extraResources']);
+        Route::get('extra-add-ons', [HelperController::class, 'extraAddOns']);
+        Route::get('extra-sport-categories', [HelperController::class, 'extraSportCategories']);
+        Route::get('extra-data-for-listing', [HelperController::class, 'extraDataForListing']);
         Route::post('test-email', [SettingController::class, 'sendTestEmail']);
 
         Route::apiResource('bookings', BookingController::class);
-        Route::post('bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
+        Route::put('bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
+
+        Route::apiResource('special-days', SpecialDayController::class);
+        Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar']);
+        Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate']);
+
+        Route::apiResource('customers', CustomerController::class);
+        Route::put('customers/{id}/tags', [CustomerController::class, 'updateTags']);
+        Route::put('customers/{id}/status', [CustomerController::class, 'updateStatus']);
 
     });
 

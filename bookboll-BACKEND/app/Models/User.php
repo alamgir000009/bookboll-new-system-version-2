@@ -13,9 +13,11 @@ class User extends Authenticatable
 
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
+    public const BLOCKED  = 'blocked';
 
     protected $fillable = [
         'name',
+        'phone',
         'email',
         'status',
         'password',
@@ -34,8 +36,55 @@ class User extends Authenticatable
         ];
     }
 
+    protected $appends = ['roles_array'];
+
+    public function getRolesArrayAttribute()
+    {
+        return $this->getRoleNames();
+    }
+
     public function venues()
     {
         return $this->belongsToMany(Venue::class);
+    }
+
+    public function bookings()
+    {
+        return $this->hasMany(Booking::class);
+    }
+
+    public function tags()
+    {
+        return $this->morphToMany(Tag::class, 'taggable')->withTimestamps()->orderBy('name');
+    }
+
+    public function syncTags(array $tagNames)
+    {
+        $tags = collect($tagNames)
+            ->map(fn($name) => trim(strtolower($name)))
+            ->filter()
+            ->unique()
+            ->map(function ($name) {
+                return Tag::firstOrCreate(
+                    ['name' => $name],
+                    ['color' => $this->generateTagColor($name)]
+                );
+            });
+
+        $this->tags()->sync($tags->pluck('id'));
+
+        return $this->load('tags');
+    }
+
+    private function generateTagColor($name)
+    {
+        $colors = [
+            'vip'       => 'bg-purple-100 text-purple-800',
+            'corporate' => 'bg-blue-100 text-blue-800',
+            'regular'   => 'bg-green-100 text-green-800',
+            'new'       => 'bg-yellow-100 text-yellow-800',
+        ];
+
+        return $colors[$name] ?? 'bg-gray-100 text-gray-800';
     }
 }

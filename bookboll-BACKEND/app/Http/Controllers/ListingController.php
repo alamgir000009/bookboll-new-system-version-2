@@ -20,6 +20,11 @@ class ListingController extends Controller
         return $this->listingService->create($request);
     }
 
+    public function show($id)
+    {
+        return $this->listingService->show($id);
+    }
+
     public function update(Request $request, $id)
     {
         return $this->listingService->update($request, $id);

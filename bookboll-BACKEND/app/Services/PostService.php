@@ -85,8 +85,10 @@ class PostService
 
         $formData['user_id'] = $request->user()->id;
 
-        $tags = $formData['tags'];
-        unset($formData['tags']);
+        if (! empty($formData['tags'])) {
+            $tags = $formData['tags'];
+            unset($formData['tags']);
+        }
 
         $post = $this->postModel::create($formData);
 

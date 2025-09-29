@@ -20,6 +20,11 @@ class PostCategoryController extends Controller
         return $this->postCategoryService->create($request);
     }
 
+    public function update(Request $request, $id)
+    {
+        return $this->postCategoryService->update($request, $id);
+    }
+
     public function destroy($id)
     {
         return $this->postCategoryService->delete($id);

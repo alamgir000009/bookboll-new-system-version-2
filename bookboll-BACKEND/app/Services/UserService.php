@@ -145,28 +145,21 @@ class UserService
 
     public function list($request)
     {
-        $search = $request->search ?? null;
+        $search           = $request->search ?? null;
+        $records_per_page = $request->records_per_page ?? 10;
 
         $users = $this->userModel->latest()
-            ->with(['roles', 'venues'])
+            ->whereHas('roles', function ($query) {
+                $query->whereIn('name', ['super_admin', 'admin', 'senior_employee', 'junior_employee', 'guard']);
+            })
+            ->with(['venues:id,name'])
             ->when($search, function ($query, $search) {
                 $query->where("name", "LIKE", "%{$search}%")
                     ->orWhere("email", "LIKE", "%{$search}%")
                     ->orWhere("status", "LIKE", "%{$search}%")
                     ->orWhere("created_at", "LIKE", "%{$search}%");
             })
-            ->get()
-            ->map(function ($user) {
-                return [
-                    'id'         => $user->id,
-                    'name'       => $user->name,
-                    'email'      => $user->email,
-                    'status'     => $user->status,
-                    'created_at' => $user->created_at,
-                    'roles'      => $user->getRoleNames(),
-                    'venues'     => $user->venues,
-                ];
-            });
+            ->paginate($records_per_page);
 
         $roles  = Role::get(['id', 'name']);
         $venues = Venue::get(['id', 'name']);
@@ -181,7 +174,7 @@ class UserService
             'email'    => 'required|email|unique:users,email',
             'role'     => 'required|exists:roles,name',
             'status'   => 'required|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
-            'password' => 'required|min:8',
+            'password' => 'nullable|min:8',
             'venues'   => 'nullable|array',
             'venues.*' => 'numeric|exists:venues,id',
         ]);
@@ -197,6 +190,10 @@ class UserService
             if ($isSuperAdminOrAdmin) {
                 $allVenues          = Venue::pluck('id')->toArray();
                 $formData['venues'] = $allVenues;
+            }
+
+            if (empty($formData['password'])) {
+                $formData['password'] = '12345678';
             }
 
             $user = $this->userModel->create([

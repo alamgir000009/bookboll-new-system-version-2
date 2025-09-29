@@ -167,6 +167,12 @@ class ListingService
         }
     }
 
+    public function show($id)
+    {
+        $listing = $this->listingModel->with(['schedules'])->findOrFail($id);
+        return sendSuccess('Listing deleted successfully', compact('listing'));
+    }
+
     public function delete($id)
     {
         $listing = $this->listingModel->findOrFail($id);
@@ -196,7 +202,7 @@ class ListingService
         $rules = [
             'name'                  => 'required|string|max:255',
             'venue_id'              => 'required|exists:venues,id',
-            'sports_type'           => 'required|in:football,basketball,tennis,cricket,other',
+            'sports_type'           => 'required',
             'status'                => 'required|in:active,inactive',
             'description'           => 'nullable|string',
             'base_price'            => 'required|numeric|min:0',
@@ -205,7 +211,7 @@ class ListingService
             'slot_duration'         => 'required|integer|min:1',
             'loyalty_points'        => 'nullable|integer|min:0',
             'calendar_color'        => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
-            'images.*'              => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048', // 2MB max
+            'images.*'              => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
             'add_ons.*'             => 'nullable|exists:add_ons,id',
         ];
 

@@ -17,13 +17,27 @@ class PostCategoryService
     public function create($request)
     {
         $formData = $request->validate([
-            "name"        => "required|max:255",
+            "name"        => "required|max:255|unique:post_categories",
             "slug"        => "required|max:255|unique:post_categories",
             "description" => "nullable|max:500",
         ]);
 
         $category = $this->postCategoryModel::create($formData);
         return sendSuccess("Category added successfully", compact('category'));
+    }
+
+    public function update($request, $id)
+    {
+        $category = $this->postCategoryModel->findOrFail($id);
+
+        $formData = $request->validate([
+            "name"        => "required|max:255|unique:post_categories,name,".$id,
+            "slug"        => "required|max:255|unique:post_categories,slug,".$id,
+            "description" => "nullable|max:500",
+        ]);
+
+        $category = $category->update($formData);
+        return sendSuccess("Category updated successfully", compact('category'));
     }
 
     public function delete($id)

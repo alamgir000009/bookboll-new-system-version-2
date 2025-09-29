@@ -60,8 +60,6 @@ class PromocodeService
 
             DB::commit();
 
-            $this->logActivity('created', $promocode);
-
             $promocode->load(['venues', 'listings']);
 
             return sendSuccess('Promocode created successfully', compact('promocode'), 201);
@@ -185,27 +183,4 @@ class PromocodeService
         return $request->validate($rules);
     }
 
-    protected function logActivity(string $action, Promocode $promocode): void
-    {
-        AuditLog::create([
-            'timestamp'   => now(),
-            'actor_email' => Auth::user()?->email ?? 'system',
-            'action'      => $action,
-            'resource'    => 'promocode',
-            'resource_id' => $promocode->id,
-            'details'     => json_encode([
-                'code'               => $promocode->code,
-                'discount_type'      => $promocode->discount_type,
-                'discount_value'     => $promocode->discount_value,
-                'formatted_discount' => $promocode->formatted_discount,
-                'valid_from'         => $promocode->valid_from,
-                'never_expires'      => $promocode->never_expires,
-                'venues_count'       => $promocode->venues()->count(),
-                'listings_count'     => $promocode->listings()->count(),
-                'used_count'         => $promocode->used_count,
-            ]),
-            'ip_address'  => request()->ip(),
-            'device'      => request()->userAgent(),
-        ]);
-    }
 }

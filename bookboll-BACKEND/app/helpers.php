@@ -109,19 +109,24 @@ if (! function_exists('getResourceFromRoute')) {
             'sports-categories.destroy' => 'Sports Category',
 
             // Add-Ons
-            'add-ons.store'             => 'Sports Category',
-            'add-ons.update'            => 'Sports Category',
-            'add-ons.destroy'           => 'Sports Category',
+            'add-ons.store'             => 'Add-On',
+            'add-ons.update'            => 'Add-On',
+            'add-ons.destroy'           => 'Add-On',
 
             // Listings
-            'listings.store'            => 'Sports Category',
-            'listings.update'           => 'Sports Category',
-            'listings.destroy'          => 'Sports Category',
+            'listings.store'            => 'Listing',
+            'listings.update'           => 'Listing',
+            'listings.destroy'          => 'Listing',
 
             // Promocode
-            'promocodes.store'          => 'Sports Category',
-            'promocodes.update'         => 'Sports Category',
-            'promocodes.destroy'        => 'Sports Category',
+            'promocodes.store'          => 'Promocde',
+            'promocodes.update'         => 'Promocde',
+            'promocodes.destroy'        => 'Promocde',
+
+            // Special Days
+            'special-days.store'        => 'Special Day',
+            'special-days.update'       => 'Special Day',
+            'special-days.destroy'      => 'Special Day',
 
             // Settings
             'settings.update'           => 'Setting',
@@ -176,13 +181,18 @@ if (! function_exists('extractSuccessDetails')) {
             $id = $data['id'];
 
             $detailsMap = [
-                'bookings.store' => "Created booking #{$id}",
+                'posts.store' => "Created Post #{$id}",
                 'users.store' => "Created user #{$id}",
                 'venues.store' => "Created venue #{$id}",
+                'add-ons.store' => "Created Add-On #{$id}",
+                'bookings.store' => "Created booking #{$id}",
+                'listings.store' => "Created Listing #{$id}",
                 'resources.store' => "Created resource #{$id}",
                 'gift-cards.store' => "Created gift card #{$id}",
+                'promocodes.store' => "Created Promocode #{$id}",
+                'special-days.store' => "Special Day Promocode #{$id}",
+                'post-categories.store' => "Created Blog Category #{$id}",
                 'sports-categories.store' => "Created sports category #{$id}",
-                'add-ons.store' => "Created Add-On #{$id}",
             ];
 
             foreach ($detailsMap as $routePattern => $detail) {

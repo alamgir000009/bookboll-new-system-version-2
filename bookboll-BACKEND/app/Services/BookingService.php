@@ -19,7 +19,7 @@ class BookingService
         $perPage = $request->per_page ?? 10;
         $search  = $request->search ?? null;
 
-        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns'])
+        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user'])
             ->when($search, function ($q) use ($search) {
                 $q->where(function ($q) use ($search) {
                     $q->whereHas('listing', fn($l) => $l->where('name', 'LIKE', "%{$search}%"))
@@ -35,7 +35,7 @@ class BookingService
             ->when($request->from_date ?? null, fn($q, $from) => $q->whereDate('created_at', '>=', $from))
             ->when($request->to_date ?? null, fn($q, $to) => $q->whereDate('created_at', '<=', $to))
             ->when($request->venue ?? null, function ($q, $venue) {
-                $q->whereHas('venue', fn($v) => $v->where('name', 'LIKE', "%{$venue}%"));
+                $q->where('venue_id', 'LIKE', "%{$venue}%");
             })
             ->when($request->user ?? null, function ($q, $user) {
                 $q->whereHas('user', fn($u) => $u->where('name', 'LIKE', "%{$user}%"));
