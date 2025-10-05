@@ -1,12 +1,8 @@
 <?php
 namespace App\Http\Controllers;
 
-use App\Models\User;
-use App\Models\Venue;
 use App\Services\UserService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Spatie\Permission\Models\Role;
 
 class UserController extends Controller
 {
@@ -57,5 +53,15 @@ class UserController extends Controller
     public function destroy($id)
     {
         return $this->userService->deleteUser($id);
+    }
+
+    public function sendResetLinkEmail(Request $request)
+    {
+        return $this->userService->forgotPassword($request);
+    }
+
+    public function reset(Request $request)
+    {
+        return $this->userService->resetPassword($request);
     }
 }

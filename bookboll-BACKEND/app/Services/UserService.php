@@ -1,13 +1,18 @@
 <?php
 namespace App\Services;
 
+use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserWelcomeMail;
 use App\Models\User;
 use App\Models\Venue;
+use Carbon\Carbon;
 use Exception;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 use Spatie\Permission\Models\Role;
 
 class UserService
@@ -318,6 +323,53 @@ class UserService
             $user->delete();
         }
         return sendSuccess('User deleted successfully');
+    }
+
+    public function forgotPassword($request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        $token = Str::random(64);
+
+        DB::table('password_reset_tokens')->updateOrInsert(
+            ['email' => $request->email],
+            ['token' => Hash::make($token), 'created_at' => Carbon::now()]
+        );
+
+        $url = config('app.frontend_url') . '/reset-password?token=' . $token . '&email=' . urlencode($request->email);
+
+        Mail::to($request->email)->send(new ForgetPasswordEmail($url));
+
+        return response()->json(['message' => 'Password reset link sent']);
+    }
+
+    public function resetPassword($request)
+    {
+        $request->validate([
+            'email'    => 'required|email',
+            'token'    => 'required|string',
+            'password' => 'required|confirmed|min:3',
+        ]);
+
+        $tokenRecord = DB::table('password_reset_tokens')->where('email', $request->email)->first();
+
+        if (! $tokenRecord || ! Hash::check($request->token, $tokenRecord->token)) {
+            return sendError('Invalid link please try again');
+        }
+
+        if (Carbon::parse($tokenRecord->created_at)->addMinutes(30)->isPast()) {
+            return sendError('Link expired please try again');
+        }
+
+        $user = User::where('email', $request->email)->first();
+        if (! $user) {
+            return sendError('User not found');
+        }
+
+        $user->password = $request->password;
+        $user->save();
+
+        return sendSuccess('Password reset successfully');
     }
 
 }
