@@ -45,4 +45,9 @@ class PostController extends Controller
     {
         return $this->postService->delete($id);
     }
+
+    public function blogArticles(Request $request)
+    {
+        return $this->postService->blogArticles($request);
+    }
 }

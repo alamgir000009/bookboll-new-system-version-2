@@ -1,6 +1,7 @@
 <?php
 namespace App\Services;
 
+use App\Models\Post;
 use App\Models\PostCategory;
 
 class PostCategoryService
@@ -45,5 +46,15 @@ class PostCategoryService
         $postCategory = $this->postCategoryModel->findOrFail($id);
         $postCategory->delete();
         return sendSuccess('Category deleted successfully');
+    }
+
+    public function blogCategories()
+    {
+        $categories = $this->postCategoryModel::whereRelation('posts', 'status', Post::PUBLISHED)
+        ->pluck('name')->toArray();
+
+        $featuredArticle = Post::where('featured', true)->where('status', Post::PUBLISHED)->first();
+
+        return sendSuccess("Blog categories fetched successfully", compact('categories', 'featuredArticle'));
     }
 }

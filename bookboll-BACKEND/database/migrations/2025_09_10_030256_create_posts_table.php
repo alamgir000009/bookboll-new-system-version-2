@@ -14,6 +14,7 @@ return new class extends Migration
     {
         Schema::create('posts', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
             $table->string('title');
             $table->string('slug')->unique();
             $table->text('excerpt')->nullable();
@@ -25,7 +26,8 @@ return new class extends Migration
             $table->json('tags')->nullable();
             $table->string('seo_title')->nullable();
             $table->text('seo_description')->nullable();
-            $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
+            $table->boolean('featured')->default(false);
+            $table->string('read_time')->nullable()->default('5 min read');
             $table->timestamps();
         });
     }

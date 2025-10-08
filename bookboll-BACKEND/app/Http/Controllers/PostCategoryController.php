@@ -29,4 +29,9 @@ class PostCategoryController extends Controller
     {
         return $this->postCategoryService->delete($id);
     }
+
+    public function blogCategories()
+    {
+        return $this->postCategoryService->blogCategories();
+    }
 }

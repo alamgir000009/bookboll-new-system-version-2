@@ -19,7 +19,8 @@ class DatabaseSeeder extends Seeder
             ListingTableSeeder::class,
             PromocodeTableSeeder::class,
             SpecialDayTableSeeder::class,
-            BookingTableSeeder::class
+            BookingTableSeeder::class,
+            BlogTableSeeder::class,
         ]);
     }
 }

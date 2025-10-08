@@ -66,6 +66,7 @@ class PostService
             'tags'             => 'nullable|array',
             'tags.*'           => 'string|max:100',
             'seo_title'        => 'nullable|string|max:255',
+            '5 min read'       => 'nullable|string|max:50',
             'seo_description'  => 'nullable|string|max:160',
         ]);
 
@@ -193,5 +194,33 @@ class PostService
         }
 
         return sendSuccess('Post status updated successfully', compact('post'));
+    }
+
+    public function blogArticles($request)
+    {
+        $records_per_page = $request->records_per_page ?? 10;
+        $search           = $request->search ?? null;
+        $category         = $request->category ?? null;
+
+        $blogArticles = $this->postModel->where('status', Post::PUBLISHED)
+            ->with(['author', 'category', 'tags'])
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('title', 'LIKE', "%{$search}%")
+                        ->orWhere('slug', 'LIKE', "%{$search}%")
+                        ->orWhere('excerpt', 'LIKE', "%{$search}%")
+                        ->orWhere('content', 'LIKE', "%{$search}%")
+                        ->orWhere('published_at', 'LIKE', "%{$search}%")
+                        ->orWhere('seo_title', 'LIKE', "%{$search}%");
+                });
+            })
+            ->when($category, function ($query, $category) {
+                $query->whereHas('category', function ($q) use ($category) {
+                    $q->where('name', 'LIKE', $category);
+                });
+            })
+            ->simplePaginate($records_per_page);
+
+        return sendSuccess('Blog articles fetched successfully', compact('blogArticles'));
     }
 }
