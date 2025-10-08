@@ -37,7 +37,7 @@ class UserService
             if ($user) {
                 if (! $user->hasRole('customer')) {
                     $user->assignRole('customer');
-                }else {
+                } else {
                     return sendError("Customer with this email already exists");
                 }
 
@@ -73,6 +73,75 @@ class UserService
             DB::rollBack();
             logger("User registration error: " . $e->getMessage(), ['exception' => $e]);
             return sendError("Something went wrong please try again later");
+        }
+    }
+
+    public function upupdateCustomerProfiledateProfile($request, $id)
+    {
+        $user = $this->findById($id);
+
+        if (! $user) {
+            return sendError("User not found");
+        }
+
+        if (Auth::id() !== $user->id && ! Auth::user()->hasRole(['super_admin', 'admin'])) {
+            return sendError("Unauthorized to update this profile");
+        }
+
+        $formData = $request->validate([
+            'name'          => 'sometimes|string|max:100',
+            'email'         => 'sometimes|email|unique:users,email,' . $user->id,
+            'date_of_birth' => 'sometimes|date|before:today',
+            'gender'        => 'sometimes|in,male,femal,other',
+            'nationality'   => 'sometimes|string',
+            'address'       => 'sometimes|max:255',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $updateData = [];
+
+            if (isset($formData['name'])) {
+                $updateData['name'] = $formData['name'];
+            }
+
+            if (isset($formData['email'])) {
+                $updateData['email'] = $formData['email'];
+            }
+
+            if (isset($formData['date_of_birth'])) {
+                $updateData['date_of_birth'] = $formData['date_of_birth'];
+            }
+
+            if (isset($formData['gender'])) {
+                $updateData['gender'] = $formData['gender'];
+            }
+
+            if (isset($formData['nationality'])) {
+                $updateData['nationality'] = $formData['nationality'];
+            }
+
+            if (isset($formData['address'])) {
+                $updateData['address'] = $formData['address'];
+            }
+
+            if (! empty($updateData)) {
+                $user->update($updateData);
+            }
+
+            DB::commit();
+
+            $user->refresh();
+            $user->load(['roles', 'venues']);
+            $user->makeHidden(['roles']);
+            $roles = $user->getRoleNames();
+
+            return sendSuccess("Profile updated successfully", compact('user', 'roles'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            return sendError("Something went wrong: " . $e->getMessage());
         }
     }
 
@@ -430,6 +499,35 @@ class UserService
         $user->save();
 
         return sendSuccess('Password reset successfully');
+    }
+
+    public function changePassword($request, $id)
+    {
+        $user = $this->findById($id);
+
+        if (! $user) {
+            return sendError("User not found");
+        }
+
+        $formData = $request->validate([
+            'current_password' => 'required|current_password',
+            'password'         => 'required|min:8|confirmed|different:current_password',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $user->password = $formData['password'];
+            $user->save();
+
+            DB::commit();
+
+            return sendSuccess("Password changed successfully");
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            return sendError("Something went wrong: " . $e->getMessage());
+        }
     }
 
 }

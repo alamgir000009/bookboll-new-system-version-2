@@ -21,6 +21,8 @@ use Illuminate\Support\Facades\Route;
 Route::post('login', [UserController::class, 'login']);
 Route::post('logout', [UserController::class, 'logout']);
 Route::post('register', [UserController::class, 'register']);
+Route::post('update-profile', [UserController::class, 'updateProfile'])->middleware('auth:sanctum');
+Route::post('change-password', [UserController::class, 'changePassword'])->middleware('auth:sanctum');
 Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail']);
 Route::post('reset-password', [UserController::class, 'reset']);
 

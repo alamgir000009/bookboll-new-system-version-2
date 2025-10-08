@@ -12,7 +12,12 @@ class UserController extends Controller
     {
         return $this->userService->register($request);
     }
-    
+
+    public function updateProfile(Request $request)
+    {
+        return $this->userService->updateProfile($request, auth()->id());
+    }
+
     public function login(Request $request)
     {
         return $this->userService->login($request);
@@ -28,9 +33,9 @@ class UserController extends Controller
         return $this->userService->loginUser();
     }
 
-    public function updateProfile(Request $request)
+    public function updateCustomerProfile(Request $request)
     {
-        return $this->userService->updateProfile($request, auth()->id());
+        return $this->userService->updateCustomerProfile($request, auth()->id());
     }
 
     public function requiredDataForUser()
@@ -66,5 +71,10 @@ class UserController extends Controller
     public function reset(Request $request)
     {
         return $this->userService->resetPassword($request);
+    }
+
+    public function changePassword(Request $request)
+    {
+        return $this->userService->changePassword($request, auth()->id());
     }
 }
