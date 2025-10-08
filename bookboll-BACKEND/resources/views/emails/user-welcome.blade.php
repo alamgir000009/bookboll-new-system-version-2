@@ -5,7 +5,9 @@
     <p>Your account has been created successfully.</p>
     <p>Here are your login credentials:</p>
     <p><strong>- **Email:** {{ $user->email }}</strong></p>
+    @if($plainPassword)
     <p><strong>- **Password:** {{ $plainPassword }}</strong></p>
+    @endif
     <p>If you have any questions or need further assistance, feel free to contact our support team at <a href="mailto:{{ config('app.support_email') }}">{{ config('app.support_email') }}</a>.</p>
 </div>
 

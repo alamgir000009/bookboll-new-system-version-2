@@ -6,10 +6,13 @@ use Illuminate\Http\Request;
 
 class UserController extends Controller
 {
-    public function __construct(protected UserService $userService)
-    {
+    public function __construct(protected UserService $userService){}
 
+    public function register(Request $request)
+    {
+        return $this->userService->register($request);
     }
+    
     public function login(Request $request)
     {
         return $this->userService->login($request);

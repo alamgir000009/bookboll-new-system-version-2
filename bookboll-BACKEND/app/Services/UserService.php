@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Spatie\Permission\Models\Role;
 
@@ -20,6 +19,63 @@ class UserService
     public function __construct(protected User $userModel)
     {
     }
+
+    public function register($request)
+    {
+        $formData = $request->validate([
+            'name'     => 'required|string|max:100',
+            'email'    => 'required|email',
+            'phone'    => 'required|min:6|max:20',
+            'password' => 'required|min:8|confirmed',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $user = $this->userModel->where("email", $formData['email'])->first();
+
+            if ($user) {
+                if (! $user->hasRole('customer')) {
+                    $user->assignRole('customer');
+                }else {
+                    return sendError("Customer with this email already exists");
+                }
+
+            } else {
+
+                $user = $this->userModel->create([
+                    'name'     => $formData['name'],
+                    'email'    => $formData['email'],
+                    'phone'    => $formData['phone'],
+                    'password' => bcrypt($formData['password']),
+                    'status'   => $this->userModel::ACTIVE,
+                ]);
+
+                $user->assignRole('customer');
+            }
+
+            DB::commit();
+
+            try {
+                Mail::to($user->email)->queue(new UserWelcomeMail($user, $formData['password']));
+            } catch (Exception $e) {
+                logger("Failed to send welcome email: " . $e->getMessage(), ['exception' => $e]);
+            }
+
+            $user->load(['roles', 'venues']);
+            $user->makeHidden('roles');
+            $token = $user->createToken('bookboll-api-token')->plainTextToken;
+            $roles = $user->getRoleNames();
+
+            return sendSuccess("User registered successfully", compact('user', 'roles', 'token'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            logger("User registration error: " . $e->getMessage(), ['exception' => $e]);
+            return sendError("Something went wrong please try again later");
+        }
+    }
+
     public function login($request)
     {
         try {
@@ -220,7 +276,11 @@ class UserService
 
             DB::commit();
 
-            Mail::to($user->email)->queue(new UserWelcomeMail($user, $formData['password']));
+            try {
+                Mail::to($user->email)->queue(new UserWelcomeMail($user, $formData['password']));
+            } catch (Exception $e) {
+                logger("Failed to send welcome email: " . $e->getMessage(), ['exception' => $e]);
+            }
 
             $user->load(['roles', 'venues']);
             $user->makeHidden('roles');
