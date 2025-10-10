@@ -56,6 +56,29 @@ class Listing extends Model
         return $this->hasMany(Schedule::class, 'listing_id');
     }
 
+    public function getAverageRatingAttribute()
+    {
+        return $this->reviews()->avg('overall_rating') ?? 0;
+    }
+
+    public function getTotalReviewsAttribute()
+    {
+        return $this->reviews()->count();
+    }
+
+    public function getStarDistributionAttribute()
+    {
+        return $this->reviews()->selectRaw('overall_rating, COUNT(*) as count')
+            ->groupBy('overall_rating')
+            ->pluck('count', 'overall_rating')
+            ->toArray();
+    }
+
+    public function reviews()
+    {
+        return Review::whereRelation('booking', 'listing_id', $this->id);
+    }
+
     public function scopeActive($query)
     {
         return $query->where('status', 'active');

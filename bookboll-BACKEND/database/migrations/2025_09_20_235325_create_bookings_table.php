@@ -25,7 +25,7 @@ return new class extends Migration
             $table->decimal('total_price', 15, 2);
             $table->enum('payment_method', ['cash_on_arrival', 'online', 'deposit'])->default('cash_on_arrival');
             $table->text('notes')->nullable();
-            $table->string('status')->default('pending');
+            $table->enum('status', \BookingStatus::list())->default(\BookingStatus::PENDING);
             $table->timestamps();
             $table->index(['user_id', 'status']);
             $table->index(['listing_id', 'start_time', 'end_time']);

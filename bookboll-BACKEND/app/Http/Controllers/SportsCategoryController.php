@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 class SportsCategoryController extends Controller
 {
     public function __construct(protected SportCategoryService $sportCategoryService){}
+
     public function index()
     {
         return $this->sportCategoryService->all();
@@ -35,5 +36,10 @@ class SportsCategoryController extends Controller
     public function popularEmojis()
     {
         return sendSuccess('Popular emojis retrieved successfully', SportsCategory::getPopularEmojis());
+    }
+
+    public function sportsCategories()
+    {
+        return $this->sportCategoryService->sportsCategories();
     }
 }

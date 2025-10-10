@@ -137,4 +137,10 @@ class SportCategoryService
             return sendError('Failed to delete sports category: ' . $e->getMessage());
         }
     }
+
+    public function sportsCategories()
+    {
+        $sportsCategories = $this->sportCategoryModel::active()->orderBy('name')->get();
+        return sendSuccess('Sports categories retrieved successfully', compact('sportsCategories'));
+    }
 }

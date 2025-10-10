@@ -2,6 +2,30 @@
 
 use App\Services\AuditLogService;
 
+if (! class_exists('BookingStatus')) {
+    class BookingStatus
+    {
+        const PENDING         = 'pending';
+        const CONFIRMED       = 'confirmed';
+        const REJECTED        = 'rejected';
+        const COMPLETED       = 'completed';
+        const CANCELLED       = 'cancelled';
+        const PAYMENT_PENDING = 'payment_pending';
+
+        public static function list(): array
+        {
+            return [
+                self::PENDING,
+                self::CONFIRMED,
+                self::REJECTED,
+                self::COMPLETED,
+                self::CANCELLED,
+                self::PAYMENT_PENDING,
+            ];
+        }
+    }
+}
+
 if (! function_exists('sendSuccess')) {
     function sendSuccess(string $message = 'Success', array $data = [], int $code = 200, $logActivity = true): \Illuminate\Http\JsonResponse
     {

@@ -18,7 +18,8 @@ return new class extends Migration
             $table->date('date_of_birth')->nullable();
             $table->string('gender')->nullable();
             $table->string('nationality')->nullable();
-            $table->string('address')->nullable();
+            $table->longText('address')->nullable();
+            $table->string('image',255)->nullable();
             $table->string('status')->default(User::ACTIVE);
             $table->string('password');
             $table->rememberToken();

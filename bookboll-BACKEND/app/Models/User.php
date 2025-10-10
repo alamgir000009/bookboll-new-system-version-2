@@ -57,6 +57,16 @@ class User extends Authenticatable
         return $this->hasMany(Booking::class);
     }
 
+    public function reviews()
+    {
+        return $this->hasMany(Review::class);
+    }
+
+    public function helpfulReviews()
+    {
+        return $this->belongsToMany(Review::class, 'helpful_review', 'user_id', 'review_id')->withTimestamps(); // If you create a pivot model
+    }
+
     public function tags()
     {
         return $this->morphToMany(Tag::class, 'taggable')->withTimestamps()->orderBy('name');

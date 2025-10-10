@@ -23,7 +23,7 @@ class BookingTableSeeder extends Seeder
     {
         $currentDate = Carbon::parse('2025-09-21');
 
-        $users      = User::limit(5)->get();
+        $users      = User::where("id", ">", 5)->get();
         $venues     = Venue::limit(2)->get();
         $listings   = Listing::limit(3)->get();
         $promocodes = Promocode::active()->limit(2)->get();
@@ -60,7 +60,6 @@ class BookingTableSeeder extends Seeder
                 'promocode_id'    => $promocode?->id,
                 'start_time'      => $startTime,
                 'end_time'        => $endTime,
-                // 'duration'        => $duration,
                 'subtotal'        => $subtotal,
                 'discount_amount' => $discount,
                 'total_price'     => $totalPrice,

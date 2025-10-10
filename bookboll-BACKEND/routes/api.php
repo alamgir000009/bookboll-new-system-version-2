@@ -11,6 +11,7 @@ use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PromocodeController;
 use App\Http\Controllers\ResourceController;
+use App\Http\Controllers\ReviewController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\SpecialDayController;
 use App\Http\Controllers\SportsCategoryController;
@@ -90,7 +91,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     });
 
+    Route::prefix('customer')->group(function () {
+
+        Route::apiResource('reviews', ReviewController::class)->except(['show']);
+        Route::get('reviews/my', [ReviewController::class, 'myReviews']);
+        Route::patch('reviews/{review}/helpful', [ReviewController::class, 'helpful']);
+
+    });
+
 });
 
 Route::get('blog-categories', [PostCategoryController::class, 'blogCategories']);
 Route::get('blog-articles', [PostController::class, 'blogArticles']);
+Route::get('sports-categories', [SportsCategoryController::class, 'sportsCategories']);
