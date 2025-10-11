@@ -2,6 +2,8 @@
 namespace App\Services;
 
 use App\Models\GiftCard;
+use App\Models\LoyaltyPoint;
+use App\Models\Transaction;
 
 class GiftCardService
 {
@@ -20,23 +22,45 @@ class GiftCardService
                     ->orWhere('currency', 'LIKE', "%$search}%")
                     ->orWhere('description', 'LIKE', "%$search}%");
             })
+            ->when($request->status, function ($query, $status) {
+                $query->where("status", $status);
+            })
             ->get();
 
-        return sendSuccess('Gift cards retrieved successfully', compact('giftCards'));
+        $data['giftCards'] = $giftCards;
+        if ($request->status) {
+
+            $customer        = auth()->user();
+            $availablePoints = LoyaltyPoint::balance($customer->id);
+            $redeemedPoints  = $customer->loyaltyPoints()->where('type', 'debit')->sum('points');
+            $balance         = Transaction::balance($customer->id);
+
+            $data['balance']         = $balance;
+            $data['redeemedPoints']  = $redeemedPoints;
+            $data['availablePoints'] = $availablePoints;
+
+        }
+
+        return sendSuccess('Gift cards retrieved successfully', $data);
     }
 
     public function create($request)
     {
-        $validated = $request->validate([
+        $formData = $request->validate([
             'title'           => 'required|string|max:255|unique:gift_cards,title',
             'description'     => 'nullable|string|max:1000',
             'points_required' => 'required|integer|min:1',
             'value'           => 'required|numeric|min:0.01',
             'currency'        => 'nullable|max:100',
             'status'          => 'required|in:active,inactive',
+            'image'           => 'nullable|image',
         ]);
 
-        $giftCard = $this->giftCardModel::create($validated);
+        if (! empty($formData['image'])) {
+            $formData['image'] = $formData['image']->store('gift-cards', 'public');
+        }
+
+        $giftCard = $this->giftCardModel::create($formData);
         return sendSuccess('Gift Card added successfullly', compact('giftCard'));
     }
 
@@ -51,7 +75,14 @@ class GiftCardService
             'value'           => 'required|numeric|min:0.01',
             'currency'        => 'nullable|max:100',
             'status'          => 'required|in:active,inactive',
+            'image'           => 'nullable|image',
         ]);
+
+        if (! empty($formData['image'])) {
+            $formData['image'] = $formData['image']->store('gift-cards', 'public');
+        } else {
+            unset($formData['image']);
+        }
 
         $giftCard->update($formData);
         return sendSuccess('Gift card updated successfully', compact('giftCard'));
@@ -62,5 +93,38 @@ class GiftCardService
         $giftCard = GiftCard::findOrFail($id);
         $giftCard->delete();
         return sendSuccess('Gift card deleted successfully', compact('giftCard'));
+    }
+
+    public function redeem($request)
+    {
+        $request->validate(['gift_card_id' => 'required|exists:gift_cards,id']);
+
+        $customer = auth()->user();
+        $giftCard = GiftCard::find($request->gift_card_id);
+
+        if (LoyaltyPoint::balance($customer->id) < $giftCard->points_required) {
+            return sendSuccess('Insufficient points to redeem this gift card.');
+        }
+
+        $customer->loyaltyPoints()->create([
+            'type'   => 'debit',
+            'points' => $giftCard->points_required,
+            'reason' => "Redeemed {$giftCard->name} gift card",
+        ]);
+
+        $customer->transactions()->create([
+            'gift_card_id' => $giftCard->id,
+            'amount'       => $giftCard->value,
+        ]);
+
+        $availablePoints = LoyaltyPoint::balance($customer->id);
+        $redeemedPoints  = $customer->loyaltyPoints()->where('type', 'debit')->sum('points');
+        $balance         = Transaction::balance($customer->id);
+
+        $data['balance']         = $balance;
+        $data['redeemedPoints']  = $redeemedPoints;
+        $data['availablePoints'] = $availablePoints;
+
+        return sendSuccess("Gift card redeemed successfully", $data);
     }
 }

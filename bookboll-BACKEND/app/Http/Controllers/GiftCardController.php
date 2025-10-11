@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Http\Controllers;
 
 use App\Services\GiftCardService;
@@ -7,7 +6,8 @@ use Illuminate\Http\Request;
 
 class GiftCardController extends Controller
 {
-    public function __construct(protected GiftCardService $giftCardService){}
+    public function __construct(protected GiftCardService $giftCardService)
+    {}
 
     public function index(Request $request)
     {
@@ -27,5 +27,16 @@ class GiftCardController extends Controller
     public function destroy($id)
     {
         return $this->giftCardService->delete($id);
+    }
+
+    public function fetchGiftCards(Request $request)
+    {
+        $request->merge(['status' => 'active']);
+        return $this->giftCardService->all($request);
+    }
+
+    public function redeemGiftCard(Request $request)
+    {
+        return $this->giftCardService->redeem($request);
     }
 }

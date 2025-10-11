@@ -20,7 +20,11 @@ class DatabaseSeeder extends Seeder
             PromocodeTableSeeder::class,
             SpecialDayTableSeeder::class,
             BookingTableSeeder::class,
+            TagTableSeeder::class,
             BlogTableSeeder::class,
+            ReviewTableSeeder::class,
+            LoyaltyPointTableSeeder::class,
+            TransactionTableSeeder::class
         ]);
     }
 }

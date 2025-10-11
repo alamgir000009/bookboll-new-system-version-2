@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 class GiftCard extends Model
 {
     protected $fillable = [
+        'image',
         'title',
         'value',
         'status',
@@ -13,6 +14,11 @@ class GiftCard extends Model
         'description',
         'points_required',
     ];
+
+    public function getImageAttribute($image)
+    {
+        return $image ? url("storage/{$image}") : null;
+    }
 
     public function scopeActive($query)
     {

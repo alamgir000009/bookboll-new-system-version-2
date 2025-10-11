@@ -98,6 +98,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::patch('reviews/{review}/helpful', [ReviewController::class, 'helpful']);
         Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings']);
 
+        Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards']);
+        Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard']);
+
     });
 
 });

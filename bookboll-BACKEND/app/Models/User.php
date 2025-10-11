@@ -67,6 +67,16 @@ class User extends Authenticatable
         return $this->belongsToMany(Review::class, 'helpful_review', 'user_id', 'review_id')->withTimestamps(); // If you create a pivot model
     }
 
+    public function loyaltyPoints()
+    {
+        return $this->hasMany(LoyaltyPoint::class);
+    }
+
+    public function transactions()
+    {
+        return $this->hasMany(Transaction::class);
+    }
+
     public function tags()
     {
         return $this->morphToMany(Tag::class, 'taggable')->withTimestamps()->orderBy('name');

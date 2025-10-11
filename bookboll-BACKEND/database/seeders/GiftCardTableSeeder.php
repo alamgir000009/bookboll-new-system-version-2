@@ -18,6 +18,7 @@ class GiftCardTableSeeder extends Seeder
                 'value' => 50.00,
                 'currency' => 'qar',
                 'status' => 'active',
+                'image' => 'https://images.pexels.com/photos/399187/pexels-photo-399187.jpeg?auto=compress&cs=tinysrgb&w=800'
             ],
             [
                 'title' => 'Premium Gift Card',
@@ -26,6 +27,7 @@ class GiftCardTableSeeder extends Seeder
                 'value' => 100.00,
                 'currency' => 'qar',
                 'status' => 'active',
+                'image' => 'https://images.pexels.com/photos/399187/pexels-photo-399187.jpeg?auto=compress&cs=tinysrgb&w=800'
             ],
             [
                 'title' => 'VIP Gift Card',
@@ -34,6 +36,7 @@ class GiftCardTableSeeder extends Seeder
                 'value' => 200.00,
                 'currency' => 'qar',
                 'status' => 'inactive',
+                'image' => 'https://images.pexels.com/photos/399187/pexels-photo-399187.jpeg?auto=compress&cs=tinysrgb&w=800'
             ],
         ];
 

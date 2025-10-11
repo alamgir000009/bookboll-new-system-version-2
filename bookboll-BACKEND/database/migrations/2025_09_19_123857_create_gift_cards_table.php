@@ -17,6 +17,7 @@ return new class extends Migration
             $table->text('description')->nullable();
             $table->integer('points_required');
             $table->decimal('value', 15, 2);
+            $table->string('image',255)->nullable();
             $table->string('currency')->default('qar');
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->timestamps();
