@@ -4,6 +4,8 @@ namespace App\Services;
 use App\Models\Post;
 use App\Models\PostCategory;
 use App\Models\Tag;
+use Exception;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class PostService
@@ -68,44 +70,63 @@ class PostService
             'seo_title'        => 'nullable|string|max:255',
             '5 min read'       => 'nullable|string|max:50',
             'seo_description'  => 'nullable|string|max:160',
+            'featured'         => 'nullable',
         ]);
 
-        if ($formData['status'] == $this->postModel::PUBLISHED) {
-            $formData['published_at'] = now();
+        try {
+            DB::beginTransaction();
+
+            if ($formData['status'] == $this->postModel::PUBLISHED) {
+                $formData['published_at'] = now();
+            }
+
+            if (! empty($formData['featured'])) {
+                $formData['featured'] = true;
+                $this->postModel->update(['featured' => false]);
+
+            } else {
+                $formData['featured'] = false;
+            }
+
+            if (empty($formData['slug'])) {
+                $formData['slug'] = Str::slug($formData['title']);
+            }
+
+            if ($request->hasFile('featured_image')) {
+                $formData['featured_image'] = $request->file('featured_image')->store('posts', 'public');
+            } elseif ($request->filled('image_url')) {
+                $formData['featured_image'] = $request->input('image_url');
+            }
+
+            $formData['user_id'] = $request->user()->id;
+
+            if (! empty($formData['tags'])) {
+                $tags = $formData['tags'];
+                unset($formData['tags']);
+            }
+
+            $post = $this->postModel::create($formData);
+
+            if (! empty($tags)) {
+                $tagIds = collect($tags)->map(function ($tag) {
+                    return $this->tagModel::firstOrCreate(
+                        ['slug' => Str::slug($tag)],
+                        ['name' => $tag]
+                    )->id;
+                });
+                $post->tags()->sync($tagIds);
+            }
+
+            DB::commit();
+
+            $post->load('tags', 'category');
+
+            return sendSuccess('Post created successfully', compact('post'), 201);
+        } catch (Exception $e) {
+            DB::rollBack();
+            logger("Creating Blog Post Error: " . $e->getMessage());
+            return sendError("Something went wrong.");
         }
-
-        if (empty($formData['slug'])) {
-            $formData['slug'] = Str::slug($formData['title']);
-        }
-
-        if ($request->hasFile('featured_image')) {
-            $formData['featured_image'] = $request->file('featured_image')->store('posts', 'public');
-        } elseif ($request->filled('image_url')) {
-            $formData['featured_image'] = $request->input('image_url');
-        }
-
-        $formData['user_id'] = $request->user()->id;
-
-        if (! empty($formData['tags'])) {
-            $tags = $formData['tags'];
-            unset($formData['tags']);
-        }
-
-        $post = $this->postModel::create($formData);
-
-        if (! empty($tags)) {
-            $tagIds = collect($tags)->map(function ($tag) {
-                return $this->tagModel::firstOrCreate(
-                    ['slug' => Str::slug($tag)],
-                    ['name' => $tag]
-                )->id;
-            });
-            $post->tags()->sync($tagIds);
-        }
-
-        $post->load('tags', 'category');
-
-        return sendSuccess('Post created successfully', compact('post'), 201);
     }
 
     public function getPost($id)
@@ -131,40 +152,62 @@ class PostService
             'tags.*'           => 'string|max:100',
             'seo_title'        => 'nullable|string|max:255',
             'seo_description'  => 'nullable|string|max:160',
+            'featured'         => 'nullable',
         ]);
 
-        if ($formData['status'] == $this->postModel::PUBLISHED && $post->published_at == null) {
-            $formData['published_at'] = now();
+        try {
+            DB::beginTransaction();
+
+            if ($formData['status'] == $this->postModel::PUBLISHED && $post->published_at == null) {
+                $formData['published_at'] = now();
+            }
+
+            if (! empty($formData['featured'])) {
+                $formData['featured'] = true;
+                $this->postModel->update(['featured' => false]);
+
+            } else {
+                $formData['featured'] = false;
+            }
+
+            if (empty($formData['slug'])) {
+                $formData['slug'] = Str::slug($formData['title']);
+            }
+
+            if ($request->hasFile('featured_image')) {
+                $formData['featured_image'] = $request->file('featured_image')->store('posts', 'public');
+            } elseif ($request->filled('image_url')) {
+                $formData['featured_image'] = $request->input('image_url');
+            } else {
+                unset($formData['featured_image']);
+            }
+
+            $tags = $formData['tags'] ?? null;
+            unset($formData['tags']);
+
+            $post->update($formData);
+
+            if (! empty($tags)) {
+                $tagIds = collect($tags)->map(function ($tag) {
+                    return $this->tagModel::firstOrCreate(
+                        ['slug' => Str::slug($tag)],
+                        ['name' => $tag]
+                    )->id;
+                });
+                $post->tags()->sync($tagIds);
+            }
+
+            $post->refresh();
+
+            DB::commit();
+
+            return sendSuccess('Post updated successfully', compact('post'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            logger("Updating Blog Post Error: " . $e->getMessage());
+            return sendError("Something went wrong.");
         }
-
-        if (empty($formData['slug'])) {
-            $formData['slug'] = Str::slug($formData['title']);
-        }
-
-        if ($request->hasFile('featured_image')) {
-            $formData['featured_image'] = $request->file('featured_image')->store('posts', 'public');
-        } elseif ($request->filled('image_url')) {
-            $formData['featured_image'] = $request->input('image_url');
-        } else {
-            unset($formData['featured_image']);
-        }
-
-        $tags = $formData['tags'] ?? null;
-        unset($formData['tags']);
-
-        $post->update($formData);
-
-        if (! empty($tags)) {
-            $tagIds = collect($tags)->map(function ($tag) {
-                return $this->tagModel::firstOrCreate(
-                    ['slug' => Str::slug($tag)],
-                    ['name' => $tag]
-                )->id;
-            });
-            $post->tags()->sync($tagIds);
-        }
-
-        return sendSuccess('Post updated successfully', compact('post'));
     }
 
     public function delete($id)
@@ -221,6 +264,9 @@ class PostService
             })
             ->simplePaginate($records_per_page);
 
-        return sendSuccess('Blog articles fetched successfully', compact('blogArticles'));
+        $featuredArticle = $this->postModel::with(['author', 'category', 'tags'])
+            ->where('featured', 1)->first();
+
+        return sendSuccess('Blog articles fetched successfully', compact('blogArticles', 'featuredArticle'));
     }
 }
