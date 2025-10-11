@@ -39,4 +39,8 @@ class ReviewController extends Controller
     {
         return $this->reviewService->incrementHelpful($id);
     }
+
+    public function reviewableBookings() {
+        return $this->reviewService->bookingsForReview();
+    }
 }

@@ -24,7 +24,11 @@ class ReviewService
             ->pluck('count', 'overall_rating')
             ->toArray();
 
-        $star_distribution = array_fill_keys([1, 2, 3, 4, 5], 0) + $star_distribution;
+        $default = array_fill_keys([1, 2, 3, 4, 5], 0);
+
+        $star_distribution = array_replace($default, $star_distribution);
+
+        $star_distribution = array_reverse($star_distribution, true);
 
         $stats = compact('average_rating', 'total_reviews', 'star_distribution');
 
@@ -51,23 +55,44 @@ class ReviewService
                 'booking.venue:id,name',
             ])
             ->latest()
-            ->get();
+            ->get()
+            ->map(function ($review) {
+                return [
+                    'id'             => $review->id,
+                    'listing_name'   => optional($review->booking->listing)->name,
+                    'venue'          => optional($review->booking->venue)->name,
+                    'booking_id'     => optional($review->booking)->id,
+                    'overall_rating' => $review->overall_rating,
+                    'comment'        => $review->comment,
+                    'review_text'    => $review->review_text,
+                    'recommended'    => (bool) $review->recommended,
+                    'helpful_count'  => $review->helpful_count,
+                    'created_at'     => $review->created_at,
+                    'categories'     => [
+                        'cleanliness' => (int) $review->cleanliness_rating,
+                        'facilities'  => (int) $review->facilities_rating,
+                        'staff'       => (int) $review->staff_rating,
+                        'value'       => (int) $review->value_rating,
+                    ],
+                    'user'           => [
+                        'name'  => optional($review->user)->name,
+                        'image' => optional($review->user)->image,
+                    ],
+                ];
+            });
 
-        $total_my_reviews = $this->reviewModel->where('user_id', auth()->id())->count();
-
-        return sendSuccess('My reviews fetched successfully.', compact('reviews', 'total_my_reviews'));
+        return sendSuccess('My reviews fetched successfully.', compact('reviews'));
     }
 
     public function createReview($request)
     {
-
         $formData = $request->validate([
             'booking_id'         => 'required|exists:bookings,id',
-            'overall_rating'     => 'required|integer|min:1|max:5',
-            'cleanliness_rating' => 'nullable|integer|min:1|max:5',
-            'facilities_rating'  => 'nullable|integer|min:1|max:5',
-            'staff_rating'       => 'nullable|integer|min:1|max:5',
-            'value_rating'       => 'nullable|integer|min:1|max:5',
+            'overall_rating'     => 'required|integer|min:0|max:5',
+            'cleanliness_rating' => 'nullable|integer|min:0|max:5',
+            'facilities_rating'  => 'nullable|integer|min:0|max:5',
+            'staff_rating'       => 'nullable|integer|min:0|max:5',
+            'value_rating'       => 'nullable|integer|min:0|max:5',
             'review_text'        => 'nullable|string|max:500',
             'recommend'          => 'boolean',
         ]);
@@ -102,11 +127,11 @@ class ReviewService
 
         $formData = $request->validate([
             'booking_id'         => 'required|exists:bookings,id',
-            'overall_rating'     => 'required|integer|min:1|max:5',
-            'cleanliness_rating' => 'nullable|integer|min:1|max:5',
-            'facilities_rating'  => 'nullable|integer|min:1|max:5',
-            'staff_rating'       => 'nullable|integer|min:1|max:5',
-            'value_rating'       => 'nullable|integer|min:1|max:5',
+            'overall_rating'     => 'required|integer|max:5',
+            'cleanliness_rating' => 'nullable|integer|max:5',
+            'facilities_rating'  => 'nullable|integer|max:5',
+            'staff_rating'       => 'nullable|integer|max:5',
+            'value_rating'       => 'nullable|integer|max:5',
             'review_text'        => 'nullable|string|max:500',
             'recommend'          => 'boolean',
         ]);
@@ -137,7 +162,7 @@ class ReviewService
         $userId = auth()->id();
 
         if ($review->user_id == $userId) {
-            return sendError('Cannot mark your own review as helpful.', [], 400);
+            return sendError('Cannot mark your own review as helpful.');
         }
 
         try {
@@ -168,5 +193,16 @@ class ReviewService
         } catch (Exception $e) {
             return sendError($e->getMessage());
         }
+    }
+
+    public function bookingsForReview()
+    {
+        $bookings = $this->bookingModel::where('user_id', auth()->id())
+            ->where('status', BookingStatus::COMPLETED)
+            ->whereDoesntHave('review')
+            ->with(['listing:id,venue_id,name', 'listing.venue:id,name'])
+            ->get(['id', 'listing_id', 'bookings.created_at']);
+
+        return sendSuccess('Reviewable bookings list fetched successfully', compact('bookings'));
     }
 }

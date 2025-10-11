@@ -96,6 +96,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('reviews', ReviewController::class)->except(['show']);
         Route::get('reviews/my', [ReviewController::class, 'myReviews']);
         Route::patch('reviews/{review}/helpful', [ReviewController::class, 'helpful']);
+        Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings']);
 
     });
 
