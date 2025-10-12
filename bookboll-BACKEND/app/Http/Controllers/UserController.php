@@ -77,4 +77,19 @@ class UserController extends Controller
     {
         return $this->userService->changePassword($request, auth()->id());
     }
+
+    public function customerLogin(Request $request)
+    {
+        return $this->userService->customerLogin($request);
+    }
+
+    public function customerPreferences()
+    {
+        return $this->userService->getPreferences();
+    }
+
+    public function updatePreferences(Request $request)
+    {
+        return $this->userService->updatePreferences($request);
+    }
 }

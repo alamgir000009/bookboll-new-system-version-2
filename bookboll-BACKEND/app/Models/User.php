@@ -17,6 +17,7 @@ class User extends Authenticatable
 
     protected $fillable = [
         'name',
+        'image',
         'phone',
         'email',
         'status',
@@ -29,6 +30,7 @@ class User extends Authenticatable
 
     protected $hidden = [
         'password',
+        'stripe_id',
         'remember_token',
     ];
 
@@ -75,6 +77,11 @@ class User extends Authenticatable
     public function transactions()
     {
         return $this->hasMany(Transaction::class);
+    }
+
+    public function preferences()
+    {
+        return $this->hasOne(Preference::class);
     }
 
     public function tags()

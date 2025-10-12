@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserWelcomeMail;
+use App\Models\Preference;
 use App\Models\User;
 use App\Models\Venue;
 use Carbon\Carbon;
@@ -76,7 +77,7 @@ class UserService
         }
     }
 
-    public function upupdateCustomerProfiledateProfile($request, $id)
+    public function updateCustomerProfile($request, $id)
     {
         $user = $this->findById($id);
 
@@ -90,9 +91,9 @@ class UserService
 
         $formData = $request->validate([
             'name'          => 'sometimes|string|max:100',
-            'email'         => 'sometimes|email|unique:users,email,' . $user->id,
+            // 'email'         => 'sometimes|email|unique:users,email,' . $user->id,
             'date_of_birth' => 'sometimes|date|before:today',
-            'gender'        => 'sometimes|in,male,femal,other',
+            'gender'        => 'sometimes',
             'nationality'   => 'sometimes|string',
             'address'       => 'sometimes|max:255',
         ]);
@@ -106,9 +107,9 @@ class UserService
                 $updateData['name'] = $formData['name'];
             }
 
-            if (isset($formData['email'])) {
-                $updateData['email'] = $formData['email'];
-            }
+            // if (isset($formData['email'])) {
+            //     $updateData['email'] = $formData['email'];
+            // }
 
             if (isset($formData['date_of_birth'])) {
                 $updateData['date_of_birth'] = $formData['date_of_birth'];
@@ -163,6 +164,30 @@ class UserService
                 'user'            => $user->setHidden(['roles']),
                 'roles'           => $roles,
                 'assigned_venues' => $user->venues,
+            ];
+
+            return sendSuccess('Login successful', $response);
+        } catch (Exception $e) {
+            return sendError('Something went wrong during login');
+        }
+    }
+
+    public function customerLogin($request)
+    {
+        try {
+
+            $user = $this->userModel->whereRelation('roles', 'customer')
+                ->whereEmail($request->email)->first();
+
+            if (! $user || ! password_verify($request->password, $user->password)) {
+                return sendError('Invalid credentials');
+            }
+
+            $token = $user->createToken('bookboll-customer-login-api-token')->plainTextToken;
+
+            $response = [
+                'token' => $token,
+                'user'  => $user->setHidden(['roles']),
             ];
 
             return sendSuccess('Login successful', $response);
@@ -530,4 +555,39 @@ class UserService
         }
     }
 
+    public function getPreferences()
+    {
+        $preferences = Preference::where('user_id', auth()->id())->first();
+        return sendSuccess('Preferences fetched successfully', compact('preferences'));
+    }
+
+    public function updatePreferences($request)
+    {
+        $user = auth()->user();
+
+        $formDate = $request->validate([
+            'notifications.email_bookings' => 'boolean',
+            'notifications.sms_reminders'  => 'boolean',
+            'notifications.marketing'      => 'boolean',
+            'favorite_sports'              => 'array',
+            'favorite_sports.*'            => 'required',
+            'language'                     => 'required',
+            'currency'                     => 'required',
+        ]);
+
+        $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
+
+        $currentNotifications       = $preferences->notifications ?? [];
+        $preferences->notifications = array_merge($currentNotifications, $formDate['notifications'] ?? []);
+
+        $preferences->favorite_sports = $formDate['favorite_sports'] ?? [];
+        $preferences->language        = $formDate['language'] ?? $preferences->language;
+        $preferences->currency        = $formDate['currency'] ?? $preferences->currency;
+
+        $preferences->save();
+
+        $user->load('preferences');
+
+        return sendSuccess('Preferences fetched successfully', compact('user', 'preferences'));
+    }
 }

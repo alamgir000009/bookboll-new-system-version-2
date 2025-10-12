@@ -105,6 +105,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
 });
 
+Route::prefix('customer')->group(function(){
+
+    Route::post('login', [UserController::class, 'customerLogin']);
+
+    Route::middleware(['auth:sanctum'])->group(function(){
+        Route::get('preferences', [UserController::class, 'customerPreferences']);
+        Route::post('preferences', [UserController::class, 'updatePreferences']);
+        Route::post('update-profile', [UserController::class, 'updateCustomerProfile']);
+    });
+
+});
+
+
 Route::get('home-page-data', [HelperController::class, 'homePageData']);
 Route::get('blog-categories', [PostCategoryController::class, 'blogCategories']);
 Route::get('blog-articles', [PostController::class, 'blogArticles']);
