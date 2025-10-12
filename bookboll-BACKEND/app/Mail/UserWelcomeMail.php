@@ -10,7 +10,6 @@ class UserWelcomeMail extends Mailable
 {
     use Queueable, SerializesModels;
 
-
     public function __construct(public $user, public $plainPassword = null){}
 
     public function build()

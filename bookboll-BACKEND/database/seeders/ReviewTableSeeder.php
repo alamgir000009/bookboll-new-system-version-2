@@ -14,7 +14,7 @@ class ReviewTableSeeder extends Seeder
     {
         $faker = Faker::create();
 
-        $bookings = Booking::where('status', BookingStatus::COMPLETED)->with('user')->get();
+        $bookings = Booking::with('user')->get();
 
         foreach ($bookings as $booking) {
             Review::updateOrCreate(
