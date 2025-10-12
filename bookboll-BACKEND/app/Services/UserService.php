@@ -8,11 +8,14 @@ use App\Models\User;
 use App\Models\Venue;
 use Carbon\Carbon;
 use Exception;
+use Google_Client;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Models\Role;
 
 class UserService
@@ -169,6 +172,64 @@ class UserService
             return sendSuccess('Login successful', $response);
         } catch (Exception $e) {
             return sendError('Something went wrong during login');
+        }
+    }
+
+    public function loginWithGoogle($request)
+    {
+        $request->validate([
+            'id_token' => 'required|string',
+        ]);
+
+        $client  = new Google_Client(['client_id' => env('GOOGLE_CLIENT_ID')]);
+        $payload = $client->verifyIdToken($request->id_token);
+
+        if (! $payload) {
+            throw ValidationException::withMessages([
+                'id_token' => ['Invalid Google token.'],
+            ]);
+        }
+
+        try {
+
+            DB::beginTransaction();
+
+            $googleId = $payload['sub'];
+            $email    = $payload['email'];
+            $name     = $payload['name'];
+            $picture  = $payload['picture'] ?? null;
+
+            $user = User::where('provider_id', $googleId)->orWhere('email', $email)->first();
+
+            if (! $user) {
+                $user = $this->userModel->create([
+                    'name'              => $name,
+                    'email_verified_at' => now(),
+                    'email'             => $email,
+                    'image'             => $picture,
+                    'provider'          => "google",
+                    'provider_id'       => $googleId,
+                    'password'          => "bookboll-000009",
+                    'status'            => $this->userModel::ACTIVE,
+                ]);
+            }
+
+            if (! $user->hasRole('customer')) {
+                $user->assignRole('customer');
+            }
+
+            $token = $user->createToken('auth-token')->plainTextToken;
+
+            DB::commit();
+
+            $user->setHidden(['roles']);
+
+            return sendSuccess("Logged in with google", compact('token', 'user'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Customer Google Login Failed: " . $e->getMessage(), ["exception" => $e]);
+            return sendError("Something went wrong try again later");
         }
     }
 
@@ -594,8 +655,8 @@ class UserService
     public function updateProfileImage($request)
     {
         $request->validate(["image" => "required|image"]);
-        $image = $request->image->store("profile-images", "public");
-        $user = auth()->user();
+        $image       = $request->image->store("profile-images", "public");
+        $user        = auth()->user();
         $user->image = $image;
         $user->save();
 

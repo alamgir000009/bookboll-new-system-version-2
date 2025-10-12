@@ -24,6 +24,8 @@ class User extends Authenticatable
         'gender',
         'address',
         'password',
+        'provider',
+        'provider_id',
         'nationality',
         'date_of_birth',
     ];
@@ -56,7 +58,12 @@ class User extends Authenticatable
 
     public function getImageAttribute($image)
     {
-        return $image ? url("storage/{$image}") : null;
+        if (! $image) {
+            return null;
+        } elseif (filter_var($image, FILTER_VALIDATE_URL)) {
+            return $image;
+        }
+        return url("storage/{$image}");
     }
 
     public function venues()

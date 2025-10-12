@@ -24,6 +24,11 @@ class UserController extends Controller
         return $this->userService->login($request);
     }
 
+    public function googleLogin(Request $request)
+    {
+        return $this->userService->loginWithGoogle($request);
+    }
+
     public function logout()
     {
         return $this->userService->logout();
@@ -96,7 +101,6 @@ class UserController extends Controller
 
     public function updateProfileImage(Request $request)
     {
-
         return $this->userService->updateProfileImage($request);
     }
 }
