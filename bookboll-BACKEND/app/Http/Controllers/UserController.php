@@ -6,7 +6,8 @@ use Illuminate\Http\Request;
 
 class UserController extends Controller
 {
-    public function __construct(protected UserService $userService){}
+    public function __construct(protected UserService $userService)
+    {}
 
     public function register(Request $request)
     {
@@ -91,5 +92,11 @@ class UserController extends Controller
     public function updatePreferences(Request $request)
     {
         return $this->userService->updatePreferences($request);
+    }
+
+    public function updateProfileImage(Request $request)
+    {
+
+        return $this->userService->updateProfileImage($request);
     }
 }

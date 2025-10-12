@@ -20,7 +20,6 @@ use App\Http\Controllers\VenueController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('login', [UserController::class, 'login']);
-Route::post('logout', [UserController::class, 'logout']);
 Route::post('register', [UserController::class, 'register']);
 Route::post('update-profile', [UserController::class, 'updateProfile'])->middleware('auth:sanctum');
 Route::post('change-password', [UserController::class, 'changePassword'])->middleware('auth:sanctum');
@@ -29,7 +28,8 @@ Route::post('reset-password', [UserController::class, 'reset']);
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
-    Route::get('/me', [UserController::class, 'me']);
+    Route::post('logout', [UserController::class, 'logout']);
+    Route::get('me', [UserController::class, 'me']);
 
     Route::prefix('admin')->group(function () {
 
@@ -113,6 +113,7 @@ Route::prefix('customer')->group(function(){
         Route::get('preferences', [UserController::class, 'customerPreferences']);
         Route::post('preferences', [UserController::class, 'updatePreferences']);
         Route::post('update-profile', [UserController::class, 'updateCustomerProfile']);
+        Route::post('update-profile-image', [UserController::class, 'updateProfileImage']);
     });
 
 });

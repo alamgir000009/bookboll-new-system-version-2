@@ -590,4 +590,16 @@ class UserService
 
         return sendSuccess('Preferences fetched successfully', compact('user', 'preferences'));
     }
+
+    public function updateProfileImage($request)
+    {
+        $request->validate(["image" => "required|image"]);
+        $image = $request->image->store("profile-images", "public");
+        $user = auth()->user();
+        $user->image = $image;
+        $user->save();
+
+        $image = $user->image;
+        return sendSuccess("Profile image updated successfully", compact('image'));
+    }
 }

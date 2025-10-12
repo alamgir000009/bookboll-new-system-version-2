@@ -42,11 +42,21 @@ class User extends Authenticatable
         ];
     }
 
-    protected $appends = ['roles_array'];
+    protected $appends = ['roles_array', 'total_bookings'];
 
     public function getRolesArrayAttribute()
     {
         return $this->getRoleNames();
+    }
+
+    public function getTotalBookingsAttribute()
+    {
+        return $this->bookings()->count();
+    }
+
+    public function getImageAttribute($image)
+    {
+        return $image ? url("storage/{$image}") : null;
     }
 
     public function venues()
