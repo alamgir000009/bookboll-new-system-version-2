@@ -4,6 +4,7 @@ namespace App\Services;
 use App\Models\Listing;
 use App\Models\Schedule;
 use App\Models\SportsCategory;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
@@ -404,7 +405,7 @@ class ListingService
         $date             = $request->date ?? null;
         $time             = $request->time ?? null;
 
-        $query = $this->listingModel::with(['venue', 'pricingGroups', 'addOns', 'resources'])
+        $query = $this->listingModel::with(['venue', 'schedules'])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
@@ -413,14 +414,28 @@ class ListingService
                         ->orWhere('base_price', 'LIKE', "%{$search}%");
                 });
             })
-            ->when($venue_id ?? null, function ($query, $venue_id) {
+            ->when($venue_id, function ($query, $venue_id) {
                 $query->whereRelation('venue', 'id', $venue_id);
+            })
+            ->when($date, function ($query, $date) {
+                $dayName = Carbon::parse($date)->format('l');
+                $query->whereHas('schedules', function ($q) use ($dayName) {
+                    $q->where('day', $dayName)->where('is_open', true);
+                });
+            })
+            ->when($time, function ($query, $time) use ($date) {
+                $dayName = Carbon::parse($date)->format('l');
+                $query->whereHas('schedules', function ($q) use ($dayName, $time) {
+                    $q->where('day', $dayName)
+                        ->where('is_open', true)
+                        ->whereTime('from_time', '<=', $time)
+                        ->whereTime('to_time', '>=', $time);
+                });
             });
 
         $listings = $query->paginate($records_per_page);
 
         $listings->getCollection()->transform(function ($listing) {
-
             return [
                 'id'              => $listing->id,
                 'name'            => $listing->name,
@@ -445,7 +460,7 @@ class ListingService
         $category = $request->category ?? null;
 
         $sportCategory = SportsCategory::where("type", $category)->first();
-        $listings      = $this->listingModel::with(['venue', 'pricingGroups', 'addOns', 'resources'])
+        $listings      = $this->listingModel::with(['venue'])
             ->when($sportCategory->name ?? null, function ($query, $type) {
                 $query->where('sports_type', 'NOT LIKE', $type);
             })->take(4)->get()->map(function ($listing) {
