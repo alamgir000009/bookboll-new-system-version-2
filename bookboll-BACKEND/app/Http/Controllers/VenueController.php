@@ -34,4 +34,9 @@ class VenueController extends Controller
         return sendSuccess('Venue deleted successfull');
     }
 
+    public function fetchVenues(Request $request)
+    {
+        return $this->venueService->all($request);
+    }
+
 }

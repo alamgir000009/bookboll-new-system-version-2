@@ -35,4 +35,14 @@ class ListingController extends Controller
         return $this->listingService->delete($id);
     }
 
+    public function fetchListings(Request $request)
+    {
+        return $this->listingService->fetchListings($request);
+    }
+
+    public function fetchSuggestedListings(Request $request)
+    {
+        return $this->listingService->fetchSuggestions($request);
+    }
+
 }

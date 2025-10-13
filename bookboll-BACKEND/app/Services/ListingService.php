@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Models\Listing;
 use App\Models\Schedule;
+use App\Models\SportsCategory;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
@@ -378,8 +379,7 @@ class ListingService
 
         foreach ($images as $image) {
             if ($image->isValid()) {
-                $path           = $image->store('listings', 'public');
-                $uploadedUrls[] = Storage::url($path);
+                $uploadedUrls[] = $image->store('listings', 'public');
             }
         }
 
@@ -394,5 +394,78 @@ class ListingService
                 Storage::disk('public')->delete($path);
             }
         }
+    }
+
+    public function fetchListings($request)
+    {
+        $records_per_page = $request->records_per_page ?? 20;
+        $search           = $request->search ?? null;
+        $venue_id         = $request->venueId ?? null;
+        $date             = $request->date ?? null;
+        $time             = $request->time ?? null;
+
+        $query = $this->listingModel::with(['venue', 'pricingGroups', 'addOns', 'resources'])
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'LIKE', "%{$search}%")
+                        ->orWhere('sports_type', 'LIKE', "%{$search}%")
+                        ->orWhere('description', 'LIKE', "%{$search}%")
+                        ->orWhere('base_price', 'LIKE', "%{$search}%");
+                });
+            })
+            ->when($venue_id ?? null, function ($query, $venue_id) {
+                $query->whereRelation('venue', 'id', $venue_id);
+            });
+
+        $listings = $query->paginate($records_per_page);
+
+        $listings->getCollection()->transform(function ($listing) {
+
+            return [
+                'id'              => $listing->id,
+                'name'            => $listing->name,
+                'venue'           => $listing->venue?->name,
+                'sport'           => $listing->sports_type,
+                'price'           => $listing->base_price,
+                'description'     => $listing->description,
+                'rating'          => round($listing->average_rating, 1),
+                'images'          => $listing->image_urls ?? [],
+                'duration'        => $listing->duration,
+                'payment_options' => $listing->payment_options,
+                'loyalty_points'  => $listing->loyalty_points,
+                'map_address'     => $listing->venue->maps_url,
+            ];
+        });
+
+        return sendSuccess("Listings fetched successfully", compact('listings'));
+    }
+
+    public function fetchSuggestions($request)
+    {
+        $category = $request->category ?? null;
+
+        $sportCategory = SportsCategory::where("type", $category)->first();
+        $listings      = $this->listingModel::with(['venue', 'pricingGroups', 'addOns', 'resources'])
+            ->when($sportCategory->name ?? null, function ($query, $type) {
+                $query->where('sports_type', 'NOT LIKE', $type);
+            })->take(4)->get()->map(function ($listing) {
+
+            return [
+                'id'              => $listing->id,
+                'name'            => $listing->name,
+                'venue'           => $listing->venue?->name,
+                'sport'           => $listing->sports_type,
+                'price'           => $listing->base_price,
+                'description'     => $listing->description,
+                'rating'          => round($listing->average_rating, 1),
+                'images'          => $listing->image_urls ?? [],
+                'duration'        => $listing->duration,
+                'payment_options' => $listing->payment_options,
+                'loyaltyPoints'   => $listing->loyalty_points,
+                'map_address'     => $listing->venue->maps_url,
+            ];
+        });
+
+        return sendSuccess("Listings fetched successfully", compact('listings'));
     }
 }

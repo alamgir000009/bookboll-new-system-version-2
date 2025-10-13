@@ -124,3 +124,6 @@ Route::get('blog-categories', [PostCategoryController::class, 'blogCategories'])
 Route::get('blog-articles', [PostController::class, 'blogArticles']);
 Route::get('sports-categories', [SportsCategoryController::class, 'sportsCategories']);
 Route::post('contact-us', [HelperController::class, 'contactUs']);
+Route::get('fetch-venues', [VenueController::class, 'fetchVenues']);
+Route::get('fetch-listings', [ListingController::class, 'fetchListings']);
+Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings']);

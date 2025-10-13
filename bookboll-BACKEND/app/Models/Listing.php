@@ -56,6 +56,29 @@ class Listing extends Model
         return $this->hasMany(Schedule::class, 'listing_id');
     }
 
+    public function reviews()
+    {
+        return Review::whereRelation('booking', 'listing_id', $this->id);
+    }
+
+    public function getImageUrlsAttribute($images)
+    {
+        $images = $this->attributes['image_urls'] ?? null;
+
+        if (! empty($images)) {
+            $images = is_array($images) ? $images : json_decode($images, true);
+
+            $newImages = [];
+            foreach ($images as $image) {
+                $newImages[] = url("storage/{$image}");
+            }
+
+            return $newImages;
+        }
+
+        return [];
+    }
+
     public function getAverageRatingAttribute()
     {
         return $this->reviews()->avg('overall_rating') ?? 0;
@@ -72,11 +95,6 @@ class Listing extends Model
             ->groupBy('overall_rating')
             ->pluck('count', 'overall_rating')
             ->toArray();
-    }
-
-    public function reviews()
-    {
-        return Review::whereRelation('booking', 'listing_id', $this->id);
     }
 
     public function scopeActive($query)
