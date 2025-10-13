@@ -71,6 +71,7 @@ class SportCategoryService
 
         try {
             $newIcon = $formData['icon'] ?? null;
+            $image   = null;
 
             if ($request->hasFile('image')) {
                 if ($category->image && str_starts_with($category->image, 'sport-categories/icons/')) {
@@ -87,17 +88,21 @@ class SportCategoryService
                 $icon  = $newIcon;
             } else {
                 $icon  = $category->icon;
-                $image = $category->image;
             }
 
-            $category->update([
-                'image'       => $image,
+            $data = [
                 'icon'        => $icon,
                 'name'        => $formData['name'],
                 'type'        => $formData['type'],
                 'status'      => $formData['status'],
                 'description' => $formData['description'],
-            ]);
+            ];
+
+            if ($image) {
+                $data['image'] = $image;
+            }
+
+            $category->update($data);
 
             return sendSuccess('Sports category updated successfully', compact('category'));
         } catch (Exception $e) {
