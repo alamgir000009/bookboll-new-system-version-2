@@ -2,12 +2,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Storage;
 
 class SportsCategory extends Model
 {
     protected $fillable = [
         'name',
+        'type',
         'icon',
         'image',
         'status',
