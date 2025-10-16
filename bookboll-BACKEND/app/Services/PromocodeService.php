@@ -1,9 +1,7 @@
 <?php
 namespace App\Services;
 
-use App\Models\AuditLog;
 use App\Models\Promocode;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -17,7 +15,7 @@ class PromocodeService
         $records_per_page = $request->records_per_page ?? 10;
         $search           = $request->search ?? null;
 
-        $query = $this->promocodeModel::with(['venues', 'listings'])
+        $query = $this->promocodeModel::with(['venues', 'listings'])->latest()
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('code', 'LIKE', "%{$search}%")
