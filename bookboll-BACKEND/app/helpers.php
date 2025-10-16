@@ -255,3 +255,16 @@ if (! function_exists('logActivity')) {
         }
     }
 }
+
+if (! function_exists('generatePaymentId')) {
+    function generatePaymentId(int $bookingId, string $type): string
+    {
+        $typeAbbr = match ($type) {
+            'deposit'   => 'DEP',
+            'remaining' => 'REM',
+            default     => '',
+        };
+
+        return 'PAY-' . $bookingId . $typeAbbr;
+    }
+}

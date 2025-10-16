@@ -23,6 +23,7 @@ return new class extends Migration
             $table->decimal('subtotal', 15, 2);
             $table->decimal('discount_amount')->default(0);
             $table->decimal('total_price', 15, 2);
+            $table->boolean('full_payment_received')->default(false);
             $table->enum('payment_method', ['cash_on_arrival', 'online', 'deposit'])->default('cash_on_arrival');
             $table->text('notes')->nullable();
             $table->enum('status', \BookingStatus::list())->default(\BookingStatus::PENDING);

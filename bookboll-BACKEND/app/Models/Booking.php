@@ -18,14 +18,16 @@ class Booking extends Model
         'promocode_id',
         'payment_method',
         'discount_amount',
+        'full_payment_received',
     ];
 
     protected $casts = [
-        'start_time'      => 'datetime',
-        'end_time'        => 'datetime',
-        'subtotal'        => 'decimal:2',
-        'discount_amount' => 'decimal:2',
-        'total_price'     => 'decimal:2',
+        'start_time'            => 'datetime',
+        'end_time'              => 'datetime',
+        'subtotal'              => 'decimal:2',
+        'discount_amount'       => 'decimal:2',
+        'total_price'           => 'decimal:2',
+        'full_payment_received' => 'boolean',
     ];
 
     public function user()
@@ -53,6 +55,11 @@ class Booking extends Model
         return $this->belongsToMany(AddOn::class);
     }
 
+    public function payments()
+    {
+        return $this->hasMany(Payment::class);
+    }
+
     public function review()
     {
         return $this->hasOne(Review::class);
@@ -71,6 +78,18 @@ class Booking extends Model
     public function calculateDuration()
     {
         return $this->start_time->diffInHours($this->end_time);
+    }
+
+    public function isFullyPaid()
+    {
+        return $this->total_paid >= $this->total_price;
+    }
+
+    public function scopeWithTotals($query)
+    {
+        return $query->with(['payments' => function ($q) {
+            $q->select('id', 'booking_id', 'amount', 'status');
+        }]);
     }
 
     public function isAvailable()

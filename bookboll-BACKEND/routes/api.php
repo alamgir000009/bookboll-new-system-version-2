@@ -8,6 +8,7 @@ use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
 use App\Http\Controllers\LoyaltyPointController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PromocodeController;
@@ -83,6 +84,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::apiResource('bookings', BookingController::class);
         Route::put('bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
+
+        Route::apiResource('payments', PaymentController::class);
+        // Route::post('bookings/{booking}/payments/confirm', [PaymentController::class, 'confirm']);
+        // Route::get('dashboard/totals', [PaymentController::class, 'totals']);
+        // Route::get('payments/export', [PaymentController::class, 'export']);
 
         Route::apiResource('special-days', SpecialDayController::class);
         Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar']);
