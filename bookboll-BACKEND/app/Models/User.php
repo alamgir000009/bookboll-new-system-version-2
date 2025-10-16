@@ -66,6 +66,11 @@ class User extends Authenticatable
         return url("storage/{$image}");
     }
 
+    public function scopeActive($query)
+    {
+        return $query->where('status', self::ACTIVE);
+    }
+
     public function venues()
     {
         return $this->belongsToMany(Venue::class);

@@ -25,7 +25,7 @@ return new class extends Migration
             $table->integer('loyalty_points')->nullable();
             $table->string('calendar_color')->default('#0000FF');
             $table->json('payment_options');
-            $table->json('image_urls')->nullable();
+            $table->json('images_urls')->nullable();
             $table->timestamps();
 
             $table->index(['venue_id', 'status']);

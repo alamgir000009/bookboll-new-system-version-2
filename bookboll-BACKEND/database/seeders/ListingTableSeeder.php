@@ -66,7 +66,7 @@ class ListingTableSeeder extends Seeder
             'loyalty_points'        => $listingData['loyalty_points'] ?? 0,
             'calendar_color'        => $listingData['calendar_color'] ?? '#0000FF',
             'payment_options'       => $listingData['payment_options'],
-            'image_urls'            => $listingData['images'],
+            'images_urls'            => $listingData['images'],
         ]);
 
         if (! empty($listingData['add_ons'])) {

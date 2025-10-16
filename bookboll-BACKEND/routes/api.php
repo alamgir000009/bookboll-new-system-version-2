@@ -7,6 +7,7 @@ use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
+use App\Http\Controllers\LoyaltyPointController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PromocodeController;
@@ -76,6 +77,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('extra-add-ons', [HelperController::class, 'extraAddOns']);
         Route::get('extra-sport-categories', [HelperController::class, 'extraSportCategories']);
         Route::get('extra-data-for-listing', [HelperController::class, 'extraDataForListing']);
+        Route::get('extra-loyalty-data', [LoyaltyPointController::class, 'extraDataForLoyalty']);
+
         Route::post('test-email', [SettingController::class, 'sendTestEmail']);
 
         Route::apiResource('bookings', BookingController::class);
@@ -127,3 +130,5 @@ Route::post('contact-us', [HelperController::class, 'contactUs']);
 Route::get('fetch-venues', [VenueController::class, 'fetchVenues']);
 Route::get('fetch-listings', [ListingController::class, 'fetchListings']);
 Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings']);
+Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing']);
+Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons']);

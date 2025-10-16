@@ -19,6 +19,16 @@ class PricingGroup extends Model
         'days'           => 'array',
     ];
 
+    public function getStartTimeAttribute($start_time)
+    {
+        return $start_time ? date('H:i', strtotime($start_time)) : null;
+    }
+
+    public function getEndTimeAttribute($end_time)
+    {
+        return $end_time ? date('H:i', strtotime($end_time)) : null;
+    }
+
     public function listing()
     {
         return $this->belongsTo(Listing::class);

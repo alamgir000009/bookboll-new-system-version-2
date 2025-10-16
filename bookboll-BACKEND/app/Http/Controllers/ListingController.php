@@ -45,4 +45,13 @@ class ListingController extends Controller
         return $this->listingService->fetchSuggestions($request);
     }
 
+    public function fetchListing($id)
+    {
+        return $this->listingService->listing($id);
+    }
+
+    public function fetchAddons($listing_id)
+    {
+        return $this->listingService->fetchAddons($listing_id);
+    }
 }

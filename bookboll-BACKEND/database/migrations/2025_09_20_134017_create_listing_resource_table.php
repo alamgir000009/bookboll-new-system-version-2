@@ -14,9 +14,8 @@ return new class extends Migration
         Schema::create('listing_resource', function (Blueprint $table) {
             $table->id();
             $table->foreignId('listing_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('resource_id')->constrained('resources')->cascadeOnDelete();
+            $table->foreignId('resource_id')->constrained()->cascadeOnDelete();
             $table->integer('quantity')->default(1);
-            $table->timestamps();
         });
     }
 

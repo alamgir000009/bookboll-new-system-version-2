@@ -24,6 +24,13 @@ class SportsCategoryTableSeeder extends Seeder
                 'type'        => 'Sports Facilities',
             ],
             [
+                'name'        => 'Cricket',
+                'description' => 'Indoor and outdoor cricket courts',
+                'icon'        => '🏏',
+                'status'      => 'active',
+                'type'        => 'Sports Facilities',
+            ],
+            [
                 'name'        => 'Tennis',
                 'description' => 'Tennis courts and facilities',
                 'icon'        => '🎾',

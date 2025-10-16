@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AddOn;
 use Illuminate\Http\Request;
 use App\Services\AddOnService;
 

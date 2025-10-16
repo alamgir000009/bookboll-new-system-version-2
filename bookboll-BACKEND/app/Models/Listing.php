@@ -15,7 +15,7 @@ class Listing extends Model
         'venue_id',
         'capacity',
         'base_price',
-        'image_urls',
+        'images_urls',
         'sports_type',
         'description',
         'slot_duration',
@@ -28,7 +28,7 @@ class Listing extends Model
     protected $casts = [
         'base_price'      => 'decimal:2',
         'payment_options' => 'array',
-        'image_urls'      => 'array',
+        'images_urls'      => 'array',
     ];
 
     public function venue()
@@ -61,9 +61,9 @@ class Listing extends Model
         return Review::whereRelation('booking', 'listing_id', $this->id);
     }
 
-    public function getImageUrlsAttribute($images)
+    public function getImagesUrlsAttribute($images)
     {
-        $images = $this->attributes['image_urls'] ?? null;
+        $images = $this->attributes['images_urls'] ?? null;
 
         if (! empty($images)) {
             $images = is_array($images) ? $images : json_decode($images, true);

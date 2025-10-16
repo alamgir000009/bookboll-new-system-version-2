@@ -73,7 +73,7 @@ class ListingService
 
             if ($request->hasFile('images')) {
                 $imageUrls = $this->uploadImages($request->file('images'));
-                $listing->update(['image_urls' => $imageUrls]);
+                $listing->update(['images_urls' => $imageUrls]);
             }
 
             if (! empty($formData['schedule'])) {
@@ -117,7 +117,17 @@ class ListingService
 
             DB::beginTransaction();
 
-            $listing->update($this->extractListingData($formData));
+            $listingUpdateData = $this->extractListingData($formData);
+
+            if ($request->hasFile('images')) {
+                $this->deleteOldImages($listing->images_urls);
+                $imageUrls                        = $this->uploadImages($request->file('images'));
+                $listingUpdateData['images_urls'] = $imageUrls;
+            } else {    
+                unset($listingUpdateData['images_urls']);
+            }
+
+            $listing->update($listingUpdateData);
 
             if (isset($formData['add_ons'])) {
                 $listing->addOns()->sync($formData['add_ons']);
@@ -129,12 +139,6 @@ class ListingService
                     $syncData[$resource['id']] = ['quantity' => $resource['quantity']];
                 }
                 $listing->resources()->sync($syncData);
-            }
-
-            if ($request->hasFile('images')) {
-                $this->deleteOldImages($listing->image_urls);
-                $imageUrls = $this->uploadImages($request->file('images'));
-                $listing->update(['image_urls' => $imageUrls]);
             }
 
             if (isset($formData['schedule'])) {
@@ -171,7 +175,7 @@ class ListingService
 
     public function show($id)
     {
-        $listing = $this->listingModel->with(['schedules'])->findOrFail($id);
+        $listing = $this->listingModel->with(['schedules', 'addOns', 'resources', 'pricingGroups'])->findOrFail($id);
         return sendSuccess('Listing deleted successfully', compact('listing'));
     }
 
@@ -179,10 +183,9 @@ class ListingService
     {
         $listing = $this->listingModel->findOrFail($id);
 
-        $this->deleteOldImages($listing->image_urls);
+        $this->deleteOldImages($listing->images_urls);
         $listing->schedules()->delete();
         $listing->pricingGroups()->delete();
-
         $listing->delete();
 
         return sendSuccess('Listing deleted successfully');
@@ -202,19 +205,38 @@ class ListingService
     protected function parseAndValidateRequest($request, bool $isUpdate = false): array
     {
         $rules = [
-            'name'                  => 'required|string|max:255',
-            'venue_id'              => 'required|exists:venues,id',
-            'sports_type'           => 'required',
-            'status'                => 'required|in:active,inactive',
-            'description'           => 'nullable|string',
-            'base_price'            => 'required|numeric|min:0',
-            'max_bookings_per_slot' => 'required|integer|min:1',
-            'capacity'              => 'required|integer|min:1',
-            'slot_duration'         => 'required|integer|min:1',
-            'loyalty_points'        => 'nullable|integer|min:0',
-            'calendar_color'        => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
-            'images.*'              => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
-            'add_ons.*'             => 'nullable|exists:add_ons,id',
+            'name'                               => 'required|string|max:255',
+            'venue_id'                           => 'required|exists:venues,id',
+            'sports_type'                        => 'required',
+            'status'                             => 'required|in:active,inactive',
+            'description'                        => 'nullable|string',
+            'base_price'                         => 'required|numeric|min:0',
+            'max_bookings_per_slot'              => 'required|integer|min:1',
+            'capacity'                           => 'required|integer|min:1',
+            'slot_duration'                      => 'required|numeric|min:0.5',
+            'loyalty_points'                     => 'nullable|integer|min:0',
+            'calendar_color'                     => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
+            'payment_options'                    => 'required|array',
+            'payment_options.cash_on_arrival'    => 'nullable|boolean',
+            'payment_options.deposit.amount'     => 'nullable|numeric|min:0',
+            'payment_options.deposit.percentage' => 'nullable|numeric|between:0,100',
+            'schedule'                           => $isUpdate ? 'sometimes|required|array|min:1' : 'required|array|min:7',
+            'schedule.*.day'                     => 'required|in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
+            'schedule.*.is_open'                 => 'required|boolean',
+            'schedule.*.from_time'               => 'required_if:schedule.*.is_open,true|date_format:H:i',
+            'schedule.*.to_time'                 => 'required_if:schedule.*.from_time,*,schedule.*.is_open,true|after:schedule.*.from_time',
+            'pricing_groups'                     => 'nullable|array',
+            'pricing_groups.*.name'              => 'nullable|string|max:255',
+            'pricing_groups.*.start_time'        => 'required|date_format:H:i',
+            'pricing_groups.*.end_time'          => 'required|date_format:H:i|after:pricing_groups.*.start_time',
+            'pricing_groups.*.price_per_hour'    => 'required|numeric|min:0',
+            'pricing_groups.*.days'              => 'required|array',
+            'pricing_groups.*.days.*'            => 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
+            'images.*'                           => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'add_ons.*'                          => 'nullable|exists:add_ons,id',
+            'resources'                          => 'nullable|array',
+            'resources.*.id'                     => 'required|exists:resources,id',
+            'resources.*.quantity'               => 'nullable|integer|min:1',
         ];
 
         if ($isUpdate) {
@@ -346,7 +368,7 @@ class ListingService
             'loyalty_points'        => $data['loyalty_points'] ?? 0,
             'calendar_color'        => $data['calendar_color'] ?? '#0000FF',
             'payment_options'       => $data['payment_options'] ?? [],
-            'image_urls'            => $data['image_urls'] ?? [],
+            'images_urls'           => $data['images_urls'] ?? [],
         ];
     }
 
@@ -444,7 +466,7 @@ class ListingService
                 'price'           => $listing->base_price,
                 'description'     => $listing->description,
                 'rating'          => round($listing->average_rating, 1),
-                'images'          => $listing->image_urls ?? [],
+                'images'          => $listing->images_urls ?? [],
                 'duration'        => $listing->duration,
                 'payment_options' => $listing->payment_options,
                 'loyalty_points'  => $listing->loyalty_points,
@@ -453,6 +475,43 @@ class ListingService
         });
 
         return sendSuccess("Listings fetched successfully", compact('listings'));
+    }
+
+    public function listing($id)
+    {
+        $listing = $this->listingModel::with(['venue', 'schedules'])->findOrFail($id);
+
+        $timeSlots = $listing->schedules->map(function ($schedule) use ($listing) {
+            $from = date('H:i', strtotime($schedule->from_time));
+            $to   = date('H:i', strtotime($schedule->to_time));
+            return [
+                'available' => 22,
+                'time'      => "{$from} - {$to}",
+                'capacity' => $listing->capacity,
+                'booked'   => $schedule->booked ?? 10,
+                'duration' => $schedule->duration ?? '1h',
+                'price'    => $schedule->price ?? $listing->base_price,
+            ];
+        });
+
+        $listing = [
+            'id'              => $listing->id,
+            'name'            => $listing->name,
+            'duration'        => $listing->duration,
+            'price'           => $listing->base_price,
+            'description'     => $listing->description,
+            'sport'           => $listing->sports_type,
+            'venue'           => $listing->venue?->name,
+            'loyalty_points'  => $listing->loyalty_points,
+            'calendar_color'  => $listing->calendar_color,
+            'payment_options' => $listing->payment_options,
+            'amenities'       => $listing->amenities ?? [],
+            'images'          => $listing->images_urls ?? [],
+            'map_address'     => $listing->venue?->maps_url,
+            'rating'          => round($listing->average_rating, 1),
+        ];
+
+        return sendSuccess('Listing fetched successfully', compact('listing', 'timeSlots'));
     }
 
     public function fetchSuggestions($request)
@@ -473,7 +532,7 @@ class ListingService
                 'price'           => $listing->base_price,
                 'description'     => $listing->description,
                 'rating'          => round($listing->average_rating, 1),
-                'images'          => $listing->image_urls ?? [],
+                'images'          => $listing->images_urls ?? [],
                 'duration'        => $listing->duration,
                 'payment_options' => $listing->payment_options,
                 'loyaltyPoints'   => $listing->loyalty_points,
@@ -482,5 +541,25 @@ class ListingService
         });
 
         return sendSuccess("Listings fetched successfully", compact('listings'));
+    }
+
+    public function fetchAddons($listing_id)
+    {
+        $listing = $this->listingModel->with('addons')->findOrFail($listing_id);
+
+        $addons = $listing->addons->map(function ($addon) {
+            return [
+                'recommended' => true,
+                'id'          => $addon->id,
+                'name'        => $addon->name,
+                'price'       => $addon->price ?? 0,
+                'description' => $addon->description,
+                'icon'        => $addon->icon ?? '🧽',
+                'subtitle'    => $addon->subtitle ?? '',
+                //  '+1 hour extension - More time to enjoy!'
+            ];
+        });
+
+        return sendSuccess('Addons fetched successfully', compact('addons'));
     }
 }

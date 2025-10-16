@@ -27,6 +27,16 @@ class CustomerService
                         ->orWhere('phone', 'LIKE', "%{$search}%");
                 });
             })
+            ->addSelect([
+                'loyalty_balance' => function ($q) {
+                    $q->selectRaw('
+                COALESCE(SUM(CASE WHEN type = "credit" THEN points ELSE 0 END), 0) -
+                COALESCE(SUM(CASE WHEN type = "debit" THEN points ELSE 0 END), 0)
+            ')
+                        ->from('loyalty_points')
+                        ->whereColumn('loyalty_points.user_id', 'users.id');
+                },
+            ])
             ->when($status, function ($query, $status) {
                 $query->where('status', 'LIKE', "%{$status}%");
             })
