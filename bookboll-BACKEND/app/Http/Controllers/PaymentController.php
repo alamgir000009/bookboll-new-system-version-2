@@ -15,19 +15,6 @@ class PaymentController extends Controller
         return $this->paymentService->list($request);
     }
 
-    public function store(Request $request, Booking $booking) // Call after booking create
-    {
-        $this->paymentService->createInitialPayments($booking);
-        return response()->json(['message' => 'Payments created']);
-    }
-
-    public function confirm(Request $request, Booking $booking)
-    {
-        $payment = $booking->payments()->where('type', 'remaining')->where('status', 'pending')->firstOrFail();
-        $this->paymentService->confirmRemainingPayment($payment, $request->validated());
-        return response()->json(['message' => 'Payment confirmed', 'qr_path' => $request->method === 'online' ? $payment->fresh()->notes : null]);
-    }
-
     public function totals()
     {
         return response()->json($this->paymentService->getDashboardTotals());
@@ -43,5 +30,8 @@ class PaymentController extends Controller
         return response($csv, 200, ['Content-Type' => 'text/csv', 'Content-Disposition' => 'attachment; filename="payments.csv"']);
     }
 
-    // Show, update, destroy as needed...
+    public function downloadInvoice($id)
+    {
+        return $this->paymentService->downloadInvoice($id);
+    }
 }

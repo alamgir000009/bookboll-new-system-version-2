@@ -3,8 +3,10 @@ namespace Database\Seeders;
 
 use App\Models\Booking;
 use App\Models\Payment;
+use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Seeder;
+use PaymnetStatus;
 
 class PaymentTableSeeder extends Seeder
 {
@@ -19,21 +21,23 @@ class PaymentTableSeeder extends Seeder
 
     private function createPaymentsForBooking(Booking $booking)
     {
-        $isConfirmed     = $booking->status === 'confirmed';
-        $paymentDateBase = $booking->start_time->copy();
+        $isConfirmed     = $booking->status === BookingStatus::CONFIRMED;
+        $paymentDateBase = Carbon::parse($booking->date . ' ' . $booking->start_time);
+
+        $bookingTotalAmount = $booking->total_price;
 
         match ($booking->payment_method) {
             'online'  => $this->createSinglePayment(
                 $booking,
                 'full',
-                $booking->total_price,
+                $bookingTotalAmount,
                 'online',
-                $isConfirmed ? 'paid' : 'pending',
+                $isConfirmed ? PaymnetStatus::PAID : PaymnetStatus::PENDING,
                 $paymentDateBase->copy()->subDays(rand(0, 2))
             ),
             'deposit' => [
-                $depositAmount = round($booking->total_price * 0.3, 2),
-                $remainingAmount = $booking->total_price - $depositAmount,
+                $depositAmount = round($bookingTotalAmount * 0.3, 2),
+                $remainingAmount = $bookingTotalAmount - $depositAmount,
 
                 $this->createSinglePayment(
                     $booking,
@@ -50,7 +54,7 @@ class PaymentTableSeeder extends Seeder
                     'remaining',
                     $remainingAmount,
                     $remainingMethod,
-                    $isConfirmed ? 'paid' : 'pending',
+                    $isConfirmed ? PaymnetStatus::PAID : PaymnetStatus::PENDING,
                     $isConfirmed ? $paymentDateBase : null
                 ),
             ],
@@ -58,7 +62,7 @@ class PaymentTableSeeder extends Seeder
             $this->createSinglePayment(
                 $booking,
                 'full',
-                $booking->total_price,
+                $bookingTotalAmount,
                 'cash',
                 $isConfirmed ? 'paid' : 'pending',
                 $isConfirmed ? $paymentDateBase->copy()->addDays(rand(0, 1)) : $paymentDateBase
@@ -66,7 +70,7 @@ class PaymentTableSeeder extends Seeder
         };
     }
 
-    private function createSinglePayment(Booking $booking, string $type, float $amount, string $method, string $status, ?Carbon $paymentDate = null)
+    private function createSinglePayment(Booking $booking, string $type, $amount, string $method, string $status, ?Carbon $paymentDate = null)
     {
         Payment::create([
             'type'       => $type,
@@ -77,7 +81,7 @@ class PaymentTableSeeder extends Seeder
             'user_id'    => $booking->user_id,
             'payment_id' => generatePaymentId($booking->id, $type),
             'date'       => $paymentDate ? $paymentDate->format('Y-m-d') : Carbon::today()->format('Y-m-d'),
-            'notes'      => $status === 'paid' && $method === 'online' ? 'Online payment confirmed via QR' . rand(1000, 9999) : null,
+            'notes'      => $status === PaymnetStatus::PAID && $method === 'online' ? 'Online payment confirmed via QR' . rand(1000, 9999) : null,
         ]);
     }
 }

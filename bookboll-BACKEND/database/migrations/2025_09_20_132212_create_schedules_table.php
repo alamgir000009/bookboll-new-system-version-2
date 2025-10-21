@@ -17,8 +17,8 @@ return new class extends Migration
             $table->foreignId('listing_id')->nullable()->constrained()->cascadeOnDelete();
             $table->enum('day', ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])->nullable();
             $table->boolean('is_open')->default(false);
-            $table->string('from_time')->nullable();
-            $table->string('to_time')->nullable();
+            $table->string('start_time')->nullable();
+            $table->string('end_time')->nullable();
             $table->timestamps();
             $table->index(['venue_id', 'listing_id']);
             $table->index('day');

@@ -1,7 +1,10 @@
 <?php
 namespace App\Services;
 
+use App\Models\Listing;
 use App\Models\Promocode;
+use App\Models\Venue;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -46,12 +49,10 @@ class PromocodeService
 
             $promocode = $this->promocodeModel::create($validated);
 
-            // Sync venues
             if (! empty($request->venues)) {
                 $promocode->venues()->sync($request->venues);
             }
 
-            // Sync listings
             if (! empty($request->listings)) {
                 $promocode->listings()->sync($request->listings);
             }

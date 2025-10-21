@@ -40,8 +40,8 @@ class VenueService
             'schedule'              => ['required', 'array'],
             'schedule.*.day'        => ['required', 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
             'schedule.*.is_open'    => ['required', 'boolean'],
-            'schedule.*.from_time'  => ['nullable', 'required_if:schedule.*.open,true'],
-            'schedule.*.to_time'    => ['nullable', 'required_if:schedule.*.open,true', 'after:schedule.*.from'],
+            'schedule.*.start_time' => ['nullable', 'required_if:schedule.*.open,true'],
+            'schedule.*.end_time'   => ['nullable', 'required_if:schedule.*.open,true', 'after:schedule.*.from'],
         ]);
 
         $schedules = $formData['schedule'];
@@ -70,8 +70,8 @@ class VenueService
             'schedule'              => ['required', 'array'],
             'schedule.*.day'        => ['required', 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
             'schedule.*.is_open'    => ['required', 'boolean'],
-            'schedule.*.from_time'  => ['nullable', 'required_if:schedule.*.is_open,true', 'string'],
-            'schedule.*.to_time'    => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'after:schedule.*.from_time'],
+            'schedule.*.start_time' => ['nullable', 'required_if:schedule.*.is_open,true', 'string'],
+            'schedule.*.end_time'   => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'after:schedule.*.start_time'],
         ]);
 
         $schedules = $formData['schedule'];
@@ -89,9 +89,9 @@ class VenueService
                     'venue_id' => $venue->id,
                 ],
                 [
-                    'is_open'   => $schedule['is_open'],
-                    'from_time' => $schedule['from_time'],
-                    'to_time'   => $schedule['to_time'],
+                    'is_open'    => $schedule['is_open'],
+                    'start_time' => $schedule['start_time'],
+                    'end_time'   => $schedule['end_time'],
                 ]
             );
 

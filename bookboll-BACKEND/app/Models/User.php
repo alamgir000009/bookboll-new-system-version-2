@@ -101,6 +101,16 @@ class User extends Authenticatable
         return $this->hasMany(Transaction::class);
     }
 
+    public function payments()
+    {
+        return $this->hasMany(Payment::class);
+    }
+
+    public function promocodes()
+    {
+        return $this->belongsToMany(Promocode::class, 'promocode_user')->withPivot('usage_count')->withTimestamps();
+    }
+
     public function preferences()
     {
         return $this->hasOne(Preference::class);

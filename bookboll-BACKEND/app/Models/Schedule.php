@@ -1,6 +1,7 @@
 <?php
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -11,16 +12,16 @@ class Schedule extends Model
     protected $fillable = [
         'day',
         'is_open',
-        'to_time',
+        'end_time',
         'venue_id',
-        'from_time',
+        'start_time',
         'listing_id',
     ];
 
     protected $casts = [
-        'is_open'   => 'boolean',
-        'from_time' => 'datetime:H:i',
-        'to_time'   => 'datetime:H:i',
+        'is_open'    => 'boolean',
+        'start_time' => 'datetime:H:i',
+        'end_time'   => 'datetime:H:i',
     ];
 
     public function venue()
@@ -49,10 +50,10 @@ class Schedule extends Model
             return false;
         }
 
-        $checkTime = \Carbon\Carbon::createFromTimeString($time);
-        $fromTime  = \Carbon\Carbon::createFromTimeString($this->from_time);
-        $toTime    = \Carbon\Carbon::createFromTimeString($this->to_time);
+        $checkTime = Carbon::createFromTimeString($time);
+        $startTime = Carbon::createFromTimeString($this->start_time);
+        $endTime   = Carbon::createFromTimeString($this->end_time);
 
-        return $checkTime->between($fromTime, $toTime);
+        return $checkTime->between($startTime, $endTime);
     }
 }

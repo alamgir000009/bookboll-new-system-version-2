@@ -30,4 +30,9 @@ class LoyaltyPoint extends Model
 
         return $credit - $debit;
     }
+
+    public function scopeType($query, $type)
+    {
+        return $this->where("type", $type);
+    }
 }

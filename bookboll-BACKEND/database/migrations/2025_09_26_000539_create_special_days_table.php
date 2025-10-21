@@ -21,8 +21,7 @@ return new class extends Migration
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->timestamps();
 
-            $table->unique(['venue_id', 'date']);
-            $table->index(['venue_id', 'status']);
+            $table->index(['venue_id', 'listing_id', 'status']);
             $table->index('date');
         });
     }

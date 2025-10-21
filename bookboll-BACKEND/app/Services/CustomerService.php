@@ -2,6 +2,7 @@
 namespace App\Services;
 
 use App\Models\User;
+use PaymnetStatus;
 
 class CustomerService
 {
@@ -28,13 +29,26 @@ class CustomerService
                 });
             })
             ->addSelect([
-                'loyalty_balance' => function ($q) {
+                'loyalty_balance'  => function ($q) {
                     $q->selectRaw('
                 COALESCE(SUM(CASE WHEN type = "credit" THEN points ELSE 0 END), 0) -
                 COALESCE(SUM(CASE WHEN type = "debit" THEN points ELSE 0 END), 0)
             ')
                         ->from('loyalty_points')
                         ->whereColumn('loyalty_points.user_id', 'users.id');
+                },
+                'total_due_amount' => function ($q) {
+                    $q->selectRaw('COALESCE(SUM(amount), 0)')
+                        ->from('payments')
+                        ->whereColumn('payments.user_id', 'users.id')
+                        ->where('payments.status', '!=', PaymnetStatus::PAID);
+                },
+
+                'total_spent'      => function ($q) {
+                    $q->selectRaw('COALESCE(SUM(amount), 0)')
+                        ->from('payments')
+                        ->whereColumn('payments.user_id', 'users.id')
+                        ->where('payments.status', PaymnetStatus::PAID);
                 },
             ])
             ->when($status, function ($query, $status) {

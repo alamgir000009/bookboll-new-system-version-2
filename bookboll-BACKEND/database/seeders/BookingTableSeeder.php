@@ -14,15 +14,13 @@ class BookingTableSeeder extends Seeder
 {
     public function run(): void
     {
-        for ($i = 0; $i < 5; $i++) {
+        for ($i = 0; $i < 2; $i++) {
             $this->createBookingData();
         }
     }
 
     private function createBookingData()
     {
-        $currentDate = Carbon::parse('2025-09-21');
-
         $users      = User::where("id", ">", 5)->get();
         $venues     = Venue::limit(2)->get();
         $listings   = Listing::limit(3)->get();
@@ -30,12 +28,13 @@ class BookingTableSeeder extends Seeder
         $addOns     = AddOn::limit(4)->get();
 
         for ($i = 0; $i < 10; $i++) {
-            $user      = $users->random();
-            $venue     = $venues->random();
-            $listing   = $listings->random();
-            $startTime = $currentDate->copy()->addDays(rand(0, 30))->setHour(rand(8, 18))->setMinute(0)->setSecond(0);
-            $duration  = rand(1, 3);
-            $endTime   = $startTime->copy()->addHours($duration);
+            $bookingDate = Carbon::create(2025, 10, "2{$i}");
+            $user        = $users->random();
+            $venue       = $venues->random();
+            $listing     = $listings->random();
+            $startTime   = $bookingDate->copy()->addDays(rand(0, 30))->setHour(rand(8, 18))->setMinute(0)->setSecond(0);
+            $duration    = rand(1, 3);
+            $endTime     = $startTime->copy()->addHours($duration);
 
             $subtotal = $listing->base_price * $duration;
 
@@ -58,6 +57,7 @@ class BookingTableSeeder extends Seeder
                 'venue_id'        => $venue->id,
                 'listing_id'      => $listing->id,
                 'promocode_id'    => $promocode?->id,
+                'date'            => $bookingDate,
                 'start_time'      => $startTime,
                 'end_time'        => $endTime,
                 'subtotal'        => $subtotal,
@@ -69,6 +69,12 @@ class BookingTableSeeder extends Seeder
             ]);
 
             $booking->addOns()->sync($selectedAddOns);
+
+            $booking->history()->create([
+                "action"      => "Booking created",
+                "description" => "The following booking is created via seeder for testing.",
+                "user_id"     => $booking->user_id,
+            ]);
         }
     }
 }

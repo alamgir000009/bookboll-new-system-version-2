@@ -26,6 +26,7 @@ return new class extends Migration
             $table->string('calendar_color')->default('#0000FF');
             $table->json('payment_options');
             $table->json('images_urls')->nullable();
+            $table->json('amenities')->nullable();
             $table->timestamps();
 
             $table->index(['venue_id', 'status']);

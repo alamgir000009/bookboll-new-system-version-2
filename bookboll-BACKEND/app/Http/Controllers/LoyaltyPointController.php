@@ -5,6 +5,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Http\Request;
+use PaymnetStatus;
 
 class LoyaltyPointController extends Controller
 {
@@ -13,7 +14,6 @@ class LoyaltyPointController extends Controller
 
         $customers = User::whereRelation('roles', 'name', 'customer')
             ->withCount(['bookings'])
-            ->withSum('bookings', 'total_price')
             ->addSelect([
                 'loyalty_balance' => function ($q) {
                     $q->selectRaw('
@@ -22,6 +22,12 @@ class LoyaltyPointController extends Controller
             ')
                         ->from('loyalty_points')
                         ->whereColumn('loyalty_points.user_id', 'users.id');
+                },
+                'total_spent'     => function ($q) {
+                    $q->selectRaw('COALESCE(SUM(amount), 0)')
+                        ->from('payments')
+                        ->whereColumn('payments.user_id', 'users.id')
+                        ->where('payments.status', PaymnetStatus::PAID);
                 },
             ])
             ->orderByDesc('loyalty_balance')->take(10)->get();
@@ -39,7 +45,7 @@ class LoyaltyPointController extends Controller
             "points_redeemed" => $total_redeemed ?? 0,
         ];
 
-        return sendSuccess('Loyalty data fetched successfully', compact('customers','recentRedeemptions', 'stats'));
+        return sendSuccess('Loyalty data fetched successfully', compact('customers', 'recentRedeemptions', 'stats'));
 
     }
 }

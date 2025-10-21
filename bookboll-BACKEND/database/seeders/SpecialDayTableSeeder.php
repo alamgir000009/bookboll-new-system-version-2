@@ -16,7 +16,7 @@ class SpecialDayTableSeeder extends Seeder
             [
                 'venue_id'    => $venueId,
                 'listing_id'  => $listingId,
-                'date'        => Carbon::parse('2025-09-15'),
+                'date'        => Carbon::parse('2025-10-20'),
                 'type'        => 'holiday',
                 'description' => 'New Year Holiday - No bookings',
                 'status'      => 'active',
@@ -45,7 +45,7 @@ class SpecialDayTableSeeder extends Seeder
             [
                 'venue_id'    => $venueId,
                 'listing_id'  => $listingId,
-                'date'        => Carbon::parse('2025-09-25'),
+                'date'        => Carbon::parse('2025-10-25'),
                 'type'        => 'special',
                 'description' => 'End of Month Discount',
                 'status'      => 'inactive',

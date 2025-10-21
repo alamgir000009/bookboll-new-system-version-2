@@ -7,6 +7,7 @@ use App\Models\Contact;
 use App\Models\Listing;
 use App\Models\Resource;
 use App\Models\Review;
+use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\User;
 use App\Models\Venue;
@@ -18,7 +19,7 @@ class HelperController extends Controller
     public function extraData()
     {
         $venues   = Venue::with(['listings:id,venue_id,name', 'schedules'])->get(['id', 'name']);
-        $listings = Listing::with(['venue'])->get(['id', 'name', 'venue_id']);
+        $listings = Listing::with(['venue'])->get(['id', 'name', 'venue_id', 'calendar_color']);
         return sendSuccess('Data fetched successfully', compact('venues', 'listings'));
     }
 
@@ -53,6 +54,28 @@ class HelperController extends Controller
         $venues          = Venue::with(['listings:id,venue_id,name', 'schedules'])->get(['id', 'name']);
 
         return sendSuccess('Data fetched successfully', compact('venues', 'resources', 'addons', 'sportCategories'));
+    }
+
+    public function extraSpecialDays()
+    {
+        $specialDays = SpecialDay::with(['timeBlocks'])->get()->map(function ($day) {
+            return [
+                'id'         => $day->id,
+                'date'       => $day->date,
+                'type'       => $day->type,
+                'venue_id'   => $day->venue_id,
+                'timeBlocks' => $day->timeBlocks->map(function ($block) {
+                    return [
+                        'start_time'     => $block->start_time,
+                        'end_time'       => $block->end_time,
+                        'price_per_hour'  => $block->price_per_hour,
+                        'price_currency' => $block->price_currency,
+                    ];
+                }),
+            ];
+        });
+
+        return sendSuccess('Special days fetched successfully', compact('specialDays'));
     }
 
     public function homePageData()
@@ -103,7 +126,6 @@ class HelperController extends Controller
             return sendSuccess("Message sent successfully! We\'ll get back to you soon.");
         } catch (\Exception $e) {
             logger("Contact Us mail failed: " . $e->getMessage());
-
             return sendError("Failed to send message: Something went wrong");
         }
 

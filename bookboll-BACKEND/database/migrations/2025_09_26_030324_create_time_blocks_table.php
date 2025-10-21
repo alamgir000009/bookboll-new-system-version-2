@@ -14,8 +14,8 @@ return new class extends Migration
         Schema::create('time_blocks', function (Blueprint $table) {
             $table->id();
             $table->foreignId('special_day_id')->constrained('special_days')->onDelete('cascade');
-            $table->time('start_time')->nullable();
-            $table->time('end_time')->nullable();
+            $table->string('start_time')->nullable();
+            $table->string('end_time')->nullable();
             $table->decimal('price_per_hour', 15, 2)->nullable();
             $table->string('price_currency')->default('qar');
             $table->timestamps();

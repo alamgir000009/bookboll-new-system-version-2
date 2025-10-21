@@ -79,13 +79,23 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('extra-sport-categories', [HelperController::class, 'extraSportCategories']);
         Route::get('extra-data-for-listing', [HelperController::class, 'extraDataForListing']);
         Route::get('extra-loyalty-data', [LoyaltyPointController::class, 'extraDataForLoyalty']);
+        Route::get('extra-special-days', [HelperController::class, 'extraSpecialDays']);
 
         Route::post('test-email', [SettingController::class, 'sendTestEmail']);
 
-        Route::apiResource('bookings', BookingController::class);
-        Route::put('bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
+        Route::get('dashboard-data', [BookingController::class, 'dashboardData']);
+        Route::get('dashboard/chart', [BookingController::class, 'dashboardChart']);
 
+        Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory']);
+        Route::get('bookings/form-data', [BookingController::class, 'formData']);
+        Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar']);
+        Route::post('bookings/{booking}/cancel', [BookingController::class, 'cancel']);
+        Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings']);
+        Route::apiResource('bookings', BookingController::class);
+
+        Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice']);
         Route::apiResource('payments', PaymentController::class);
+
         // Route::post('bookings/{booking}/payments/confirm', [PaymentController::class, 'confirm']);
         // Route::get('dashboard/totals', [PaymentController::class, 'totals']);
         // Route::get('payments/export', [PaymentController::class, 'export']);

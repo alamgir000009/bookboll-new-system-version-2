@@ -23,12 +23,7 @@ class SpecialDayController extends Controller
         return $this->specialDayService->calendar($venueId, $listingId, $yearMonth);
     }
 
-    public function store(Request $request)
-    {
-        return $this->specialDayService->create($request);
-    }
-
-    public function update(Request $request, int $id)
+    public function update(Request $request, $id)
     {
         return $this->specialDayService->update($request, $id);
     }

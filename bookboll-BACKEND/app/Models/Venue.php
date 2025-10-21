@@ -17,6 +17,11 @@ class Venue extends Model
         'max_bookings_per_slot',
     ];
 
+    public function scopeActive($query)
+    {
+        return $query->where("status", self::ACTIVE);
+    }
+
     public function schedules()
     {
         return $this->hasMany(Schedule::class);

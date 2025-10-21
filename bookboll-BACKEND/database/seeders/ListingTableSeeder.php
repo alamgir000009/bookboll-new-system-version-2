@@ -19,7 +19,7 @@ class ListingTableSeeder extends Seeder
         $paymentOptionsJson = str_replace("'", '"', "{'cash_on_arrival':true,'deposit':{'amount':50.00,'percentage':50}}");
         $paymentOptions     = json_decode($paymentOptionsJson, true) ?: [];
 
-        $scheduleJson = str_replace("'", '"', "[{'day':'monday','is_open':true,'from_time':'06:00','to_time':'22:00'},{'day':'tuesday','is_open':true,'from_time':'06:00','to_time':'22:00'},{'day':'wednesday','is_open':true,'from_time':'06:00','to_time':'22:00'},{'day':'thursday','is_open':true,'from_time':'06:00','to_time':'22:00'},{'day':'friday','is_open':true,'from_time':'06:00','to_time':'22:00'},{'day':'saturday','is_open':true,'from_time':'06:00','to_time':'22:00'},{'day':'sunday','is_open':true,'from_time':'06:00','to_time':'22:00'}]");
+        $scheduleJson = str_replace("'", '"', "[{'day':'monday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'tuesday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'wednesday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'thursday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'friday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'saturday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'sunday','is_open':true,'start_time':'06:00','end_time':'22:00'}]");
         $schedule     = json_decode($scheduleJson, true) ?: [];
 
         $pricingGroupsJson = str_replace("'", '"', "[{'name':'Peak Time','start_time':'18:00','end_time':'22:00','price_per_hour':150.00,'days':['monday','tuesday','wednesday','thursday','friday','saturday']},{'name':'Off-Peak Time','start_time':'06:00','end_time':'18:00','price_per_hour':80.00,'days':['monday','tuesday','wednesday','thursday','friday','saturday']}]");
@@ -51,22 +51,24 @@ class ListingTableSeeder extends Seeder
             "max_bookings_per_slot" => 1,
             "calendar_color"        => "#0000FF",
             "images"                => $images,
+            "amenities"             => ['Wi-Fi', 'Parking', 'AC'],
         ];
 
         $listing = Listing::create([
             'name'                  => $listingData['name'],
-            'venue_id'              => $listingData['venue_id'],
-            'sports_type'           => $listingData['sports_type'],
             'status'                => $listingData['status'],
-            'description'           => $listingData['description'] ?? null,
-            'base_price'            => $listingData['base_price'],
-            'max_bookings_per_slot' => $listingData['max_bookings_per_slot'] ?? 1,
+            'images_urls'           => $listingData['images'],
+            'venue_id'              => $listingData['venue_id'],
             'capacity'              => $listingData['capacity'],
+            'amenities'             => $listingData['amenities'],
+            'base_price'            => $listingData['base_price'],
+            'sports_type'           => $listingData['sports_type'],
             'slot_duration'         => $listingData['slot_duration'],
-            'loyalty_points'        => $listingData['loyalty_points'] ?? 0,
-            'calendar_color'        => $listingData['calendar_color'] ?? '#0000FF',
             'payment_options'       => $listingData['payment_options'],
-            'images_urls'            => $listingData['images'],
+            'loyalty_points'        => $listingData['loyalty_points'] ?? 0,
+            'description'           => $listingData['description'] ?? null,
+            'max_bookings_per_slot' => $listingData['max_bookings_per_slot'] ?? 1,
+            'calendar_color'        => $listingData['calendar_color'] ?? '#0000FF',
         ]);
 
         if (! empty($listingData['add_ons'])) {
@@ -90,8 +92,8 @@ class ListingTableSeeder extends Seeder
                         'listing_id' => $listing->id,
                         'day'        => $schedule['day'],
                         'is_open'    => true,
-                        'from_time'  => $schedule['from_time'],
-                        'to_time'    => $schedule['to_time'],
+                        'start_time' => $schedule['start_time'],
+                        'end_time'   => $schedule['end_time'],
                     ]);
                 }
             }

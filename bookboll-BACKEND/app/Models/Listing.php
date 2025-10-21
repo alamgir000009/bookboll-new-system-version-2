@@ -14,6 +14,7 @@ class Listing extends Model
         'status',
         'venue_id',
         'capacity',
+        'amenities',
         'base_price',
         'images_urls',
         'sports_type',
@@ -26,9 +27,10 @@ class Listing extends Model
     ];
 
     protected $casts = [
-        'base_price'      => 'decimal:2',
         'payment_options' => 'array',
-        'images_urls'      => 'array',
+        'images_urls'     => 'array',
+        'amenities'       => 'array',
+        'base_price'      => 'decimal:2',
     ];
 
     public function venue()
@@ -49,6 +51,11 @@ class Listing extends Model
     public function resources()
     {
         return $this->belongsToMany(Resource::class)->withPivot('quantity');
+    }
+
+    public function resourceRequirements()
+    {
+        return $this->belongsToMany(Resource::class, 'listing_resource')->withPivot('quantity');
     }
 
     public function schedules()
@@ -121,7 +128,7 @@ class Listing extends Model
     {
         $days = collect($scheduleData)->groupBy('day');
 
-        foreach ($days as $daySchedules) {
+        foreach ($days as $day => $daySchedules) {
             if ($daySchedules->count() > 1) {
                 foreach ($daySchedules as $i => $schedule) {
                     foreach ($daySchedules as $j => $otherSchedule) {
@@ -136,10 +143,10 @@ class Listing extends Model
 
     protected function timesOverlap($schedule1, $schedule2)
     {
-        $start1 = Carbon::createFromTimeString($schedule1['from_time']);
-        $end1   = Carbon::createFromTimeString($schedule1['to_time']);
-        $start2 = Carbon::createFromTimeString($schedule2['from_time']);
-        $end2   = Carbon::createFromTimeString($schedule2['to_time']);
+        $start1 = Carbon::createFromTimeString($schedule1['start_time']);
+        $end1   = Carbon::createFromTimeString($schedule1['end_time']);
+        $start2 = Carbon::createFromTimeString($schedule2['start_time']);
+        $end2   = Carbon::createFromTimeString($schedule2['end_time']);
 
         return ($start1->lt($end2) && $end1->gt($start2));
     }

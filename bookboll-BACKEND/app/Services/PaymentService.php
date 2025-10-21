@@ -3,6 +3,8 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Models\Payment;
+use Barryvdh\DomPDF\Facade\Pdf;
+use CompnayInfo;
 use Illuminate\Support\Str;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
@@ -27,7 +29,11 @@ class PaymentService
         ])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
-                    $q->where('payment_id', 'LIKE', "%{$search}%")
+                    $q->where('type', 'LIKE', "%{$search}%")
+                        ->orWhere('method', 'LIKE', "%{$search}%")
+                        ->orWhere('amount', 'LIKE', "%{$search}%")
+                        ->orWhere('booking_id', 'LIKE', "%{$search}%")
+                        ->orWhere('payment_id', 'LIKE', "%{$search}%")
                         ->orWhereHas('booking.user', function ($sub) use ($search) {
                             $sub->where('name', 'LIKE', "%{$search}%")
                                 ->orWhere('email', 'LIKE', "%{$search}%");
@@ -168,7 +174,6 @@ class PaymentService
         ];
     }
 
-    // For CSV export
     public function exportPaymentsCsv($filters = []): array
     {
         $query = Payment::with(['booking.user', 'booking.venue'])
@@ -189,5 +194,27 @@ class PaymentService
         ]);
 
         return $payments->toArray();
+    }
+
+    public function downloadInvoice($id)
+    {
+        $payment = $this->paymentModel::with(['user', 'booking.venue'])->findOrFail($id);
+
+        $data = [
+            'payment' => $payment,
+            'date'    => now()->format('Y-m-d'),
+            'company' => [
+                'name'    => CompnayInfo::NAME,
+                'address' => CompnayInfo::ADDRESS,
+                'email'   => CompnayInfo::EMAIL,
+                'phone'   => CompnayInfo::PHONE,
+            ],
+        ];
+
+        $pdf = Pdf::loadView('pdfs.payment-invoice', $data);
+
+        return response()->streamDownload(function () use ($pdf) {
+            echo $pdf->output();
+        }, "invoice-{$payment->id}.pdf");
     }
 }

@@ -41,6 +41,11 @@ class Promocode extends Model
         return $this->belongsToMany(Listing::class);
     }
 
+    public function users()
+    {
+        return $this->belongsToMany(User::class, 'promocode_user')->withPivot('usage_count')->withTimestamps();
+    }
+
     public function scopeActive($query)
     {
         return $query->where('status', 'active')

@@ -366,7 +366,7 @@ class UserService
 
         $users = $this->userModel->latest()
             ->whereHas('roles', function ($query) {
-                $query->whereIn('name', ['super_admin', 'admin', 'senior_employee', 'junior_employee', 'guard']);
+                $query->whereIn('name', ['admin', 'senior_employee', 'junior_employee', 'guard']);
             })
             ->with(['venues:id,name'])
             ->when($search, function ($query, $search) {

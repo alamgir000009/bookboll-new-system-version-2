@@ -123,7 +123,7 @@ class ListingService
                 $this->deleteOldImages($listing->images_urls);
                 $imageUrls                        = $this->uploadImages($request->file('images'));
                 $listingUpdateData['images_urls'] = $imageUrls;
-            } else {    
+            } else {
                 unset($listingUpdateData['images_urls']);
             }
 
@@ -223,8 +223,8 @@ class ListingService
             'schedule'                           => $isUpdate ? 'sometimes|required|array|min:1' : 'required|array|min:7',
             'schedule.*.day'                     => 'required|in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
             'schedule.*.is_open'                 => 'required|boolean',
-            'schedule.*.from_time'               => 'required_if:schedule.*.is_open,true|date_format:H:i',
-            'schedule.*.to_time'                 => 'required_if:schedule.*.from_time,*,schedule.*.is_open,true|after:schedule.*.from_time',
+            'schedule.*.start_time'              => 'required_if:schedule.*.is_open,true|date_format:H:i',
+            'schedule.*.end_time'                => 'required_if:schedule.*.start_time,*,schedule.*.is_open,true|after:schedule.*.start_time',
             'pricing_groups'                     => 'nullable|array',
             'pricing_groups.*.name'              => 'nullable|string|max:255',
             'pricing_groups.*.start_time'        => 'required|date_format:H:i',
@@ -237,6 +237,7 @@ class ListingService
             'resources'                          => 'nullable|array',
             'resources.*.id'                     => 'required|exists:resources,id',
             'resources.*.quantity'               => 'nullable|integer|min:1',
+            'amenities'                          => 'array',
         ];
 
         if ($isUpdate) {
@@ -319,8 +320,8 @@ class ListingService
             'schedule'                           => $isUpdate ? 'sometimes|required|array|min:1' : 'required|array|min:7',
             'schedule.*.day'                     => 'required|in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
             'schedule.*.is_open'                 => 'required|boolean',
-            'schedule.*.from_time'               => 'required_if:schedule.*.is_open,true|date_format:H:i',
-            'schedule.*.to_time'                 => 'required_if:schedule.*.from_time,*,schedule.*.is_open,true|after:schedule.*.from_time',
+            'schedule.*.start_time'              => 'required_if:schedule.*.is_open,true|date_format:H:i',
+            'schedule.*.end_time'                => 'required_if:schedule.*.start_time,*,schedule.*.is_open,true|after:schedule.*.start_time',
 
             'pricing_groups'                     => 'nullable|array',
             'pricing_groups.*.name'              => 'nullable|string|max:255',
@@ -369,6 +370,7 @@ class ListingService
             'calendar_color'        => $data['calendar_color'] ?? '#0000FF',
             'payment_options'       => $data['payment_options'] ?? [],
             'images_urls'           => $data['images_urls'] ?? [],
+            'amenities'             => $data['amenities'] ?? [],
         ];
     }
 
@@ -383,8 +385,8 @@ class ListingService
                     'listing_id' => $listing->id,
                     'day'        => $schedule['day'],
                     'is_open'    => true,
-                    'from_time'  => $schedule['from_time'],
-                    'to_time'    => $schedule['to_time'],
+                    'start_time' => $schedule['start_time'],
+                    'end_time'   => $schedule['end_time'],
                 ]);
             }
         }
@@ -450,8 +452,8 @@ class ListingService
                 $query->whereHas('schedules', function ($q) use ($dayName, $time) {
                     $q->where('day', $dayName)
                         ->where('is_open', true)
-                        ->whereTime('from_time', '<=', $time)
-                        ->whereTime('to_time', '>=', $time);
+                        ->whereTime('start_time', '<=', $time)
+                        ->whereTime('end_time', '>=', $time);
                 });
             });
 
@@ -482,8 +484,8 @@ class ListingService
         $listing = $this->listingModel::with(['venue', 'schedules'])->findOrFail($id);
 
         $timeSlots = $listing->schedules->map(function ($schedule) use ($listing) {
-            $from = date('H:i', strtotime($schedule->from_time));
-            $to   = date('H:i', strtotime($schedule->to_time));
+            $from = date('H:i', strtotime($schedule->start_time));
+            $to   = date('H:i', strtotime($schedule->end_time));
             return [
                 'available' => 22,
                 'time'      => "{$from} - {$to}",
