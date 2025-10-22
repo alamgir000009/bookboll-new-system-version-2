@@ -5,24 +5,57 @@ use App\Services\AuditLogService;
 if (! class_exists('BookingStatus')) {
     class BookingStatus
     {
-        const PENDING         = 'pending';
-        const CONFIRMED       = 'confirmed';
-        const REJECTED        = 'rejected';
-        const COMPLETED       = 'completed';
-        const CANCELLED       = 'cancelled';
-        const PAYMENT_PENDING = 'payment_pending';
+        public const PENDING         = 'pending';
+        public const CONFIRMED       = 'confirmed';
+        public const COMPLETED       = 'completed';
+        public const CANCELLED       = 'cancelled';
 
         public static function list(): array
         {
             return [
                 self::PENDING,
                 self::CONFIRMED,
-                self::REJECTED,
                 self::COMPLETED,
                 self::CANCELLED,
-                self::PAYMENT_PENDING,
             ];
         }
+    }
+}
+
+if (! class_exists('PaymentStatus')) {
+    class PaymentStatus
+    {
+        public const PAID    = 'paid';
+        public const PENDING = 'pending';
+        public const UNPAID = 'unpaid';
+
+        public static function list(): array
+        {
+            return [
+                self::PAID,
+                self::PENDING,
+                self::UNPAID,
+            ];
+        }
+    }
+}
+
+if (! class_exists('PaymentMethod')) {
+    class PaymentMethod
+    {
+        public const DEPOSIT_REMAININ_ON_ARRIVAL = 'deposit_remaining_on_arrival';
+        public const REMAINING                   = 'remaining';
+        public const ONLINE                      = 'online';
+    }
+}
+
+if (! class_exists('CompnayInfo')) {
+    class CompnayInfo
+    {
+        public const EMAIL   = 'support@bookboll.com';
+        public const NAME    = 'BOOKBOLL';
+        public const ADDRESS = '123 Main Street, Doha, Qatar';
+        public const PHONE   = '123456789';
     }
 }
 

@@ -2,7 +2,7 @@
 namespace App\Services;
 
 use App\Models\User;
-use PaymnetStatus;
+use PaymentStatus;
 
 class CustomerService
 {
@@ -41,14 +41,14 @@ class CustomerService
                     $q->selectRaw('COALESCE(SUM(amount), 0)')
                         ->from('payments')
                         ->whereColumn('payments.user_id', 'users.id')
-                        ->where('payments.status', '!=', PaymnetStatus::PAID);
+                        ->where('payments.status', '!=', PaymentStatus::PAID);
                 },
 
                 'total_spent'      => function ($q) {
                     $q->selectRaw('COALESCE(SUM(amount), 0)')
                         ->from('payments')
                         ->whereColumn('payments.user_id', 'users.id')
-                        ->where('payments.status', PaymnetStatus::PAID);
+                        ->where('payments.status', PaymentStatus::PAID);
                 },
             ])
             ->when($status, function ($query, $status) {

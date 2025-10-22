@@ -1,9 +1,12 @@
 <?php
 namespace App\Services;
 
+use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\Schedule;
+use App\Models\SpecialDay;
 use App\Models\SportsCategory;
+use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -259,7 +262,7 @@ class ListingService
     {
         if (isset($data['payment_options']) && is_string($data['payment_options'])) {
             $decoded = json_decode($data['payment_options'], true);
-            if (json_last_error() === JSON_ERROR_NONE) {
+            if (json_last_error() == JSON_ERROR_NONE) {
                 $data['payment_options'] = $decoded;
             } else {
                 throw ValidationException::withMessages([
@@ -270,7 +273,7 @@ class ListingService
 
         if (isset($data['schedule']) && is_string($data['schedule'])) {
             $decoded = json_decode($data['schedule'], true);
-            if (json_last_error() === JSON_ERROR_NONE) {
+            if (json_last_error() == JSON_ERROR_NONE) {
                 $data['schedule'] = is_array($decoded) ? $decoded : [];
             } else {
                 throw ValidationException::withMessages([
@@ -281,7 +284,7 @@ class ListingService
 
         if (isset($data['pricing_groups']) && is_string($data['pricing_groups'])) {
             $decoded = json_decode($data['pricing_groups'], true);
-            if (json_last_error() === JSON_ERROR_NONE) {
+            if (json_last_error() == JSON_ERROR_NONE) {
                 $data['pricing_groups'] = is_array($decoded) ? $decoded : [];
             } else {
                 throw ValidationException::withMessages([
@@ -483,21 +486,78 @@ class ListingService
     {
         $listing = $this->listingModel::with(['venue', 'schedules'])->findOrFail($id);
 
-        $timeSlots = $listing->schedules->map(function ($schedule) use ($listing) {
-            $from = date('H:i', strtotime($schedule->start_time));
-            $to   = date('H:i', strtotime($schedule->end_time));
-            return [
-                'available' => 22,
-                'time'      => "{$from} - {$to}",
-                'capacity' => $listing->capacity,
-                'booked'   => $schedule->booked ?? 10,
-                'duration' => $schedule->duration ?? '1h',
-                'price'    => $schedule->price ?? $listing->base_price,
-            ];
-        });
+        $date    = request('date') ?? now()->toDateString();
+        $venueId = $listing->venue_id;
 
-        $listing = [
+        if (Carbon::parse($date)->lt(now()->startOfDay())) {
+            return sendError('You cannot view time slots for a past date.');
+        }
+
+        $specialDay = SpecialDay::with('timeBlocks')->where('venue_id', $venueId)
+            ->where(function ($q) use ($listing) {
+                $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+            })
+            ->where('date', $date)->active()->first();
+
+        $isHoliday = $specialDay && $specialDay->type == 'holiday';
+
+        $bookings = Booking::where('listing_id', $listing->id)
+            ->where('date', $date)
+            ->whereNotIn('status', [BookingStatus::CANCELLED])
+            ->get(['start_time', 'end_time']);
+
+        $duration  = $listing->duration ?? 60; // in minutes (can also come from schedule)
+        $timeSlots = collect();
+
+        foreach ($listing->schedules as $schedule) {
+            $start = Carbon::parse($schedule->start_time);
+            $end   = Carbon::parse($schedule->end_time);
+
+            while ($start->lt($end)) {
+                $slotStart = $start->format('H:i');
+                $slotEnd   = $start->copy()->addMinutes($duration)->format('H:i');
+
+                if (Carbon::parse($slotEnd)->gt($end)) {
+                    break;
+                }
+
+                // Check if booked
+                $isBooked = $bookings->contains(function ($b) use ($slotStart, $slotEnd) {
+                    return ! (
+                        strtotime($b->end_time) <= strtotime($slotStart) ||
+                        strtotime($b->start_time) >= strtotime($slotEnd)
+                    );
+                });
+
+                // Calculate price
+                $price = $listing->base_price;
+                if ($specialDay && $specialDay->timeBlocks->count()) {
+                    foreach ($specialDay->timeBlocks as $block) {
+                        $blockStart = strtotime($block->start_time);
+                        $blockEnd   = strtotime($block->end_time);
+                        if (strtotime($slotStart) >= $blockStart && strtotime($slotEnd) <= $blockEnd) {
+                            $price = $block->price_per_hour ?? $price;
+                        }
+                    }
+                }
+
+                $timeSlots->push([
+                    'time' => "{$slotStart} - {$slotEnd}",
+                    'capacity'   => $listing->capacity,
+                    'booked'     => $isBooked,
+                    'available'  => $isHoliday ? false : ! $isBooked,
+                    'is_holiday' => $isHoliday,
+                    'duration'   => "{$duration}m",
+                    'price' => $price,
+                ]);
+
+                $start->addMinutes($duration);
+            }
+        }
+
+        $listingData = [
             'id'              => $listing->id,
+            'venue_id'        => $listing->venue_id,
             'name'            => $listing->name,
             'duration'        => $listing->duration,
             'price'           => $listing->base_price,
@@ -511,10 +571,97 @@ class ListingService
             'images'          => $listing->images_urls ?? [],
             'map_address'     => $listing->venue?->maps_url,
             'rating'          => round($listing->average_rating, 1),
+            'is_holiday'      => $isHoliday,
+            'special_day'     => $specialDay?->description,
         ];
 
-        return sendSuccess('Listing fetched successfully', compact('listing', 'timeSlots'));
+        return sendSuccess('Listing fetched successfully', [
+            'listing'   => $listingData,
+            'timeSlots' => $timeSlots,
+        ]);
     }
+
+    // public function listing($id)
+    // {
+    //     $listing = $this->listingModel::with(['venue', 'schedules'])->findOrFail($id);
+
+    //     $date    = request('date') ?? now()->toDateString();
+    //     $venueId = $listing->venue_id;
+
+    //     if (Carbon::parse($date)->lt(now()->startOfDay())) {
+    //         return sendError('You cannot view time slots for a past date.');
+    //     }
+
+    //     $specialDay = SpecialDay::with('timeBlocks')->where('venue_id', $venueId)
+    //         ->where(function ($q) use ($listing) {
+    //             $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+    //         })
+    //         ->where('date', $date)->active()->first();
+
+    //     $isHoliday = $specialDay && $specialDay->type == 'holiday';
+
+    //     $bookings = Booking::where('listing_id', $listing->id)->where('date', $date)
+    //         ->whereNotIn('status', [BookingStatus::CANCELLED])->get(['start_time', 'end_time']);
+
+    //     $timeSlots = $listing->schedules->map(function ($schedule) use ($listing, $bookings, $isHoliday, $specialDay) {
+    //         $from = date('H:i', strtotime($schedule->start_time));
+    //         $to   = date('H:i', strtotime($schedule->end_time));
+
+    //         $isBooked = $bookings->contains(function ($b) use ($from, $to) {
+    //             return ! (
+    //                 strtotime($b->end_time) <= strtotime($from) ||
+    //                 strtotime($b->start_time) >= strtotime($to)
+    //             );
+    //         });
+
+    //         $price = $listing->base_price;
+
+    //         if ($specialDay && $specialDay->timeBlocks->count()) {
+    //             foreach ($specialDay->timeBlocks as $block) {
+    //                 $blockStart = strtotime($block->start_time);
+    //                 $blockEnd   = strtotime($block->end_time);
+    //                 if (strtotime($from) >= $blockStart && strtotime($to) <= $blockEnd) {
+    //                     $price = $block->price_per_hour ?? $price;
+    //                 }
+    //             }
+    //         }
+
+    //         return [
+    //             'time' => "{$from} - {$to}",
+    //             'capacity'   => $listing->capacity,
+    //             'booked'     => $isBooked,
+    //             'available'  => $isHoliday ? false : ! $isBooked,
+    //             'is_holiday' => $isHoliday,
+    //             'duration'   => $schedule->duration ?? '1h',
+    //             'price'      => $price,
+    //         ];
+    //     });
+
+    //     $listingData = [
+    //         'id'              => $listing->id,
+    //         'venue_id'        => $listing->venue_id,
+    //         'name'            => $listing->name,
+    //         'duration'        => $listing->duration,
+    //         'price'           => $listing->base_price,
+    //         'description'     => $listing->description,
+    //         'sport'           => $listing->sports_type,
+    //         'venue'           => $listing->venue?->name,
+    //         'loyalty_points'  => $listing->loyalty_points,
+    //         'calendar_color'  => $listing->calendar_color,
+    //         'payment_options' => $listing->payment_options,
+    //         'amenities'       => $listing->amenities ?? [],
+    //         'images'          => $listing->images_urls ?? [],
+    //         'map_address'     => $listing->venue?->maps_url,
+    //         'rating'          => round($listing->average_rating, 1),
+    //         'is_holiday'      => $isHoliday,
+    //         'special_day'     => $specialDay?->description,
+    //     ];
+
+    //     return sendSuccess('Listing fetched successfully', [
+    //         'listing'   => $listingData,
+    //         'timeSlots' => $timeSlots,
+    //     ]);
+    // }
 
     public function fetchSuggestions($request)
     {

@@ -3,7 +3,11 @@ namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Services\PaymentService;
+use Exception;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Stripe\PaymentIntent;
+use Stripe\Stripe;
 
 class PaymentController extends Controller
 {
@@ -33,5 +37,35 @@ class PaymentController extends Controller
     public function downloadInvoice($id)
     {
         return $this->paymentService->downloadInvoice($id);
+    }
+
+    public function createPaymentIntent(Request $request)
+    {
+        $request->validate([
+            'amount'   => 'required|numeric|min:1',
+            'currency' => 'required|string',
+        ]);
+
+        Stripe::setApiKey(config('services.stripe.secret'));
+
+        try {
+            $intent = PaymentIntent::create([
+                'amount'   => $request->amount * 100,
+                'currency' => $request->currency,
+                'metadata' => [
+                    'listing_id' => $request->listing_id,
+                    'user_id'    => auth()->id(),
+                ],
+            ]);
+
+            return sendSuccess("Client secret", [
+                'clientSecret'    => $intent->client_secret,
+                'paymentIntentId' => $intent->id,
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Stripe Payment Intent Error: ' . $e->getMessage());
+            return sendError("Something went wrong: " . $e->getMessage());
+        }
     }
 }

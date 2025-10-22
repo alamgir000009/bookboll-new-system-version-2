@@ -78,7 +78,7 @@ class Promocode extends Model
         }
 
         if ($this->payment_methods !== 'all') {
-            if ($this->payment_methods === 'online_only' && $paymentMethod !== 'online') {
+            if ($this->payment_methods == 'online_only' && $paymentMethod !== 'online') {
                 return false;
             }
         }
@@ -109,9 +109,9 @@ class Promocode extends Model
     {
         $discount = 0;
 
-        if ($this->discount_type === 'percentage') {
+        if ($this->discount_type == 'percentage') {
             $discount = ($orderAmount * $this->discount_value) / 100;
-        } elseif ($this->discount_type === 'fixed') {
+        } elseif ($this->discount_type == 'fixed') {
             $discount = $this->discount_value;
         }
 
@@ -140,7 +140,7 @@ class Promocode extends Model
 
     public function getFormattedDiscountAttribute()
     {
-        if ($this->discount_type === 'percentage') {
+        if ($this->discount_type == 'percentage') {
             return $this->discount_value . '%';
         }
         return 'QAR ' . number_format($this->discount_value, 2);

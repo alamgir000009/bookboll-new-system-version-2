@@ -5,7 +5,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Http\Request;
-use PaymnetStatus;
+use PaymentStatus;
 
 class LoyaltyPointController extends Controller
 {
@@ -27,7 +27,7 @@ class LoyaltyPointController extends Controller
                     $q->selectRaw('COALESCE(SUM(amount), 0)')
                         ->from('payments')
                         ->whereColumn('payments.user_id', 'users.id')
-                        ->where('payments.status', PaymnetStatus::PAID);
+                        ->where('payments.status', PaymentStatus::PAID);
                 },
             ])
             ->orderByDesc('loyalty_balance')->take(10)->get();

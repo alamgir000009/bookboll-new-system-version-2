@@ -89,7 +89,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory']);
         Route::get('bookings/form-data', [BookingController::class, 'formData']);
         Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar']);
-        Route::post('bookings/{booking}/cancel', [BookingController::class, 'cancel']);
+        Route::put('bookings/{booking}/cancel', [BookingController::class, 'cancel']);
         Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings']);
         Route::apiResource('bookings', BookingController::class);
 
@@ -120,6 +120,13 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards']);
         Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard']);
 
+        Route::post('bookings/confirm', [BookingController::class, 'confirmBooking']);
+        Route::get('bookings/upcoming', [BookingController::class, 'upcoming']);
+        Route::get('bookings/recent', [BookingController::class, 'recent']);
+        Route::post('bookings/{id}/pay', [BookingController::class, 'pay']);
+        Route::post('bookings/{id}/cancel', [BookingController::class, 'cancel']);
+         Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent']);
+
     });
 
 });
@@ -148,3 +155,4 @@ Route::get('fetch-listings', [ListingController::class, 'fetchListings']);
 Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings']);
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing']);
 Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons']);
+Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode']);
