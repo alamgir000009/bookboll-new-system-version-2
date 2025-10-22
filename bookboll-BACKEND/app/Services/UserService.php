@@ -551,7 +551,9 @@ class UserService
             ['token' => Hash::make($token), 'created_at' => Carbon::now()]
         );
 
-        $url = config('app.frontend_url') . '/reset-password?token=' . $token . '&email=' . urlencode($request->email);
+        $domain = $request->domain ?? config('app.frontend_url');
+
+        $url = $domain . '/reset-password?token=' . $token . '&email=' . urlencode($request->email);
 
         Mail::to($request->email)->send(new ForgetPasswordEmail($url));
 
