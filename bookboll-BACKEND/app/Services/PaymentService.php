@@ -27,6 +27,7 @@ class PaymentService
             'user:id,name,email',
             'booking.venue:id,name',
         ])
+        ->latest()
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('type', 'LIKE', "%{$search}%")
