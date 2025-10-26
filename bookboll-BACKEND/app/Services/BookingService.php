@@ -51,7 +51,7 @@ class BookingService
             ->when($request->user ?? null, function ($q, $user) {
                 $q->whereHas('user', fn($u) => $u->where('name', 'LIKE', "%{$user}%"));
             })
-            ->latest()
+            ->latest('id')
             ->paginate($records_per_page);
 
         return sendSuccess('Bookings fetched successfully', compact('bookings'));
