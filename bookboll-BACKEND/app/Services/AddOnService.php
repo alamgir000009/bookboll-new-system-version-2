@@ -47,8 +47,13 @@ class AddOnService
             'description'     => 'nullable|string',
             'price'           => 'sometimes|required|numeric|min:0',
             'hours_extension' => 'nullable|integer|min:0',
-            'status'          => 'sometimes|required|in:active,inactive',
+            'status'          => 'required|in:active,inactive',
+            'image'           => 'exclude_if:image,null|image|mimes:jpg,jpeg,png,webp|max:2048',
         ]);
+
+        if ($request->hasFile('image')) {
+            $formData['image'] = $request->file('image')->store('addons', 'public');
+        }
 
         $addOn->update($formData);
 

@@ -19,6 +19,7 @@ return new class extends Migration
             $table->string('currency')->default('qar');
             $table->integer('hours_extension')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active');
+            $table->string('image', 255)->nullable();
             $table->timestamps();
             $table->index('status');
         });

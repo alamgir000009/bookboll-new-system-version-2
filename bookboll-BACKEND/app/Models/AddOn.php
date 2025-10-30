@@ -7,6 +7,7 @@ class AddOn extends Model
 {
     protected $fillable = [
         'name',
+        'image',
         'price',
         'status',
         'currency',
@@ -15,12 +16,17 @@ class AddOn extends Model
     ];
 
     protected $casts = [
-        'price'           => 'decimal:2',
         'hours_extension' => 'integer',
+        'price'           => 'decimal:2',
     ];
 
     public function scopeActive($query)
     {
         return $query->where('status', 'active');
+    }
+
+    public function getImageAttribute($image)
+    {
+        return $image ? url("storage/{$image}") : null;
     }
 }

@@ -18,6 +18,7 @@ class SportsCategory extends Model
     {
         return $image ? url("storage/{$image}") : null;
     }
+
     public function scopeActive($query)
     {
         return $query->where('status', 'active');
