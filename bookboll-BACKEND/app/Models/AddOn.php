@@ -11,6 +11,7 @@ class AddOn extends Model
         'price',
         'status',
         'currency',
+        'sort_order',
         'description',
         'hours_extension',
     ];

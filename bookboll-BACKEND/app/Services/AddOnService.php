@@ -2,6 +2,7 @@
 namespace App\Services;
 
 use App\Models\AddOn;
+use Exception;
 
 class AddOnService
 {
@@ -12,7 +13,7 @@ class AddOnService
     {
         $search = $request->search ?? null;
 
-        $addOns = $this->addOnModel::latest()
+        $addOns = $this->addOnModel::orderBy('sort_order', 'ASC')
             ->when($search, function ($query, $search) {
                 $query->where('name', 'LIKE', "%{$search}%")
                     ->orWhere('status', 'LIKE', "%{$search}%")
@@ -65,5 +66,24 @@ class AddOnService
         $addOn = $this->addOnModel->findOrFail($id);
         $addOn->delete();
         return sendSuccess('Add-On deleted successfully');
+    }
+
+    public function reorder($request)
+    {
+        $request->validate([
+            'order'   => 'required|array',
+            'order.*' => 'exists:add_ons,id',
+        ]);
+
+        try {
+
+            foreach ($request->order as $index => $id) {
+                AddOn::where('id', $id)->update(['sort_order' => $index]);
+            }
+
+            return sendSuccess('Order updated successfully');
+        } catch (Exception $e) {
+            return sendError('Failed to update order');
+        }
     }
 }

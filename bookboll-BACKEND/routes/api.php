@@ -61,6 +61,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
         Route::get('audit-logs/export', [AuditLogController::class, 'export']);
 
+        Route::post('add-ons/reorder', [AddOnController::class, 'reorder']);
         Route::apiResource('add-ons', AddOnController::class);
 
         Route::apiResource('listings', ListingController::class);

@@ -20,6 +20,7 @@ return new class extends Migration
             $table->integer('hours_extension')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->string('image', 255)->nullable();
+            $table->integer('sort_order')->default(0);
             $table->timestamps();
             $table->index('status');
         });

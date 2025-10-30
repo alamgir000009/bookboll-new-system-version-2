@@ -29,4 +29,8 @@ class AddOnController extends Controller
     {
         return $this->addOnService->delete($id);
     }
+    public function reorder(Request $request)
+    {
+        return $this->addOnService->reorder($request);
+    }
 }
