@@ -17,8 +17,10 @@ return new class extends Migration
             $table->enum('type', ['credit', 'debit']);
             $table->integer('points');
             $table->string('reason');
-            $table->foreignId('booking_id')->nullable()->constrained()->onDelete('set null');
+            $table->foreignId('booking_id')->nullable()->constrained()->nullOnDelete();
             $table->timestamps();
+
+            $table->index(['user_id', 'booking_id', 'points']);
         });
     }
 

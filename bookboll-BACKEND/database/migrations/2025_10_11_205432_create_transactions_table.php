@@ -20,6 +20,9 @@ return new class extends Migration
             $table->decimal('amount', 15, 2);
             $table->longText('reason')->nullable();
             $table->timestamps();
+
+            $table->index(['user_id', 'gift_card_id', 'booking_id']);
+            $table->index(['type', 'amount']);
         });
     }
 

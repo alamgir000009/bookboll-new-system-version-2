@@ -5,10 +5,10 @@ use App\Services\AuditLogService;
 if (! class_exists('BookingStatus')) {
     class BookingStatus
     {
-        public const PENDING         = 'pending';
-        public const CONFIRMED       = 'confirmed';
-        public const COMPLETED       = 'completed';
-        public const CANCELLED       = 'cancelled';
+        public const PENDING   = 'pending';
+        public const CONFIRMED = 'confirmed';
+        public const COMPLETED = 'completed';
+        public const CANCELLED = 'cancelled';
 
         public static function list(): array
         {
@@ -27,7 +27,7 @@ if (! class_exists('PaymentStatus')) {
     {
         public const PAID    = 'paid';
         public const PENDING = 'pending';
-        public const UNPAID = 'unpaid';
+        public const UNPAID  = 'unpaid';
 
         public static function list(): array
         {
@@ -40,12 +40,79 @@ if (! class_exists('PaymentStatus')) {
     }
 }
 
+if (! class_exists('BookingPaymentStatus')) {
+    class BookingPaymentStatus
+    {
+        public const PENDING      = 'pending';
+        public const FULLY_PAID   = 'fully_paid';
+        public const DEPOSIT_PAID = 'deposit_paid';
+
+        public static function list(): array
+        {
+            return [
+                self::PENDING,
+                self::FULLY_PAID,
+                self::DEPOSIT_PAID,
+            ];
+        }
+    }
+}
+
+if (! class_exists('BookingPaymentMethod')) {
+    class BookingPaymentMethod
+    {
+        public const ONLINE_PAYMENT               = 'online_payment';
+        public const CASH_ON_ARRIVAL              = 'cash_on_arrival';
+        public const DEPOSIT_REMAINING_ON_ARRIVAL = 'deposit_remaining_on_arrival';
+
+        public static function list(): array
+        {
+            return [
+                self::CASH_ON_ARRIVAL,
+                self::ONLINE_PAYMENT,
+                self::DEPOSIT_REMAINING_ON_ARRIVAL,
+            ];
+        }
+    }
+}
+
 if (! class_exists('PaymentMethod')) {
     class PaymentMethod
     {
-        public const DEPOSIT_REMAININ_ON_ARRIVAL = 'deposit_remaining_on_arrival';
-        public const REMAINING                   = 'remaining';
-        public const ONLINE                      = 'online';
+
+        public const CASH          = 'cash';
+        public const ONLINE        = 'online';
+        public const CHEQUE        = 'cheque';
+        public const WIRE_TRANSFER = 'wire_transfer';
+
+        public static function list()
+        {
+            return [
+                self::CASH,
+                self::ONLINE,
+                self::CHEQUE,
+                self::WIRE_TRANSFER,
+            ];
+        }
+    }
+}
+
+if (! class_exists('PaymentType')) {
+    class PaymentType
+    {
+
+        public const FULL      = 'full';
+        public const DEPOSIT   = 'deposit';
+        public const REMAINING = 'remaining';
+
+        public static function list()
+        {
+            return [
+                self::FULL,
+                self::DEPOSIT,
+                self::REMAINING,
+            ];
+        }
     }
 }
 

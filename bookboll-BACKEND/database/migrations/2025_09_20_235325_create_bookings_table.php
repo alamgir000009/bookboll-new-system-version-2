@@ -13,10 +13,11 @@ return new class extends Migration
     {
         Schema::create('bookings', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->constrained('users')->cascadeOnDelete(); // Customer
-            $table->foreignId('venue_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('listing_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('user_id')->comment('Used for customers')->constrained('users')->cascadeOnDelete();
+            $table->foreignId('venue_id')->nullable()->constrained()->nullOnDelete();
+            $table->foreignId('listing_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('promocode_id')->nullable()->constrained('promocodes')->nullOnDelete();
+            $table->string('reference_number')->unique()->nullable();
             $table->date('date')->nullable();
             $table->time('start_time')->nullable();
             $table->time('end_time')->nullable();
@@ -25,18 +26,22 @@ return new class extends Migration
             $table->decimal('discount_amount')->default(0);
             $table->decimal('total_price', 15, 2);
             $table->boolean('full_payment_received')->default(false);
-            $table->text('notes')->nullable();
+            $table->longText('notes')->nullable();
             $table->text('cancel_reason')->nullable();
             $table->foreignId('cancelled_by')->nullable()->constrained('users')->references('id')->nullOnDelete();
             $table->timestamp('cancelled_at')->nullable();
-            $table->enum('status', \BookingStatus::list())->default(\BookingStatus::PENDING);
-            $table->enum('payment_status', ['pending', 'fully_paid', 'deposit_paid'])->nullable();
-            $table->enum('payment_method', ['deposit_remaining_on_arrival', 'online_payment', 'cash_on_arrival'])->default('cash_on_arrival');
+            $table->decimal('refunded_amount', 15, 2)->default(0);
+            $table->timestamp('refunded_at')->nullable();
+            $table->enum('status', BookingStatus::list())->default(BookingStatus::PENDING);
+            $table->enum('payment_status', BookingPaymentStatus::list())->nullable();
+            $table->enum('payment_method', BookingPaymentMethod::list())->default(BookingPaymentMethod::CASH_ON_ARRIVAL);
             $table->json('payment_breakdown')->nullable();
             $table->integer('loyalty_points_earned')->nullable();
             $table->timestamps();
-            $table->index(['user_id', 'status']);
-            $table->index(['listing_id', 'start_time', 'end_time']);
+
+            $table->index(['user_id', 'venue_id', 'listing_id']);
+            $table->index(['date', 'start_time', 'end_time']);
+            $table->index(['reference_number', 'total_price', 'status']);
         });
     }
 

@@ -25,9 +25,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->dropIndex([
-                'stripe_id',
-            ]);
+            $table->dropIndex(['stripe_id']);
 
             $table->dropColumn([
                 'stripe_id',

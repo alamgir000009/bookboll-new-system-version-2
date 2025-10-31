@@ -18,6 +18,8 @@ return new class extends Migration
             $table->string('action')->nullable();
             $table->longText('description')->nullable();
             $table->timestamps();
+
+            $table->index(['user_id', 'booking_id', 'action']);
         });
     }
 

@@ -12,6 +12,7 @@ class Venue extends Model
         'name',
         'status',
         'maps_url',
+        'sort_order',
         'description',
         'min_advance_booking',
         'max_bookings_per_slot',

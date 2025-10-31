@@ -34,6 +34,8 @@ class AddOnService
             'status'          => 'required|in:active,inactive',
         ]);
 
+        $formData['sort_order'] = $this->addOnModel->max('id') + 1;
+
         $addOn = $this->addOnModel::create($formData);
 
         return sendSuccess('AddOn added successfully', compact('addOn'));

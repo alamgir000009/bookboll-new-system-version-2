@@ -25,6 +25,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->foreign('actor_id')->references('id')->on('users')->onDelete('set null');
+            
             $table->index(['timestamp', 'action', 'resource']);
         });
     }

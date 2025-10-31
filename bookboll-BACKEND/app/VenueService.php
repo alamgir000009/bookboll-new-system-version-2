@@ -2,6 +2,8 @@
 namespace App;
 
 use App\Models\Venue;
+use Exception;
+use Illuminate\Support\Facades\DB;
 
 class VenueService
 {
@@ -22,7 +24,7 @@ class VenueService
                         ->orWhere('max_bookings_per_slot', 'LIKE', "%{$search}%");
                 });
             })
-            ->latest()
+            ->latest('sort_order')
             ->get();
 
         return sendSuccess('Venues fetched successfully', compact('venues'));
@@ -46,6 +48,8 @@ class VenueService
 
         $schedules = $formData['schedule'];
         unset($formData['schedule']);
+
+        $formData['sort_order'] = $this->venueModel->max('id') + 1;
 
         $venue = $this->venueModel::create($formData);
 
@@ -109,5 +113,39 @@ class VenueService
     {
         $venue = $this->venueModel::with(['schedules', 'users', 'listings'])->findOrFail($id);
         return sendSuccess('Venue fetched successfully', compact('venue'));
+    }
+
+    public function updateSortingOrder($request)
+    {
+        $request->validate([
+            'updates'              => 'required|array|min:1',
+            'updates.*.id'         => 'required|integer|exists:venues,id',
+            'updates.*.sort_order' => 'required|integer|min:1',
+        ]);
+
+        $updates  = $request->input('updates');
+        $venueIds = collect($updates)->pluck('id')->toArray();
+
+        $sortOrders = collect($updates)->pluck('sort_order')->sort()->values()->toArray();
+        if (count(array_unique($sortOrders)) !== count($sortOrders) || $sortOrders[0] !== 1
+            || end($sortOrders) !== count($sortOrders)) {
+            return sendError('Sort orders must be unique, sequential integers starting from 1.');
+        }
+
+        DB::beginTransaction();
+
+        try {
+            foreach ($updates as $update) {
+                $this->venueModel::where('id', $update['id'])->update(['sort_order' => $update['sort_order']]);
+            }
+
+            DB::commit();
+
+            return sendSuccess('Sort order updated successfully.', ['data' => ['updated_venues' => $venueIds]]);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            return sendError('Failed to update sort order: ' . $e->getMessage());
+        }
     }
 }

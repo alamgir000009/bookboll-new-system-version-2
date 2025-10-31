@@ -1,7 +1,7 @@
 <?php
 namespace Database\Seeders;
 
-use App\Models\SportsCategory;
+use App\Models\SportsType;
 use Illuminate\Database\Seeder;
 
 class SportsCategoryTableSeeder extends Seeder
@@ -60,8 +60,11 @@ class SportsCategoryTableSeeder extends Seeder
             ],
         ];
 
-        foreach ($categories as $category) {
-            SportsCategory::create($category);
+        foreach ($categories as $index => $category) {
+            $type = SportsType::firstWhere("name", $category['type']);
+            unset($category['type']);
+            $category['sort_order'] = $index + 1;
+            $type->sportsCategories()->create($category);
         }
     }
 }

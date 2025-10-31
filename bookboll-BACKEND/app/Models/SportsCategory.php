@@ -7,12 +7,18 @@ class SportsCategory extends Model
 {
     protected $fillable = [
         'name',
-        'type',
         'icon',
         'image',
         'status',
+        'sort_order',
         'description',
+        'sports_type_id',
     ];
+
+    public function sportsType()
+    {
+        return $this->belongsTo(SportsType::class);
+    }
 
     public function getImageAttribute($image)
     {

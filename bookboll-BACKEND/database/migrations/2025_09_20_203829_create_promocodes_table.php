@@ -28,7 +28,8 @@ return new class extends Migration
             $table->json('used_by_users')->default('{}');
             $table->unsignedInteger('used_count')->default(0);
             $table->timestamps();
-            $table->index(['status', 'valid_from', 'expires_at']);
+
+            $table->index(['code', 'status', 'valid_from', 'expires_at']);
         });
     }
 

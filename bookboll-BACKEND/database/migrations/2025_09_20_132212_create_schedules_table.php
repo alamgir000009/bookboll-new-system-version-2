@@ -20,8 +20,8 @@ return new class extends Migration
             $table->string('start_time')->nullable();
             $table->string('end_time')->nullable();
             $table->timestamps();
-            $table->index(['venue_id', 'listing_id']);
-            $table->index('day');
+
+            $table->index(['venue_id', 'listing_id', 'day', 'start_time', 'end_time']);
         });
     }
 

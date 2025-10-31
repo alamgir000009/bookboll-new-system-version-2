@@ -26,6 +26,9 @@ return new class extends Migration
             $table->boolean('recommended')->default(true);
             $table->integer('helpful_count')->default(0);
             $table->timestamps();
+
+            $table->index(['user_id', 'listing_id', 'booking_id']);
+            $table->index(['overall_rating', 'recommended']);
         });
     }
 

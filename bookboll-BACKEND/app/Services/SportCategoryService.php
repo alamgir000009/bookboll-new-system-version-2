@@ -2,30 +2,33 @@
 namespace App\Services;
 
 use App\Models\SportsCategory;
+use App\Models\SportsType;
 use Exception;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class SportCategoryService
 {
-    public function __construct(protected SportsCategory $sportCategoryModel)
+    public function __construct(protected SportsCategory $sportCategoryModel, protected SportsType $sportsTypeModel)
     {}
 
     public function all()
     {
-        $categories = $this->sportCategoryModel::orderBy('name')->get();
-        return sendSuccess('Sports categories retrieved successfully', compact('categories'));
+        $types      = $this->sportsTypeModel::orderBy('name')->get(['id', 'name']);
+        $categories = $this->sportCategoryModel::with(['sportsType:id,name'])->orderBy('name')->get();
+        return sendSuccess('Sports categories retrieved successfully', compact('types', 'categories'));
     }
 
     public function create($request)
     {
         $formData = $request->validate([
-            'name'        => 'required|string|max:255|unique:sports_categories,name',
-            'description' => 'nullable|string|max:500',
-            'icon'        => 'nullable|string|max:10',
-            'type'        => 'required|string|max:100',
-            'image'       => 'nullable|image',
-            'status'      => 'required|in:active,inactive',
+            'name'           => 'required|string|max:255|unique:sports_categories,name',
+            'description'    => 'nullable|string|max:500',
+            'icon'           => 'nullable|string|max:10',
+            'sports_type_id' => 'required|numeric|exists:sports_types,id',
+            'image'          => 'nullable|image',
+            'status'         => 'required|in:active,inactive',
         ]);
 
         try {
@@ -41,13 +44,16 @@ class SportCategoryService
             }
 
             $category = SportsCategory::create([
-                'image'       => $image,
-                'icon'        => $icon,
-                'name'        => $formData['name'],
-                'type'        => $formData['type'],
-                'status'      => $formData['status'],
-                'description' => $formData['description'],
+                'icon'           => $icon,
+                'image'          => $image,
+                'name'           => $formData['name'],
+                'status'         => $formData['status'],
+                'description'    => $formData['description'],
+                'sports_type_id' => $formData['sports_type_id'],
+                'sort_order'     => $this->sportCategoryModel->max('id') + 1,
             ]);
+
+            $category->load('sportsType');
 
             return sendSuccess('Sports category created successfully', compact('category'));
         } catch (Exception $e) {
@@ -61,12 +67,12 @@ class SportCategoryService
         $category = SportsCategory::findOrFail($id);
 
         $formData = $request->validate([
-            'name'        => 'required|string|max:255|unique:sports_categories,name,' . $id,
-            'description' => 'nullable|string|max:500',
-            'icon'        => 'nullable|string|max:10',
-            'type'        => 'required|string|max:100',
-            'image'       => 'nullable|image',
-            'status'      => 'required|in:active,inactive',
+            'name'           => 'required|string|max:255|unique:sports_categories,name,' . $id,
+            'description'    => 'nullable|string|max:500',
+            'icon'           => 'nullable|string|max:10',
+            'sports_type_id' => 'required|numeric|exists:sports_types,id',
+            'image'          => 'nullable|image',
+            'status'         => 'required|in:active,inactive',
         ]);
 
         try {
@@ -87,15 +93,15 @@ class SportCategoryService
                 $image = null;
                 $icon  = $newIcon;
             } else {
-                $icon  = $category->icon;
+                $icon = $category->icon;
             }
 
             $data = [
-                'icon'        => $icon,
-                'name'        => $formData['name'],
-                'type'        => $formData['type'],
-                'status'      => $formData['status'],
-                'description' => $formData['description'],
+                'icon'           => $icon,
+                'name'           => $formData['name'],
+                'status'         => $formData['status'],
+                'description'    => $formData['description'],
+                'sports_type_id' => $formData['sports_type_id'],
             ];
 
             if ($image) {
@@ -103,6 +109,7 @@ class SportCategoryService
             }
 
             $category->update($data);
+            $category->load('sportsType');
 
             return sendSuccess('Sports category updated successfully', compact('category'));
         } catch (Exception $e) {
@@ -137,5 +144,52 @@ class SportCategoryService
     {
         $sportsCategories = $this->sportCategoryModel::active()->orderBy('name')->get();
         return sendSuccess('Sports categories retrieved successfully', compact('sportsCategories'));
+    }
+
+    public function updateSortOrder($request)
+    {
+        $request->validate([
+            'updates'              => 'required|array|min:1',
+            'updates.*.id'         => 'required|integer|exists:sports_categories,id',
+            'updates.*.sort_order' => 'required|integer|min:1',
+        ]);
+
+        $updates     = $request->input('updates');
+        $categoryIds = collect($updates)->pluck('id')->toArray();
+
+        $categories = $this->sportCategoryModel::whereIn('id', $categoryIds)->get(['id', 'sports_type_id']);
+
+        if ($categories->isEmpty()) {
+            return sendError('No categories found.');
+        }
+
+        $sportsTypeId = $categories->first()->sports_type_id;
+        if ($categories->pluck('sports_type_id')->unique()->count() > 1) {
+            return sendError('Categories must belong to the same sports type.');
+        }
+
+        $sortOrders = collect($updates)->pluck('sort_order')->sort()->values()->toArray();
+        if (count(array_unique($sortOrders)) !== count($sortOrders) || $sortOrders[0] !== 1 || end($sortOrders) !== count($sortOrders)) {
+            return sendError('Sort orders must be unique, sequential integers starting from 1.');
+        }
+
+        DB::beginTransaction();
+
+        try {
+            foreach ($updates as $update) {
+                $this->sportCategoryModel::where('id', $update['id'])
+                    ->where('sports_type_id', $sportsTypeId)
+                    ->update(['sort_order' => $update['sort_order']]);
+            }
+
+            DB::commit();
+
+            return sendSuccess('Sort order updated successfully.', [
+                'data' => ['updated_categories' => $categoryIds],
+            ]);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return sendError('Failed to update sort order: ' . $e->getMessage());
+        }
     }
 }

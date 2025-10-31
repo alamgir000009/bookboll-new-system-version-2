@@ -13,14 +13,14 @@ return new class extends Migration
     {
         Schema::create('sports_categories', function (Blueprint $table) {
             $table->id();
-            $table->string('name')->unique();
-            $table->string('type')->nullable();
+            $table->string('name')->unique()->index();
+            $table->foreignId('sports_type_id')->constrained('sports_types')->cascadeOnDelete();
             $table->text('description')->nullable();
             $table->string('icon')->nullable();
             $table->string('image')->nullable();
-            $table->enum('status', ['active', 'inactive'])->default('active');
+            $table->enum('status', ['active', 'inactive'])->default('active')->index();
+            $table->integer('sort_order')->default(0);
             $table->timestamps();
-            $table->index('status');
         });
     }
 

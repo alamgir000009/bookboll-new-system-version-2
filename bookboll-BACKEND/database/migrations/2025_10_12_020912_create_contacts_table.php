@@ -18,6 +18,8 @@ return new class extends Migration
             $table->string('subject');
             $table->text('message');
             $table->timestamps();
+
+            $table->index(['name', 'email', 'subject']);
         });
     }
 

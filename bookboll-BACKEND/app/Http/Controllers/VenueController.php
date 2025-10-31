@@ -39,4 +39,9 @@ class VenueController extends Controller
         return $this->venueService->all($request);
     }
 
+    public function sort(Request $request)
+    {
+        return $this->venueService->updateSortingOrder($request);
+    }
+
 }

@@ -15,14 +15,13 @@ return new class extends Migration
             $table->id();
             $table->foreignId('venue_id')->constrained('venues')->onDelete('cascade');
             $table->foreignId('listing_id')->nullable()->constrained('listings')->onDelete('cascade');
-            $table->date('date')->nullable();
+            $table->date('date');
             $table->enum('type', ['holiday', 'special'])->default('special');
             $table->longText('description')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->timestamps();
 
-            $table->index(['venue_id', 'listing_id', 'status']);
-            $table->index('date');
+            $table->index(['venue_id', 'listing_id', 'date', 'type', 'status']);
         });
     }
 

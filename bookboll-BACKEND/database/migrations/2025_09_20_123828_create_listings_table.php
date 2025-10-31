@@ -29,7 +29,7 @@ return new class extends Migration
             $table->json('amenities')->nullable();
             $table->timestamps();
 
-            $table->index(['venue_id', 'status']);
+            $table->index(['name', 'venue_id', 'sports_type', 'base_price', 'status']);
         });
     }
 

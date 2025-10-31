@@ -22,7 +22,8 @@ return new class extends Migration
             $table->string('image', 255)->nullable();
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            $table->index('status');
+
+            $table->index(['name', 'price', 'hours_extension', 'sort_order', 'status']);
         });
     }
 

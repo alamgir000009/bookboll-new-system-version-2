@@ -14,12 +14,13 @@ return new class extends Migration
     {
         Schema::create('venues', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
+            $table->string('name')->index();
             $table->enum('status', [Venue::ACTIVE, Venue::INACTIVE])->default(Venue::ACTIVE);
             $table->string('maps_url')->nullable();
             $table->text('description')->nullable();
             $table->integer('min_advance_booking')->default(2);
             $table->integer('max_bookings_per_slot')->default(1);
+            $table->integer('sort_order')->default(0);
             $table->timestamps();
         });
     }

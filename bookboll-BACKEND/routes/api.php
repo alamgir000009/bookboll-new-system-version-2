@@ -40,6 +40,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('posts/change-status', [PostController::class, 'changeStatus']);
         Route::get('posts-tags', [PostController::class, 'postTagsList']);
 
+        Route::post('venues/sort', [VenueController::class, 'sort']);
         Route::apiResource('venues', VenueController::class);
 
         Route::apiResource('users', UserController::class);
@@ -50,6 +51,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('settings/{key}', [SettingController::class, 'updateSingle']);
         Route::post('settings', [SettingController::class, 'update']);
 
+        Route::post('sports-categories/sort', [SportsCategoryController::class, 'sort']);
         Route::apiResource('sports-categories', SportsCategoryController::class);
         Route::get('sports-categories/popular-emojis', [SportsCategoryController::class, 'popularEmojis']);
 
@@ -126,7 +128,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('bookings/recent', [BookingController::class, 'recent']);
         Route::post('bookings/{id}/pay', [BookingController::class, 'pay']);
         Route::post('bookings/{id}/cancel', [BookingController::class, 'cancel']);
-         Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent']);
+        Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent']);
 
     });
 

@@ -21,7 +21,8 @@ return new class extends Migration
             $table->string('currency')->default('qar');
             $table->json('days');
             $table->timestamps();
-            $table->index('listing_id');
+
+            $table->index(['name', 'listing_id', 'start_time', 'end_time']);
         });
     }
 

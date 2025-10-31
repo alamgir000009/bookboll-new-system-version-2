@@ -3,6 +3,7 @@ namespace App\Models;
 
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use PaymentStatus;
 
 class Booking extends Model
@@ -12,20 +13,23 @@ class Booking extends Model
         'notes',
         'status',
         'user_id',
-        'venue_id',
         'end_time',
         'duration',
         'subtotal',
+        'venue_id',
         'listing_id',
         'start_time',
         'total_price',
+        'refunded_at',
+        'promocode_id',
         'cancelled_by',
         'cancelled_at',
-        'promocode_id',
         'cancel_reason',
         'payment_status',
         'payment_method',
+        'refunded_amount',
         'discount_amount',
+        'reference_number',
         'payment_breakdown',
         'full_payment_received',
         'loyalty_points_earned',
@@ -166,6 +170,21 @@ class Booking extends Model
                 $booking->duration = abs($end->diffInHours($start));
             }
         });
-    }
 
+        static::creating(function ($booking) {
+
+            $year = now()->year;
+
+            DB::transaction(function () use ($year, $booking) {
+
+                $latestBooking = static::lockForUpdate()->whereYear('created_at', $year)->latest('id')->first();
+
+                $nextBookingNumber = $latestBooking
+                    ? (int) substr($latestBooking->reference_number, -5) + 1
+                    : 1;
+
+                $booking->reference_number = sprintf('BKN_%s_%05d', $year, $nextBookingNumber);
+            });
+        });
+    }
 }

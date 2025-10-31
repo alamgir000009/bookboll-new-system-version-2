@@ -18,7 +18,8 @@ return new class extends Migration
             $table->string('unit_type')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->timestamps();
-            $table->index('status');
+            
+            $table->index(['name', 'total_quantity', 'status']);
         });
     }
 

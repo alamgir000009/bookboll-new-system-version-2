@@ -20,7 +20,7 @@ return new class extends Migration
             $table->string('price_currency')->default('qar');
             $table->timestamps();
 
-            $table->index('special_day_id');
+            $table->index(['special_day_id', 'start_time', 'end_time']);
         });
     }
 

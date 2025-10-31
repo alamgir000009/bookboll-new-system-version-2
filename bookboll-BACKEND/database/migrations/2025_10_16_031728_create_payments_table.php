@@ -16,16 +16,16 @@ return new class extends Migration
             $table->string('payment_id')->unique();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->foreignId('booking_id')->constrained()->cascadeOnDelete();
-            $table->enum('type', ['deposit', 'remaining', 'full'])->default('full');
+            $table->enum('type', PaymentType::list())->default(PaymentType::FULL);
             $table->decimal('amount', 15, 2);
-            $table->enum('method', ['online', 'cash', 'wire_transfer', 'cheque'])->default('cash');
-            $table->enum('status', ['paid', 'pending', 'unpaid'])->default('pending');
+            $table->enum('method', PaymentMethod::list())->default(PaymentMethod::CASH);
+            $table->enum('status', PaymentStatus::list())->default(PaymentStatus::PENDING);
             $table->date('date')->nullable();
             $table->text('notes')->nullable();
             $table->timestamps();
 
-            $table->index(['booking_id', 'user_id', 'status']);
-            $table->index(['date', 'status']);
+            $table->index(['payment_id', 'user_id', 'booking_id']);
+            $table->index(['type', 'method', 'date', 'status']);
         });
     }
 

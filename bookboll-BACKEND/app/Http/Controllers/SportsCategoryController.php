@@ -42,4 +42,9 @@ class SportsCategoryController extends Controller
     {
         return $this->sportCategoryService->sportsCategories();
     }
+
+    public function sort(Request $request)
+    {
+        return $this->sportCategoryService->updateSortOrder($request);
+    }
 }
