@@ -8,13 +8,27 @@ class SportsTypeTableSeeder extends Seeder
 {
     public function run(): void
     {
-        $sportsTypes = ['Sports Facilities', 'Adventure Sports', 'Entertainment Sports'];
+        $sportsTypes = [
+            [
+                'icon' => '⚽',
+                'slug' => 'sports-facilities',
+                'name' => 'Sports Facilities',
+            ],
+            [
+
+                'icon' => '🏜️',
+                'slug' => 'adventure-sports',
+                'name' => 'Adventure Sports',
+            ],
+            [
+                'icon' => '🎱',
+                'slug' => 'entertainment-sports',
+                'name' => 'Entertainment Sports',
+            ],
+        ];
 
         foreach ($sportsTypes as $sportsType) {
-            SportsType::create([
-                "name"       => $sportsType,
-                "slug"       => strtolower(str_replace(" ", "-", $sportsType)),
-            ]);
+            SportsType::create($sportsType);
         }
     }
 }

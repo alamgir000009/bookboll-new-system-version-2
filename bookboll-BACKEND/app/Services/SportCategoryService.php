@@ -15,7 +15,7 @@ class SportCategoryService
 
     public function all()
     {
-        $types      = $this->sportsTypeModel::orderBy('name')->get(['id', 'name']);
+        $types      = $this->sportsTypeModel::orderBy('name')->get(['id', 'icon', 'name']);
         $categories = $this->sportCategoryModel::with(['sportsType:id,name'])->orderBy('name')->get();
         return sendSuccess('Sports categories retrieved successfully', compact('types', 'categories'));
     }

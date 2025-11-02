@@ -8,22 +8,32 @@ use Illuminate\Support\Str;
 
 class SportsTypeController extends Controller
 {
+    public function __construct(protected SportsType $sportsTypeModel)
+    {}
+
     public function store(Request $request)
     {
-        $formData = $request->validate(['name' => 'required|max:255|unique:sports_types,name']);
+        $formData = $request->validate([
+            'icon' => 'nullable|string',
+            'name' => 'required|max:255|unique:sports_types,name',
+        ]);
 
         $formData['slug'] = Str::slug($formData['name']);
 
-        $type = SportsType::create($formData);
+        $type = $this->sportsTypeModel::create($formData);
 
         return sendSuccess('Sports type added successfully', compact('type'), 201);
     }
 
     public function update(Request $request, $id)
     {
-        $type = SportsType::findOrFail($id);
+        $type = $this->sportsTypeModel::findOrFail($id);
 
-        $formData         = $request->validate(['name' => 'required|string|max:255|unique:sports_types,name,' . $id]);
+        $formData = $request->validate([
+            'icon' => 'nullable|string',
+            'name' => 'required|string|max:255|unique:sports_types,name,' . $id,
+        ]);
+
         $formData['slug'] = Str::slug($formData['name']);
 
         $type->update($formData);
@@ -33,7 +43,7 @@ class SportsTypeController extends Controller
 
     public function destroy($id)
     {
-        $type = SportsType::findOrFail($id);
+        $type = $this->sportsTypeModel::findOrFail($id);
         $type->delete();
 
         return sendSuccess('Sports type deleted successfully');
