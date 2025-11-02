@@ -142,8 +142,9 @@ class SportCategoryService
 
     public function sportsCategories()
     {
-        $sportsCategories = $this->sportCategoryModel::active()->orderBy('name')->get();
-        return sendSuccess('Sports categories retrieved successfully', compact('sportsCategories'));
+        $sportsTypes      = $this->sportsTypeModel::with(['sportsCategories:id,name,sports_type_id'])->get(['id', 'icon', 'name']);
+        $sportsCategories = $this->sportCategoryModel::active()->orderBy('sort_order')->get();
+        return sendSuccess('Sports categories retrieved successfully', compact('sportsTypes', 'sportsCategories'));
     }
 
     public function updateSortOrder($request)
