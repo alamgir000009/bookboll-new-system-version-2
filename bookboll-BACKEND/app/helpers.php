@@ -116,6 +116,23 @@ if (! class_exists('PaymentType')) {
     }
 }
 
+if (! class_exists('SubscriberStatus')) {
+    class SubscriberStatus
+    {
+
+        public const SUBSCRIBED   = 'subscribed';
+        public const UNSUBSCRIBED = 'unsubscribed';
+
+        public static function list()
+        {
+            return [
+                self::SUBSCRIBED,
+                self::UNSUBSCRIBED,
+            ];
+        }
+    }
+}
+
 if (! class_exists('CompnayInfo')) {
     class CompnayInfo
     {

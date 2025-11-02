@@ -2,7 +2,7 @@
 namespace App\Services;
 
 use App\Mail\ForgetPasswordEmail;
-use App\Mail\UserWelcomeMail;
+use App\Mail\UserWelcomeEmail;
 use App\Models\Preference;
 use App\Models\User;
 use App\Models\Venue;
@@ -61,7 +61,7 @@ class UserService
             DB::commit();
 
             try {
-                Mail::to($user->email)->queue(new UserWelcomeMail($user, $formData['password']));
+                Mail::to($user->email)->queue(new UserWelcomeEmail($user, $formData['password']));
             } catch (Exception $e) {
                 logger("Failed to send welcome email: " . $e->getMessage(), ['exception' => $e]);
             }
@@ -432,7 +432,7 @@ class UserService
             DB::commit();
 
             try {
-                Mail::to($user->email)->queue(new UserWelcomeMail($user, $formData['password']));
+                Mail::to($user->email)->queue(new UserWelcomeEmail($user, $formData['password']));
             } catch (Exception $e) {
                 logger("Failed to send welcome email: " . $e->getMessage(), ['exception' => $e]);
             }

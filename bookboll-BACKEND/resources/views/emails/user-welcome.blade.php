@@ -1,7 +1,7 @@
 @include('emails.header')
 
 <div class="content">
-    <p>Welcome {{ $user->name }},</p>
+    <h1>Welcome {{ $user->name }},</h1>
     <p>Your account has been created successfully.</p>
     <p>Here are your login credentials:</p>
     <p><strong>- **Email:** {{ $user->email }}</strong></p>

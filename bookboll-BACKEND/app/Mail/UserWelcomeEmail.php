@@ -6,7 +6,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
 
-class UserWelcomeMail extends Mailable
+class UserWelcomeEmail extends Mailable
 {
     use Queueable, SerializesModels;
 
