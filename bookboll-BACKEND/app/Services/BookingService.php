@@ -11,18 +11,24 @@ use App\Models\Resource;
 use App\Models\SpecialDay;
 use App\Models\User;
 use App\Models\Venue;
+use App\Notifications\BookingCancelledUserNotification;
+use App\Notifications\BookingCreatedAdminNotification;
+use App\Notifications\BookingCreatedUserNotification;
 use BookingStatus;
 use Carbon\Carbon;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use PaymentMethod;
 use PaymentStatus;
+use PaymentType;
 
 class BookingService
 {
-    public function __construct(protected Booking $bookingModel)
+    public function __construct(protected Booking $bookingModel, protected Payment $paymentModel)
     {}
 
     public function all($request)
@@ -87,22 +93,24 @@ class BookingService
 
         $request->validate(['cancel_reason' => 'nullable|string|max:255']);
 
-        if ($booking->status == 'cancelled') {
+        if ($booking->status == BookingStatus::CANCELLED) {
             return sendError('Booking is already cancelled.');
         }
 
         $booking->update([
+            'cancelled_at'  => now(),
+            'cancelled_by'  => auth()->id(),
             'status'        => BookingStatus::CANCELLED,
             'cancel_reason' => $request->cancel_reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
-            'cancelled_by'  => auth()->id(),
-            'cancelled_at'  => now(),
         ]);
 
         $booking->history()->create([
+            'user_id'     => auth()->id(),
             'action'      => 'booking cancelled',
             'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
-            'user_id'     => auth()->id(),
         ]);
+
+        $booking->user->notify(new BookingCancelledUserNotification($booking));
 
         return sendSuccess('Booking cancelled successfully.', compact('booking'));
     }
@@ -175,7 +183,7 @@ class BookingService
             'selectedListings' => 'array|nullable',
         ]);
 
-        $payments = Payment::whereBetween('payments.date', [$filters['dateFrom'], $filters['dateTo']])
+        $payments = $this->paymentModel::whereBetween('payments.date', [$filters['dateFrom'], $filters['dateTo']])
             ->join('bookings', 'payments.booking_id', '=', 'bookings.id')
             ->when(! empty($filters['selectedVenues']), function ($q) use ($filters) {
                 return $q->whereIn('bookings.venue_id', $filters['selectedVenues']);
@@ -292,7 +300,7 @@ class BookingService
             'editing_booking_id' => 'nullable|integer',
         ]);
 
-        $dueBookings = Booking::with(['listing', 'payments'])
+        $dueBookings = $this->bookingModel::with(['listing', 'payments'])
             ->where('user_id', $validated['customer_id'])
             ->where('venue_id', $validated['venue_id'])
             ->where('end_time', '<', now())
@@ -332,7 +340,7 @@ class BookingService
         ]);
 
         if (! empty($data['selected_due_bookings'])) {
-            $dueBookings = Booking::whereIn('id', $data['selected_due_bookings'])
+            $dueBookings = $this->bookingModel::whereIn('id', $data['selected_due_bookings'])
                 ->where('user_id', $data['user_id'])
                 ->where('status', BookingStatus::CONFIRMED)
                 ->whereRaw('total_price > COALESCE((SELECT SUM(amount) FROM payments WHERE booking_id = bookings.id), 0)')
@@ -383,7 +391,7 @@ class BookingService
         DB::beginTransaction();
         try {
 
-            $booking = Booking::create([
+            $booking = $this->paymentModel::create([
                 'user_id'               => $data['user_id'],
                 'venue_id'              => $data['venue_id'],
                 'listing_id'            => $data['listing_id'],
@@ -407,12 +415,12 @@ class BookingService
 
             // Handle selected due bookings
             foreach ($data['selected_due_bookings'] ?? [] as $dueId) {
-                $dueBooking = Booking::findOrFail($dueId);
+                $dueBooking = $this->bookingModel::findOrFail($dueId);
                 $dueAmount  = $dueBooking->total_price - $dueBooking->payments()->sum('amount');
 
                 if ($dueAmount > 0) {
                     $paymentId = 'PAY_' . Str::uuid();
-                    Payment::create([
+                    $this->paymentModel::create([
                         'payment_id' => $paymentId,
                         'user_id'    => $data['user_id'],
                         'booking_id' => $dueId,
@@ -451,9 +459,9 @@ class BookingService
                 'booking' => $booking->load(['user', 'venue', 'listing', 'payments', 'addOns']),
             ]);
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
-            \Log::error('Booking creation failed: ' . $e->getMessage());
+            Log::error('Booking creation failed: ' . $e->getMessage());
             return sendError('Failed to create booking', ['error' => $e->getMessage()], 500);
         }
     }
@@ -548,7 +556,7 @@ class BookingService
         // Overlaps (time conflicts on the listing for the date)
         $fullStart = Carbon::parse("{$data['date']} {$data['start_time']}");
         $fullEnd   = Carbon::parse("{$data['date']} {$data['end_time']}");
-        $overlaps  = Booking::whereDate('start_time', $data['date'])
+        $overlaps  = $this->bookingModel::whereDate('start_time', $data['date'])
             ->where('listing_id', $data['listing_id'])
             ->where('status', '!=', 'cancelled')
             ->where('id', '!=', $editingId)
@@ -566,12 +574,12 @@ class BookingService
         return $errors;
     }
 
-    private function createPaymentsForBooking(Booking $booking, string $method, float $totalPrice)
+    private function createPaymentsForBooking($booking, string $method, float $totalPrice)
     {
         $paymentId = 'PAY_' . Str::uuid();
         if ($method == 'cash_on_arrival') {
             // Create pending full payment
-            Payment::create([
+            $this->paymentModel::create([
                 'payment_id' => $paymentId,
                 'user_id'    => $booking->user_id,
                 'booking_id' => $booking->id,
@@ -585,7 +593,7 @@ class BookingService
         } else {
             // For online/deposit, create paid full
             $payMethod = $method == 'online' ? 'online' : ($method == 'deposit' ? 'wire_transfer' : 'cash');
-            Payment::create([
+            $this->paymentModel::create([
                 'payment_id' => $paymentId,
                 'user_id'    => $booking->user_id,
                 'booking_id' => $booking->id,
@@ -727,7 +735,7 @@ class BookingService
             };
 
             // Create booking
-            $booking = Booking::create([
+            $booking = $this->bookingModel::create([
                 'user_id'               => $user->id,
                 'venue_id'              => $formData['venue_id'],
                 'listing_id'            => $formData['listing_id'],
@@ -771,7 +779,7 @@ class BookingService
                     }
                 }
 
-                Payment::create([
+                $this->paymentModel::create([
                     'payment_id' => $this->generatePaymentId($booking->id, 'deposit'),
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
@@ -783,31 +791,30 @@ class BookingService
                     'notes'      => 'Deposit payment for booking #' . $booking->id,
                 ]);
 
-                Payment::create([
+                $this->paymentModel::create([
                     'payment_id' => $this->generatePaymentId($booking->id, 'remaining'),
+                    'date'       => null,
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
-                    'type'       => 'remaining',
-                    'amount'     => $totalPrice - $depositAmount,
-                    'method'     => 'cash',
+                    'method'     => PaymentMethod::CASH,
+                    'type'       => PaymentType::REMAINING,
                     'status'     => PaymentStatus::PENDING,
-                    'date'       => null,
+                    'amount'     => $totalPrice - $depositAmount,
                     'notes'      => 'Remaining payment pending for booking #' . $booking->id,
                 ]);
             } else {
                 $booking->payments()->create([
                     'payment_id' => $this->generatePaymentId($booking->id, 'full'),
                     'user_id'    => $user->id,
-                    'type'       => 'full',
                     'amount'     => $totalPrice,
-                    'method'     => $formData['payment_method'] == 'online_payment' ? 'online' : 'cash',
-                    'status'     => $paymentStatus == 'fully_paid' ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                    'type'       => PaymentType::FULL,
                     'date'       => $paymentStatus == 'fully_paid' ? now()->format('Y-m-d') : null,
-                    'notes'      => $paymentStatus == 'fully_paid' ? 'Full payment for booking #' . $booking->id : 'Payment pending for booking #' . $booking->id,
+                    'status'     => $paymentStatus == 'fully_paid' ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                    'method'     => $formData['payment_method'] == 'online_payment' ? 'online' : PaymentMethod::CASH,
+                    'notes'      => $paymentStatus == 'fully_paid' ? "Full payment for booking #{$booking->id}" : "Payment pending for booking #{$booking->id}",
                 ]);
             }
 
-            // Log booking history
             $booking->history()->create([
                 'action'      => 'booking_created',
                 'description' => 'Booking created via API.',
@@ -816,36 +823,38 @@ class BookingService
 
             if ($paymentStatus == 'deposit_paid') {
                 $booking->history()->create([
+                    'user_id'     => $user->id,
                     'action'      => 'deposit_paid',
                     'description' => 'Deposit payment processed.',
-                    'user_id'     => $user->id,
                 ]);
             }
 
-            // Log::info("Order Placing:", [
-            //     "basePrice"       => $basePrice,
-            //     "duration"        => $duration,
-            //     "subtotal"        => $subtotal,
-            //     "discount"        => $discount,
-            //     "totalPrice"      => $totalPrice,
-            //     "paymentStatus"   => $paymentStatus,
-            //     "formData"        => $formData,
-            //     "booking"         => $booking,
-            //     "bookingPayments" => $booking->payments,
-            // ]);
-            // dd(2);
+            try {
+
+                $user->notify(new BookingCreatedUserNotification($booking));
+
+                // Notify the admin
+                $admins = User::whereHas("roles", function ($query) {
+                    $query->whereIn("name", ["super_admin", "admin"]);
+                })->get();
+
+                Notification::send($admins, new BookingCreatedAdminNotification($booking));
+
+            } catch (Exception $e) {
+                Log::error("Booking created notification errors: " . $e->getMessage(), ["Exception" => $e]);
+            }
 
             DB::commit();
 
-            return sendSuccess('Booking confirmed successfully', [
-                'booking' => $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name']),
-            ]);
+            $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name']);
+
+            return sendSuccess('Booking confirmed successfully', compact('booking'));
 
         } catch (Exception $e) {
 
             DB::rollBack();
             Log::error("Order placing Failed: " . $e->getMessage(), ["Exception" => $e]);
-            return sendError("Something went wrong: " . $e->getMessage());
+            return sendError("Something went wrong please try again later");
         }
     }
 
