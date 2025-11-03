@@ -8,6 +8,7 @@ use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\SportsType;
 use Carbon\Carbon;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
@@ -432,9 +433,12 @@ class ListingService
         $date             = $request->date ?? null;
         $time             = $request->time ?? null;
         $search           = $request->search ?? null;
-        $venue_id         = $request->venueId ?? null;
+        $venue_id         = $request->venue_id ?? null;
         $sports_type      = $request->category ?? null;
+        $categories       = $request->categories ?? [];
         $records_per_page = $request->records_per_page ?? null;
+
+        logger($request->all());
 
         $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType'])
             ->when($search, function ($query, $search) {
@@ -450,6 +454,11 @@ class ListingService
             ->when($sports_type, function ($query, $sports_type) {
                 $query->whereHas('sportsCategory.sportsType', function ($q) use ($sports_type) {
                     $q->where('title', $sports_type);
+                });
+            })
+            ->when($categories, function ($query, $categories) {
+                $query->whereHas('sportsCategory', function ($q) use ($categories) {
+                    $q->whereIn('name', $categories);
                 });
             })
             ->when($date, function ($query, $date) {
@@ -468,11 +477,10 @@ class ListingService
                 });
             });
 
-        // ✅ Fetch data with consistent paginator-like structure
         if (! $records_per_page || $records_per_page === 'all' || (int) $records_per_page === 0) {
             $data = $query->get();
 
-            $listings = new \Illuminate\Pagination\LengthAwarePaginator(
+            $listings = new LengthAwarePaginator(
                 $data,
                 $data->count(),
                 $data->count() ?: 1,
@@ -483,21 +491,20 @@ class ListingService
             $listings = $query->paginate($records_per_page);
         }
 
-        // ✅ Transform each record safely
         $listings->getCollection()->transform(function ($listing) {
             return [
                 'id'              => $listing->id,
                 'name'            => $listing->name,
-                'venue'           => $listing->venue?->name,
-                'sport'           => $listing->sportsCategory?->name,
                 'price'           => $listing->base_price,
                 'description'     => $listing->description,
-                'rating'          => round($listing->average_rating, 1),
-                'images'          => $listing->images_urls ?? [],
-                'duration'        => $listing->duration,
-                'payment_options' => $listing->payment_options,
+                'venue'           => $listing->venue?->name,
+                'duration'        => $listing->slot_duration,
                 'loyalty_points'  => $listing->loyalty_points,
+                'payment_options' => $listing->payment_options,
                 'map_address'     => $listing->venue?->maps_url,
+                'images'          => $listing->images_urls ?? [],
+                'sport'           => $listing->sportsCategory?->name,
+                'rating'          => round($listing->average_rating, 1),
             ];
         });
 
@@ -735,26 +742,27 @@ class ListingService
         $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
 
         $listings = $this->listingModel::with(['venue'])
-            ->when(! empty($categoryIds), function ($query) use ($categoryIds) {
+            ->when($categoryIds, function ($query, $categoryIds) {
                 $query->whereNotIn('sports_category_id', $categoryIds);
             })
-            ->take(4)
+            ->take(3)
             ->get()
             ->map(function ($listing) {
-
                 return [
                     'id'              => $listing->id,
                     'name'            => $listing->name,
-                    'venue'           => $listing->venue?->name,
-                    'sport'           => $listing->sportsCategory?->name,
                     'price'           => $listing->base_price,
                     'description'     => $listing->description,
-                    'rating'          => round($listing->average_rating, 1),
-                    'images'          => $listing->images_urls ?? [],
-                    'duration'        => $listing->duration,
-                    'payment_options' => $listing->payment_options,
+                    'venue'           => $listing->venue?->name,
+                    'duration'        => $listing->slot_duration,
                     'loyaltyPoints'   => $listing->loyalty_points,
+                    'payment_options' => $listing->payment_options,
                     'map_address'     => $listing->venue?->maps_url,
+                    'images'          => $listing->images_urls ?? [],
+                    'sport'           => $listing->sportsCategory?->name,
+                    'category'        => $listing->sportsCategory?->name,
+                    'icon'            => $listing->sportsCategory?->sportsType?->icon,
+                    'rating'          => round($listing->average_rating, 1),
                 ];
             });
 
