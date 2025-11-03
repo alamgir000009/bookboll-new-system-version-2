@@ -514,18 +514,21 @@ class ListingService
 
     public function listing($id)
     {
-        $listing = $this->listingModel::with(['venue'])->findOrFail($id);
+        $date = request('date', now()->toDateString());
 
-        $date    = request()->get('date', now()->toDateString());
-        $venueId = $listing->venue_id;
+        $listing = $this->listingModel::with([
+            'venue:id,name,maps_url',
+            'sportsCategory:id,name',
+        ])->findOrFail($id);
 
-        $specialDay = SpecialDay::with('timeBlocks')->where('venue_id', $venueId)
+        $specialDay = SpecialDay::with('timeBlocks')
+            ->where('venue_id', $listing->venue_id)
             ->where(function ($q) use ($listing) {
                 $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
             })
-            ->where('date', $date)->active()->first();
+            ->whereDate('date', $date)->active()->first();
 
-        $isHoliday = $specialDay && $specialDay->type == 'holiday';
+        $isHoliday = $specialDay?->type === 'holiday';
 
         $listing = [
             'is_holiday'      => $isHoliday,
@@ -543,7 +546,7 @@ class ListingService
             'special_day'     => $specialDay?->description,
             'map_address'     => $listing->venue?->maps_url,
             'images'          => $listing->images_urls ?? [],
-            'sport'           => $listing?->sportsCategory->name,
+            'sport'           => $listing->sportsCategory?->name,
             'rating'          => round($listing->average_rating, 1),
         ];
 
