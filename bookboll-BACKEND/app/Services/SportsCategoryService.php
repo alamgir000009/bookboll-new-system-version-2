@@ -8,15 +8,15 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
-class SportCategoryService
+class SportsCategoryService
 {
     public function __construct(protected SportsCategory $sportCategoryModel, protected SportsType $sportsTypeModel)
     {}
 
     public function all()
     {
-        $types      = $this->sportsTypeModel::orderBy('name')->get(['id', 'icon', 'name']);
-        $categories = $this->sportCategoryModel::with(['sportsType:id,name'])->orderBy('name')->get();
+        $types      = $this->sportsTypeModel::orderBy('title')->get(['id', 'icon', 'title', 'sub_title']);
+        $categories = $this->sportCategoryModel::with(['sportsType:id,title,sub_title'])->orderBy('name')->get();
         return sendSuccess('Sports categories retrieved successfully', compact('types', 'categories'));
     }
 
@@ -114,7 +114,7 @@ class SportCategoryService
             return sendSuccess('Sports category updated successfully', compact('category'));
         } catch (Exception $e) {
             Log::error('Failed to update sports category: ' . $e->getMessage());
-            return sendError('Failed to update sports category: ' . $e->getMessage());
+            return sendError('Failed to update sports category.');
         }
     }
 
@@ -136,14 +136,23 @@ class SportCategoryService
 
         } catch (Exception $e) {
             Log::error('Failed to delete sports category: ' . $e->getMessage());
-            return sendError('Failed to delete sports category: ' . $e->getMessage());
+            return sendError('Failed to delete sports category');
         }
     }
 
     public function sportsCategories()
     {
-        $sportsTypes      = $this->sportsTypeModel::with(['sportsCategories:id,name,sports_type_id'])->get(['id', 'icon', 'name']);
-        $sportsCategories = $this->sportCategoryModel::active()->orderBy('sort_order')->get();
+        $sports_type = request()->get('sports_type', null);
+
+        $sportsTypes      = $this->sportsTypeModel::with(['sportsCategories:id,name,sports_type_id'])
+        ->get(['id', 'icon', 'title', 'sub_title']);
+
+        $sportsCategories = $this->sportCategoryModel::with('sportsType:id,title,sub_title')->active()
+        ->when($sports_type, function($query, $sports_type) {
+            $query->whereRelation('sportsType', 'title', $sports_type);
+        })
+        ->orderBy('sort_order')->get();
+        
         return sendSuccess('Sports categories retrieved successfully', compact('sportsTypes', 'sportsCategories'));
     }
 
@@ -177,11 +186,12 @@ class SportCategoryService
         DB::beginTransaction();
 
         try {
+
             foreach ($updates as $update) {
                 $this->sportCategoryModel::where('id', $update['id'])
                     ->where('sports_type_id', $sportsTypeId)
                     ->update(['sort_order' => $update['sort_order']]);
-            }
+        }
 
             DB::commit();
 
@@ -190,7 +200,8 @@ class SportCategoryService
             ]);
         } catch (Exception $e) {
             DB::rollBack();
-            return sendError('Failed to update sort order: ' . $e->getMessage());
+            Log::error('Failed to update sort order: ' . $e->getMessage());
+            return sendError('Failed to update sort order.');
         }
     }
 }

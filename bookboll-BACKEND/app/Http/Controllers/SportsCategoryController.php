@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\SportsCategory;
-use App\Services\SportCategoryService;
+use App\Services\SportsCategoryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -11,26 +11,26 @@ use Illuminate\Support\Str;
 
 class SportsCategoryController extends Controller
 {
-    public function __construct(protected SportCategoryService $sportCategoryService){}
+    public function __construct(protected SportsCategoryService $sportsCategoryService){}
 
     public function index()
     {
-        return $this->sportCategoryService->all();
+        return $this->sportsCategoryService->all();
     }
 
     public function store(Request $request)
     {
-        return $this->sportCategoryService->create($request);
+        return $this->sportsCategoryService->create($request);
     }
 
     public function update(Request $request, $id)
     {
-        return $this->sportCategoryService->update($request, $id);
+        return $this->sportsCategoryService->update($request, $id);
     }
 
     public function destroy($id)
     {
-        return $this->sportCategoryService->delete($id);
+        return $this->sportsCategoryService->delete($id);
     }
 
     public function popularEmojis()
@@ -40,11 +40,11 @@ class SportsCategoryController extends Controller
 
     public function sportsCategories()
     {
-        return $this->sportCategoryService->sportsCategories();
+        return $this->sportsCategoryService->sportsCategories();
     }
 
     public function sort(Request $request)
     {
-        return $this->sportCategoryService->updateSortOrder($request);
+        return $this->sportsCategoryService->updateSortOrder($request);
     }
 }

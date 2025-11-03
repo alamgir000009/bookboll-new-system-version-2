@@ -17,12 +17,12 @@ class Listing extends Model
         'amenities',
         'base_price',
         'images_urls',
-        'sports_type',
         'description',
         'slot_duration',
         'loyalty_points',
         'calendar_color',
         'payment_options',
+        'sports_category_id',
         'max_bookings_per_slot',
     ];
 
@@ -32,6 +32,11 @@ class Listing extends Model
         'amenities'       => 'array',
         'base_price'      => 'decimal:2',
     ];
+
+    public function sportsCategory()
+    {
+        return $this->belongsTo(SportsCategory::class);
+    }
 
     public function venue()
     {

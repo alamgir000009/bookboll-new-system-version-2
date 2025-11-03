@@ -13,7 +13,8 @@ return new class extends Migration
     {
         Schema::create('sports_types', function (Blueprint $table) {
             $table->id();
-            $table->string('name')->unique();
+            $table->string('title')->unique();
+            $table->string('sub_title')->unique();
             $table->string('slug')->unique();
             $table->string('icon')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active')->index();

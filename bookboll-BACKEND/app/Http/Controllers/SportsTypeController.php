@@ -14,11 +14,12 @@ class SportsTypeController extends Controller
     public function store(Request $request)
     {
         $formData = $request->validate([
-            'icon' => 'nullable|string',
-            'name' => 'required|max:255|unique:sports_types,name',
+            'icon'      => 'nullable|string',
+            'title'     => 'required|max:255|unique:sports_types',
+            'sub_title' => 'required|max:255',
         ]);
 
-        $formData['slug'] = Str::slug($formData['name']);
+        $formData['slug'] = Str::slug($formData['title']);
 
         $type = $this->sportsTypeModel::create($formData);
 
@@ -30,11 +31,12 @@ class SportsTypeController extends Controller
         $type = $this->sportsTypeModel::findOrFail($id);
 
         $formData = $request->validate([
-            'icon' => 'nullable|string',
-            'name' => 'required|string|max:255|unique:sports_types,name,' . $id,
+            'icon'      => 'nullable|string',
+            'title'     => 'required|string|max:255|unique:sports_types,title,' . $id,
+            'sub_title' => 'required|max:255',
         ]);
 
-        $formData['slug'] = Str::slug($formData['name']);
+        $formData['slug'] = Str::slug($formData['title']);
 
         $type->update($formData);
 

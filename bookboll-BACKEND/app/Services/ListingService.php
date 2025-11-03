@@ -6,6 +6,7 @@ use App\Models\Listing;
 use App\Models\Schedule;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
+use App\Models\SportsType;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -34,11 +35,14 @@ class ListingService
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
                         ->orWhere('venue_id', 'LIKE', "%{$search}%")
-                        ->orWhere('sports_type', 'LIKE', "%{$search}%")
                         ->orWhere('status', 'LIKE', "%{$search}%")
                         ->orWhere('description', 'LIKE', "%{$search}%")
                         ->orWhere('base_price', 'LIKE', "%{$search}%")
-                        ->orWhere('status', 'LIKE', "%{$search}%");
+                        ->orWhere('status', 'LIKE', "%{$search}%")
+                        ->orWhereHas('sportsCategory', function ($query) use ($search) {
+                            $query->where('name', 'LIKE', "%{$search}%")
+                                ->orWhere("slug", 'LIKE', "%{$search}%");
+                        });
                 });
             })
             ->when($request->venue ?? null, function ($query, $venue) {
@@ -209,7 +213,7 @@ class ListingService
         $rules = [
             'name'                               => 'required|string|max:255',
             'venue_id'                           => 'required|exists:venues,id',
-            'sports_type'                        => 'required',
+            'sports_category_id'                 => 'required|exists:sports_categories,id',
             'status'                             => 'required|in:active,inactive',
             'description'                        => 'nullable|string',
             'base_price'                         => 'required|numeric|min:0',
@@ -360,19 +364,19 @@ class ListingService
     {
         return [
             'name'                  => $data['name'],
-            'venue_id'              => $data['venue_id'],
-            'sports_type'           => $data['sports_type'],
             'status'                => $data['status'],
-            'description'           => $data['description'] ?? null,
-            'base_price'            => $data['base_price'],
-            'max_bookings_per_slot' => $data['max_bookings_per_slot'] ?? 1,
+            'venue_id'              => $data['venue_id'],
             'capacity'              => $data['capacity'],
+            'base_price'            => $data['base_price'],
             'slot_duration'         => $data['slot_duration'],
-            'loyalty_points'        => $data['loyalty_points'] ?? 0,
-            'calendar_color'        => $data['calendar_color'] ?? '#0000FF',
-            'payment_options'       => $data['payment_options'] ?? [],
-            'images_urls'           => $data['images_urls'] ?? [],
             'amenities'             => $data['amenities'] ?? [],
+            'images_urls'           => $data['images_urls'] ?? [],
+            'sports_category_id'    => $data['sports_category_id'],
+            'loyalty_points'        => $data['loyalty_points'] ?? 0,
+            'description'           => $data['description'] ?? null,
+            'payment_options'       => $data['payment_options'] ?? [],
+            'max_bookings_per_slot' => $data['max_bookings_per_slot'] ?? 1,
+            'calendar_color'        => $data['calendar_color'] ?? '#0000FF',
         ];
     }
 
@@ -425,23 +429,28 @@ class ListingService
 
     public function fetchListings($request)
     {
-        $records_per_page = $request->records_per_page ?? 20;
-        $search           = $request->search ?? null;
-        $venue_id         = $request->venueId ?? null;
         $date             = $request->date ?? null;
         $time             = $request->time ?? null;
+        $search           = $request->search ?? null;
+        $venue_id         = $request->venueId ?? null;
+        $sports_type      = $request->category ?? null;
+        $records_per_page = $request->records_per_page ?? null;
 
-        $query = $this->listingModel::with(['venue', 'schedules'])
+        $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType'])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
-                        ->orWhere('sports_type', 'LIKE', "%{$search}%")
                         ->orWhere('description', 'LIKE', "%{$search}%")
                         ->orWhere('base_price', 'LIKE', "%{$search}%");
                 });
             })
             ->when($venue_id, function ($query, $venue_id) {
                 $query->whereRelation('venue', 'id', $venue_id);
+            })
+            ->when($sports_type, function ($query, $sports_type) {
+                $query->whereHas('sportsCategory.sportsType', function ($q) use ($sports_type) {
+                    $q->where('title', $sports_type);
+                });
             })
             ->when($date, function ($query, $date) {
                 $dayName = Carbon::parse($date)->format('l');
@@ -459,14 +468,28 @@ class ListingService
                 });
             });
 
-        $listings = $query->paginate($records_per_page);
+        // ✅ Fetch data with consistent paginator-like structure
+        if (! $records_per_page || $records_per_page === 'all' || (int) $records_per_page === 0) {
+            $data = $query->get();
 
+            $listings = new \Illuminate\Pagination\LengthAwarePaginator(
+                $data,
+                $data->count(),
+                $data->count() ?: 1,
+                1,
+                ['path' => request()->url(), 'query' => request()->query()]
+            );
+        } else {
+            $listings = $query->paginate($records_per_page);
+        }
+
+        // ✅ Transform each record safely
         $listings->getCollection()->transform(function ($listing) {
             return [
                 'id'              => $listing->id,
                 'name'            => $listing->name,
                 'venue'           => $listing->venue?->name,
-                'sport'           => $listing->sports_type,
+                'sport'           => $listing->sportsCategory?->name,
                 'price'           => $listing->base_price,
                 'description'     => $listing->description,
                 'rating'          => round($listing->average_rating, 1),
@@ -474,7 +497,7 @@ class ListingService
                 'duration'        => $listing->duration,
                 'payment_options' => $listing->payment_options,
                 'loyalty_points'  => $listing->loyalty_points,
-                'map_address'     => $listing->venue->maps_url,
+                'map_address'     => $listing->venue?->maps_url,
             ];
         });
 
@@ -602,7 +625,7 @@ class ListingService
             'duration'        => $listing->slot_duration,
             'price'           => $listing->base_price,
             'description'     => $listing->description,
-            'sport'           => $listing->sports_type,
+            'sport'           => $listing?->sportsCategory->name,
             'venue'           => $listing->venue?->name,
             'loyalty_points'  => $listing->loyalty_points,
             'calendar_color'  => $listing->calendar_color,
@@ -684,7 +707,7 @@ class ListingService
     //         'duration'        => $listing->duration,
     //         'price'           => $listing->base_price,
     //         'description'     => $listing->description,
-    //         'sport'           => $listing->sports_type,
+    //         'sport'           => $listing->sportsCategory?->name,
     //         'venue'           => $listing->venue?->name,
     //         'loyalty_points'  => $listing->loyalty_points,
     //         'calendar_color'  => $listing->calendar_color,
@@ -705,31 +728,37 @@ class ListingService
 
     public function fetchSuggestions($request)
     {
-        $category = $request->category ?? null;
+        $categoryType = $request->category ?? null;
 
-        $sportCategory = SportsCategory::where("type", $category)->first();
-        $listings      = $this->listingModel::with(['venue'])
-            ->when($sportCategory->name ?? null, function ($query, $type) {
-                $query->where('sports_type', 'NOT LIKE', $type);
-            })->take(4)->get()->map(function ($listing) {
+        $sportsType = SportsType::withCount('listings')->where("title", $categoryType)->first();
 
-            return [
-                'id'              => $listing->id,
-                'name'            => $listing->name,
-                'venue'           => $listing->venue?->name,
-                'sport'           => $listing->sports_type,
-                'price'           => $listing->base_price,
-                'description'     => $listing->description,
-                'rating'          => round($listing->average_rating, 1),
-                'images'          => $listing->images_urls ?? [],
-                'duration'        => $listing->duration,
-                'payment_options' => $listing->payment_options,
-                'loyaltyPoints'   => $listing->loyalty_points,
-                'map_address'     => $listing->venue->maps_url,
-            ];
-        });
+        $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
 
-        return sendSuccess("Listings fetched successfully", compact('listings'));
+        $listings = $this->listingModel::with(['venue'])
+            ->when(! empty($categoryIds), function ($query) use ($categoryIds) {
+                $query->whereNotIn('sports_category_id', $categoryIds);
+            })
+            ->take(4)
+            ->get()
+            ->map(function ($listing) {
+
+                return [
+                    'id'              => $listing->id,
+                    'name'            => $listing->name,
+                    'venue'           => $listing->venue?->name,
+                    'sport'           => $listing->sportsCategory?->name,
+                    'price'           => $listing->base_price,
+                    'description'     => $listing->description,
+                    'rating'          => round($listing->average_rating, 1),
+                    'images'          => $listing->images_urls ?? [],
+                    'duration'        => $listing->duration,
+                    'payment_options' => $listing->payment_options,
+                    'loyaltyPoints'   => $listing->loyalty_points,
+                    'map_address'     => $listing->venue?->maps_url,
+                ];
+            });
+
+        return sendSuccess("Listings fetched successfully", compact('listings', 'sportsType'));
     }
 
     public function fetchAddons($listing_id)

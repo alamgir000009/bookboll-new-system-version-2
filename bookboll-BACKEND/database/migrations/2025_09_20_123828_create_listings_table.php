@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->string('name');
             $table->foreignId('venue_id')->constrained()->cascadeOnDelete();
-            $table->string('sports_type')->nullable();
+            $table->foreignId('sports_category_id')->nullable()->constrained('sports_categories')->nullOnDelete();
             $table->enum('status', ['active', 'inactive'])->default('active');
             $table->text('description')->nullable();
             $table->decimal('base_price', 15, 2);
@@ -29,7 +29,8 @@ return new class extends Migration
             $table->json('amenities')->nullable();
             $table->timestamps();
 
-            $table->index(['name', 'venue_id', 'sports_type', 'base_price', 'status']);
+            $table->index(['name', 'base_price', 'status']);
+            $table->index(['venue_id', 'sports_category_id']);
         });
     }
 

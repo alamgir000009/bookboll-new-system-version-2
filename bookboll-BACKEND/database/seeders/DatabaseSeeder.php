@@ -26,7 +26,8 @@ class DatabaseSeeder extends Seeder
             ReviewTableSeeder::class,
             LoyaltyPointTableSeeder::class,
             TransactionTableSeeder::class,
-            PaymentTableSeeder::class
+            PaymentTableSeeder::class,
+            SubscriberTableSeeder::class
         ]);
     }
 }

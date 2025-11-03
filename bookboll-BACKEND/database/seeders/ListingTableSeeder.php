@@ -3,18 +3,19 @@ namespace Database\Seeders;
 
 use App\Models\Listing;
 use App\Models\Schedule;
+use App\Models\SportsCategory;
 use Illuminate\Database\Seeder;
 
 class ListingTableSeeder extends Seeder
 {
     public function run(): void
     {
-        for ($i = 0; $i < 1; $i++) {
-            $this->createListingData();
+        for ($i = 0; $i < 5; $i++) {
+            $this->createListingData($i);
         }
     }
 
-    private function createListingData()
+    private function createListingData($occurance)
     {
         $paymentOptionsJson = str_replace("'", '"', "{'cash_on_arrival':true,'deposit':{'amount':50.00,'percentage':50}}");
         $paymentOptions     = json_decode($paymentOptionsJson, true) ?: [];
@@ -26,32 +27,32 @@ class ListingTableSeeder extends Seeder
         $pricingGroups     = json_decode($pricingGroupsJson, true) ?: [];
 
         $imagesJson = str_replace("'", '"', "[]");
-        $images     = json_decode($imagesJson, true) ?: [];
+        $images     = json_decode($imagesJson, true) ?: ["listings\/PUOwZqD4YP02yHEABiiPMAQlnSSJNznhc4LsHgxC.jpg", "listings\/bJolKVSg7KcTqFP5w7uQEa1G2u2mvLn5kaUMvYwJ.jpg"];
 
         $listingData = [
-            "name"                  => "Listing 1",
+            "name" => "Listing {$occurance}",
             "venue_id"              => 1,
-            "sports_type"           => "cricket",
-            "status"                => "active",
-            "base_price"            => 100.00,
-            "capacity"              => 5,
             "slot_duration"         => 2,
-            "loyalty_points"        => 5,
-            "payment_options"       => $paymentOptions,
+            "base_price"            => 100.00,
+            "status"                => "active",
             "schedule"              => $schedule,
+            "capacity"              => $occurance,
+            "loyalty_points"        => $occurance,
             "pricing_groups"        => $pricingGroups,
+            "payment_options"       => $paymentOptions,
             "add_ons"               => [1, 2],
             "resources"             => [
                 [
                     "id"       => 2,
-                    "quantity" => 1,
+                    "quantity" => rand(1,3),
                 ],
             ],
-            "description"           => "Premium cricket field",
-            "max_bookings_per_slot" => 1,
-            "calendar_color"        => "#0000FF",
             "images"                => $images,
+            "calendar_color"        => "#0000FF",
+            "max_bookings_per_slot" => $occurance,
             "amenities"             => ['Wi-Fi', 'Parking', 'AC'],
+            "sports_category_id"    => SportsCategory::inRandomOrder()->value('id'),
+            "description"           => "This is the testing description for the lesting number {$occurance}",
         ];
 
         $listing = Listing::create([
@@ -62,9 +63,9 @@ class ListingTableSeeder extends Seeder
             'capacity'              => $listingData['capacity'],
             'amenities'             => $listingData['amenities'],
             'base_price'            => $listingData['base_price'],
-            'sports_type'           => $listingData['sports_type'],
             'slot_duration'         => $listingData['slot_duration'],
             'payment_options'       => $listingData['payment_options'],
+            'sports_category_id'    => $listingData['sports_category_id'],
             'loyalty_points'        => $listingData['loyalty_points'] ?? 0,
             'description'           => $listingData['description'] ?? null,
             'max_bookings_per_slot' => $listingData['max_bookings_per_slot'] ?? 1,
@@ -88,12 +89,12 @@ class ListingTableSeeder extends Seeder
             foreach ($listingData['schedule'] as $schedule) {
                 if (isset($schedule['is_open']) && $schedule['is_open']) {
                     Schedule::create([
-                        'venue_id'   => $listing->venue_id,
+                        'is_open'    => true,
                         'listing_id' => $listing->id,
                         'day'        => $schedule['day'],
-                        'is_open'    => true,
-                        'start_time' => $schedule['start_time'],
+                        'venue_id'   => $listing->venue_id,
                         'end_time'   => $schedule['end_time'],
+                        'start_time' => $schedule['start_time'],
                     ]);
                 }
             }

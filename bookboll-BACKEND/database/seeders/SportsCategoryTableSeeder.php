@@ -61,7 +61,7 @@ class SportsCategoryTableSeeder extends Seeder
         ];
 
         foreach ($categories as $index => $category) {
-            $type = SportsType::firstWhere("name", $category['type']);
+            $type = SportsType::firstWhere("title", $category['type']);
             unset($category['type']);
             $category['sort_order'] = $index + 1;
             $type->sportsCategories()->create($category);
