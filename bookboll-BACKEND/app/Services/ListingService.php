@@ -7,6 +7,7 @@ use App\Models\Schedule;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\SportsType;
+use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -513,17 +514,55 @@ class ListingService
 
     public function listing($id)
     {
-        $listing = $this->listingModel::with(['venue', 'schedules', 'pricingGroups'])->findOrFail($id);
+        $listing = $this->listingModel::with(['venue'])->findOrFail($id);
 
-        $date    = request('date') ?? now()->toDateString();
+        $date    = request()->get('date', now()->toDateString());
         $venueId = $listing->venue_id;
+
+        $specialDay = SpecialDay::with('timeBlocks')->where('venue_id', $venueId)
+            ->where(function ($q) use ($listing) {
+                $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+            })
+            ->where('date', $date)->active()->first();
+
+        $isHoliday = $specialDay && $specialDay->type == 'holiday';
+
+        $listing = [
+            'is_holiday'      => $isHoliday,
+            'id'              => $listing->id,
+            'name'            => $listing->name,
+            'venue_id'        => $listing->venue_id,
+            'price'           => $listing->base_price,
+            'description'     => $listing->description,
+            'venue'           => $listing->venue?->name,
+            'duration'        => $listing->slot_duration,
+            'loyalty_points'  => $listing->loyalty_points,
+            'calendar_color'  => $listing->calendar_color,
+            'payment_options' => $listing->payment_options,
+            'amenities'       => $listing->amenities ?? [],
+            'special_day'     => $specialDay?->description,
+            'map_address'     => $listing->venue?->maps_url,
+            'images'          => $listing->images_urls ?? [],
+            'sport'           => $listing?->sportsCategory->name,
+            'rating'          => round($listing->average_rating, 1),
+        ];
+
+        return sendSuccess('Listing fetched successfully', compact('listing'));
+    }
+
+    public function fetchTimeSlots()
+    {
+
+        $listing_id = request()->get('listing_id');
+        $date       = request()->get('date', now()->toDateString());
+        $listing    = $this->listingModel::with(['venue', 'schedules', 'pricingGroups'])->findOrFail($listing_id);
 
         // Prevent viewing past date slots
         if (Carbon::parse($date)->lt(now()->startOfDay())) {
             return sendError('You cannot view time slots for a past date.');
         }
 
-        $specialDay = SpecialDay::with('timeBlocks')->where('venue_id', $venueId)
+        $specialDay = SpecialDay::with('timeBlocks')->where('venue_id', $listing->venue_id)
             ->where(function ($q) use ($listing) {
                 $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
             })
@@ -534,7 +573,7 @@ class ListingService
         // Fetch existing bookings for that date
         $bookings = Booking::where('listing_id', $listing->id)
             ->where('date', $date)
-            ->whereNotIn('status', [\BookingStatus::CANCELLED])
+            ->whereNotIn('status', [BookingStatus::CANCELLED])
             ->get(['start_time', 'end_time']);
 
         $timeSlots = collect();
@@ -554,10 +593,7 @@ class ListingService
 
             // If still no open schedule, return empty
             if (! $schedule || ! $schedule->is_open) {
-                return sendSuccess('No available schedule for this day', [
-                    'listing'   => $listing,
-                    'timeSlots' => [],
-                ]);
+                return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
             }
 
             $start        = Carbon::parse($schedule->start_time);
@@ -587,17 +623,6 @@ class ListingService
                 // Base price
                 $price = $listing->base_price;
 
-                // Override with Special Day price
-                if ($specialDay && $specialDay->timeBlocks->count()) {
-                    foreach ($specialDay->timeBlocks as $block) {
-                        $blockStart = strtotime($block->start_time);
-                        $blockEnd   = strtotime($block->end_time);
-                        if (strtotime($slotStart) >= $blockStart && strtotime($slotEnd) <= $blockEnd) {
-                            $price = $block->price_per_hour ?? $price;
-                        }
-                    }
-                }
-
                 // Override with Pricing Group price
                 foreach ($listing->pricingGroups as $group) {
                     if (in_array($weekday, $group->days)) {
@@ -609,46 +634,35 @@ class ListingService
                     }
                 }
 
+                // Override with Special Day price
+                if ($specialDay && $specialDay->timeBlocks->count()) {
+                    foreach ($specialDay->timeBlocks as $block) {
+                        $blockStart = strtotime($block->start_time);
+                        $blockEnd   = strtotime($block->end_time);
+                        if (strtotime($slotStart) >= $blockStart && strtotime($slotEnd) <= $blockEnd) {
+                            $price = $block->price_per_hour ?? $price;
+                        }
+                    }
+                }
+
                 $timeSlots->push([
-                    'time' => "{$slotStart} - {$slotEnd}",
-                    'capacity'        => $listing->max_bookings_per_slot,
-                    'booked'          => $bookedCount,
-                    'available'       => $isAvailable,
                     'is_holiday'      => $isHoliday,
+                    'available'       => $isAvailable,
+                    'booked'          => $bookedCount,
                     'available_count' => $availableCount,
                     'duration'        => "{$slotDuration}h",
-                    'price' => round($price, 2),
+                    'time' => "{$slotStart} - {$slotEnd}",
+                    'price'    => round($price, 2),
+                    'capacity' => $listing->max_bookings_per_slot,
                 ]);
 
                 $start->addMinutes($slotMinutes);
-
             }
         }
 
-        $listingData = [
-            'id'              => $listing->id,
-            'venue_id'        => $listing->venue_id,
-            'name'            => $listing->name,
-            'duration'        => $listing->slot_duration,
-            'price'           => $listing->base_price,
-            'description'     => $listing->description,
-            'sport'           => $listing?->sportsCategory->name,
-            'venue'           => $listing->venue?->name,
-            'loyalty_points'  => $listing->loyalty_points,
-            'calendar_color'  => $listing->calendar_color,
-            'payment_options' => $listing->payment_options,
-            'amenities'       => $listing->amenities ?? [],
-            'images'          => $listing->images_urls ?? [],
-            'map_address'     => $listing->venue?->maps_url,
-            'rating'          => round($listing->average_rating, 1),
-            'is_holiday'      => $isHoliday,
-            'special_day'     => $specialDay?->description,
-        ];
+        $timeSlots = $timeSlots->values();
 
-        return sendSuccess('Listing fetched successfully', [
-            'listing'   => $listingData,
-            'timeSlots' => $timeSlots->values(),
-        ]);
+        return sendSuccess('Listing slots fetched successfully', compact('timeSlots'));
     }
 
     // public function listing($id)

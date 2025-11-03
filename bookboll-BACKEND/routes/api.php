@@ -160,5 +160,6 @@ Route::get('fetch-venues', [VenueController::class, 'fetchVenues']);
 Route::get('fetch-listings', [ListingController::class, 'fetchListings']);
 Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings']);
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing']);
+Route::get('fetch-time-slots', [ListingController::class, 'fetchTimeSlots']);
 Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons']);
 Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode']);
