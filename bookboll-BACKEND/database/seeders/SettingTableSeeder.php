@@ -44,6 +44,12 @@ class SettingTableSeeder extends Seeder
                 'type'        => 'boolean',
                 'description' => 'Auto-confirm new bookings',
             ],
+            [
+                'key'         => 'default_bookings_slot_lock_time',
+                'value'       => 5,
+                'type'        => 'integer',
+                'description' => 'Listing slots will be locked once viewed by a customer for the following time',
+            ],
 
             // Modules
             [

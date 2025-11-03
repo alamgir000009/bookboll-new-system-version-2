@@ -4,6 +4,8 @@ namespace App\Services;
 use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\Schedule;
+use App\Models\Setting;
+use App\Models\SlotLock;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\SportsType;
@@ -439,8 +441,6 @@ class ListingService
         $categories       = $request->categories ?? [];
         $records_per_page = $request->records_per_page ?? null;
 
-        logger($request->all());
-
         $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType'])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -555,8 +555,11 @@ class ListingService
 
     public function fetchTimeSlots()
     {
+        $user      = auth()->user();
+        $ipAddress = request()->ip();
         $listingId = request('listing_id');
         $date      = Carbon::parse(request('date', now()->toDateString()));
+        $sessionId = $user ? 'user_' . $user->id : 'guest_' . md5($ipAddress . request()->userAgent());
 
         // Prevent viewing past date slots
         if ($date->lt(now()->startOfDay())) {
@@ -571,6 +574,15 @@ class ListingService
 
         $weekday     = strtolower($date->format('l'));
         $slotMinutes = ($listing->slot_duration ?? 1) * 60;
+
+        $activeLock = SlotLock::where('listing_id', $listingId)->whereDate('date', $date)
+            ->where('locked_until', '>', now())
+            ->where('session_id', '!=', $sessionId)
+            ->exists();
+
+        if ($activeLock) {
+            return sendError('This date is currently locked by another user. Please try again later.');
+        }
 
         // ---- Get schedule for the day ----
         $schedule = $listing->schedules->firstWhere('day', $weekday) ?? $listing->venue?->schedules?->firstWhere('day', $weekday);
@@ -598,7 +610,7 @@ class ListingService
             ->get(['start_time', 'end_time']);
 
         // ---- Generate time slots ----
-        $slots = $this->generateTimeSlots(
+        $timeSlots = $this->generateTimeSlots(
             $schedule->start_time,
             $schedule->end_time,
             $slotMinutes,
@@ -609,7 +621,21 @@ class ListingService
             $isHoliday
         );
 
-        return sendSuccess('Listing slots fetched successfully', ['timeSlots' => $slots]);
+        $lockDuration = intval(Setting::where('key','default_bookings_slot_lock_time')->value('value')) ?? 5;
+
+        SlotLock::updateOrCreate(
+            [
+                'session_id' => $sessionId,
+                'ip_address' => $ipAddress,
+                'listing_id' => $listing->id,
+                'date'       => $date->toDateString(),
+            ],
+            [
+                'locked_until' => now()->addMinutes($lockDuration),
+            ]
+        );
+
+        return sendSuccess('Listing slots fetched successfully', compact('timeSlots'));
     }
 
     protected function generateTimeSlots($startTime, $endTime, $slotMinutes, $listing, $weekday, $specialDay, $bookings, $isHoliday)

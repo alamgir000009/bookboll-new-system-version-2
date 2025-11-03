@@ -11,12 +11,14 @@ class UserTableSeeder extends Seeder
         $users = [
             [
                 'name'     => 'Super Admin',
-                'email'    => 'super_admin@bookboll.com',
+                // 'email'    => 'super_admin@bookboll.com',
+                'email'    => 'alamgir000009@gmail.com',
                 'password' => '12345678',
             ],
             [
                 'name'     => 'Admin Admin',
-                'email'    => 'admin@bookboll.com',
+                // 'email'    => 'admin@bookboll.com',
+                'email'    => 'alamgirdevelopment@gmail.com',
                 'password' => '12345678',
             ],
             [
