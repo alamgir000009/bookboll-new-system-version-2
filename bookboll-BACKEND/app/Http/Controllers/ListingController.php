@@ -50,9 +50,9 @@ class ListingController extends Controller
         return $this->listingService->listing($id);
     }
 
-    public function fetchTimeSlots()
+    public function fetchTimeSlots(Request $request)
     {
-        return $this->listingService->fetchTimeSlots();
+        return $this->listingService->fetchTimeSlots($request);
     }
 
     public function fetchAddons($listing_id)

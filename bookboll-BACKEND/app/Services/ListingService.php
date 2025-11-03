@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Models\Listing;
+use App\Models\Resource;
 use App\Models\Schedule;
 use App\Models\Setting;
 use App\Models\SlotLock;
@@ -553,23 +554,25 @@ class ListingService
         return sendSuccess('Listing fetched successfully', compact('listing'));
     }
 
-    public function fetchTimeSlots()
+    public function fetchTimeSlots($request)
     {
-        $user      = auth()->user();
-        $ipAddress = request()->ip();
-        $listingId = request('listing_id');
-        $date      = Carbon::parse(request('date', now()->toDateString()));
-        $sessionId = $user ? 'user_' . $user->id : 'guest_' . md5($ipAddress . request()->userAgent());
+        $request->validate([
+            "listing_id" => "required|numeric|exists:listings,id",
+            "date"       => "required|date|after_or_equal:today",
+        ], [
+            "date.after_or_equal" => "You cannot view time slots for a past date.",
+        ]);
 
-        // Prevent viewing past date slots
-        if ($date->lt(now()->startOfDay())) {
-            return sendError('You cannot view time slots for a past date.');
-        }
+        $user      = auth()->user();
+        $ipAddress = $request->ip();
+        $listingId = $request->listing_id;
+        $date      = Carbon::parse(request('date', now()->toDateString()));
+        $sessionId = $user ? 'user_' . $user->id : 'guest_' . md5($ipAddress . $request->userAgent());
 
         $listing = $this->listingModel::with([
-            'venue.schedules',
             'schedules',
             'pricingGroups',
+            'venue.schedules',
         ])->findOrFail($listingId);
 
         $weekday     = strtolower($date->format('l'));
@@ -621,7 +624,7 @@ class ListingService
             $isHoliday
         );
 
-        $lockDuration = intval(Setting::where('key','default_bookings_slot_lock_time')->value('value')) ?? 5;
+        $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
 
         SlotLock::updateOrCreate(
             [

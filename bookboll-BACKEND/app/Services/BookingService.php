@@ -684,11 +684,17 @@ class BookingService
             'notes'          => 'nullable|string|max:500',
             'add_ons'        => 'nullable|array',
             'add_ons.*'      => 'exists:add_ons,id',
+            'phone'          => 'required|string|min:5',
         ]);
 
         try {
 
             DB::beginTransaction();
+
+            if (! $user->phone || $user->phone != $request->phone) {
+                $user->phone = $request->phone;
+                $user->save();
+            }
 
             $listing   = Listing::findOrFail($formData['listing_id']);
             $basePrice = $listing->base_price ?? 0;
