@@ -3,7 +3,6 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Models\Listing;
-use App\Models\Resource;
 use App\Models\Schedule;
 use App\Models\Setting;
 use App\Models\SlotLock;
@@ -647,6 +646,8 @@ class ListingService
         $end   = Carbon::parse($endTime);
         $slots = collect();
 
+        $listingResources = $listing->resources()->get(['resources.id', 'resources.total_quantity', 'listing_resource.quantity as required_qty']);
+
         while ($start->lt($end)) {
             $slotStart = $start->format('H:i');
             $slotEnd   = $start->copy()->addMinutes($slotMinutes)->format('H:i');
@@ -655,27 +656,43 @@ class ListingService
                 break;
             }
 
-            // Check if booked
-            $bookedCount = $bookings->filter(fn($b) => ! (
+            $slotBookings = $bookings->filter(fn($b) => ! (
                 strtotime($b->end_time) <= strtotime($slotStart) ||
                 strtotime($b->start_time) >= strtotime($slotEnd)
-            ))->count();
+            ));
 
+            $bookedCount    = $slotBookings->count();
             $availableCount = max($listing->max_bookings_per_slot - $bookedCount, 0);
-            $isAvailable    = ! $isHoliday && $availableCount > 0;
 
-            // Base price
+            $allResourcesAvailable = true;
+            $availableQty          = null;
+
+            foreach ($listingResources as $res) {
+
+                $bookedQty = $slotBookings->flatMap(fn($b) => $b->resourcesAllocated)->where('id', $res->id)->sum('pivot.quantity');
+
+                $availableQty = $res->total_quantity - $bookedQty;
+
+                if ($availableQty < $res->required_qty) {
+                    $allResourcesAvailable = false;
+                    break;
+                }
+            }
+
+            $isAvailable = ! $isHoliday && $availableCount > 0 && $allResourcesAvailable;
+
             $price = $this->determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
 
             $slots->push([
-                'is_holiday'      => $isHoliday,
-                'available'       => $isAvailable,
-                'booked'          => $bookedCount,
-                'available_count' => $availableCount,
-                'duration'        => ($slotMinutes / 60) . "h",
-                'time'            => "{$slotStart} - {$slotEnd}",
-                'price'    => round($price, 2),
-                'capacity' => $listing->max_bookings_per_slot,
+                'is_holiday'          => $isHoliday,
+                'available'           => $isAvailable,
+                'booked'              => $bookedCount,
+                'available_count'     => $availableCount,
+                'available_resources' => $availableQty,
+                'duration'            => ($slotMinutes / 60) . "h",
+                'time'                => "{$slotStart} - {$slotEnd}",
+                'price'               => round($price, 2),
+                'capacity'            => $listing->max_bookings_per_slot,
             ]);
 
             $start->addMinutes($slotMinutes);
