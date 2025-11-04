@@ -56,6 +56,8 @@ class SettingService
 
         $value = $request->value;
 
+        logger($request->all());
+
         $setting = $this->settingModel::updateOrCreate(
             ['key' => $key],
             ['value' => $value]);

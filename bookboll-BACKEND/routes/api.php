@@ -118,7 +118,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::prefix('customer')->group(function () {
 
-        Route::apiResource('reviews', ReviewController::class)->except(['show']);
+        Route::apiResource('reviews', ReviewController::class)->except(['show', 'index']);
         Route::get('reviews/my', [ReviewController::class, 'myReviews']);
         Route::patch('reviews/{review}/helpful', [ReviewController::class, 'helpful']);
         Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings']);
@@ -139,6 +139,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
 Route::prefix('customer')->group(function () {
 
+    Route::get('reviews', [ReviewController::class, 'index']);
+    Route::get('reviews/my', [ReviewController::class, 'myReviews']);
     Route::post('login', [UserController::class, 'customerLogin']);
     Route::post('google-login', [UserController::class, 'googleLogin']);
 

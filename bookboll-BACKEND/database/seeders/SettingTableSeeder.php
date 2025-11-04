@@ -24,6 +24,13 @@ class SettingTableSeeder extends Seeder
                 'encrypted'   => true,
                 'description' => 'Stripe Secret Key',
             ],
+            [
+                'key'         => 'stripe_webhook_secret',
+                'value'       => null,
+                'type'        => 'string',
+                'encrypted'   => true,
+                'description' => 'Stripe Secret Key',
+            ],
 
             // Booking
             [

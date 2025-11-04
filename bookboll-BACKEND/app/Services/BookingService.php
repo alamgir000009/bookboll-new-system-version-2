@@ -14,6 +14,7 @@ use App\Models\Venue;
 use App\Notifications\BookingCancelledUserNotification;
 use App\Notifications\BookingCreatedAdminNotification;
 use App\Notifications\BookingCreatedUserNotification;
+use BookingPaymentStatus;
 use BookingStatus;
 use Carbon\Carbon;
 use Exception;
@@ -673,27 +674,56 @@ class BookingService
         $user = auth()->user();
 
         $formData = $request->validate([
-            'venue_id'       => 'required|exists:venues,id',
-            'listing_id'     => 'required|exists:listings,id',
-            'promocode'      => 'nullable|string',
-            'date'           => 'required|date|after_or_equal:today',
-            'start_time'     => 'required|date_format:H:i',
-            'end_time'       => 'required|date_format:H:i|after:start_time',
-            'payment_method' => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival',
-            'agree_to_terms' => 'required|accepted',
-            'notes'          => 'nullable|string|max:500',
-            'add_ons'        => 'nullable|array',
-            'add_ons.*'      => 'exists:add_ons,id',
-            'phone'          => 'required|string|min:5',
+            'venue_id'          => 'required|exists:venues,id',
+            'listing_id'        => 'required|exists:listings,id',
+            'promocode'         => 'nullable|string',
+            'date'              => 'required|date|after_or_equal:today',
+            'start_time'        => 'required|date_format:H:i',
+            'end_time'          => 'required|date_format:H:i|after:start_time',
+            'payment_method'    => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival',
+            'agree_to_terms'    => 'required|accepted',
+            'notes'             => 'nullable|string|max:500',
+            'add_ons'           => 'nullable|array',
+            'add_ons.*'         => 'exists:add_ons,id',
+            'phone'             => 'required|string|min:5',
+            'payment_method_id' => 'nullable|string',
+            'payment_intent_id' => 'nullable|string',
         ]);
 
         try {
 
             DB::beginTransaction();
 
+            if (in_array($formData['payment_method'], ['online_payment', 'deposit_remaining_on_arrival'])) {
+                $payment = $user->findPayment($formData['payment_intent_id']);
+                if ($payment->status !== 'succeeded') {
+                    return response()->json(['message' => 'Payment not confirmed'], 400);
+                }
+            }
+
             if (! $user->phone || $user->phone != $request->phone) {
                 $user->phone = $request->phone;
                 $user->save();
+                $user->updateStripeCustomer(['phone' => $formData['phone']]);
+            }
+
+            if (isset($formData['payment_method_id'])) {
+
+                $user->addPaymentMethod($formData['payment_method_id']);
+                $user->updateDefaultPaymentMethod($formData['payment_method_id']);
+
+                $pm = $user->findPaymentMethod($formData['payment_method_id']);
+                if ($pm && $pm->type === 'card') {
+                    $card = $pm->card;
+                    $user->paymentMethods()->create([
+                        'brand'     => $card->brand,
+                        'last_four' => $card->last4,
+                        'exp_year'  => $card->exp_year,
+                        'exp_month' => $card->exp_month,
+                    ]);
+                }
+
+                Log::info('PM Attached & Stored', ['pm_id' => $formData['payment_method_id'], 'user_id' => $user->id]);
             }
 
             $listing   = Listing::findOrFail($formData['listing_id']);
@@ -760,10 +790,10 @@ class BookingService
                 'payment_method'        => $formData['payment_method'],
                 'loyalty_points_earned' => $listing->loyalty_points ?? 0,
                 'payment_breakdown'     => [
-                    'deposit_amount'   => $paymentStatus == 'deposit_paid' ? round($totalPrice * 0.3, 2) : 0,
-                    'deposit_method'   => $paymentStatus == 'deposit_paid' ? 'online' : null,
-                    'remaining_amount' => $paymentStatus == 'deposit_paid' ? $totalPrice - round($totalPrice * 0.3, 2) : 0,
-                    'remaining_method' => $paymentStatus == 'deposit_paid' ? 'cash' : null,
+                    'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? round($totalPrice * 0.3, 2) : 0,
+                    'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
+                    'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - round($totalPrice * 0.3, 2) : 0,
+                    'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
                 ],
             ]);
 
@@ -789,10 +819,10 @@ class BookingService
                     'payment_id' => $this->generatePaymentId($booking->id, 'deposit'),
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
-                    'type'       => 'deposit',
                     'amount'     => $depositAmount,
-                    'method'     => 'online',
                     'status'     => PaymentStatus::PAID,
+                    'type'       => PaymentType::DEPOSIT,
+                    'method'     => PaymentMethod::ONLINE,
                     'date'       => now()->format('Y-m-d'),
                     'notes'      => 'Deposit payment for booking #' . $booking->id,
                 ]);
@@ -839,7 +869,6 @@ class BookingService
 
                 $user->notify(new BookingCreatedUserNotification($booking));
 
-                // Notify the admin
                 $admins = User::whereHas("roles", function ($query) {
                     $query->whereIn("name", ["super_admin", "admin"]);
                 })->get();
@@ -860,7 +889,7 @@ class BookingService
 
             DB::rollBack();
             Log::error("Order placing Failed: " . $e->getMessage(), ["Exception" => $e]);
-            return sendError("Something went wrong please try again later");
+            return sendError("Something went wrong please try again later: ".$e->getMessage());
         }
     }
 
