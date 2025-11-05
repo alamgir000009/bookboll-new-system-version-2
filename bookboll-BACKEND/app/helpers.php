@@ -413,4 +413,11 @@ if (! function_exists('determineSlotPrice')) {
 
         return $price;
     }
+
+    if (! function_exists('generatePaymentId')) {
+        function generatePaymentId($bookingId, $type)
+        {
+            return 'PAY-' . $bookingId . '-' . strtoupper($type) . '-' . time();
+        }
+    }
 }

@@ -853,7 +853,7 @@ class BookingService
                     'method'     => PaymentMethod::ONLINE,
                     'date'       => now()->format('Y-m-d'),
                     'notes'      => 'Deposit payment for booking #' . $booking->id,
-                    'payment_id' => $this->generatePaymentId($booking->id, 'deposit'),
+                    'payment_id' => generatePaymentId($booking->id, PaymentType::DEPOSIT),
                 ]);
 
                 $this->paymentModel::create([
@@ -865,7 +865,7 @@ class BookingService
                     'status'     => PaymentStatus::PENDING,
                     'amount'     => $totalPrice - $depositAmount,
                     'notes'      => 'Remaining payment pending for booking #' . $booking->id,
-                    'payment_id' => $this->generatePaymentId($booking->id, 'remaining'),
+                    'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
                 ]);
             } else {
                 $booking->payments()->create([
@@ -873,7 +873,7 @@ class BookingService
                     'amount'     => $totalPrice,
                     'type'       => PaymentType::FULL,
                     'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
-                    'payment_id' => $this->generatePaymentId($booking->id, PaymentType::FULL),
+                    'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
                     'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
                     'method'     => $formData['payment_method'] == 'online_payment' ? PaymentMethod::ONLINE : PaymentMethod::CASH,
                     'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->id}" : "Payment pending for booking #{$booking->id}",
@@ -929,11 +929,6 @@ class BookingService
             Log::error("Order placing Failed: " . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong please try again later: " . $e->getMessage());
         }
-    }
-
-    private function generatePaymentId($bookingId, $type)
-    {
-        return 'PAY-' . $bookingId . '-' . strtoupper($type) . '-' . time();
     }
 
     public function upcoming($request)
