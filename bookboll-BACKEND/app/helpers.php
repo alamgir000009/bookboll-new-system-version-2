@@ -1,6 +1,8 @@
 <?php
 
+use App\Models\Invoice;
 use App\Services\AuditLogService;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 if (! class_exists('BookingStatus')) {
     class BookingStatus
@@ -418,6 +420,39 @@ if (! function_exists('determineSlotPrice')) {
         function generatePaymentId($bookingId, $type)
         {
             return 'PAY-' . $bookingId . '-' . strtoupper($type) . '-' . time();
+        }
+    }
+
+    if (! function_exists('generateInvoiceId')) {
+        function generateInvoiceId()
+        {
+            $invoiceNumber = null;
+            DB::transaction(function () use (&$invoiceNumber) {
+
+                $year              = now()->year;
+                $latestInvoice     = Invoice::lockForUpdate()->whereYear('created_at', $year)->latest('id')->first();
+                $nextInvoiceNumber = $latestInvoice ? (int) substr($latestInvoice->invoice_number, -5) + 1 : 1;
+                $invoiceNumber     = sprintf('INV_%s_%05d', $year, $nextInvoiceNumber);
+
+            });
+
+            return $invoiceNumber;
+        }
+    }
+
+    if (! function_exists('generateAndStoreInvoicePdf')) {
+        function generateAndStoreInvoicePdf($booking, $invoiceNumber)
+        {
+            logger("DD: " . $invoiceNumber);
+            $pdf = Pdf::loadView('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
+
+            $fileName     = 'invoice_' . $invoiceNumber . '_' . $booking->id . '.pdf';
+            $relativePath = 'invoices/' . $fileName;
+
+            Storage::disk('public')->makeDirectory('invoices');
+            Storage::disk('public')->put($relativePath, $pdf->output());
+
+            return $relativePath;
         }
     }
 }

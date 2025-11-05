@@ -87,6 +87,11 @@ class Booking extends Model
         return $this->hasMany(Payment::class);
     }
 
+    public function invoices()
+    {
+        return $this->hasMany(Invoice::class);
+    }
+
     public function history()
     {
         return $this->hasMany(BookingHistory::class, 'booking_id');

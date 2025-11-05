@@ -688,42 +688,53 @@ class BookingService
             'add_ons.*'         => 'exists:add_ons,id',
             'phone'             => 'required|string|min:5',
             'payment_method_id' => 'nullable|string',
-            'payment_intent_id' => 'nullable|string',
+            'payment_intent_id' => 'nullable|required_if:payment_method,online_payment,deposit_remaining_on_arrival',
         ]);
 
         try {
 
             DB::beginTransaction();
 
-            if (in_array($formData['payment_method'], ['online_payment', 'deposit_remaining_on_arrival'])) {
-                $payment = $user->findPayment($formData['payment_intent_id']);
-                if ($payment->status !== 'succeeded') {
-                    return sendError('Payment not confirmed');
-                }
-            }
-
             if (! $user->phone || $user->phone != $request->phone) {
                 $user->phone = $request->phone;
                 $user->save();
             }
 
-            if (isset($formData['payment_method_id'])) {
+            $paymentIntentId = null;
+            $chargeId        = null;
 
-                $user->addPaymentMethod($formData['payment_method_id']);
-                $user->updateDefaultPaymentMethod($formData['payment_method_id']);
+            if (in_array($formData['payment_method'], ['online_payment', 'deposit_remaining_on_arrival'])) {
 
-                $pm = $user->findPaymentMethod($formData['payment_method_id']);
-                if ($pm && $pm->type === 'card') {
-                    $card = $pm->card;
-                    $user->paymentMethods()->create([
-                        'brand'     => $card->brand,
-                        'last_four' => $card->last4,
-                        'exp_year'  => $card->exp_year,
-                        'exp_month' => $card->exp_month,
-                    ]);
+                if (! empty($formData['payment_intent_id'])) {
+                    $payment = $user->findPayment($formData['payment_intent_id']);
+
+                    if (! $payment || $payment->status !== 'succeeded') {
+                        return sendError('Payment not confirmed');
+                    }
+
+                    $paymentIntentId = $formData['payment_intent_id'];
+                    $chargeId        = $payment->latest_charge;
                 }
 
-                Log::info('PM Attached & Stored', ['pm_id' => $formData['payment_method_id'], 'user_id' => $user->id]);
+                if (! empty($formData['payment_method_id'])) {
+
+                    $user->addPaymentMethod($formData['payment_method_id']);
+                    $user->updateDefaultPaymentMethod($formData['payment_method_id']);
+
+                    $pm = $user->findPaymentMethod($formData['payment_method_id']);
+                    if ($pm && $pm->type === 'card') {
+                        $card = $pm->card;
+
+                        $user->paymentMethods()->updateOrCreate(
+                            ['last_four' => $card->last4],
+                            [
+                                'brand'     => $card->brand,
+                                'exp_year'  => $card->exp_year,
+                                'exp_month' => $card->exp_month,
+                            ]
+                        );
+                    }
+                }
             }
 
             $listing = Listing::findOrFail($formData['listing_id']);
@@ -845,15 +856,17 @@ class BookingService
                 }
 
                 $this->paymentModel::create([
-                    'user_id'    => $user->id,
-                    'booking_id' => $booking->id,
-                    'amount'     => $depositAmount,
-                    'status'     => PaymentStatus::PAID,
-                    'type'       => PaymentType::DEPOSIT,
-                    'method'     => PaymentMethod::ONLINE,
-                    'date'       => now()->format('Y-m-d'),
-                    'notes'      => 'Deposit payment for booking #' . $booking->id,
-                    'payment_id' => generatePaymentId($booking->id, PaymentType::DEPOSIT),
+                    'charge_id'         => $chargeId,
+                    'user_id'           => $user->id,
+                    'booking_id'        => $booking->id,
+                    'amount'            => $depositAmount,
+                    'status'            => PaymentStatus::PAID,
+                    'type'              => PaymentType::DEPOSIT,
+                    'method'            => PaymentMethod::ONLINE,
+                    'date'              => now()->format('Y-m-d'),
+                    'payment_intent_id' => $paymentIntentId,
+                    'notes'             => 'Deposit payment for booking #' . $booking->id,
+                    'payment_id'        => generatePaymentId($booking->id, PaymentType::DEPOSIT),
                 ]);
 
                 $this->paymentModel::create([
@@ -869,14 +882,16 @@ class BookingService
                 ]);
             } else {
                 $booking->payments()->create([
-                    'user_id'    => $user->id,
-                    'amount'     => $totalPrice,
-                    'type'       => PaymentType::FULL,
-                    'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
-                    'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
-                    'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
-                    'method'     => $formData['payment_method'] == 'online_payment' ? PaymentMethod::ONLINE : PaymentMethod::CASH,
-                    'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->id}" : "Payment pending for booking #{$booking->id}",
+                    'charge_id'         => $chargeId,
+                    'user_id'           => $user->id,
+                    'amount'            => $totalPrice,
+                    'type'              => PaymentType::FULL,
+                    'payment_intent_id' => $paymentIntentId,
+                    'payment_id'        => generatePaymentId($booking->id, PaymentType::FULL),
+                    'date'              => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
+                    'method'            => $formData['payment_method'] == 'online_payment' ? PaymentMethod::ONLINE : PaymentMethod::CASH,
+                    'status'            => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                    'notes'             => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->id}" : "Payment pending for booking #{$booking->id}",
                 ]);
             }
 
@@ -889,14 +904,26 @@ class BookingService
             if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
                 $booking->history()->create([
                     'user_id'     => $user->id,
-                    'action'      => BookingPaymentStatus::DEPOSIT_PAID,
                     'description' => 'Deposit payment processed.',
+                    'action'      => BookingPaymentStatus::DEPOSIT_PAID,
                 ]);
             }
 
             try {
 
-                $user->notify(new BookingCreatedUserNotification($booking));
+                $invoiceNumber = generateInvoiceId();
+
+                $invoicePath = generateAndStoreInvoicePdf($booking, $invoiceNumber);
+
+                $invoice = $user->invoices()->create([
+                    'user_id'        => $user->id,
+                    'status'         => 'generated',
+                    'path'           => $invoicePath,
+                    'booking_id'     => $booking->id,
+                    'invoice_number' => $invoiceNumber,
+                ]);
+
+                $user->notify(new BookingCreatedUserNotification($booking, $invoice->path));
 
                 $admins = User::whereHas("roles", function ($query) {
                     $query->whereIn("name", ["super_admin", "admin"]);
@@ -915,11 +942,9 @@ class BookingService
                 ->where('session_id', $sessionId)
                 ->delete();
 
-            $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name']);
-
             DB::commit();
 
-            $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name']);
+            $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name', 'invoices']);
 
             return sendSuccess('Booking confirmed successfully', compact('booking'));
 

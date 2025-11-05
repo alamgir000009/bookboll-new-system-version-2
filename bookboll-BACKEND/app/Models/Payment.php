@@ -14,8 +14,10 @@ class Payment extends Model
         'method',
         'status',
         'user_id',
+        'charge_id',
         'payment_id',
         'booking_id',
+        'payment_intent_id',
     ];
 
     protected $casts = [

@@ -22,6 +22,8 @@ return new class extends Migration
             $table->enum('status', PaymentStatus::list())->default(PaymentStatus::PENDING);
             $table->date('date')->nullable();
             $table->text('notes')->nullable();
+            $table->string('payment_intent_id')->nullable();
+            $table->string('charge_id')->nullable();
             $table->timestamps();
 
             $table->index(['payment_id', 'user_id', 'booking_id']);

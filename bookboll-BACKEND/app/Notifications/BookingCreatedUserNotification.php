@@ -7,12 +7,13 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use Illuminate\Support\Facades\Storage;
 
 class BookingCreatedUserNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    public function __construct(public Booking $booking)
+    public function __construct(public Booking $booking, public $invoice_path = null)
     {}
 
     public function via()
@@ -24,16 +25,24 @@ class BookingCreatedUserNotification extends Notification implements ShouldQueue
     {
         $booking = $this->booking;
 
-        return (new MailMessage)
+        $mail = (new MailMessage)
             ->subject('Your Booking is Confirmed')
             ->greeting('Hi ' . $booking->user->name . ',')
             ->line('Your booking for ' . $booking->listing->name . ' at ' . $booking->venue->name . ' has been confirmed.')
             ->line('Date: ' . $booking->date)
             ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
             ->line('Total: $' . number_format($booking->total_price ?? 0, 2))
-            // ->action('View Booking', config('app.frontend_url').'/bookings/' . $booking->id)
             ->action('View Booking', config('app.frontend_url'))
             ->line('We look forward to seeing you!');
+
+        if ($this->invoice_path && Storage::disk('public')->exists($this->invoice_path)) {
+            $mail->attach(Storage::disk('public')->path($this->invoice_path), [
+                'as'   => 'Invoice-' . $booking->id . '.pdf',
+                'mime' => 'application/pdf',
+            ]);
+        }
+
+        return $mail;
     }
 
     public function toArray($notifiable)
