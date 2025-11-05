@@ -6,6 +6,7 @@ use App\Models\PostCategory;
 use App\Models\Tag;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class PostService
@@ -124,7 +125,7 @@ class PostService
             return sendSuccess('Post created successfully', compact('post'), 201);
         } catch (Exception $e) {
             DB::rollBack();
-            logger("Creating Blog Post Error: " . $e->getMessage());
+            Log::error("Creating Blog Post Error: " . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong.");
         }
     }
@@ -205,7 +206,7 @@ class PostService
 
         } catch (Exception $e) {
             DB::rollBack();
-            logger("Updating Blog Post Error: " . $e->getMessage());
+            Log::error("Updating Blog Post Error: " . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong.");
         }
     }

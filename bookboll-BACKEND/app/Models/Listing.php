@@ -60,7 +60,7 @@ class Listing extends Model
 
     public function resourceRequirements()
     {
-        return $this->belongsToMany(Resource::class, 'listing_resource')->withPivot('quantity');
+        return $this->belongsToMany(Resource::class, 'listing_resource', 'listing_id', 'resource_id')->withPivot('quantity');
     }
 
     public function schedules()

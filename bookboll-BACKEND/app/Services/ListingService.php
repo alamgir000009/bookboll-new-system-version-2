@@ -681,7 +681,7 @@ class ListingService
 
             $isAvailable = ! $isHoliday && $availableCount > 0 && $allResourcesAvailable;
 
-            $price = $this->determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
+            $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
 
             $slots->push([
                 'is_holiday'          => $isHoliday,
@@ -691,43 +691,14 @@ class ListingService
                 'available_resources' => $availableQty,
                 'duration'            => ($slotMinutes / 60) . "h",
                 'time'                => "{$slotStart} - {$slotEnd}",
-                'price'               => round($price, 2),
-                'capacity'            => $listing->max_bookings_per_slot,
+                'price'    => round($price, 2),
+                'capacity' => $listing->max_bookings_per_slot,
             ]);
 
             $start->addMinutes($slotMinutes);
         }
 
         return $slots->values();
-    }
-
-    protected function determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay)
-    {
-        $price = $listing->base_price;
-
-        // Apply pricing group overrides
-        foreach ($listing->pricingGroups as $group) {
-            if (in_array($weekday, $group->days)) {
-                if (strtotime($slotStart) >= strtotime($group->start_time) &&
-                    strtotime($slotEnd) <= strtotime($group->end_time)) {
-                    $price = $group->price_per_hour;
-                    break;
-                }
-            }
-        }
-
-        // Apply special day overrides
-        if ($specialDay && $specialDay->timeBlocks->count()) {
-            foreach ($specialDay->timeBlocks as $block) {
-                if (strtotime($slotStart) >= strtotime($block->start_time) &&
-                    strtotime($slotEnd) <= strtotime($block->end_time)) {
-                    $price = $block->price_per_hour ?? $price;
-                    break;
-                }
-            }
-        }
-
-        return $price;
     }
 
     public function fetchSuggestions($request)
@@ -772,14 +743,13 @@ class ListingService
 
         $addons = $listing->addons->map(function ($addon) {
             return [
-                'recommended' => true,
-                'id'          => $addon->id,
-                'name'        => $addon->name,
-                'price'       => $addon->price ?? 0,
-                'description' => $addon->description,
-                'icon'        => $addon->icon ?? '🧽',
-                'subtitle'    => $addon->subtitle ?? '',
-                //  '+1 hour extension - More time to enjoy!'
+                'recommended'     => true,
+                'id'              => $addon->id,
+                'name'            => $addon->name,
+                'image'           => $addon->image,
+                'price'           => $addon->price ?? 0,
+                'description'     => $addon->description,
+                'hours_extension' => $addon->hours_extension,
             ];
         });
 

@@ -385,3 +385,32 @@ if (! function_exists('generatePaymentId')) {
         return 'PAY-' . $bookingId . $typeAbbr;
     }
 }
+
+if (! function_exists('determineSlotPrice')) {
+    function determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay)
+    {
+        $price = $listing->base_price;
+
+        foreach ($listing->pricingGroups as $group) {
+            if (in_array($weekday, $group->days)) {
+                if (strtotime($slotStart) >= strtotime($group->start_time) &&
+                    strtotime($slotEnd) <= strtotime($group->end_time)) {
+                    $price = $group->price_per_hour;
+                    break;
+                }
+            }
+        }
+
+        if ($specialDay && $specialDay->timeBlocks->count()) {
+            foreach ($specialDay->timeBlocks as $block) {
+                if (strtotime($slotStart) >= strtotime($block->start_time) &&
+                    strtotime($slotEnd) <= strtotime($block->end_time)) {
+                    $price = $block->price_per_hour ?? $price;
+                    break;
+                }
+            }
+        }
+
+        return $price;
+    }
+}

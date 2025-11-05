@@ -63,7 +63,7 @@ class UserService
             try {
                 Mail::to($user->email)->queue(new UserWelcomeEmail($user, $formData['password']));
             } catch (Exception $e) {
-                logger("Failed to send welcome email: " . $e->getMessage(), ['exception' => $e]);
+                Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
             }
 
             $user->load(['roles', 'venues']);
@@ -75,7 +75,7 @@ class UserService
 
         } catch (Exception $e) {
             DB::rollBack();
-            logger("User registration error: " . $e->getMessage(), ['exception' => $e]);
+            Log::error("User registration error: " . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong please try again later");
         }
     }
@@ -434,7 +434,7 @@ class UserService
             try {
                 Mail::to($user->email)->queue(new UserWelcomeEmail($user, $formData['password']));
             } catch (Exception $e) {
-                logger("Failed to send welcome email: " . $e->getMessage(), ['exception' => $e]);
+                Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
             }
 
             $user->load(['roles', 'venues']);

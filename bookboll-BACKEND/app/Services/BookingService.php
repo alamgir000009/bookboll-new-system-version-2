@@ -8,6 +8,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\Payment;
 use App\Models\Promocode;
 use App\Models\Resource;
+use App\Models\SlotLock;
 use App\Models\SpecialDay;
 use App\Models\User;
 use App\Models\Venue;
@@ -697,14 +698,13 @@ class BookingService
             if (in_array($formData['payment_method'], ['online_payment', 'deposit_remaining_on_arrival'])) {
                 $payment = $user->findPayment($formData['payment_intent_id']);
                 if ($payment->status !== 'succeeded') {
-                    return response()->json(['message' => 'Payment not confirmed'], 400);
+                    return sendError('Payment not confirmed');
                 }
             }
 
             if (! $user->phone || $user->phone != $request->phone) {
                 $user->phone = $request->phone;
                 $user->save();
-                $user->updateStripeCustomer(['phone' => $formData['phone']]);
             }
 
             if (isset($formData['payment_method_id'])) {
@@ -726,14 +726,24 @@ class BookingService
                 Log::info('PM Attached & Stored', ['pm_id' => $formData['payment_method_id'], 'user_id' => $user->id]);
             }
 
-            $listing   = Listing::findOrFail($formData['listing_id']);
-            $basePrice = $listing->base_price ?? 0;
+            $listing = Listing::findOrFail($formData['listing_id']);
+
+            $weekday = strtolower(Carbon::parse($request->date)->format('l'));
+
+            $specialDay = SpecialDay::with('timeBlocks')
+                ->where('venue_id', $listing->venue_id)
+                ->where(function ($q) use ($listing) {
+                    $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+                })
+                ->whereDate('date', $request->date)->active()->first();
+
+            $basePrice = determineSlotPrice($listing, $weekday, $formData['start_time'], $formData['end_time'], $specialDay);
 
             $startTime = Carbon::parse($formData['start_time']);
             $endTime   = Carbon::parse($formData['end_time']);
             $duration  = abs($endTime->diffInHours($startTime));
 
-            $subtotal = $basePrice * $duration;
+            $subtotal = $basePrice;
 
             $addOnCost = 0;
             if (! empty($formData['add_ons'])) {
@@ -770,32 +780,51 @@ class BookingService
                 default                        => 'pending',
             };
 
-            // Create booking
+            $depositAmount = 0;
+
+            if (! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
+                $deposit = $listing->payment_options['deposit'];
+
+                if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
+                    $depositAmount = $deposit['amount'];
+                } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                    $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
+                }
+            }
+
             $booking = $this->bookingModel::create([
                 'user_id'               => $user->id,
-                'venue_id'              => $formData['venue_id'],
-                'listing_id'            => $formData['listing_id'],
-                'promocode_id'          => $promocode?->id,
-                'date'                  => $formData['date'],
-                'start_time'            => $formData['start_time'],
-                'end_time'              => $formData['end_time'],
                 'duration'              => $duration,
                 'subtotal'              => $subtotal,
                 'discount_amount'       => $discount,
                 'total_price'           => $totalPrice,
-                'full_payment_received' => $paymentStatus == 'fully_paid',
-                'notes'                 => $formData['notes'],
-                'status'                => BookingStatus::PENDING,
                 'payment_status'        => $paymentStatus,
+                'promocode_id'          => $promocode?->id,
+                'date'                  => $formData['date'],
+                'notes'                 => $formData['notes'],
+                'venue_id'              => $formData['venue_id'],
+                'end_time'              => $formData['end_time'],
+                'status'                => BookingStatus::PENDING,
+                'start_time'            => $formData['start_time'],
+                'listing_id'            => $formData['listing_id'],
                 'payment_method'        => $formData['payment_method'],
                 'loyalty_points_earned' => $listing->loyalty_points ?? 0,
+                'full_payment_received' => $paymentStatus == BookingPaymentStatus::FULLY_PAID,
                 'payment_breakdown'     => [
-                    'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? round($totalPrice * 0.3, 2) : 0,
+                    'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
                     'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
-                    'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - round($totalPrice * 0.3, 2) : 0,
+                    'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - $depositAmount : 0,
                     'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
                 ],
             ]);
+
+            $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
+
+            foreach ($resources as $resource) {
+                $booking->resourcesAllocated()->attach($resource->id, [
+                    'quantity' => $resource->pivot->quantity,
+                ]);
+            }
 
             if (! empty($formData['add_ons'])) {
                 $booking->addOns()->sync($formData['add_ons']);
@@ -816,7 +845,6 @@ class BookingService
                 }
 
                 $this->paymentModel::create([
-                    'payment_id' => $this->generatePaymentId($booking->id, 'deposit'),
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
                     'amount'     => $depositAmount,
@@ -825,10 +853,10 @@ class BookingService
                     'method'     => PaymentMethod::ONLINE,
                     'date'       => now()->format('Y-m-d'),
                     'notes'      => 'Deposit payment for booking #' . $booking->id,
+                    'payment_id' => $this->generatePaymentId($booking->id, 'deposit'),
                 ]);
 
                 $this->paymentModel::create([
-                    'payment_id' => $this->generatePaymentId($booking->id, 'remaining'),
                     'date'       => null,
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
@@ -837,30 +865,31 @@ class BookingService
                     'status'     => PaymentStatus::PENDING,
                     'amount'     => $totalPrice - $depositAmount,
                     'notes'      => 'Remaining payment pending for booking #' . $booking->id,
+                    'payment_id' => $this->generatePaymentId($booking->id, 'remaining'),
                 ]);
             } else {
                 $booking->payments()->create([
-                    'payment_id' => $this->generatePaymentId($booking->id, 'full'),
                     'user_id'    => $user->id,
                     'amount'     => $totalPrice,
                     'type'       => PaymentType::FULL,
-                    'date'       => $paymentStatus == 'fully_paid' ? now()->format('Y-m-d') : null,
-                    'status'     => $paymentStatus == 'fully_paid' ? PaymentStatus::PAID : PaymentStatus::PENDING,
-                    'method'     => $formData['payment_method'] == 'online_payment' ? 'online' : PaymentMethod::CASH,
-                    'notes'      => $paymentStatus == 'fully_paid' ? "Full payment for booking #{$booking->id}" : "Payment pending for booking #{$booking->id}",
+                    'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
+                    'payment_id' => $this->generatePaymentId($booking->id, PaymentType::FULL),
+                    'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                    'method'     => $formData['payment_method'] == 'online_payment' ? PaymentMethod::ONLINE : PaymentMethod::CASH,
+                    'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->id}" : "Payment pending for booking #{$booking->id}",
                 ]);
             }
 
             $booking->history()->create([
+                'user_id'     => $user->id,
                 'action'      => 'booking_created',
                 'description' => 'Booking created via API.',
-                'user_id'     => $user->id,
             ]);
 
-            if ($paymentStatus == 'deposit_paid') {
+            if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
                 $booking->history()->create([
                     'user_id'     => $user->id,
-                    'action'      => 'deposit_paid',
+                    'action'      => BookingPaymentStatus::DEPOSIT_PAID,
                     'description' => 'Deposit payment processed.',
                 ]);
             }
@@ -879,6 +908,15 @@ class BookingService
                 Log::error("Booking created notification errors: " . $e->getMessage(), ["Exception" => $e]);
             }
 
+            $ipAddress = $request->ip();
+            $sessionId = $user ? 'user_' . $user->id : 'guest_' . md5($ipAddress . $request->userAgent());
+
+            $activeLock = SlotLock::where('listing_id', $listing->id)->whereDate('date', $booking->date)
+                ->where('session_id', $sessionId)
+                ->delete();
+
+            $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name']);
+
             DB::commit();
 
             $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name']);
@@ -889,7 +927,7 @@ class BookingService
 
             DB::rollBack();
             Log::error("Order placing Failed: " . $e->getMessage(), ["Exception" => $e]);
-            return sendError("Something went wrong please try again later: ".$e->getMessage());
+            return sendError("Something went wrong please try again later: " . $e->getMessage());
         }
     }
 

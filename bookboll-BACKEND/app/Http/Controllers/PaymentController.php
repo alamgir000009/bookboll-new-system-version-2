@@ -80,12 +80,6 @@ class PaymentController extends Controller
                 'setup_future_usage'   => 'off_session',
             ]);
 
-            Log::info('PI Created with Customer', [
-                'pi_id'        => $payment->id,
-                'customer_id'  => $payment->customer,
-                'future_usage' => $payment->setup_future_usage,
-            ]);
-
             return sendSuccess("Client secret created successfully", [
                 'client_secret'     => $payment->client_secret,
                 'payment_intent_id' => $payment->id,

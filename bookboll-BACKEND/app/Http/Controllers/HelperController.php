@@ -11,7 +11,9 @@ use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\User;
 use App\Models\Venue;
+use Exception;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
 class HelperController extends Controller
@@ -124,10 +126,9 @@ class HelperController extends Controller
             Mail::to($adminEmail)->send(new ContactUsEmail($contact));
 
             return sendSuccess("Message sent successfully! We\'ll get back to you soon.");
-        } catch (\Exception $e) {
-            logger("Contact Us mail failed: " . $e->getMessage());
+        } catch (Exception $e) {
+            Log::error("Contact Us mail failed: " . $e->getMessage(), ["Exception" => $e]);
             return sendError("Failed to send message: Something went wrong");
         }
-
     }
 }

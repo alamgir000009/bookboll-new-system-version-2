@@ -53,10 +53,7 @@ class SettingService
     public function updateSingle(Request $request, string $key)
     {
         $request->validate(['value' => 'required']);
-
         $value = $request->value;
-
-        logger($request->all());
 
         $setting = $this->settingModel::updateOrCreate(
             ['key' => $key],
