@@ -74,7 +74,7 @@ class BookingController extends Controller
 
     public function confirmBooking(Request $request)
     {
-        return $this->bookingService->confirmBooking($request);
+        return $this->bookingService->createBooking($request);
     }
 
     public function upcoming(Request $request)

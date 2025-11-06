@@ -670,7 +670,7 @@ class BookingService
         return sendSuccess('Customer booking history fetched', compact('bookings'));
     }
 
-    public function confirmBooking($request)
+    public function createBooking($request)
     {
         $user = auth()->user();
 
