@@ -138,6 +138,23 @@ class Promocode extends Model
         }
     }
 
+    public function decrementUsage($userId = null)
+    {
+        $this->decrement('used_count');
+
+        if ($userId) {
+            $usedByUsers = $this->used_by_users;
+            if (isset($usedByUsers[$userId]) && $usedByUsers[$userId] > 0) {
+                $usedByUsers[$userId]--;
+                if ($usedByUsers[$userId] === 0) {
+                    unset($usedByUsers[$userId]);
+                }
+                $this->used_by_users = $usedByUsers;
+                $this->save();
+            }
+        }
+    }
+
     public function getFormattedDiscountAttribute()
     {
         if ($this->discount_type == 'percentage') {

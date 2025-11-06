@@ -37,6 +37,7 @@ class BookingService
     {
         $records_per_page = $request->records_per_page ?? 10;
         $search           = $request->search ?? null;
+        $user_id          = $request->user_id ?? null;
 
         $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user'])
             ->when($search, function ($q) use ($search) {
@@ -50,17 +51,21 @@ class BookingService
                         ->orWhere('subtotal', 'LIKE', "%{$search}%");
                 });
             })
-            ->when($request->status ?? null, fn($q, $status) => $q->where('status', $status))
-            ->when($request->from_date ?? null, fn($q, $from) => $q->whereDate('created_at', '>=', $from))
-            ->when($request->to_date ?? null, fn($q, $to) => $q->whereDate('created_at', '<=', $to))
-            ->when($request->venue ?? null, function ($q, $venue) {
+            ->when($request->status, fn($q, $status) => $q->where('status', $status))
+            ->when($request->from_date, fn($q, $from) => $q->whereDate('created_at', '>=', $from))
+            ->when($request->to_date, fn($q, $to) => $q->whereDate('created_at', '<=', $to))
+            ->when($request->venue, function ($q, $venue) {
                 $q->where('venue_id', 'LIKE', "%{$venue}%");
             })
-            ->when($request->user ?? null, function ($q, $user) {
+            ->when($request->user, function ($q, $user) {
                 $q->whereHas('user', fn($u) => $u->where('name', 'LIKE', "%{$user}%"));
             })
+            ->when($user_id, function ($q, $user_id) {
+                $q->whereRelation('user', 'id', $user_id);
+            })
             ->latest('id');
-            $bookings = $records_per_page == 'all' ? $bookings->get() : $bookings->paginate($records_per_page);
+
+        $bookings = $records_per_page == 'all' ? $bookings->get() : $bookings->paginate($records_per_page);
 
         return sendSuccess('Bookings fetched successfully', compact('bookings'));
     }
@@ -954,6 +959,76 @@ class BookingService
             DB::rollBack();
             Log::error("Order placing Failed: " . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong please try again later: " . $e->getMessage());
+        }
+    }
+
+    public function update($request, $bookingId)
+    {
+        $booking = $this->bookingModel::with('promocode')->findOrFail($bookingId);
+
+        $formData = $request->validate([
+            'remove_promocode' => 'sometimes|boolean',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $oldPromocode = $booking->promocode;
+
+            if (($formData['remove_promocode'] ?? false) && $oldPromocode) {
+
+                $originalDiscount = $booking->discount_amount ?? 0;
+
+                $oldPromocode->decrementUsage($booking->user_id);
+
+                $booking->update([
+                    'discount_amount' => 0,
+                    'promocode_id'    => null,
+                    'total_price'     => $booking->subtotal ?? $booking->total_price,
+                ]);
+
+                if ($booking->payment_method === 'deposit_remaining_on_arrival' && $booking->payment_breakdown) {
+                    $updatedBreakdown                     = $booking->payment_breakdown;
+                    $currentRemaining                     = $updatedBreakdown['remaining_amount'] ?? 0;
+                    $updatedBreakdown['remaining_amount'] = $currentRemaining + $originalDiscount;
+                    $booking->payment_breakdown           = $updatedBreakdown;
+                    $booking->save();
+                }
+
+                $booking->history()->create([
+                    'user_id'     => auth()->id(),
+                    'action'      => 'promocode_removed',
+                    'description' => "Promocode {$oldPromocode->code} removed. Discount (QAR {$originalDiscount}) restored.",
+                ]);
+
+                Log::info("Promocode removed from booking #{$booking->id} by admin " . auth()->id());
+            }
+
+            $booking->load([
+                'user',
+                'addOns',
+                'history',
+                'payments',
+                'invoices',
+                'promocode',
+                'venue:id,name',
+                'listing:id,name',
+                'resourcesAllocated',
+            ]);
+
+            DB::commit();
+
+            return sendSuccess('Booking updated successfully', compact('booking'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Failed to update booking #{$bookingId}: " . $e->getMessage(), [
+                'request'    => $request->all(),
+                'booking_id' => $booking->id ?? $bookingId,
+                'exception'  => $e,
+            ]);
+
+            return sendError('Failed to update booking: ' . $e->getMessage());
         }
     }
 

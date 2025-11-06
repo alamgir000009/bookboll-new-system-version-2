@@ -27,9 +27,9 @@ class BookingController extends Controller
         return $this->bookingService->getBooking($booking_id);
     }
 
-    public function update(Request $request, Booking $booking)
+    public function update(Request $request, $booking_id)
     {
-        return $this->bookingService->update($booking, $request);
+        return $this->bookingService->update($request, $booking_id);
     }
 
     public function destroy($id)
