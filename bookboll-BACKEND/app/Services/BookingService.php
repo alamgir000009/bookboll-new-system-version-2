@@ -23,6 +23,7 @@ use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use PaymentMethod;
@@ -1037,25 +1038,21 @@ class BookingService
     public function confirm($request)
     {
         $booking = $this->bookingModel::with('user')->findOrFail($request->booking_id);
-        logger("DDDDDDDDDDDDDD", [
-            "Booking" => $booking,
-            "Request" => $request->all(),
-        ]);
-        
+
         try {
 
             DB::beginTransaction();
 
-            // if ($booking->status !== BookingStatus::PENDING) {
-            //     return sendError('Booking cannot be confirmed (not pending)');
-            // }
+            if ($booking->status !== BookingStatus::PENDING) {
+                return sendError('Booking cannot be confirmed (not pending)');
+            }
 
             $booking->update(['status' => BookingStatus::CONFIRMED]);
 
             $booking->history()->create([
                 'user_id'     => auth()->id(),
                 'action'      => 'booking_confirmed',
-                'description' => 'Booking confirmed by '.auth()->user()->name,
+                'description' => 'Booking confirmed by ' . auth()->user()->name,
             ]);
 
             try {
@@ -1090,6 +1087,69 @@ class BookingService
                 'exception'  => $e,
             ]);
             return sendError('Failed to confirm booking: ' . $e->getMessage());
+        }
+    }
+
+    public function generateInvoice($request)
+    {
+        $booking = $this->bookingModel::with('user')->findOrFail($request->booking_id);
+
+        $validated = $request->validate(['regenerate' => 'sometimes|boolean']);
+
+        try {
+            DB::beginTransaction();
+
+            $user = $booking->user;
+
+            $existingInvoice = $user->invoices()->where('booking_id', $booking->id)->latest()->first();
+
+            if ($existingInvoice && ! ($validated['regenerate'] ?? false)) {
+                if (Storage::disk('public')->exists($existingInvoice->path)) {
+                    return response()->download(
+                        Storage::disk('public')->path($existingInvoice->path),
+                        $existingInvoice->invoice_number . '.pdf',
+                        [
+                            'Content-Type' => 'application/pdf',
+                        ]
+                    );
+                } else {
+                    Log::warning("Existing invoice file missing for booking #{$booking->id}, regenerating.");
+                }
+            }
+
+            $invoiceNumber = generateInvoiceId();
+            $invoicePath   = generateAndStoreInvoicePdf($booking, $invoiceNumber);
+
+            $user->invoices()->create([
+                'path'           => $invoicePath,
+                'booking_id'     => $booking->id,
+                'status'         => 're_generated',
+                'invoice_number' => $invoiceNumber,
+            ]);
+
+            DB::commit();
+
+            if (! Storage::disk('public')->exists($invoicePath)) {
+                return sendError('Invoice file not found after generation');
+            }
+
+            return response()->download(
+                Storage::disk('public')->path($invoicePath),
+                $invoiceNumber . '_' . time() . '.pdf',
+                [
+                    'Content-Type'        => 'application/pdf',
+                    'Content-Disposition' => 'attachment; filename="' . $invoiceNumber . '_' . time() . '.pdf"',
+                ]
+            );
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Failed to generate invoice for booking #{$booking->id}: " . $e->getMessage(), [
+                'request'    => $request->all(),
+                'booking_id' => $booking->id,
+                'exception'  => $e,
+            ]);
+            return sendError('Failed to generate invoice: ' . $e->getMessage());
         }
     }
 
