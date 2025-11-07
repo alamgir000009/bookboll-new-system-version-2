@@ -37,9 +37,9 @@ class BookingController extends Controller
         return $this->bookingService->delete($id);
     }
 
-    public function cancel(Request $request, $id)
+    public function cancel(Request $request)
     {
-        return $this->bookingService->cancel($request, $id);
+        return $this->bookingService->cancel($request);
     }
 
     public function dashboardData()

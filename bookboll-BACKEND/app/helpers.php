@@ -179,7 +179,7 @@ if (! function_exists('sendSuccess')) {
 }
 
 if (! function_exists('sendError')) {
-    function sendError(string $message = 'Error', array $errors = [], int $code = 400): \Illuminate\Http\JsonResponse
+    function sendError(string $message = 'Error', array $errors = [], int $code = 400)
     {
         return response()->json([
             'success' => false,
@@ -443,7 +443,6 @@ if (! function_exists('determineSlotPrice')) {
     if (! function_exists('generateAndStoreInvoicePdf')) {
         function generateAndStoreInvoicePdf($booking, $invoiceNumber)
         {
-            logger("DD: " . $invoiceNumber);
             $pdf = Pdf::loadView('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
 
             $fileName     = 'invoice_' . $invoiceNumber . '_' . $booking->id . '.pdf';

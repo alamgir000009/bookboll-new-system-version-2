@@ -97,9 +97,9 @@ class BookingService
         return sendSuccess('Booking delete successfully');
     }
 
-    public function cancel($request, $id)
+    public function cancel($request)
     {
-        $booking = $this->bookingModel->findOrFail($id);
+        $booking = $this->bookingModel->findOrFail($request->booking_id);
 
         $request->validate(['cancel_reason' => 'nullable|string|max:255']);
 
@@ -116,7 +116,7 @@ class BookingService
 
         $booking->history()->create([
             'user_id'     => auth()->id(),
-            'action'      => 'booking cancelled',
+            'action'      => 'booking_cancelled',
             'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
         ]);
 

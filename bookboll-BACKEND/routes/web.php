@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\NewsletterController;
+use App\Http\Controllers\PaymentController;
 use Illuminate\Support\Facades\Route;
 use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 
@@ -18,3 +19,6 @@ Route::get('storage-link-000009', function () {
 });
 
 Route::get('logs-000009', [LogViewerController::class, 'index']);
+
+Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentSuccess'])->name('payment.success');
+Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');

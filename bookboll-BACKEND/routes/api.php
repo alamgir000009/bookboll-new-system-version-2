@@ -97,10 +97,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory']);
         Route::get('bookings/form-data', [BookingController::class, 'formData']);
         Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar']);
-        Route::put('bookings/{booking}/cancel', [BookingController::class, 'cancel']);
+        Route::post('bookings/cancel', [BookingController::class, 'cancel']);
         Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings']);
         Route::apiResource('bookings', BookingController::class);
 
+
+        Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink']);
         Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice']);
         Route::apiResource('payments', PaymentController::class);
 

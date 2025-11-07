@@ -37,13 +37,13 @@ class Booking extends Model
 
     protected $casts = [
         'payment_breakdown'     => 'array',
+        'full_payment_received' => 'boolean',
         'subtotal'              => 'decimal:2',
         'discount_amount'       => 'decimal:2',
         'total_price'           => 'decimal:2',
-        'full_payment_received' => 'boolean',
     ];
 
-    protected $appends = ['payment_status', 'due_amount'];
+    protected $appends = ['due_amount'];
 
     public function getPaymentStatusAttribute()
     {
