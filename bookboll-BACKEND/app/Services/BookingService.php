@@ -78,10 +78,10 @@ class BookingService
             'payments',
             'invoices',
             'promocode',
-            'history.user',
             'venue:id,name',
             'listing:id,name',
             'resourcesAllocated',
+            'history.user:id,name',
             'user:id,name,email,phone',
         ])->findOrFail($booking_id);
 
@@ -1014,6 +1014,7 @@ class BookingService
                 'venue:id,name',
                 'listing:id,name',
                 'resourcesAllocated',
+                'history.user:id,name',
             ]);
 
             DB::commit();

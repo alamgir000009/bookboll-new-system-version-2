@@ -73,10 +73,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::apiResource('promocodes', PromocodeController::class);
 
-        Route::post('promocodes/{promocode}/validate', [PromocodeController::class, 'validate']);
-        Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply']);
         Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues']);
         Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings']);
+        Route::post('promocodes/validate', [PromocodeController::class, 'validate']);
+        Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply']);
 
         Route::get('extra-data', [HelperController::class, 'extraData']);
         Route::get('extra-customers', [HelperController::class, 'extraCustomers']);

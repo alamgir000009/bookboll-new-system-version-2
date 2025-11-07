@@ -1,16 +1,20 @@
 <?php
 namespace App\Services;
 
+use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\Promocode;
 use App\Models\Venue;
+use Carbon\Carbon;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class PromocodeService
 {
-    public function __construct(protected Promocode $promocodeModel)
+    public function __construct(protected Promocode $promocodeModel, protected Booking $bookingModel)
     {}
 
     public function all($request)
@@ -63,7 +67,7 @@ class PromocodeService
 
             return sendSuccess('Promocode created successfully', compact('promocode'), 201);
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
             return sendError('Failed to create promocode: ' . $e->getMessage());
         }
@@ -93,7 +97,7 @@ class PromocodeService
 
             return sendSuccess('Promocode updated successfully', compact('promocode'));
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
             return sendError('Failed to update promocode: ' . $e->getMessage());
         }
@@ -182,4 +186,217 @@ class PromocodeService
         return $request->validate($rules);
     }
 
+    public function validatePromocode($request)
+    {
+        $validated = $request->validate([
+            'code'           => 'required|string',
+            'amount'         => 'required|numeric|min:0',
+            'user_id'        => 'required|integer|exists:users,id',
+            'venue_id'       => 'required|integer|exists:venues,id',
+            'listing_id'     => 'sometimes|integer|exists:listings,id',
+            'payment_method' => 'sometimes|string|in:cash_on_arrival,deposit_remaining_on_arrival,online_payment,paid_cash,paid_cheque,paid_wire_transfer',
+        ]);
+
+        try {
+
+            $promocode = Promocode::where('code', $validated['code'])->first();
+
+            if (! $promocode) {
+                return $this->invalidResponse('Promocode not found');
+            }
+
+            $neverExpires = is_null($promocode->expires_at);
+            $now          = Carbon::now();
+
+            if (! $neverExpires) {
+                if ($now->lt($promocode->valid_from) || $now->gt($promocode->expires_at)) {
+                    return $this->invalidResponse('Promocode has expired');
+                }
+            } else {
+                // For never-expiring, still check valid_from
+                if ($now->lt($promocode->valid_from)) {
+                    return $this->invalidResponse('Promocode is not yet active');
+                }
+            }
+
+            // Step 3: Check usage limit (used_count vs usage_limit)
+            if ($promocode->usage_limit && $promocode->used_count >= $promocode->usage_limit) {
+                return $this->invalidResponse('Promocode usage limit reached');
+            }
+
+            // Step 4: Check per-user usage limit (from used_by_users JSON)
+            if ($promocode->per_user_limit) {
+                $userUsageCount = $promocode->used_by_users[$validated['user_id']] ?? 0;
+                if ($userUsageCount >= $promocode->per_user_limit) {
+                    $limitText = $promocode->per_user_limit > 1 ? 's' : '';
+                    return $this->invalidResponse("You can only use this promocode {$promocode->per_user_limit} time{$limitText}");
+                }
+            }
+
+            // Step 5: Check minimum order amount
+            if ($promocode->min_order_amount && $validated['amount'] < $promocode->min_order_amount) {
+                return $this->invalidResponse("Minimum amount required to use promocode is QAR {$promocode->min_order_amount}, your order is for QAR {$validated['amount']}");
+            }
+
+            $paymentMethod = $validated['payment_method'] ?? null; // Optional in request
+            if ($paymentMethod) {                                  // Only check if provided
+                $paymentMethodMapping = [
+                    'cash_on_arrival'              => 'pending_payment',
+                    'deposit_remaining_on_arrival' => 'pending_payment',
+                    'online_payment'               => 'online_payment',
+                    'paid_cash'                    => 'pending_payment',
+                    'paid_cheque'                  => 'pending_payment',
+                    'paid_wire_transfer'           => 'pending_payment',
+                ];
+
+                $mappedPaymentMethod = $paymentMethodMapping[$paymentMethod] ?? $paymentMethod;
+
+                // Assume model's payment_methods is a comma-separated string (e.g., 'pending_payment,online_payment') or array-like
+                // To match JS: Treat as array of allowed methods
+                $validPaymentMethods = $this->parsePaymentMethods($promocode->payment_methods);
+
+                if (! empty($validPaymentMethods) && ! in_array($mappedPaymentMethod, $validPaymentMethods)) {
+                    if (in_array('online_payment', $validPaymentMethods) && ! in_array('pending_payment', $validPaymentMethods)) {
+                        return $this->invalidResponse('This promocode is only valid for online payments');
+                    } elseif (in_array('pending_payment', $validPaymentMethods) && ! in_array('online_payment', $validPaymentMethods)) {
+                        return $this->invalidResponse('This promocode is only valid for cash/deposit payments');
+                    } else {
+                        return $this->invalidResponse('This promocode is not valid for the selected payment method');
+                    }
+                }
+            }
+
+            // Step 7: Check venue restriction (load relation and check contains)
+            if ($validated['venue_id']) {
+                $promocode->load('venues');
+                $applicableVenues = $promocode->venues->pluck('id')->toArray();
+                if (! empty($applicableVenues) && ! in_array($validated['venue_id'], $applicableVenues)) {
+                    return $this->invalidResponse('Promocode is not valid for this venue');
+                }
+            }
+
+            // Step 8: Check listing restriction (optional; load if provided)
+            $listingId = $validated['listing_id'] ?? null;
+            if ($listingId) {
+                $promocode->load('listings');
+                $applicableListings = $promocode->listings->pluck('id')->toArray();
+                if (! empty($applicableListings) && ! in_array($listingId, $applicableListings)) {
+                    return $this->invalidResponse('Promocode is not valid for this listing');
+                }
+            }
+
+            // All checks passed: Return valid with promocode object (matches JS return { valid: true, promocode })
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'valid'           => true,
+                    'promocode'       => $promocode->toArray(),
+                    'discount_amount' => $promocode->applyDiscount($validated['amount']),
+                ],
+            ], 200);
+
+        } catch (Exception $e) {
+            Log::error("Promocode validation failed: " . $e->getMessage(), ['request' => $request->all()]);
+            return $this->invalidResponse('Something went wrong during validation');
+        }
+    }
+
+    private function invalidResponse($error)
+    {
+        return response()->json([
+            'success' => false,
+            'data'    => [
+                'valid' => false,
+                'error' => $error,
+            ],
+        ], 422);
+    }
+
+    /**
+     * Parse payment_methods string to array (e.g., 'all,online_payment' -> ['all', 'online_payment']).
+     * Adjust based on your data (e.g., if 'all' means no restriction, handle in validation).
+     */
+    private function parsePaymentMethods($paymentMethods)
+    {
+        if ($paymentMethods === 'all') {
+            return ['pending_payment', 'online_payment']; // Allow all
+        }
+        return explode(',', $paymentMethods); // Assume comma-separated
+    }
+
+    public function applyPromocode($request, $promocode)
+    {
+        $validated = $request->validate([
+            'booking_id'        => 'required|exists:bookings,id',
+            'discount_amount'   => 'required|numeric|min:0',
+            'total_price'       => 'required|numeric|min:0',
+            'promocode'         => 'sometimes|string', // Optional: code for logging
+            'applied_promocode' => 'sometimes|array',  // Optional: full object for logging; ignore for logic
+            'payment_breakdown' => 'sometimes|array',  // Optional: for deposit updates
+        ]);
+
+        try {
+
+            DB::beginTransaction();
+
+            $booking = $this->bookingModel::findOrFail($validated['booking_id']);
+
+            if ($booking->promocode_id) {
+                return sendError('A promocode has already been applied to this booking');
+            }
+
+            $booking->update([
+                'promocode_id'    => $promocode->id,
+                'total_price'     => $validated['total_price'],
+                'discount_amount' => $validated['discount_amount'],
+            ]);
+
+            $isDeposit = $booking->payment_method === 'deposit_remaining_on_arrival';
+            if ($isDeposit && ($booking->payment_breakdown || isset($validated['payment_breakdown']))) {
+                $breakdown                     = $validated['payment_breakdown'] ?? $booking->payment_breakdown;
+                $currentRemaining              = $breakdown['remaining_amount'] ?? 0;
+                $newRemaining                  = max(0, $currentRemaining - $validated['discount_amount']);
+                $breakdown['remaining_amount'] = $newRemaining;
+
+                $booking->payment_breakdown = $breakdown;
+                $booking->save();
+            }
+
+            $promocode->incrementUsage($booking->user_id);
+
+            $code = $request->input('promocode', $promocode->code);
+
+            $booking->history()->create([
+                'user_id'     => auth()->id(),
+                'action'      => 'promocode_applied',
+                'description' => "Applied promocode {$code} - Discount: QAR {$validated['discount_amount']}",
+            ]);
+
+            DB::commit();
+
+            $booking->load([
+                'user',
+                'addOns',
+                'history',
+                'payments',
+                'invoices',
+                'promocode',
+                'venue:id,name',
+                'listing:id,name',
+                'resourcesAllocated',
+                'history.user:id,name',
+            ]);
+
+            return sendSuccess('Promocode applied successfully', compact('booking'));
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Promocode apply failed for booking #{$validated['booking_id']}: " . $e->getMessage(), [
+                'request'    => $request->all(),
+                'booking_id' => $validated['booking_id'] ?? null,
+                'exception'  => $e,
+            ]);
+
+            return sendError('Failed to apply promocode: ' . $e->getMessage());
+        }
+    }
 }
