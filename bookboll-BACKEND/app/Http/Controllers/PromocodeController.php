@@ -163,9 +163,9 @@ class PromocodeController extends Controller
 
         return sendSuccess('Promocode applied successfully', [
             'promocode' => [
+                'discount_amount'  => $discount,
                 'code'             => $promocode->code,
                 'discount'         => $promocode->formatted_discount,
-                'discount_amount'  => $discount,
                 'new_order_amount' => $request->order_amount - $discount,
             ],
         ]);
