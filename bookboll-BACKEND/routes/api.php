@@ -102,6 +102,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('bookings', BookingController::class);
 
 
+        Route::post('payments/confirm', [PaymentController::class, 'confirmPayment']);
         Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink']);
         Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice']);
         Route::apiResource('payments', PaymentController::class);

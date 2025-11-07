@@ -4,11 +4,14 @@ namespace App\Services;
 use App\Models\Booking;
 use App\Models\Payment;
 use Barryvdh\DomPDF\Facade\Pdf;
+use BookingPaymentStatus;
 use CompnayInfo;
 use Exception;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
-use SimpleSoftwareIO\QrCode\Facades\QrCode;
+use PaymentMethod;
+use PaymentStatus;
+use PaymentType;
 use Stripe\Checkout\Session;
 use Stripe\PaymentIntent;
 use Stripe\Stripe;
@@ -70,101 +73,6 @@ class PaymentService
         $payments = $query->paginate($records_per_page);
 
         return sendSuccess('Payments fetched successfully', compact('payments', 'stats'));
-    }
-
-    public function createInitialPayments(Booking $booking)
-    {
-        $depositAmount   = 0;
-        $remainingAmount = $booking->total_price;
-
-        match ($booking->payment_method) {
-            'online'          => [
-                $this->createPayment($booking, 'full', $booking->total_price, 'online', 'paid'), // Full online
-                $booking->update(['status' => \BookingStatus::CONFIRMED, 'full_payment_received' => true]),
-            ],
-            'deposit'         => [
-                $depositAmount = $booking->total_price * 0.3, // Example: 30% deposit; make configurable
-                $remainingAmount = $booking->total_price - $depositAmount,
-                $this->createPayment($booking, 'deposit', $depositAmount, 'online', 'paid'),      // Assume deposit paid online
-                $this->createPayment($booking, 'remaining', $remainingAmount, 'cash', 'pending'), // Default cash on arrival
-                $booking->update(['status' => \BookingStatus::CONFIRMED]),                        // Confirmed after deposit
-            ],
-            'cash_on_arrival' => [
-                $this->createPayment($booking, 'full', $booking->total_price, 'cash', 'pending'),
-            ],
-            default           => throw new \Exception('Invalid payment method'),
-        };
-    }
-
-    private function createPayment(Booking $booking, string $type, float $amount, string $method, string $status)
-    {
-        $paymentId = $this->generatePaymentId($booking->id, $type);
-
-        return $this->paymentModel::create([
-            'payment_id' => $paymentId,
-            'booking_id' => $booking->id,
-            'type'       => $type,
-            'amount'     => $amount,
-            'method'     => $method,
-            'status'     => $status,
-            'date'       => now()->format('Y-m-d'),
-            'notes'      => $type === 'deposit' ? 'Online deposit' : null,
-        ]);
-    }
-
-    private function generatePaymentId(int $bookingId, string $type): string
-    {
-        $typeAbbr = match ($type) {
-            'deposit'   => 'DEP',
-            'remaining' => 'REM',
-            'full'      => '',
-            default     => 'FULL',
-        };
-        return 'PAY-' . $bookingId . '-' . $typeAbbr;
-    }
-
-    public function confirmRemainingPayment(Payment $payment, array $data): void
-    {
-        if ($payment->type !== 'remaining' || $payment->status === 'paid') {
-            throw new \Exception('Invalid payment for confirmation');
-        }
-
-        $method = $data['method'] ?? 'cash';
-        $notes  = $data['notes'] ?? null;
-
-        if ($method === 'online') {
-            $qrData = ['amount' => $payment->amount, 'booking_id' => $payment->booking_id, 'ref' => Str::uuid()];
-            $qrPath = $this->generateQR($qrData);
-            $notes .= ' QR Ref: ' . $qrData['ref'] . ' Path: ' . $qrPath;
-        }
-
-        $payment->update([
-            'status' => 'paid',
-            'notes'  => $notes,
-            'method' => $method,
-            'date'   => now()->format('Y-m-d'),
-        ]);
-
-        $this->checkAndUpdateBooking($payment->booking);
-    }
-
-    private function generateQR(array $data): string
-    {
-        $qrContent = json_encode($data);
-        $path      = 'qr_codes/' . Str::uuid() . '.svg';
-        QrCode::size(200)->generate($qrContent, storage_path('app/public/' . $path));
-        return $path;
-    }
-
-    private function checkAndUpdateBooking(Booking $booking): void
-    {
-        if ($booking->isFullyPaid()) {
-            $booking->update([
-                'status'                => \BookingStatus::CONFIRMED,
-                'full_payment_received' => true,
-            ]);
-            // Optional: Award loyalty points here
-        }
     }
 
     public function getDashboardTotals(): array
@@ -322,4 +230,138 @@ class PaymentService
 
         return $dueBookings;
     }
+
+    public function confirmPayment($request)
+    {
+        $user = auth()->user();
+
+        $formData = $request->validate([
+            'booking_id'                     => 'required|exists:bookings,id',
+            'total_amount'                   => 'required|numeric|min:0',
+            'payment_method'                 => 'required|in:cash,wire,cheque',
+            'selected_due_bookings'          => 'nullable|array',
+            'selected_due_bookings.*.id'     => 'exists:bookings,id',
+            'selected_due_bookings.*.amount' => 'numeric|min:0',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $mainBookingId   = $formData['booking_id'];
+            $dueBookingsData = collect($formData['selected_due_bookings'] ?? []);
+
+            $mainBookingForValidation = $this->bookingModel::findOrFail($mainBookingId);
+
+            $dueTotal = 0;
+
+            foreach ($dueBookingsData as $due) {
+                $dueBooking = $this->bookingModel::findOrFail($due['id']);
+                if ($dueBooking->user_id !== $mainBookingForValidation->user_id) {
+                    return sendError("Due booking ({$dueBooking->reference_number}) belongs to different user.");
+                }
+                $dueTotal += $due['amount'];
+            }
+
+            $mainAmount = $formData['total_amount'] - $dueTotal;
+            if ($mainAmount < 0) {
+                return sendError('Invalid amounts: main amount cannot be negative');
+            }
+
+            $paymentMethodMap = [
+                'cash'   => PaymentMethod::CASH,
+                'cheque' => PaymentMethod::CHEQUE,
+                'wire'   => PaymentMethod::WIRE_TRANSFER,
+            ];
+
+            $method = $paymentMethodMap[$formData['payment_method']];
+
+            $allBookingsData = collect([$mainBookingId => ['amount' => $mainAmount]]);
+            foreach ($dueBookingsData as $due) {
+                $allBookingsData[$due['id']] = ['amount' => $due['amount']];
+            }
+
+            $mainBooking = null;
+            foreach ($allBookingsData as $bookingId => $data) {
+                $booking = $this->bookingModel::lockForUpdate()->findOrFail($bookingId);
+
+                $paymentAmount = $data['amount'];
+                $isMain        = ($bookingId == $mainBookingId);
+                if ($isMain) {
+                    $mainBooking = $booking;
+                }
+
+                $hasDeposit = $booking->payments()
+                    ->where('type', PaymentType::DEPOSIT)
+                    ->where('status', PaymentStatus::PAID)
+                    ->exists();
+
+                $paymentType = $hasDeposit ? PaymentType::REMAINING : PaymentType::FULL;
+
+                $pendingPayment = $booking->payments()
+                    ->where('status', PaymentStatus::PENDING)
+                    ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
+                    ->first();
+
+                $notes = ($paymentType == PaymentType::REMAINING ? 'Remaining' : 'Full') . " payment for booking #{$booking->id}";
+
+                if ($pendingPayment) {
+
+                    $notes = str_replace('pending', 'paid via ' . strtoupper($formData['payment_method']), $pendingPayment->notes);
+
+                    $pendingPayment->update([
+                        'notes'  => $notes,
+                        'method' => $method,
+                        'status' => PaymentStatus::PAID,
+                        'date'   => now()->format('Y-m-d'),
+                    ]);
+
+                }
+
+                $bookingUpdates = [
+                    'full_payment_received' => true,
+                    'payment_status'        => BookingPaymentStatus::FULLY_PAID,
+                ];
+
+                if ($isMain && $booking->payment_method === 'deposit_remaining_on_arrival') {
+                    $paymentBreakdown                     = $booking->payment_breakdown ?? [];
+                    $paymentBreakdown['remaining_method'] = $formData['payment_method'];
+                    $bookingUpdates['payment_breakdown']  = $paymentBreakdown;
+                }
+
+                $booking->update($bookingUpdates);
+
+                if ($mainBooking) {
+                    $mainBooking->history()->create([
+                        'user_id'     => $user->id,
+                        'action'      => 'payment_completed',
+                        'description' => 'Payment completed via ' . strtoupper($formData['payment_method']),
+                    ]);
+                }
+
+            }
+
+            DB::commit();
+
+            $booking = $mainBooking->load([
+                'addOns',
+                'history',
+                'payments',
+                'invoices',
+                'promocode',
+                'venue:id,name',
+                'listing:id,name',
+                'resourcesAllocated',
+                'history.user:id,name',
+                'user:id,name,email,phone',
+            ]);
+
+            return sendSuccess('Payment confirmed successfully.', compact('booking'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Confirm payment failed: ' . $e->getMessage(), ['trace' => $e]);
+            return sendError('Payment confirmation failed. Please try again.');
+        }
+    }
+
 }

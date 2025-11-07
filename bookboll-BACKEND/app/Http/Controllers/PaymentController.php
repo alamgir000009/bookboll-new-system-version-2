@@ -108,6 +108,11 @@ class PaymentController extends Controller
         return $this->paymentService->generatePaymentLink($request);
     }
 
+    public function confirmPayment(Request $request)
+    {
+        return $this->paymentService->confirmPayment($request);
+    }
+
     public function paymentSuccess($session_id)
     {
         Stripe::setApiKey(config('services.stripe.secret'));
@@ -169,23 +174,25 @@ class PaymentController extends Controller
                     continue;
                 }
 
-                $pendingPayment = $booking->payments()
+                $pendingPayments = $booking->payments()
                     ->where('status', PaymentStatus::PENDING)
                     ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
-                    ->first();
+                    ->get();
 
-                $notes = "Full payment for booking #{$booking->id}";
+                if ($pendingPayments->isNotEmpty()) {
+                    foreach ($pendingPayments as $payment) {
+                        $notes = $payment->notes ?? "Full payment for booking #{$booking->id}";
+                        $notes = str_replace('pending', 'paid online via Stripe', $notes);
 
-                if ($pendingPayment) {
-                    $notes  = str_replace('pending', 'paid online via Stripe', $pendingPayment->notes);
-                    $pendingPayment->update([
-                        'notes'             => $notes,
-                        'charge_id'         => $chargeId,
-                        'payment_intent_id' => $paymentIntentId,
-                        'status'            => PaymentStatus::PAID,
-                        'method'            => PaymentMethod::ONLINE,
-                        'date'              => now()->format('Y-m-d'),
-                    ]);
+                        $payment->update([
+                            'notes'             => $notes,
+                            'charge_id'         => $chargeId,
+                            'payment_intent_id' => $paymentIntentId,
+                            'status'            => PaymentStatus::PAID,
+                            'method'            => PaymentMethod::ONLINE,
+                            'date'              => now()->format('Y-m-d'),
+                        ]);
+                    }
                 }
             }
 
