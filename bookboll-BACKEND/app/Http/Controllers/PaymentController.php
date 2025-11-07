@@ -169,9 +169,6 @@ class PaymentController extends Controller
                     continue;
                 }
 
-                $userId     = $booking->user_id;
-                $totalPrice = $booking->total_price;
-
                 $pendingPayment = $booking->payments()
                     ->where('status', PaymentStatus::PENDING)
                     ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
@@ -180,8 +177,6 @@ class PaymentController extends Controller
                 $notes = "Full payment for booking #{$booking->id}";
 
                 if ($pendingPayment) {
-                    $type   = $pendingPayment->type;
-                    $amount = $pendingPayment->amount;
                     $notes  = str_replace('pending', 'paid online via Stripe', $pendingPayment->notes);
                     $pendingPayment->update([
                         'notes'             => $notes,
