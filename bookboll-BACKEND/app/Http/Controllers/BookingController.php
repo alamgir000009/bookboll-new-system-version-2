@@ -76,6 +76,10 @@ class BookingController extends Controller
     {
         return $this->bookingService->createBooking($request);
     }
+    public function confirm(Request $request)
+    {
+        return $this->bookingService->confirm($request);
+    }
 
     public function upcoming(Request $request)
     {

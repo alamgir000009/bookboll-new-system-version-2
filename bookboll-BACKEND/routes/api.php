@@ -92,6 +92,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('dashboard-data', [BookingController::class, 'dashboardData']);
         Route::get('dashboard/chart', [BookingController::class, 'dashboardChart']);
 
+        Route::post('bookings/confirm', [BookingController::class, 'confirm']);
         Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory']);
         Route::get('bookings/form-data', [BookingController::class, 'formData']);
         Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar']);
@@ -101,10 +102,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice']);
         Route::apiResource('payments', PaymentController::class);
-
-        // Route::post('bookings/{booking}/payments/confirm', [PaymentController::class, 'confirm']);
-        // Route::get('dashboard/totals', [PaymentController::class, 'totals']);
-        // Route::get('payments/export', [PaymentController::class, 'export']);
 
         Route::apiResource('special-days', SpecialDayController::class);
         Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar']);

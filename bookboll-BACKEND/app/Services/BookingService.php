@@ -13,6 +13,7 @@ use App\Models\SpecialDay;
 use App\Models\User;
 use App\Models\Venue;
 use App\Notifications\BookingCancelledUserNotification;
+use App\Notifications\BookingConfirmedUserNotification;
 use App\Notifications\BookingCreatedAdminNotification;
 use App\Notifications\BookingCreatedUserNotification;
 use BookingPaymentStatus;
@@ -1030,6 +1031,65 @@ class BookingService
             ]);
 
             return sendError('Failed to update booking: ' . $e->getMessage());
+        }
+    }
+
+    public function confirm($request)
+    {
+        $booking = $this->bookingModel::with('user')->findOrFail($request->booking_id);
+        logger("DDDDDDDDDDDDDD", [
+            "Booking" => $booking,
+            "Request" => $request->all(),
+        ]);
+        
+        try {
+
+            DB::beginTransaction();
+
+            // if ($booking->status !== BookingStatus::PENDING) {
+            //     return sendError('Booking cannot be confirmed (not pending)');
+            // }
+
+            $booking->update(['status' => BookingStatus::CONFIRMED]);
+
+            $booking->history()->create([
+                'user_id'     => auth()->id(),
+                'action'      => 'booking_confirmed',
+                'description' => 'Booking confirmed by '.auth()->user()->name,
+            ]);
+
+            try {
+                $user = $booking->user;
+                $user->notify(new BookingConfirmedUserNotification($booking));
+            } catch (Exception $e) {
+                Log::error("Booking confirmation notification failed: " . $e->getMessage(), ['booking_id' => $booking->id]);
+            }
+
+            DB::commit();
+
+            $booking->load([
+                'user',
+                'addOns',
+                'history',
+                'payments',
+                'invoices',
+                'promocode',
+                'venue:id,name',
+                'listing:id,name',
+                'resourcesAllocated',
+                'history.user:id,name',
+            ]);
+
+            return sendSuccess('Booking confirmed and email sent successfully', compact('booking'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Failed to confirm booking #{$booking->id}: " . $e->getMessage(), [
+                'request'    => $request->all(),
+                'booking_id' => $booking->id,
+                'exception'  => $e,
+            ]);
+            return sendError('Failed to confirm booking: ' . $e->getMessage());
         }
     }
 

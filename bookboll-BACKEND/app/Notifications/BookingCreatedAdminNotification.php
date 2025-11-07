@@ -33,7 +33,7 @@ class BookingCreatedAdminNotification extends Notification implements ShouldQueu
             ->line('Listing: ' . $booking->listing->name)
             ->line('Date: ' . $booking->date)
             ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
-            ->line('Total: $' . number_format($booking->total_price ?? 0, 2))
+            ->line('Total: QAR' . number_format($booking->total_price ?? 0, 2))
             ->action('View Booking', config('app.admin_url').'/bookings/' . $booking->id)
             ->line('Thank you for using ' . config('app.name') . '!');
     }

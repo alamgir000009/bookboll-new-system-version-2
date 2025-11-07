@@ -26,12 +26,12 @@ class BookingCreatedUserNotification extends Notification implements ShouldQueue
         $booking = $this->booking;
 
         $mail = (new MailMessage)
-            ->subject('Your Booking is Confirmed')
+            ->subject('Your Booking is Created! - #' . $booking->reference_number)
             ->greeting('Hi ' . $booking->user->name . ',')
             ->line('Your booking for ' . $booking->listing->name . ' at ' . $booking->venue->name . ' has been confirmed.')
             ->line('Date: ' . $booking->date)
             ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
-            ->line('Total: $' . number_format($booking->total_price ?? 0, 2))
+            ->line('Total: QAR' . number_format($booking->total_price ?? 0, 2))
             ->action('View Booking', config('app.frontend_url'))
             ->line('We look forward to seeing you!');
 
