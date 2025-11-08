@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('user_id')->nullable()->constrained()->cascadeOnDelete();
             $table->enum('type', ['credit', 'debit']);
             $table->integer('points');
-            $table->string('reason');
+            $table->string('reason')->nullable();
             $table->foreignId('booking_id')->nullable()->constrained()->nullOnDelete();
             $table->timestamps();
 

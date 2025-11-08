@@ -92,6 +92,11 @@ class Booking extends Model
         return $this->hasMany(Invoice::class);
     }
 
+    public function latestInvoice()
+    {
+        return $this->hasOne(Invoice::class)->latestOfMany();
+    }
+
     public function history()
     {
         return $this->hasMany(BookingHistory::class, 'booking_id');

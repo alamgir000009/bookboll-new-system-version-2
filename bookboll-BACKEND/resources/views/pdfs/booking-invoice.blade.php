@@ -208,10 +208,10 @@
                     <td style="width: 60%; vertical-align: top; padding-right: 40px;">
                         <div style="font-weight: bold; font-size: 18px; margin-bottom: 5px;">Venue Booking Service</div>
                         <div style="line-height: 1.4; font-size: 12px;">
-                            123 Booking Street<br>
-                            City, State 12345<br>
-                            Email: booking@bookboll.com<br>
-                            Phone: (123) 456-7890
+                            {{ \CompnayInfo::ADDRESS }}<br>
+                            {{ \CompnayInfo::CITY }}, {{ \CompnayInfo::POSTAL_CODE }}<br>
+                            Email: {{ \CompnayInfo::EMAIL }}<br>
+                            Phone: {{ \CompnayInfo::PHONE }}
                         </div>
                     </td>
                     <td style="width: 40%; vertical-align: top; text-align: right;">
@@ -238,9 +238,10 @@
                     <td style="width: 50%; vertical-align: top; text-align: right; padding-left: 20px;">
                         <div style="font-weight: bold; margin-bottom: 5px;">Booking #</div>
                         <div style="line-height: 1.4;">
-                            #{{ $booking->id }}<br>
+                            #{{ $booking->reference_number }}<br>
                             {{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}<br>
-                            {{ $booking->start_time }} - {{ $booking->end_time }}
+                            {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} -
+                            {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}
                         </div>
                     </td>
                 </tr>
@@ -256,7 +257,9 @@
                 </div>
                 <div>
                     <div class="booking-row"><span>Date:</span> <span>{{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}</span></div>
-                    <div class="booking-row"><span>Time:</span> <span>{{ $booking->start_time }} to {{ $booking->end_time }}</span></div>
+                    <div class="booking-row"><span>Time:</span> <span>
+                            {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} To
+                            {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}</span></div>
                     <div class="booking-row"><span>Duration:</span> <span>{{ $booking->duration }} hours</span></div>
                 </div>
             </div>
@@ -317,12 +320,12 @@
         @else
         <div class="payment-info">
             <strong>Payment Status:</strong> {{ ucfirst(str_replace('_', ' ', $booking->payment_status)) }}<br>
-            Method: {{ ucfirst(str_replace('_', ' ', $booking->payment_method)) }}
+            <strong>Method:</strong> {{ ucfirst(str_replace('_', ' ', $booking->payment_method)) }}
         </div>
         @endif
 
         <div class="footer">
-            <p>Thank you for your booking! If you have any questions, please contact us at booking@bookboll.com.</p>
+            <p>Thank you for your booking! If you have any questions, please contact us at {{ \CompnayInfo::EMAIL }}.</p>
             <p>This is an electronic invoice. For terms and conditions, visit our website.</p>
         </div>
     </div>

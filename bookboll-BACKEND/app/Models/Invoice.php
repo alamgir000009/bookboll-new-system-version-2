@@ -3,6 +3,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class Invoice extends Model
 {
@@ -14,6 +15,8 @@ class Invoice extends Model
         'booking_id',
         'invoice_number',
     ];
+
+    protected $appends = ['full_path'];
 
     public function user()
     {
@@ -28,5 +31,10 @@ class Invoice extends Model
     public function payment()
     {
         return $this->belongsTo(Payment::class);
+    }
+
+    public function getFullPathAttribute()
+    {
+        return $this->path ? url("storage/{$this->path}") : null;
     }
 }

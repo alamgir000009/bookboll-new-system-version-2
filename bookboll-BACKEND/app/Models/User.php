@@ -29,6 +29,7 @@ class User extends Authenticatable
         'provider_id',
         'nationality',
         'date_of_birth',
+        'loyalty_tier_id',
     ];
 
     protected $hidden = [
@@ -40,12 +41,18 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'datetime',
             'password'          => 'hashed',
+            'email_verified_at' => 'datetime',
         ];
     }
 
-    protected $appends = ['roles_array', 'total_bookings'];
+    protected $appends = [
+        'next_tier',
+        'roles_array',
+        'total_bookings',
+        'loyalty_progress',
+        'points_to_next_tier',
+    ];
 
     public function getRolesArrayAttribute()
     {
@@ -95,6 +102,89 @@ class User extends Authenticatable
     public function loyaltyPoints()
     {
         return $this->hasMany(LoyaltyPoint::class);
+    }
+
+    public function loyaltyTier()
+    {
+        return $this->belongsTo(LoyaltyTier::class);
+    }
+
+    public function calculateLoyaltyTier(int $points): ?LoyaltyTier
+    {
+        return LoyaltyTier::active()
+            ->where('min_points', '<=', $points)
+            ->where(function ($query) use ($points) {
+                $query->where('max_points', '>=', $points)
+                    ->orWhere('max_points', 2147483647);
+            })
+            ->ordered()
+            ->first() ?? LoyaltyTier::where('slug', 'bronze')->first();
+    }
+
+    public function getLoyaltyProgressAttribute(): int
+    {
+        $points      = LoyaltyPoint::balance($this->id) ?? 0;
+        $currentTier = $this->loyaltyTier;
+        $nextTier    = $currentTier->getNextTier();
+
+        if (! $nextTier) {
+            return 100;
+        }
+
+        $currentMin = $currentTier->min_points;
+        $nextMin    = $nextTier->min_points;
+
+        if ($nextMin <= $currentMin) {
+            return 100;
+        }
+
+        $progress = (($points - $currentMin) / ($nextMin - $currentMin)) * 100;
+        return min(100, max(0, (int) round($progress)));
+    }
+
+    public function getNextTierAttribute()
+    {
+        return $this->loyaltyTier->getNextTier();
+    }
+
+    public function getPointsToNextTierAttribute(): int
+    {
+        $points   = LoyaltyPoint::balance($this->id) ?? 0;
+        $nextTier = $this->next_tier;
+
+        if (! $nextTier) {
+            return 0;
+        }
+
+        return max(0, $nextTier->min_points - $points);
+    }
+
+    /**
+     * Update the user's loyalty tier (persist it).
+     *
+     * @return bool
+     */
+    public function updateLoyaltyTier(): bool
+    {
+        $newTier = $this->calculateLoyaltyTier(LoyaltyPoint::balance($this->id) ?? 0);
+
+        if ($this->loyalty_tier_id != $newTier?->id) {
+            $this->loyalty_tier_id = $newTier?->id;
+            $this->save();
+        }
+
+        return true;
+    }
+
+    public function addLoyaltyPoints(int $points, $booking_id = null, $reason = 'added by system'): void
+    {
+        $this->loyaltyPoints()->create([
+            'points'     => $points,
+            'reason'     => $reason,
+            'type'       => 'credit',
+            'booking_id' => $booking_id,
+        ]);
+        $this->updateLoyaltyTier();
     }
 
     public function transactions()

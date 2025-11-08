@@ -39,6 +39,11 @@ class UserController extends Controller
         return $this->userService->loginUser();
     }
 
+    public function getCustomerProfile()
+    {
+        return $this->userService->getCustomerProfile();
+    }
+
     public function updateCustomerProfile(Request $request)
     {
         return $this->userService->updateCustomerProfile($request, auth()->id());

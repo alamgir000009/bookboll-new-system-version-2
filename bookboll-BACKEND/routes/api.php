@@ -101,7 +101,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings']);
         Route::apiResource('bookings', BookingController::class);
 
-
         Route::post('payments/confirm', [PaymentController::class, 'confirmPayment']);
         Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink']);
         Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice']);
@@ -148,6 +147,7 @@ Route::prefix('customer')->group(function () {
     Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('preferences', [UserController::class, 'customerPreferences']);
         Route::post('preferences', [UserController::class, 'updatePreferences']);
+        Route::get('profile', [UserController::class, 'getCustomerProfile']);
         Route::post('update-profile', [UserController::class, 'updateCustomerProfile']);
         Route::post('update-profile-image', [UserController::class, 'updateProfileImage']);
     });

@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserWelcomeEmail;
+use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
 use App\Models\Venue;
@@ -80,6 +81,33 @@ class UserService
         }
     }
 
+    public function getCustomerProfile()
+    {
+
+        $user = auth()->user();
+
+        $user->load(['roles', 'venues', 'loyaltyTier']);
+        $user->makeHidden(['roles']);
+        $roles = $user->getRoleNames();
+
+        $response = [
+            'roles'           => $roles,
+            'assigned_venues' => $user->venues,
+            'user'            => $user->setHidden(['roles']),
+            'loyalty_points'  => LoyaltyPoint::balance($user->id) ?? 0,
+            'loyalty_tier'    => [
+                'name'           => $user->loyaltyTier->name ?? 'Bronze',
+                'slug'           => $user->loyaltyTier->slug ?? 'bronze',
+                'progress'       => $user->loyalty_progress ?? 0,
+                'description'    => $user->loyaltyTier->description ?? '',
+                'points_to_next' => $user->points_to_next_tier ?? 0,
+                'next_tier'      => $user->next_tier?->name ?? 'Max Level',
+            ],
+        ];
+
+        return sendSuccess("Profile fetched successfully", $response);
+    }
+
     public function updateCustomerProfile($request, $id)
     {
         $user = $this->findById($id);
@@ -94,8 +122,7 @@ class UserService
 
         $formData = $request->validate([
             'name'          => 'sometimes|string|max:100',
-            // 'email'         => 'sometimes|email|unique:users,email,' . $user->id,
-            'date_of_birth' => 'sometimes|date|before:today',
+            'date_of_birth' => 'nullable|date|before:today',
             'gender'        => 'sometimes',
             'nationality'   => 'sometimes|string',
             'address'       => 'sometimes|max:255',
@@ -109,10 +136,6 @@ class UserService
             if (isset($formData['name'])) {
                 $updateData['name'] = $formData['name'];
             }
-
-            // if (isset($formData['email'])) {
-            //     $updateData['email'] = $formData['email'];
-            // }
 
             if (isset($formData['date_of_birth'])) {
                 $updateData['date_of_birth'] = $formData['date_of_birth'];

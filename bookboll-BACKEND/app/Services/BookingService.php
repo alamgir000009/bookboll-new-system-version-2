@@ -950,6 +950,10 @@ class BookingService
                 ->where('session_id', $sessionId)
                 ->delete();
 
+            if ($booking->loyalty_points_earned > 0) {
+                $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id);
+            }
+
             DB::commit();
 
             $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name', 'invoices']);
@@ -1157,7 +1161,7 @@ class BookingService
     {
         $today = Carbon::today();
 
-        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user'])
+        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice'])
             ->where('user_id', auth()->id())->where('date', '>=', $today)
             ->orderBy('date', 'desc')->orderBy('start_time', 'asc')->get();
 
@@ -1168,7 +1172,7 @@ class BookingService
     {
         $today = Carbon::today();
 
-        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user'])
+        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice'])
             ->where('user_id', auth()->id())->where('date', '<', $today)
             ->orderBy('date', 'desc')->orderBy('start_time', 'asc')->get();
 

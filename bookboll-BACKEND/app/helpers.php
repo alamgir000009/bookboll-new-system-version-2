@@ -138,10 +138,12 @@ if (! class_exists('SubscriberStatus')) {
 if (! class_exists('CompnayInfo')) {
     class CompnayInfo
     {
-        public const EMAIL   = 'support@bookboll.com';
-        public const NAME    = 'BOOKBOLL';
-        public const ADDRESS = '123 Main Street, Doha, Qatar';
-        public const PHONE   = '123456789';
+        public const EMAIL       = 'support@bookboll.com';
+        public const NAME        = 'BOOKBOLL';
+        public const CITY        = 'Doha';
+        public const POSTAL_CODE = '12345';
+        public const PHONE       = '123456789';
+        public const ADDRESS     = '123 Main Street, Doha, Qatar';
     }
 }
 

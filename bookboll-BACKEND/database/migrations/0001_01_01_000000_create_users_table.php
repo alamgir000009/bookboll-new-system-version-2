@@ -20,13 +20,15 @@ return new class extends Migration
             $table->string('nationality')->nullable();
             $table->longText('address')->nullable();
             $table->string('image', 255)->nullable();
-            $table->string('membership_level')->nullable()->default('Member');
             $table->string('provider')->nullable();
             $table->string('provider_id')->nullable();
             $table->string('status')->default(User::ACTIVE);
             $table->string('password');
+            $table->unsignedInteger('loyalty_tier_id')->default(1);
             $table->rememberToken();
             $table->timestamps();
+
+            $table->foreign('loyalty_tier_id')->references('id')->constrained('loyalty_tiers')->nullOnDelete();
 
             $table->index(['email', 'status']);
             $table->index(['name', 'phone']);
