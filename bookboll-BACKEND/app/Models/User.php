@@ -147,6 +147,15 @@ class User extends Authenticatable
         return $this->loyaltyTier->getNextTier();
     }
 
+    public function getLoyaltyTierAttribute()
+    {
+        if ($this->loyalty_tier_id) {
+            return $this->loyaltyTier()->first();
+        }
+
+        return $this->calculateLoyaltyTier(LoyaltyPoint::balance($this->id) ?? 0);
+    }
+
     public function getPointsToNextTierAttribute(): int
     {
         $points   = LoyaltyPoint::balance($this->id) ?? 0;
@@ -159,11 +168,6 @@ class User extends Authenticatable
         return max(0, $nextTier->min_points - $points);
     }
 
-    /**
-     * Update the user's loyalty tier (persist it).
-     *
-     * @return bool
-     */
     public function updateLoyaltyTier(): bool
     {
         $newTier = $this->calculateLoyaltyTier(LoyaltyPoint::balance($this->id) ?? 0);

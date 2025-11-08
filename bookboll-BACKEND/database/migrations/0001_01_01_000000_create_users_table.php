@@ -28,8 +28,6 @@ return new class extends Migration
             $table->rememberToken();
             $table->timestamps();
 
-            $table->foreign('loyalty_tier_id')->references('id')->constrained('loyalty_tiers')->nullOnDelete();
-
             $table->index(['email', 'status']);
             $table->index(['name', 'phone']);
             $table->index(['gender', 'nationality']);
