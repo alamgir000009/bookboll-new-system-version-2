@@ -45,12 +45,6 @@ class Booking extends Model
 
     protected $appends = ['due_amount'];
 
-    public function getPaymentStatusAttribute()
-    {
-        $paidAmount = $this->payments()->where('status', PaymentStatus::PAID)->sum('amount');
-        return ($paidAmount >= $this->total_price) ? 'completed' : 'pending';
-    }
-
     public function getDueAmountAttribute()
     {
         $paidAmount = $this->payments()->where('status', PaymentStatus::PAID)->sum('amount');

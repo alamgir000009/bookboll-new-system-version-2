@@ -783,7 +783,7 @@ class BookingService
                     $formData['venue_id'],
                     $formData['listing_id']
                 )) {
-                    return sendError('Invalid or inapplicable promocode', [], 422);
+                    return sendError('Invalid or inapplicable promocode');
                 }
 
                 $discount = $promocode->applyDiscount($subtotal);
@@ -792,11 +792,10 @@ class BookingService
 
             $totalPrice = $subtotal - $discount;
 
-            $paymentStatus = match ($formData['payment_method']) {
-                'online_payment'               => 'fully_paid',
-                'deposit_remaining_on_arrival' => 'deposit_paid',
-                'cash_on_arrival'              => 'pending',
-                default                        => 'pending',
+            $paymentStatus = match (trim($formData['payment_method'])) {
+                'cash_on_arrival'              => BookingPaymentStatus::PENDING,
+                'online_payment'               => BookingPaymentStatus::FULLY_PAID,
+                'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
             };
 
             $depositAmount = 0;
@@ -840,27 +839,29 @@ class BookingService
             $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
 
             foreach ($resources as $resource) {
-                $booking->resourcesAllocated()->attach($resource->id, [
-                    'quantity' => $resource->pivot->quantity,
-                ]);
+                $booking->resourcesAllocated()->attach($resource->id, ['quantity' => $resource->pivot->quantity]);
             }
 
             if (! empty($formData['add_ons'])) {
                 $booking->addOns()->sync($formData['add_ons']);
             }
 
-            if ($paymentStatus == 'deposit_paid') {
-                $listing        = $booking->listing;
-                $paymentOptions = $listing ? $listing->payment_options : null;
-                $depositAmount  = round($totalPrice * 0.3, 2);
+            if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
 
-                if ($paymentOptions && isset($paymentOptions['deposit'])) {
-                    $deposit = $paymentOptions['deposit'];
-                    if (isset($deposit['amount']) && $deposit['amount'] > 0) {
-                        $depositAmount = $deposit['amount'];
-                    } elseif (isset($deposit['percentage']) && $deposit['percentage'] > 0) {
-                        $depositAmount = round($totalPrice * ($deposit['percentage'] / 100), 2);
-                    }
+                $paymentOptions = $listing ? $listing->payment_options : null;
+
+                if (! $paymentOptions || empty($paymentOptions['deposit'])) {
+                    throw new Exception('Deposit configuration missing for this listing.');
+                }
+
+                $deposit = $paymentOptions['deposit'];
+
+                if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
+                    $depositAmount = $deposit['amount'];
+                } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                    $depositAmount = round($totalPrice * ($deposit['percentage'] / 100), 2);
+                } else {
+                    throw new Exception('Invalid deposit configuration: must specify amount or percentage.');
                 }
 
                 $this->paymentModel::create([
