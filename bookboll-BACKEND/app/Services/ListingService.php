@@ -442,6 +442,7 @@ class ListingService
         $records_per_page = $request->records_per_page ?? null;
 
         $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType'])
+            ->active()
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
@@ -500,6 +501,7 @@ class ListingService
                 'description'     => $listing->description,
                 'venue'           => $listing->venue?->name,
                 'duration'        => $listing->slot_duration,
+                'slot_duration'   => $listing->slot_duration,
                 'loyalty_points'  => $listing->loyalty_points,
                 'payment_options' => $listing->payment_options,
                 'map_address'     => $listing->venue?->maps_url,
@@ -684,11 +686,13 @@ class ListingService
             $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
 
             $slots->push([
+                'start_time'          => $slotStart,
+                'end_time'            => $slotEnd,
                 'is_holiday'          => $isHoliday,
                 'available'           => $isAvailable,
                 'booked'              => $bookedCount,
-                'available_count'     => $availableCount,
                 'available_resources' => $availableQty,
+                'available_count'     => $availableCount,
                 'duration'            => ($slotMinutes / 60) . "h",
                 'time'                => "{$slotStart} - {$slotEnd}",
                 'price'    => round($price, 2),

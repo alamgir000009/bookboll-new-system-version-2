@@ -15,7 +15,7 @@ class SportsCategoryService
 
     public function all()
     {
-        $types      = $this->sportsTypeModel::orderBy('title')->get(['id', 'icon', 'title', 'sub_title']);
+        $types      = $this->sportsTypeModel::orderBy('title')->get();
         $categories = $this->sportCategoryModel::with(['sportsType:id,title,sub_title'])->orderBy('name')->get();
         return sendSuccess('Sports categories retrieved successfully', compact('types', 'categories'));
     }
@@ -145,14 +145,14 @@ class SportsCategoryService
         $sports_type = request()->get('sports_type', null);
 
         $sportsTypes      = $this->sportsTypeModel::with(['sportsCategories:id,name,sports_type_id'])
-        ->get(['id', 'icon', 'title', 'sub_title']);
+        ->get(['id', 'icon', 'color', 'title', 'sub_title']);
 
         $sportsCategories = $this->sportCategoryModel::with('sportsType:id,title,sub_title')->active()
         ->when($sports_type, function($query, $sports_type) {
             $query->whereRelation('sportsType', 'title', $sports_type);
         })
         ->orderBy('sort_order')->get();
-        
+
         return sendSuccess('Sports categories retrieved successfully', compact('sportsTypes', 'sportsCategories'));
     }
 

@@ -24,6 +24,7 @@ class VenueService
                         ->orWhere('max_bookings_per_slot', 'LIKE', "%{$search}%");
                 });
             })
+            ->active()
             ->latest('sort_order')
             ->get();
 

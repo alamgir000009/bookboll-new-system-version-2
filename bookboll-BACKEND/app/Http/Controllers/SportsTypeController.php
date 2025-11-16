@@ -15,8 +15,9 @@ class SportsTypeController extends Controller
     {
         $formData = $request->validate([
             'icon'      => 'nullable|string',
-            'title'     => 'required|max:255|unique:sports_types',
+            'color'     => 'required|string',
             'sub_title' => 'required|max:255',
+            'title'     => 'required|max:255|unique:sports_types',
         ]);
 
         $formData['slug'] = Str::slug($formData['title']);
@@ -32,8 +33,9 @@ class SportsTypeController extends Controller
 
         $formData = $request->validate([
             'icon'      => 'nullable|string',
-            'title'     => 'required|string|max:255|unique:sports_types,title,' . $id,
+            'color'     => 'required|string',
             'sub_title' => 'required|max:255',
+            'title'     => 'required|string|max:255|unique:sports_types,title,' . $id,
         ]);
 
         $formData['slug'] = Str::slug($formData['title']);
@@ -47,7 +49,6 @@ class SportsTypeController extends Controller
     {
         $type = $this->sportsTypeModel::findOrFail($id);
         $type->delete();
-
         return sendSuccess('Sports type deleted successfully');
     }
 }

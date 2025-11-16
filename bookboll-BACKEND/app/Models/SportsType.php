@@ -8,6 +8,7 @@ class SportsType extends Model
     protected $fillable = [
         'slug',
         'icon',
+        'color',
         'title',
         'status',
         'sub_title',
