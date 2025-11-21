@@ -5,7 +5,9 @@ use App\Http\Controllers\Controller;
 use App\Jobs\SendNewsletter;
 use App\Mail\WelcomeNewsletterEmail;
 use App\Models\Subscriber;
+use Exception;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
 class NewsletterController extends Controller
@@ -18,11 +20,17 @@ class NewsletterController extends Controller
         $formData = $request->validate([
             'email' => 'required|email|unique:subscribers,email',
             'name'  => 'nullable|string|max:255',
+        ], [
+            'email.unique' => 'You have already subscribed',
         ]);
 
         $subscriber = $this->subscriberModel::create($formData);
 
-        Mail::to($subscriber->email)->send(new WelcomeNewsletterEmail($subscriber));
+        try {
+            Mail::to($subscriber->email)->send(new WelcomeNewsletterEmail($subscriber));
+        } catch (Exception $e) {
+            Log::error('Newsletter subscription error: ' . $e->getMessage(), ["Exception" => $e]);
+        }
 
         return sendSuccess('Successfully subscribed!', compact('subscriber'), 201);
     }
