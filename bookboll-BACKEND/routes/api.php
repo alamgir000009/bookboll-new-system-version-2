@@ -8,6 +8,7 @@ use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
 use App\Http\Controllers\LoyaltyPointController;
+use App\Http\Controllers\NewsletterController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
@@ -166,3 +167,6 @@ Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing']);
 Route::get('fetch-time-slots', [ListingController::class, 'fetchTimeSlots']);
 Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons']);
 Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode']);
+
+Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe']);
+

@@ -19,6 +19,7 @@ class Listing extends Model
         'images_urls',
         'description',
         'slot_duration',
+        'online_payment',
         'loyalty_points',
         'calendar_color',
         'payment_options',

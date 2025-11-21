@@ -226,6 +226,7 @@ class ListingService
             'slot_duration'                      => 'required|numeric|min:0.5',
             'loyalty_points'                     => 'nullable|integer|min:0',
             'calendar_color'                     => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
+            'online_payment'                     => 'required|boolean',
             'payment_options'                    => 'required|array',
             'payment_options.cash_on_arrival'    => 'nullable|boolean',
             'payment_options.deposit.amount'     => 'nullable|numeric|min:0',
@@ -373,6 +374,7 @@ class ListingService
             'capacity'              => $data['capacity'],
             'base_price'            => $data['base_price'],
             'slot_duration'         => $data['slot_duration'],
+            'online_payment'        => $data['online_payment'],
             'amenities'             => $data['amenities'] ?? [],
             'images_urls'           => $data['images_urls'] ?? [],
             'sports_category_id'    => $data['sports_category_id'],
@@ -391,12 +393,12 @@ class ListingService
         foreach ($scheduleData as $schedule) {
             if ($schedule['is_open']) {
                 Schedule::create([
-                    'venue_id'   => $listing->venue_id,
+                    'is_open'    => true,
                     'listing_id' => $listing->id,
                     'day'        => $schedule['day'],
-                    'is_open'    => true,
-                    'start_time' => $schedule['start_time'],
+                    'venue_id'   => $listing->venue_id,
                     'end_time'   => $schedule['end_time'],
+                    'start_time' => $schedule['start_time'],
                 ]);
             }
         }
@@ -540,6 +542,7 @@ class ListingService
             'price'           => $listing->base_price,
             'description'     => $listing->description,
             'venue'           => $listing->venue?->name,
+            'addons'          => $listing->addons ?? [],
             'duration'        => $listing->slot_duration,
             'loyalty_points'  => $listing->loyalty_points,
             'calendar_color'  => $listing->calendar_color,
