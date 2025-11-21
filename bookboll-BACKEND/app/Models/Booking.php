@@ -1,6 +1,7 @@
 <?php
 namespace App\Models;
 
+use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -114,7 +115,12 @@ class Booking extends Model
 
     public function scopeActive($query)
     {
-        return $query->whereIn('status', ['pending', 'confirmed']);
+        return $query->whereIn('status', [BookingStatus::PENDING, BookingStatus::CONFIRMED]);
+    }
+
+    public function scopeCompleted($query)
+    {
+        return $query->where('status', BookingStatus::COMPLETED);
     }
 
     public function scopeForDate($query, $date)

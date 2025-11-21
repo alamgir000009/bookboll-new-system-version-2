@@ -83,6 +83,14 @@ class SettingTableSeeder extends Seeder
                 'type'        => 'boolean',
                 'description' => 'Enable resource management',
             ],
+
+            // Reminder emails
+            [
+                'key'         => 'reminder_emails_after_days',
+                'value'       => 7,
+                'type'        => 'integer',
+                'description' => 'After the following days booking reminders emaill will be sent',
+            ],
         ];
 
         foreach ($defaults as $setting) {
