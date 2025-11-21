@@ -4,7 +4,6 @@ namespace App\Models;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
-use PaymentStatus;
 
 class Booking extends Model
 {
@@ -47,8 +46,15 @@ class Booking extends Model
 
     public function getDueAmountAttribute()
     {
-        $paidAmount = $this->payments()->where('status', PaymentStatus::PAID)->sum('amount');
-        return max(0, $this->total_price - $paidAmount);
+        $dueAmount = 0;
+        if ($this->payment_status === \BookingPaymentStatus::DEPOSIT_PAID) {
+            $breakdown = $this->payment_breakdown;
+            $dueAmount = $breakdown['remaining_amount'] ?? 0;
+        } else {
+            $dueAmount = $this->total_price;
+        }
+
+        return $dueAmount;
     }
 
     public function user()
