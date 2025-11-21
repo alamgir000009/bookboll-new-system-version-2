@@ -62,6 +62,7 @@ class PostService
             'slug'             => 'nullable|string|unique:posts,slug',
             'excerpt'          => 'nullable|string|max:500',
             'content'          => 'nullable|string',
+            'read_time'        => 'required|string',
             'status'           => 'required|in:draft,published',
             'post_category_id' => 'nullable|exists:post_categories,id',
             'featured_image'   => 'nullable|image|max:5120',
@@ -145,6 +146,7 @@ class PostService
             'slug'             => 'nullable|string|unique:posts,slug,' . $post->id,
             'excerpt'          => 'nullable|string|max:500',
             'content'          => 'nullable|string',
+            'read_time'        => 'required|string',
             'status'           => 'required|in:draft,published',
             'post_category_id' => 'nullable|exists:post_categories,id',
             'featured_image'   => 'nullable|image|max:5120',
@@ -242,9 +244,9 @@ class PostService
 
     public function blogArticles($request)
     {
-        $records_per_page = $request->records_per_page ?? 10;
         $search           = $request->search ?? null;
         $category         = $request->category ?? null;
+        $records_per_page = $request->records_per_page ?? 10;
 
         $blogArticles = $this->postModel->where('status', Post::PUBLISHED)
             ->with(['author', 'category', 'tags'])
@@ -254,14 +256,12 @@ class PostService
                         ->orWhere('slug', 'LIKE', "%{$search}%")
                         ->orWhere('excerpt', 'LIKE', "%{$search}%")
                         ->orWhere('content', 'LIKE', "%{$search}%")
-                        ->orWhere('published_at', 'LIKE', "%{$search}%")
-                        ->orWhere('seo_title', 'LIKE', "%{$search}%");
+                        ->orWhere('seo_title', 'LIKE', "%{$search}%")
+                        ->orWhere('published_at', 'LIKE', "%{$search}%");
                 });
             })
             ->when($category, function ($query, $category) {
-                $query->whereHas('category', function ($q) use ($category) {
-                    $q->where('name', 'LIKE', $category);
-                });
+                $query->whereRelation('category', 'name', 'LIKE', $category);
             })
             ->simplePaginate($records_per_page);
 

@@ -123,9 +123,10 @@ class UserService
         $formData = $request->validate([
             'name'          => 'sometimes|string|max:100',
             'date_of_birth' => 'nullable|date|before:today',
-            'gender'        => 'sometimes',
-            'nationality'   => 'sometimes|string',
-            'address'       => 'sometimes|max:255',
+            'gender'        => 'nullable',
+            'nationality'   => 'nullable|string',
+            'address'       => 'nullable|max:255',
+            'phone'         => 'nullable|max:20',
         ]);
 
         try {
@@ -151,6 +152,10 @@ class UserService
 
             if (isset($formData['address'])) {
                 $updateData['address'] = $formData['address'];
+            }
+
+            if (isset($formData['phone'])) {
+                $updateData['phone'] = $formData['phone'];
             }
 
             if (! empty($updateData)) {

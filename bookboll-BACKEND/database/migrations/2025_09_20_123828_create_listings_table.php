@@ -27,6 +27,7 @@ return new class extends Migration
             $table->json('payment_options');
             $table->json('images_urls')->nullable();
             $table->json('amenities')->nullable();
+            $table->boolean('online_payment')->default(false);
             $table->timestamps();
 
             $table->index(['name', 'base_price', 'status']);
