@@ -9,3 +9,5 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('slot-locks:clear')->everyMinute();
+
+Schedule::command('send-booking-reminders')->everyMinute();
