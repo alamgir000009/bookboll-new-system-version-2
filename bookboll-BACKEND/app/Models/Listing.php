@@ -15,6 +15,7 @@ class Listing extends Model
         'venue_id',
         'capacity',
         'amenities',
+        'sort_order',
         'base_price',
         'images_urls',
         'description',

@@ -10,17 +10,19 @@ class AddOnTableSeeder extends Seeder
     {
         $addOns = [
             [
-                'name'            => 'Equipment Rental',
-                'description'     => 'Professional sports equipment rental',
+                'sort_order'      => 1,
                 'price'           => 50,
                 'hours_extension' => null,
+                'name'            => 'Equipment Rental',
+                'description'     => 'Professional sports equipment rental',
 
             ],
             [
+                'sort_order'      => 2,
+                'hours_extension' => 1,
+                'price'           => 100,
                 'name'            => 'Equipment Rental',
                 'description'     => 'Professional sports equipment rental',
-                'price'           => 100,
-                'hours_extension' => 1,
 
             ],
         ];
