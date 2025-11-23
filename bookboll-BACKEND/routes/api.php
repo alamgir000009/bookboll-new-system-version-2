@@ -81,6 +81,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings']);
         Route::post('promocodes/validate', [PromocodeController::class, 'validate']);
         Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply']);
+        Route::post('promocodes/{booking}/remove', [PromocodeController::class, 'remove']);
 
         Route::get('extra-data', [HelperController::class, 'extraData']);
         Route::get('extra-customers', [HelperController::class, 'extraCustomers']);

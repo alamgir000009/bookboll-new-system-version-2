@@ -312,16 +312,12 @@ class PromocodeService
         ], 422);
     }
 
-    /**
-     * Parse payment_methods string to array (e.g., 'all,online_payment' -> ['all', 'online_payment']).
-     * Adjust based on your data (e.g., if 'all' means no restriction, handle in validation).
-     */
     private function parsePaymentMethods($paymentMethods)
     {
         if ($paymentMethods === 'all') {
-            return ['pending_payment', 'online_payment']; // Allow all
+            return ['pending_payment', 'online_payment'];
         }
-        return explode(',', $paymentMethods); // Assume comma-separated
+        return explode(',', $paymentMethods);
     }
 
     public function applyPromocode($request, $promocode)
@@ -330,9 +326,9 @@ class PromocodeService
             'booking_id'        => 'required|exists:bookings,id',
             'discount_amount'   => 'required|numeric|min:0',
             'total_price'       => 'required|numeric|min:0',
-            'promocode'         => 'sometimes|string', // Optional: code for logging
-            'applied_promocode' => 'sometimes|array',  // Optional: full object for logging; ignore for logic
-            'payment_breakdown' => 'sometimes|array',  // Optional: for deposit updates
+            'promocode'         => 'sometimes|string',
+            'applied_promocode' => 'sometimes|array',
+            'payment_breakdown' => 'sometimes|array',
         ]);
 
         try {
@@ -397,6 +393,73 @@ class PromocodeService
             ]);
 
             return sendError('Failed to apply promocode: ' . $e->getMessage());
+        }
+    }
+
+    public function removePromocodeFromBooking($bookingId)
+    {
+
+        $booking = $this->bookingModel::with('promocode')->whereHas('promocode')->findOrFail($bookingId);
+
+        try {
+            DB::beginTransaction();
+
+            $oldPromocode = $booking->promocode;
+
+            if ($oldPromocode) {
+
+                $originalDiscount = $booking->discount_amount ?? 0;
+
+                $oldPromocode->decrementUsage($booking->user_id);
+
+                $booking->update([
+                    'discount_amount' => 0,
+                    'promocode_id'    => null,
+                    'total_price'     => $booking->subtotal ?? $booking->total_price,
+                ]);
+
+                if ($booking->payment_method === 'deposit_remaining_on_arrival' && $booking->payment_breakdown) {
+                    $updatedBreakdown                     = $booking->payment_breakdown;
+                    $currentRemaining                     = $updatedBreakdown['remaining_amount'] ?? 0;
+                    $updatedBreakdown['remaining_amount'] = $currentRemaining + $originalDiscount;
+                    $booking->payment_breakdown           = $updatedBreakdown;
+                    $booking->save();
+                }
+
+                $booking->history()->create([
+                    'user_id'     => auth()->id(),
+                    'action'      => 'promocode_removed',
+                    'description' => "Promocode {$oldPromocode->code} removed. Discount (QAR {$originalDiscount}) restored.",
+                ]);
+
+                Log::info("Promocode removed from booking #{$booking->booking_id} by admin " . auth()->id());
+            }
+
+            $booking->load([
+                'user',
+                'addOns',
+                'history',
+                'payments',
+                'invoices',
+                'promocode',
+                'venue:id,name',
+                'listing:id,name',
+                'resourcesAllocated',
+                'history.user:id,name',
+            ]);
+
+            DB::commit();
+
+            return sendSuccess('Booking updated successfully', compact('booking'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Failed to update booking #{$bookingId}: " . $e->getMessage(), [
+                'booking_id' => $booking->id ?? $bookingId,
+                'exception'  => $e,
+            ]);
+
+            return sendError('Failed to update booking: ' . $e->getMessage());
         }
     }
 }

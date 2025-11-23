@@ -38,13 +38,11 @@ class PromocodeController extends Controller
         return $this->promocodeService->validatePromocode($request);
     }
 
-    // Apply promocode to order (increments usage)
     public function apply(Request $request, Promocode $promocode)
     {
         return $this->promocodeService->applyPromocode($request, $promocode);
     }
 
-    // Search endpoints for frontend autocomplete
     public function searchVenues(Request $request)
     {
         $venues = $this->promocodeService->getApplicableVenues($request);
@@ -98,5 +96,10 @@ class PromocodeController extends Controller
                 'new_order_amount' => $request->order_amount - $discount,
             ],
         ]);
+    }
+
+    public function remove($booking_id)
+    {
+        return $this->promocodeService->removePromocodeFromBooking($booking_id);
     }
 }
