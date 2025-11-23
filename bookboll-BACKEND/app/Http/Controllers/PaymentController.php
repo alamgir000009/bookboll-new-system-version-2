@@ -3,6 +3,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
+use App\Models\PaymentMethod as PaymentMethodModel;
 use App\Models\StripeSession;
 use App\Services\PaymentService;
 use BookingPaymentMethod;
