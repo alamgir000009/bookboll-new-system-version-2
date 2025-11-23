@@ -496,6 +496,7 @@ if (! function_exists('createBookingInvoiceWithNotification')) {
                 'invoice_number' => $invoiceNumber,
             ]);
 
+            $booking->load('venue:id,name,maps_url');
             $user->notify(new BookingCreatedUserNotification($booking, $invoice->path));
 
             $admins = User::whereHas("roles", function ($query) {

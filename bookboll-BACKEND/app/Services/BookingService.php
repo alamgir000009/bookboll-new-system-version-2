@@ -115,6 +115,7 @@ class BookingService
             'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
         ]);
 
+        $booking->load('venue:id,name,maps_url');
         $booking->user->notify(new BookingCancelledUserNotification($booking));
 
         return sendSuccess('Booking cancelled successfully.', compact('booking'));
@@ -982,6 +983,7 @@ class BookingService
             ]);
 
             try {
+                $booking->load('venue:id,name,maps_url');
                 $user = $booking->user;
                 $user->notify(new BookingConfirmedUserNotification($booking));
             } catch (Exception $e) {

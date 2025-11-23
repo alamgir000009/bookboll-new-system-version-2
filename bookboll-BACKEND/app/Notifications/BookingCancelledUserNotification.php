@@ -25,16 +25,23 @@ class BookingCancelledUserNotification extends Notification implements ShouldQue
     {
         $booking = $this->booking;
 
-        return (new MailMessage)
+        $mail = (new MailMessage)
             ->subject('Your Booking Has Been Cancelled')
             ->greeting('Hi ' . $booking->user->name . ',')
             ->line('We regret to inform you that your booking for ' . $booking->listing->name . ' at ' . $booking->venue->name . ' has been cancelled.')
             ->line('Date: ' . $booking->date)
             ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
-            ->line('Cancel Reason: '. $booking->cancel_reason ?? 'N/A' )
-            ->line('If this was not intended, please contact support or try booking again.')
+            ->line('Cancel Reason: ' . ($booking->cancel_reason ?? 'N/A'));
+
+        if ($booking->venue->maps_url) {
+            $mail->line('Venue Location: ' . $booking->venue->maps_url);
+        }
+
+        $mail->line('If this was not intended, please contact support or try booking again.')
             ->action('View Your Bookings', config('app.frontend_url'))
             ->line('We hope to serve you again soon.');
+
+        return $mail;
     }
 
     public function toArray($notifiable)

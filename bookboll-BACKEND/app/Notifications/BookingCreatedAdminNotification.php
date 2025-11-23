@@ -24,7 +24,7 @@ class BookingCreatedAdminNotification extends Notification implements ShouldQueu
     {
         $booking = $this->booking;
 
-        return (new MailMessage)
+        $mail = (new MailMessage)
             ->subject('New Booking Received')
             ->greeting('Hello Admin,')
             ->line('A new booking has been confirmed.')
@@ -33,9 +33,16 @@ class BookingCreatedAdminNotification extends Notification implements ShouldQueu
             ->line('Listing: ' . $booking->listing->name)
             ->line('Date: ' . $booking->date)
             ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
-            ->line('Total: QAR' . number_format($booking->total_price ?? 0, 2))
-            ->action('View Booking', config('app.admin_url').'/bookings/' . $booking->id)
+            ->line('Total: QAR' . number_format($booking->total_price ?? 0, 2));
+
+        if ($booking->venue->maps_url) {
+            $mail->line('Venue Location: ' . $booking->venue->maps_url);
+        }
+
+        $mail->action('View Booking', config('app.admin_url') . '/bookings/' . $booking->id)
             ->line('Thank you for using ' . config('app.name') . '!');
+
+        return $mail;
     }
 
     public function toArray()

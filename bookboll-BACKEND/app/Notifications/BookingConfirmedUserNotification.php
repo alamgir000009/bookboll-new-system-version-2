@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Notifications;
 
 use App\Models\Booking;
@@ -13,7 +12,8 @@ class BookingConfirmedUserNotification extends Notification implements ShouldQue
 {
     use Queueable;
 
-    public function __construct(public Booking $booking){}
+    public function __construct(public Booking $booking)
+    {}
 
     public function via($notifiable)
     {
@@ -22,7 +22,7 @@ class BookingConfirmedUserNotification extends Notification implements ShouldQue
 
     public function toMail($notifiable)
     {
-        return (new MailMessage)
+        $mail = (new MailMessage)
             ->subject('Your Booking Has Been Confirmed! - #' . $this->booking->booking_id)
             ->greeting('Hello ' . $notifiable->name . '!')
             ->line('Your booking #' . $this->booking->booking_id . ' has been confirmed.')
@@ -32,10 +32,17 @@ class BookingConfirmedUserNotification extends Notification implements ShouldQue
             ->line('Date: ' . $this->booking->date)
             ->line('Time: ' . Carbon::parse($this->booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($this->booking->end_time)->format('h:i A'))
             ->line('Total: QAR ' . number_format($this->booking->total_price, 2))
-            ->line('Status: Confirmed')
-            ->action('View Booking', config('app.frontend_url'))
+            ->line('Status: Confirmed');
+
+        if ($this->booking->venue->maps_url) {
+            $mail->action('View Location on Google Maps', $this->booking->venue->maps_url);
+        }
+
+        $mail->action('View Booking', config('app.frontend_url'))
             ->line('If you have any questions, contact us.')
             ->salutation('Best regards, BookBoll Team');
+
+        return $mail;
     }
 
     public function toArray($notifiable)

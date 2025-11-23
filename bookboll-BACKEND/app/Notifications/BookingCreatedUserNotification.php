@@ -31,8 +31,13 @@ class BookingCreatedUserNotification extends Notification implements ShouldQueue
             ->line('Your booking for ' . $booking->listing->name . ' at ' . $booking->venue->name . ' has been confirmed.')
             ->line('Date: ' . $booking->date)
             ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
-            ->line('Total: QAR' . number_format($booking->total_price ?? 0, 2))
-            ->action('View Booking', config('app.frontend_url'))
+            ->line('Total: QAR' . number_format($booking->total_price ?? 0, 2));
+
+        if ($booking->venue->maps_url) {
+            $mail->action('View Location on Google Maps', $booking->venue->maps_url);
+        }
+
+        $mail->action('View Booking', config('app.frontend_url'))
             ->line('We look forward to seeing you!');
 
         if ($this->invoice_path && Storage::disk('public')->exists($this->invoice_path)) {
