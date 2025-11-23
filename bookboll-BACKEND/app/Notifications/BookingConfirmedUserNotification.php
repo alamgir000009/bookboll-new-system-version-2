@@ -23,9 +23,9 @@ class BookingConfirmedUserNotification extends Notification implements ShouldQue
     public function toMail($notifiable)
     {
         return (new MailMessage)
-            ->subject('Your Booking Has Been Confirmed! - #' . $this->booking->reference_number)
+            ->subject('Your Booking Has Been Confirmed! - #' . $this->booking->booking_id)
             ->greeting('Hello ' . $notifiable->name . '!')
-            ->line('Your booking #' . $this->booking->reference_number . ' has been confirmed.')
+            ->line('Your booking #' . $this->booking->booking_id . ' has been confirmed.')
             ->line('**Details:**')
             ->line('Venue: ' . $this->booking->venue->name)
             ->line('Activity: ' . $this->booking->listing->name)

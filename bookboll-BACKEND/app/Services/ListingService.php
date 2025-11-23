@@ -443,7 +443,7 @@ class ListingService
         $categories       = $request->categories ?? [];
         $records_per_page = $request->records_per_page ?? null;
 
-        $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType'])
+        $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns'])
             ->active()
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -499,6 +499,7 @@ class ListingService
             return [
                 'id'              => $listing->id,
                 'name'            => $listing->name,
+                'add_ons'          => $listing->addOns,
                 'price'           => $listing->base_price,
                 'description'     => $listing->description,
                 'venue'           => $listing->venue?->name,

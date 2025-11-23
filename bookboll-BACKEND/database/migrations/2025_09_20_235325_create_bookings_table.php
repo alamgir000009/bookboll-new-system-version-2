@@ -17,7 +17,7 @@ return new class extends Migration
             $table->foreignId('venue_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('listing_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('promocode_id')->nullable()->constrained('promocodes')->nullOnDelete();
-            $table->string('reference_number')->unique()->nullable();
+            $table->string('booking_id')->unique()->nullable();
             $table->date('date')->nullable();
             $table->time('start_time')->nullable();
             $table->time('end_time')->nullable();
@@ -41,7 +41,7 @@ return new class extends Migration
 
             $table->index(['user_id', 'venue_id', 'listing_id']);
             $table->index(['date', 'start_time', 'end_time']);
-            $table->index(['reference_number', 'total_price', 'status']);
+            $table->index(['booking_id', 'total_price', 'status']);
         });
     }
 

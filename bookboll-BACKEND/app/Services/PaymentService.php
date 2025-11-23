@@ -257,7 +257,7 @@ class PaymentService
             foreach ($dueBookingsData as $due) {
                 $dueBooking = $this->bookingModel::findOrFail($due['id']);
                 if ($dueBooking->user_id !== $mainBookingForValidation->user_id) {
-                    return sendError("Due booking ({$dueBooking->reference_number}) belongs to different user.");
+                    return sendError("Due booking ({$dueBooking->booking_id}) belongs to different user.");
                 }
                 $dueTotal += $due['amount'];
             }

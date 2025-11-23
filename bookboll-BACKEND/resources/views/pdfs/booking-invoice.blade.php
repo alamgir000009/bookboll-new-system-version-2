@@ -238,7 +238,7 @@
                     <td style="width: 50%; vertical-align: top; text-align: right; padding-left: 20px;">
                         <div style="font-weight: bold; margin-bottom: 5px;">Booking #</div>
                         <div style="line-height: 1.4;">
-                            #{{ $booking->reference_number }}<br>
+                            #{{ $booking->booking_id }}<br>
                             {{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}<br>
                             {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} -
                             {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}

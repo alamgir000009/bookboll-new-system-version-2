@@ -29,7 +29,7 @@ class Booking extends Model
         'payment_method',
         'refunded_amount',
         'discount_amount',
-        'reference_number',
+        'booking_id',
         'payment_breakdown',
         'full_payment_received',
         'loyalty_points_earned',
@@ -196,10 +196,10 @@ class Booking extends Model
                 $latestBooking = static::lockForUpdate()->whereYear('created_at', $year)->latest('id')->first();
 
                 $nextBookingNumber = $latestBooking
-                    ? (int) substr($latestBooking->reference_number, -5) + 1
+                    ? (int) substr($latestBooking->booking_id, -5) + 1
                     : 1;
 
-                $booking->reference_number = sprintf('BKN_%s_%05d', $year, $nextBookingNumber);
+                $booking->booking_id = sprintf('BKN_%s_%05d', $year, $nextBookingNumber);
             });
         });
     }

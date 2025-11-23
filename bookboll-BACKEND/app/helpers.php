@@ -1,6 +1,10 @@
 <?php
 
 use App\Models\Invoice;
+use App\Models\SlotLock;
+use App\Models\User;
+use App\Notifications\BookingCreatedAdminNotification;
+use App\Notifications\BookingCreatedUserNotification;
 use App\Services\AuditLogService;
 use Barryvdh\DomPDF\Facade\Pdf;
 
@@ -63,15 +67,19 @@ if (! class_exists('BookingPaymentStatus')) {
 if (! class_exists('BookingPaymentMethod')) {
     class BookingPaymentMethod
     {
+        public const PAID_CHEQUE                  = 'paid_cheque';
         public const ONLINE_PAYMENT               = 'online_payment';
         public const CASH_ON_ARRIVAL              = 'cash_on_arrival';
+        public const PAID_WIRE_TRANSFER           = 'paid_wire_transfer';
         public const DEPOSIT_REMAINING_ON_ARRIVAL = 'deposit_remaining_on_arrival';
 
         public static function list(): array
         {
             return [
-                self::CASH_ON_ARRIVAL,
+                self::PAID_CHEQUE,
                 self::ONLINE_PAYMENT,
+                self::CASH_ON_ARRIVAL,
+                self::PAID_WIRE_TRANSFER,
                 self::DEPOSIT_REMAINING_ON_ARRIVAL,
             ];
         }
@@ -454,6 +462,50 @@ if (! function_exists('determineSlotPrice')) {
             Storage::disk('public')->put($relativePath, $pdf->output());
 
             return $relativePath;
+        }
+    }
+}
+
+if (! function_exists('unlockSlot')) {
+    function unlockSlot($request, $listing, $user, $booking)
+    {
+        $ipAddress = $request->ip();
+        $sessionId = $user ? 'user_' . $user->id : 'guest_' . md5($ipAddress . $request->userAgent());
+
+        SlotLock::where('listing_id', $listing->id)
+            ->whereDate('date', $booking->date)
+            ->where('session_id', $sessionId)
+            ->delete();
+    }
+}
+
+if (! function_exists('createBookingInvoiceWithNotification')) {
+    function createBookingInvoiceWithNotification($booking, $user)
+    {
+        try {
+
+            $invoiceNumber = generateInvoiceId();
+
+            $invoicePath = generateAndStoreInvoicePdf($booking, $invoiceNumber);
+
+            $invoice = $user->invoices()->create([
+                'user_id'        => $user->id,
+                'status'         => 'generated',
+                'path'           => $invoicePath,
+                'booking_id'     => $booking->id,
+                'invoice_number' => $invoiceNumber,
+            ]);
+
+            $user->notify(new BookingCreatedUserNotification($booking, $invoice->path));
+
+            $admins = User::whereHas("roles", function ($query) {
+                $query->whereIn("name", ["super_admin", "admin"]);
+            })->get();
+
+            Notification::send($admins, new BookingCreatedAdminNotification($booking));
+
+        } catch (Exception $e) {
+            Log::error("Booking created notification errors: " . $e->getMessage(), ["Exception" => $e]);
         }
     }
 }
