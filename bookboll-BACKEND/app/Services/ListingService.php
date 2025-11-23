@@ -549,6 +549,7 @@ class ListingService
             'duration'        => $listing->slot_duration,
             'loyalty_points'  => $listing->loyalty_points,
             'calendar_color'  => $listing->calendar_color,
+            'online_payment'  => $listing->online_payment,
             'payment_options' => $listing->payment_options,
             'amenities'       => $listing->amenities ?? [],
             'special_day'     => $specialDay?->description,
