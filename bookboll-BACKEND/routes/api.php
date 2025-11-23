@@ -55,6 +55,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('settings', [SettingController::class, 'update']);
 
         Route::apiResource('sports-types', SportsTypeController::class)->only(['store', 'update', 'destroy']);
+        Route::post('sports-types/sort', [SportsTypeController::class, 'sort']);
 
         Route::post('sports-categories/sort', [SportsCategoryController::class, 'sort']);
         Route::apiResource('sports-categories', SportsCategoryController::class);

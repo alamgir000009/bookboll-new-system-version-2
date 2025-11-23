@@ -12,6 +12,7 @@ class SportsType extends Model
         'title',
         'status',
         'sub_title',
+        'sort_order',
     ];
 
     public function sportsCategories()

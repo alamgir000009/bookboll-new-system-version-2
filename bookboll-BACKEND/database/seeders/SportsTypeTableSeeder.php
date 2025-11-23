@@ -10,22 +10,28 @@ class SportsTypeTableSeeder extends Seeder
     {
         $sportsTypes = [
             [
-                'icon'      => '⚽',
-                'slug'      => 'sports-facilities',
-                'title'     => 'Sports Facilities',
-                'sub_title' => 'Sports Categories',
+                'sort_order' => 1,
+                'icon'       => '⚽',
+                'color'      => 'red',
+                'slug'       => 'sports-facilities',
+                'title'      => 'Sports Facilities',
+                'sub_title'  => 'Sports Categories',
             ],
             [
-                'icon'      => '🏜️',
-                'slug'      => 'adventure-sports',
-                'title'     => 'Adventure Sports',
-                'sub_title' => 'Adventure Activities',
+                'sort_order' => 2,
+                'icon'       => '🏜️',
+                'color'      => 'blue',
+                'slug'       => 'adventure-sports',
+                'title'      => 'Adventure Sports',
+                'sub_title'  => 'Adventure Activities',
             ],
             [
-                'icon'      => '🎱',
-                'slug'      => 'entertainment-sports',
-                'title'     => 'Entertainment Sports',
-                'sub_title' => 'Entertainment Options',
+                'sort_order' => 3,
+                'icon'       => '🎱',
+                'color'      => 'orange',
+                'slug'       => 'entertainment-sports',
+                'title'      => 'Entertainment Sports',
+                'sub_title'  => 'Entertainment Options',
             ],
         ];
 

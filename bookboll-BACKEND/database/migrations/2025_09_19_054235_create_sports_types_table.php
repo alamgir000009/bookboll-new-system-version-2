@@ -19,6 +19,7 @@ return new class extends Migration
             $table->string('icon')->nullable();
             $table->string('color')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active')->index();
+            $table->integer('sort_order')->default(0);
             $table->timestamps();
         });
     }

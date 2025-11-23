@@ -347,19 +347,19 @@ class BookingService
             'selected_add_ons.*' => 'exists:add_ons,id',
             'promocode'          => 'nullable|string|max:50',
             'notes'              => 'nullable|string|max:1000',
+            'subtotal'           => 'nullable|numeric',
             'total_price'        => 'nullable|numeric',
         ]);
 
         $listing = Listing::findOrFail($formData['listing_id']);
         $user    = User::findOrFail($formData['user_id']);
 
-        // Validate booking before creating
         $validationErrors = $this->validateBooking($formData);
         if (! empty($validationErrors)) {
             return sendError('Validation failed', $validationErrors, 422);
         }
 
-        $subtotal      = $request->total_price;
+        $subtotal      = $request->subtotal;
         $discount      = $request->discount_amount ?? 0;
         $totalPrice    = $request->total_price;
         $paymentMethod = $request->payment_method;
