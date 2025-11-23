@@ -24,4 +24,9 @@ class CustomerController extends Controller
         return $this->customerService->updateStatus($request, $id);
     }
 
+    public function createCustomer(Request $request)
+    {
+        return $this->customerService->createCustomer($request);
+    }
+
 }

@@ -1,7 +1,13 @@
 <?php
 namespace App\Services;
 
+use App\Mail\UserWelcomeEmail;
 use App\Models\User;
+use Exception;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 use PaymentStatus;
 
 class CustomerService
@@ -84,6 +90,72 @@ class CustomerService
         $customer->load('tags');
 
         return sendSuccess('Customer status updated successfully', compact('customer'));
+    }
+
+    public function createCustomer($request)
+    {
+        $formData = $request->validate([
+            'name'          => 'required|string|max:100',
+            'email'         => 'required|email|unique:users,email',
+            'phone'         => 'required|string|min:6|max:20',
+            'password'      => 'nullable|min:8',
+            'status'        => 'sometimes|in:' . $this->customerModel::ACTIVE . ',' . $this->customerModel::INACTIVE . ',' . $this->customerModel::BLOCKED,
+            'date_of_birth' => 'nullable|date|before:today',
+            'gender'        => 'nullable|string|in:male,female,other',
+            'nationality'   => 'nullable|string|max:100',
+            'address'       => 'nullable|string|max:255',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $existingUser = $this->customerModel->where('email', $formData['email'])->first();
+            if ($existingUser) {
+                if ($existingUser->hasRole('customer')) {
+                    return sendError('Customer with this email already exists');
+                } else {
+                    $existingUser->assignRole('customer');
+                    $user = $existingUser;
+                }
+            } else {
+                if (empty($formData['password'])) {
+                    $formData['password'] = Str::random(12);
+                }
+
+                $user = $this->customerModel->create([
+                    'name'          => $formData['name'],
+                    'email'         => $formData['email'],
+                    'phone'         => $formData['phone'],
+                    'password'      => $formData['password'],
+                    'gender'        => $formData['gender'] ?? null,
+                    'address'       => $formData['address'] ?? null,
+                    'nationality'   => $formData['nationality'] ?? null,
+                    'date_of_birth' => $formData['date_of_birth'] ?? null,
+                    'status'        => $formData['status'] ?? $this->customerModel::ACTIVE,
+                ]);
+
+                $user->assignRole('customer');
+            }
+
+            DB::commit();
+
+            try {
+                Mail::to($user->email)->queue(new UserWelcomeEmail($user, $formData['password']));
+            } catch (Exception $e) {
+                Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
+            }
+
+            $user->load(['roles']);
+            $user->makeHidden('roles');
+            $roles = $user->getRoleNames();
+
+            return sendSuccess("Customer registered successfully", compact('user', 'roles'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Customer registration error: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError("Something went wrong: " . $e->getMessage());
+        }
     }
 
 }

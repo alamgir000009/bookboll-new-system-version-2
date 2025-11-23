@@ -48,6 +48,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('users', UserController::class);
         Route::get('users/required-data', [UserController::class, 'requiredDataForUser']);
         Route::post('users/update-profile', [UserController::class, 'updateProfile']);
+        Route::post('customers/register', [CustomerController::class, 'createCustomer']);
 
         Route::get('settings', [SettingController::class, 'index']);
         Route::post('settings/{key}', [SettingController::class, 'updateSingle']);
