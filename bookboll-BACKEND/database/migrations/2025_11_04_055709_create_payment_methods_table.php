@@ -18,6 +18,8 @@ return new class extends Migration
             $table->string('last_four')->nullable();
             $table->integer('exp_month')->nullable();
             $table->integer('exp_year')->nullable();
+            $table->string('stripe_payment_method_id')->nullable();
+            $table->boolean('default')->default(false);
             $table->timestamps();
         });
     }

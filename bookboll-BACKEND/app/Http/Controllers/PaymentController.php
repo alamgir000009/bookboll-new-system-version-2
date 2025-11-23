@@ -34,10 +34,9 @@ class PaymentController extends Controller
 
     public function export(Request $request)
     {
-        $filters = $request->query(); // e.g., ?method=cash&status=paid
+        $filters = $request->query();
         $data    = $this->paymentService->exportPaymentsCsv($filters);
 
-        // Use Laravel Excel or simple CSV response
         $csv = collect($data)->prepend(array_keys($data[0] ?? []))->map(fn($row) => collect($row)->implode(','))->implode("\n");
         return response($csv, 200, ['Content-Type' => 'text/csv', 'Content-Disposition' => 'attachment; filename="payments.csv"']);
     }
@@ -50,12 +49,13 @@ class PaymentController extends Controller
     public function createPaymentIntent(Request $request)
     {
         $request->validate([
-            'amount'         => 'required|integer|min:100',
-            'currency'       => 'required|string',
-            'listing_id'     => 'required|integer',
-            'promocode'      => 'nullable|string',
-            'payment_method' => 'required|string',
-            'venue_id'       => 'required|integer',
+            'amount'                  => 'required|integer|min:100',
+            'currency'                => 'required|string',
+            'listing_id'              => 'required|integer',
+            'promocode'               => 'nullable|string',
+            'payment_method'          => 'required|string',
+            'venue_id'                => 'required|integer',
+            'saved_payment_method_id' => 'nullable|numeric|exists:payment_methods,id',
         ]);
 
         Stripe::setApiKey(config('services.stripe.secret'));
@@ -78,7 +78,7 @@ class PaymentController extends Controller
                 'payment_method' => $request->payment_method,
             ];
 
-            $payment = PaymentIntent::create([
+            $paymentIntentData = [
                 'amount'               => $request->amount,
                 'currency'             => $request->currency,
                 'customer'             => $user->stripe_id,
@@ -86,7 +86,75 @@ class PaymentController extends Controller
                 'metadata'             => $metadata,
                 'description'          => 'Booking payment intent',
                 'setup_future_usage'   => 'off_session',
-            ]);
+            ];
+
+            if ($request->saved_payment_method_id) {
+                $savedPaymentMethod = PaymentMethodModel::where('id', $request->saved_payment_method_id)
+                    ->where('user_id', $user->id)->first();
+
+                if (! $savedPaymentMethod) {
+                    return sendError('Payment method not found or does not belong to you');
+                }
+
+                // If we have the Stripe payment method ID stored, use it directly
+                if ($savedPaymentMethod->stripe_payment_method_id) {
+                    // Verify the payment method still exists in Stripe and belongs to the user
+                    try {
+                        $stripePm = $user->findPaymentMethod($savedPaymentMethod->stripe_payment_method_id);
+                        if ($stripePm) {
+                            $paymentIntentData['payment_method'] = $savedPaymentMethod->stripe_payment_method_id;
+                        } else {
+                            Log::warning('Stripe payment method not found for saved payment method', [
+                                'saved_payment_method_id' => $request->saved_payment_method_id,
+                                'stripe_payment_method_id' => $savedPaymentMethod->stripe_payment_method_id,
+                                'user_id'                 => $user->id,
+                            ]);
+                            return sendError('Saved payment method is no longer available in Stripe. Please use a different payment method.', [], 404);
+                        }
+                    } catch (Exception $e) {
+                        Log::error('Error retrieving Stripe payment method', [
+                            'saved_payment_method_id' => $request->saved_payment_method_id,
+                            'stripe_payment_method_id' => $savedPaymentMethod->stripe_payment_method_id,
+                            'user_id'                 => $user->id,
+                            'error'                   => $e->getMessage(),
+                        ]);
+                        return sendError('Error retrieving saved payment method. Please use a different payment method.', [], 500);
+                    }
+                } else {
+                    // Fallback: Try to match by card details if stripe_payment_method_id is not stored
+                    $stripePaymentMethods = $user->paymentMethods();
+
+                    $matchingStripePaymentMethod = null;
+                    foreach ($stripePaymentMethods as $stripePm) {
+                        if ($stripePm->type === 'card' && $stripePm->card) {
+                            $card = $stripePm->card;
+                            if (
+                                $card->last4 === $savedPaymentMethod->last_four &&
+                                strtolower($card->brand) === strtolower($savedPaymentMethod->brand) &&
+                                $card->exp_month === $savedPaymentMethod->exp_month &&
+                                $card->exp_year === $savedPaymentMethod->exp_year
+                            ) {
+                                $matchingStripePaymentMethod = $stripePm;
+                                // Update the saved payment method with the Stripe ID for future use
+                                $savedPaymentMethod->update(['stripe_payment_method_id' => $stripePm->id]);
+                                break;
+                            }
+                        }
+                    }
+
+                    if ($matchingStripePaymentMethod) {
+                        $paymentIntentData['payment_method'] = $matchingStripePaymentMethod->id;
+                    } else {
+                        Log::warning('Saved payment method found but no matching Stripe payment method', [
+                            'saved_payment_method_id' => $request->saved_payment_method_id,
+                            'user_id'                 => $user->id,
+                        ]);
+                        return sendError('Saved payment method not found in Stripe. Please use a different payment method.', [], 404);
+                    }
+                }
+            }
+
+            $payment = PaymentIntent::create($paymentIntentData);
 
             return sendSuccess("Client secret created successfully", [
                 'client_secret'     => $payment->client_secret,
@@ -218,5 +286,10 @@ class PaymentController extends Controller
     public function cancelPayment()
     {
         echo 'Payment cancelled. Please try again.';
+    }
+
+    public function getPaymentMethods()
+    {
+        return $this->paymentService->customerPaymentMethods();
     }
 }

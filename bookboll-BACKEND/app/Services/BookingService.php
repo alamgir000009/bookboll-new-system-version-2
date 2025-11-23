@@ -679,11 +679,15 @@ class BookingService
                         $card = $pm->card;
 
                         $user->paymentMethods()->updateOrCreate(
-                            ['last_four' => $card->last4],
                             [
-                                'brand'     => $card->brand,
-                                'exp_year'  => $card->exp_year,
-                                'exp_month' => $card->exp_month,
+                                'user_id'                 => $user->id,
+                                'stripe_payment_method_id' => $formData['payment_method_id'],
+                            ],
+                            [
+                                'brand'                   => $card->brand,
+                                'exp_year'                => $card->exp_year,
+                                'exp_month'               => $card->exp_month,
+                                'last_four'               => $card->last4,
                             ]
                         );
                     }

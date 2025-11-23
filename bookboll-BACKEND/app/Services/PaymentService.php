@@ -364,4 +364,16 @@ class PaymentService
         }
     }
 
+    public function customerPaymentMethods()
+    {
+        try {
+            $user           = auth()->user();
+            $paymentMethods = $user->paymentMethods()->orderBy('created_at', 'desc')->get();
+
+            return sendSuccess("Payment methods fetched successfully", compact('paymentMethods'));
+        } catch (Exception $e) {
+            Log::error('Get Payment Methods Error: ' . $e->getMessage(), ["Exception" => $e]);
+            return sendError("Something went wrong");
+        }
+    }
 }

@@ -155,6 +155,7 @@ Route::prefix('customer')->group(function () {
         Route::get('profile', [UserController::class, 'getCustomerProfile']);
         Route::post('update-profile', [UserController::class, 'updateCustomerProfile']);
         Route::post('update-profile-image', [UserController::class, 'updateProfileImage']);
+        Route::get('payment-methods', [PaymentController::class, 'getPaymentMethods']);
     });
 
 });
