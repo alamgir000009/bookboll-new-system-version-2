@@ -353,13 +353,19 @@ class BookingService
         $listing = Listing::findOrFail($formData['listing_id']);
         $user    = User::findOrFail($formData['user_id']);
 
+        // Validate booking before creating
+        $validationErrors = $this->validateBooking($formData);
+        if (! empty($validationErrors)) {
+            return sendError('Validation failed', $validationErrors, 422);
+        }
+
         $subtotal      = $request->total_price;
         $discount      = $request->discount_amount ?? 0;
         $totalPrice    = $request->total_price;
         $paymentMethod = $request->payment_method;
 
         $promocode = null;
-        if (! empty($data['promocode'])) {
+        if (! empty($formData['promocode'])) {
             $promocode = Promocode::where('code', strtoupper($formData['promocode']))->active()->first();
             if (! $promocode) {
                 return sendError('Invalid promocode.');
@@ -413,8 +419,8 @@ class BookingService
                 ],
             ]);
 
-            if (! empty($data['selected_add_ons'])) {
-                $booking->addOns()->attach($formData['selected_add_ons'], ['quantity' => 1]);
+            if (! empty($formData['selected_add_ons'])) {
+                $booking->addOns()->attach($formData['selected_add_ons']);
             }
 
             $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
@@ -433,18 +439,12 @@ class BookingService
                 'description' => 'Booking created by ' . auth()->user()->name,
             ]);
 
-            $paymentStatus = match (trim($formData['payment_method'])) {
-                'cash_on_arrival'    => BookingPaymentStatus::PENDING,
-                'paid_cheque'        => BookingPaymentStatus::FULLY_PAID,
-                'paid_wire_transfer' => BookingPaymentStatus::FULLY_PAID,
-            };
-
             $this->paymentModel::create([
                 'user_id'    => $user->id,
                 'booking_id' => $booking->id,
                 'type'       => PaymentType::FULL,
                 'amount'     => $booking->total_price,
-                'payment_id' => generatePaymentId($booking->id, PaymentType::DEPOSIT),
+                'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
                 'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
                 'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
                 'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
@@ -475,7 +475,7 @@ class BookingService
 
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error('Booking creation failed: ' . $e->getMessage());
+            Log::error('Booking creation failed: ' . $e->getMessage(), ["Exception" => $e]);
             return sendError('Failed to create booking', ['error' => $e->getMessage()], 500);
         }
     }
@@ -546,17 +546,23 @@ class BookingService
         $resourceConflicts = [];
         foreach ($listing->resourceRequirements ?? [] as $resource) {
             // Direct sum from pivot table 'booking_resources' for this resource on date
+            // Check resource usage for overlapping time slots only
             $currentUsage = DB::table('booking_resource')
                 ->join('bookings', 'booking_resource.booking_id', '=', 'bookings.id')
-                ->whereDate('bookings.start_time', $data['date'])
+                ->where('bookings.date', $data['date'])
                 ->where('bookings.status', '!=', 'cancelled')
                 ->where('bookings.id', '!=', $editingId)
                 ->where('booking_resource.resource_id', $resource->id)
+                ->where(function ($q) use ($data) {
+                    // Only count bookings that overlap with the requested time slot
+                    $q->whereRaw('TIME(bookings.start_time) < ?', [$data['end_time']])
+                        ->whereRaw('TIME(bookings.end_time) > ?', [$data['start_time']]);
+                })
                 ->sum('booking_resource.quantity');
 
             $totalQuantity = $resource->total_quantity ?? 0;
             $available     = $totalQuantity - $currentUsage;
-            $needed        = $req->pivot?->quantity ?? 1;
+            $needed        = $resource->pivot?->quantity ?? 1;
 
             if ($needed > $available) {
                 $resourceName        = $resource->name ?? 'Unknown';
@@ -568,15 +574,18 @@ class BookingService
         }
 
         // Overlaps (time conflicts on the listing for the date)
-        $fullStart = Carbon::parse("{$data['date']} {$data['start_time']}");
-        $fullEnd   = Carbon::parse("{$data['date']} {$data['end_time']}");
-        $overlaps  = $this->bookingModel::whereDate('start_time', $data['date'])
+        // Use date column for filtering, then check time overlaps
+        $overlaps = $this->bookingModel::where('date', $data['date'])
             ->where('listing_id', $data['listing_id'])
             ->where('status', '!=', 'cancelled')
             ->where('id', '!=', $editingId)
-            ->where(function ($q) use ($fullStart, $fullEnd) {
-                $q->where('start_time', '<', $fullEnd)
-                    ->where('end_time', '>', $fullStart);
+            ->where(function ($q) use ($data) {
+                // Check for time overlaps: bookings overlap if start_time < new_end_time AND end_time > new_start_time
+                $q->where(function ($query) use ($data) {
+                    // Case 1: Existing booking starts before new booking ends AND existing booking ends after new booking starts
+                    $query->whereRaw('TIME(start_time) < ?', [$data['end_time']])
+                        ->whereRaw('TIME(end_time) > ?', [$data['start_time']]);
+                });
             })
             ->count();
 
@@ -680,6 +689,13 @@ class BookingService
             }
 
             $listing = Listing::findOrFail($formData['listing_id']);
+
+            // Validate booking before creating
+            $validationErrors = $this->validateBooking($formData);
+            if (! empty($validationErrors)) {
+                DB::rollBack();
+                return sendError('Validation failed', $validationErrors, 422);
+            }
 
             $weekday = strtolower(Carbon::parse($request->date)->format('l'));
 
