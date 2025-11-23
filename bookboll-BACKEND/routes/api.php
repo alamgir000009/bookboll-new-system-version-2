@@ -72,6 +72,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('add-ons/sort', [AddOnController::class, 'sort']);
         Route::apiResource('add-ons', AddOnController::class);
 
+        Route::post('listings/sort', [ListingController::class, 'sort']);
         Route::apiResource('listings', ListingController::class);
 
         Route::apiResource('promocodes', PromocodeController::class);

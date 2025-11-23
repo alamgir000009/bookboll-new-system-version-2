@@ -25,7 +25,7 @@ class VenueService
                 });
             })
             ->active()
-            ->latest('sort_order')
+            ->orderBy('sort_order', 'ASC')
             ->get();
 
         return sendSuccess('Venues fetched successfully', compact('venues'));

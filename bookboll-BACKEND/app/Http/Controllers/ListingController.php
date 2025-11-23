@@ -59,4 +59,9 @@ class ListingController extends Controller
     {
         return $this->listingService->fetchAddons($listing_id);
     }
+
+    public function sort(Request $request)
+    {
+        return $this->listingService->updateSortOrder($request);
+    }
 }

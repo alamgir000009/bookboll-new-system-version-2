@@ -35,6 +35,7 @@ class ListingService
                 $q->where('is_open', true)->orderBy('day');
             },
         ])
+            ->orderBy('sort_order', 'ASC')
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
@@ -499,7 +500,7 @@ class ListingService
             return [
                 'id'              => $listing->id,
                 'name'            => $listing->name,
-                'add_ons'          => $listing->addOns,
+                'add_ons'         => $listing->addOns,
                 'price'           => $listing->base_price,
                 'description'     => $listing->description,
                 'venue'           => $listing->venue?->name,
@@ -762,5 +763,53 @@ class ListingService
         });
 
         return sendSuccess('Addons fetched successfully', compact('addons'));
+    }
+
+    public function updateSortOrder($request)
+    {
+        $request->validate([
+            'updates'              => 'required|array|min:1',
+            'updates.*.id'         => 'required|integer|exists:listings,id',
+            'updates.*.sort_order' => 'required|integer|min:1',
+        ]);
+
+        $updates    = $request->input('updates');
+        $listingIds = collect($updates)->pluck('id')->toArray();
+
+        $listings = $this->listingModel::whereIn('id', $listingIds)->get(['id', 'venue_id']);
+
+        if ($listings->isEmpty()) {
+            return sendError('No listings found.');
+        }
+
+        $venueId = $listings->first()->venue_id;
+        if ($listings->pluck('venue_id')->unique()->count() > 1) {
+            return sendError('Listings must belong to the same venue.');
+        }
+
+        $sortOrders = collect($updates)->pluck('sort_order')->sort()->values()->toArray();
+        if (count(array_unique($sortOrders)) !== count($sortOrders) || $sortOrders[0] !== 1 || end($sortOrders) !== count($sortOrders)) {
+            return sendError('Sort orders must be unique, sequential integers starting from 1.');
+        }
+
+        DB::beginTransaction();
+
+        try {
+            foreach ($updates as $update) {
+                $this->listingModel::where('id', $update['id'])
+                    ->where('venue_id', $venueId)
+                    ->update(['sort_order' => $update['sort_order']]);
+            }
+
+            DB::commit();
+
+            return sendSuccess('Sort order updated successfully.', [
+                'data' => ['updated_listings' => $listingIds],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Failed to update sort order: ' . $e->getMessage(), ["Exception" => $e]);
+            return sendError('Failed to update sort order.');
+        }
     }
 }

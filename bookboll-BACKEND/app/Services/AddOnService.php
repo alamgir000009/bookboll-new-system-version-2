@@ -70,7 +70,7 @@ class AddOnService
         return sendSuccess('Add-On deleted successfully');
     }
 
-    public function reorder($request)
+    public function updateSortingOrder($request)
     {
         $request->validate([
             'order'   => 'required|array',
