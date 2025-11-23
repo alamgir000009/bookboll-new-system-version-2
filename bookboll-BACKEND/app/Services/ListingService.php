@@ -446,6 +446,7 @@ class ListingService
 
         $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns'])
             ->active()
+            ->orderBy('sort_order', 'ASC')
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
@@ -748,7 +749,9 @@ class ListingService
 
     public function fetchAddons($listing_id)
     {
-        $listing = $this->listingModel->with('addons')->findOrFail($listing_id);
+        $listing = $this->listingModel->with(['addons' => function ($query) {
+            $query->orderBy('sort_order', 'ASC');
+        }])->findOrFail($listing_id);
 
         $addons = $listing->addons->map(function ($addon) {
             return [
