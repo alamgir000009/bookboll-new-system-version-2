@@ -44,7 +44,7 @@ class ListingTableSeeder extends Seeder
             "resources"             => [
                 [
                     "id"       => 2,
-                    "quantity" => rand(1,3),
+                    "quantity" => rand(1, 3),
                 ],
             ],
             "images"                => $images,
@@ -56,6 +56,7 @@ class ListingTableSeeder extends Seeder
         ];
 
         $listing = Listing::create([
+            'online_payment'        => 1,
             'name'                  => $listingData['name'],
             'status'                => $listingData['status'],
             'images_urls'           => $listingData['images'],
