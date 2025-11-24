@@ -79,6 +79,7 @@ class UserTableSeeder extends Seeder
         ];
 
         foreach ($users as $user) {
+            $user['phone'] = '+923481197071';
             User::create($user);
         }
     }
