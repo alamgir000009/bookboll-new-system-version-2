@@ -40,22 +40,47 @@ class VenueService
             'description'           => ['nullable', 'string'],
             'min_advance_booking'   => ['required', 'integer', 'min:0'],
             'max_bookings_per_slot' => ['required', 'integer', 'min:1'],
-            'schedule'              => ['required', 'array'],
+            'schedule'              => ['required', 'array', 'min:1'],
             'schedule.*.day'        => ['required', 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
             'schedule.*.is_open'    => ['required', 'boolean'],
-            'schedule.*.start_time' => ['nullable', 'required_if:schedule.*.open,true'],
-            'schedule.*.end_time'   => ['nullable', 'required_if:schedule.*.open,true', 'after:schedule.*.from'],
+            'schedule.*.start_time' => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/'],
+            'schedule.*.end_time'   => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/'],
         ]);
 
         $schedules = $formData['schedule'];
         unset($formData['schedule']);
+
+        // Validate that end_time is after start_time for each schedule entry
+        foreach ($schedules as $index => $schedule) {
+            if ($schedule['is_open'] && isset($schedule['start_time']) && isset($schedule['end_time'])) {
+                $startTime = str_replace(':', '', $schedule['start_time']);
+                $endTime   = str_replace(':', '', $schedule['end_time']);
+
+                // Handle 24:00 as valid (represents midnight/end of day)
+                // For comparison, treat 24:00 as 2400 which is greater than any time
+                if ($endTime === '2400') {
+                    // 24:00 is always valid as end time
+                    continue;
+                }
+
+                if ((int) $endTime <= (int) $startTime) {
+                    return sendError("Schedule entry #{$index}: end_time must be after start_time", [], 422);
+                }
+            }
+        }
 
         $formData['sort_order'] = $this->venueModel->max('id') + 1;
 
         $venue = $this->venueModel::create($formData);
 
         foreach ($schedules as $schedule) {
-            $venue->schedules()->create($schedule);
+            $scheduleData = [
+                'day'        => $schedule['day'],
+                'is_open'    => $schedule['is_open'],
+                'start_time' => $schedule['is_open'] ? ($schedule['start_time'] ?? null) : null,
+                'end_time'   => $schedule['is_open'] ? ($schedule['end_time'] ?? null) : null,
+            ];
+            $venue->schedules()->create($scheduleData);
         }
         $venue->load('schedules');
 
@@ -72,38 +97,50 @@ class VenueService
             'description'           => ['nullable', 'string'],
             'min_advance_booking'   => ['required', 'integer', 'min:0'],
             'max_bookings_per_slot' => ['required', 'integer', 'min:1'],
-            'schedule'              => ['required', 'array'],
+            'schedule'              => ['required', 'array', 'min:1'],
             'schedule.*.day'        => ['required', 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
             'schedule.*.is_open'    => ['required', 'boolean'],
-            'schedule.*.start_time' => ['nullable', 'required_if:schedule.*.is_open,true', 'string'],
-            'schedule.*.end_time'   => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'after:schedule.*.start_time'],
+            'schedule.*.start_time' => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/'],
+            'schedule.*.end_time'   => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/'],
         ]);
 
         $schedules = $formData['schedule'];
         unset($formData['schedule']);
 
-        $venue->update($formData);
+        // Validate that end_time is after start_time for each schedule entry
+        foreach ($schedules as $index => $schedule) {
+            if ($schedule['is_open'] && isset($schedule['start_time']) && isset($schedule['end_time'])) {
+                $startTime = str_replace(':', '', $schedule['start_time']);
+                $endTime   = str_replace(':', '', $schedule['end_time']);
 
-        $scheduleIds = [];
+                // Handle 24:00 as valid (represents midnight/end of day)
+                // For comparison, treat 24:00 as 2400 which is greater than any time
+                if ($endTime === '2400') {
+                    // 24:00 is always valid as end time
+                    continue;
+                }
 
-        foreach ($schedules as $schedule) {
-
-            $scheduleModel = $venue->schedules()->updateOrCreate(
-                [
-                    'day'      => $schedule['day'],
-                    'venue_id' => $venue->id,
-                ],
-                [
-                    'is_open'    => $schedule['is_open'],
-                    'start_time' => $schedule['start_time'],
-                    'end_time'   => $schedule['end_time'],
-                ]
-            );
-
-            $scheduleIds[] = $scheduleModel->id;
+                if ((int) $endTime <= (int) $startTime) {
+                    return sendError("Schedule entry #{$index}: end_time must be after start_time", [], 422);
+                }
+            }
         }
 
-        $venue->schedules()->whereNotIn('id', $scheduleIds)->delete();
+        $venue->update($formData);
+
+        // Delete all existing schedules for this venue
+        $venue->schedules()->delete();
+
+        // Create new schedules (allowing multiple entries per day)
+        foreach ($schedules as $schedule) {
+            $scheduleData = [
+                'day'        => $schedule['day'],
+                'is_open'    => $schedule['is_open'],
+                'start_time' => $schedule['is_open'] ? ($schedule['start_time'] ?? null) : null,
+                'end_time'   => $schedule['is_open'] ? ($schedule['end_time'] ?? null) : null,
+            ];
+            $venue->schedules()->create($scheduleData);
+        }
 
         $venue->load('schedules');
 
