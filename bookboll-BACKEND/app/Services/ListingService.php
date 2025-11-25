@@ -622,7 +622,7 @@ class ListingService
         // ---- Get Bookings ----
         $bookings = Booking::where('listing_id', $listing->id)
             ->where('date', $date)
-            ->whereNotIn('status', [BookingStatus::CANCELLED])
+            ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
             ->get(['start_time', 'end_time']);
 
         // ---- Generate time slots ----
@@ -699,6 +699,16 @@ class ListingService
 
             $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
 
+            $hours   = floor($slotMinutes / 60);
+            $minutes = $slotMinutes % 60;
+            if ($hours > 0 && $minutes > 0) {
+                $duration = $hours . ' hour' . ($hours > 1 ? 's' : '') . ' ' . $minutes . ' minute' . ($minutes > 1 ? 's' : '');
+            } elseif ($hours > 0) {
+                $duration = $hours . ' hour' . ($hours > 1 ? 's' : '');
+            } else {
+                $duration = $minutes . ' minute' . ($minutes > 1 ? 's' : '');
+            }
+
             $slots->push([
                 'start_time'          => $slotStart,
                 'end_time'            => $slotEnd,
@@ -707,12 +717,13 @@ class ListingService
                 'booked'              => $bookedCount,
                 'available_resources' => $availableQty,
                 'available_count'     => $availableCount,
-                'duration'            => ($slotMinutes / 60) . "h",
+                'duration'            => $duration,
                 'time'                => "{$slotStart} - {$slotEnd}",
                 'price'                   => round($price, 2),
                 'capacity'                => $listing->capacity,
-                'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+                'max_bookings_per_slot'   => $listing->max_bookings_per_slot,
                 'max_multiple_bookings'   => $listing->max_multiple_bookings,
+                'allow_multiple_bookings' => $listing->allow_multiple_bookings,
             ]);
 
             $start->addMinutes($slotMinutes);
