@@ -20,6 +20,8 @@ return new class extends Migration
             $table->text('description')->nullable();
             $table->decimal('base_price', 15, 2);
             $table->integer('max_bookings_per_slot')->default(1);
+            $table->boolean('allow_multiple_bookings')->default(false);
+            $table->integer('max_multiple_bookings')->nullable();
             $table->integer('capacity');
             $table->integer('slot_duration')->comment('In hours');
             $table->integer('loyalty_points')->nullable();

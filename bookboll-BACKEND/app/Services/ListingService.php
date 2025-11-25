@@ -223,6 +223,8 @@ class ListingService
             'description'                        => 'nullable|string',
             'base_price'                         => 'required|numeric|min:0',
             'max_bookings_per_slot'              => 'required|integer|min:1',
+            'allow_multiple_bookings'            => 'nullable|boolean',
+            'max_multiple_bookings'              => 'nullable|integer|min:1|required_if:allow_multiple_bookings,true',
             'capacity'                           => 'required|integer|min:1',
             'slot_duration'                      => 'required|numeric|min:0.5',
             'loyalty_points'                     => 'nullable|integer|min:0',
@@ -369,21 +371,23 @@ class ListingService
     protected function extractListingData(array $data): array
     {
         return [
-            'name'                  => $data['name'],
-            'status'                => $data['status'],
-            'venue_id'              => $data['venue_id'],
-            'capacity'              => $data['capacity'],
-            'base_price'            => $data['base_price'],
-            'slot_duration'         => $data['slot_duration'],
-            'online_payment'        => $data['online_payment'],
-            'amenities'             => $data['amenities'] ?? [],
-            'images_urls'           => $data['images_urls'] ?? [],
-            'sports_category_id'    => $data['sports_category_id'],
-            'loyalty_points'        => $data['loyalty_points'] ?? 0,
-            'description'           => $data['description'] ?? null,
-            'payment_options'       => $data['payment_options'] ?? [],
-            'max_bookings_per_slot' => $data['max_bookings_per_slot'] ?? 1,
-            'calendar_color'        => $data['calendar_color'] ?? '#0000FF',
+            'name'                    => $data['name'],
+            'status'                  => $data['status'],
+            'venue_id'                => $data['venue_id'],
+            'capacity'                => $data['capacity'],
+            'base_price'              => $data['base_price'],
+            'slot_duration'           => $data['slot_duration'],
+            'online_payment'          => $data['online_payment'],
+            'amenities'               => $data['amenities'] ?? [],
+            'images_urls'             => $data['images_urls'] ?? [],
+            'sports_category_id'      => $data['sports_category_id'],
+            'loyalty_points'          => $data['loyalty_points'] ?? 0,
+            'description'             => $data['description'] ?? null,
+            'payment_options'         => $data['payment_options'] ?? [],
+            'max_multiple_bookings'   => $data['max_multiple_bookings'],
+            'allow_multiple_bookings' => $data['allow_multiple_bookings'],
+            'max_bookings_per_slot'   => $data['max_bookings_per_slot'] ?? 1,
+            'calendar_color'          => $data['calendar_color'] ?? '#0000FF',
         ];
     }
 
@@ -586,7 +590,8 @@ class ListingService
         $weekday     = strtolower($date->format('l'));
         $slotMinutes = ($listing->slot_duration ?? 1) * 60;
 
-        $activeLock = SlotLock::where('listing_id', $listingId)->whereDate('date', $date)
+        $activeLock = SlotLock::where('listing_id', $listingId)
+            ->where('date', $date->toDateString())
             ->where('locked_until', '>', now())
             ->where('session_id', '!=', $sessionId)
             ->exists();
@@ -665,7 +670,9 @@ class ListingService
                 break;
             }
 
-            $slotBookings = $bookings->filter(fn($b) => ! (
+            $activeBookings = $bookings->filter(fn($b) => $b->status !== BookingStatus::CANCELLED && $b->status !== BookingStatus::COMPLETED);
+
+            $slotBookings = $activeBookings->filter(fn($b) => ! (
                 strtotime($b->end_time) <= strtotime($slotStart) ||
                 strtotime($b->start_time) >= strtotime($slotEnd)
             ));
@@ -702,8 +709,10 @@ class ListingService
                 'available_count'     => $availableCount,
                 'duration'            => ($slotMinutes / 60) . "h",
                 'time'                => "{$slotStart} - {$slotEnd}",
-                'price'    => round($price, 2),
-                'capacity' => $listing->max_bookings_per_slot,
+                'price'                   => round($price, 2),
+                'capacity'                => $listing->capacity,
+                'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+                'max_multiple_bookings'   => $listing->max_multiple_bookings,
             ]);
 
             $start->addMinutes($slotMinutes);

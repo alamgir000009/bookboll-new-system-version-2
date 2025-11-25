@@ -26,13 +26,16 @@ class Listing extends Model
         'payment_options',
         'sports_category_id',
         'max_bookings_per_slot',
+        'max_multiple_bookings',
+        'allow_multiple_bookings',
     ];
 
     protected $casts = [
-        'payment_options' => 'array',
-        'images_urls'     => 'array',
-        'amenities'       => 'array',
-        'base_price'      => 'decimal:2',
+        'payment_options'        => 'array',
+        'images_urls'            => 'array',
+        'amenities'              => 'array',
+        'base_price'             => 'decimal:2',
+        'allow_multiple_bookings' => 'boolean',
     ];
 
     public function sportsCategory()
