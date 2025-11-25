@@ -450,6 +450,7 @@ class ListingService
 
         $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns'])
             ->active()
+            ->whereRelation('venue', 'status', 'active')
             ->orderBy('sort_order', 'ASC')
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -489,7 +490,6 @@ class ListingService
 
         if (! $records_per_page || $records_per_page === 'all' || (int) $records_per_page === 0) {
             $data = $query->get();
-
             $listings = new LengthAwarePaginator(
                 $data,
                 $data->count(),
