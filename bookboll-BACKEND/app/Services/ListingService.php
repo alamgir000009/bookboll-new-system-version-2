@@ -489,7 +489,7 @@ class ListingService
             });
 
         if (! $records_per_page || $records_per_page === 'all' || (int) $records_per_page === 0) {
-            $data = $query->get();
+            $data     = $query->get();
             $listings = new LengthAwarePaginator(
                 $data,
                 $data->count(),
@@ -582,10 +582,15 @@ class ListingService
         $sessionId = $user ? 'user_' . $user->id : 'guest_' . md5($ipAddress . $request->userAgent());
 
         $listing = $this->listingModel::with([
+            'venue',
             'schedules',
             'pricingGroups',
             'venue.schedules',
         ])->findOrFail($listingId);
+
+        if (! $listing->venue || $listing->venue->status !== 'active') {
+            return sendSuccess('No available schedule for this day');
+        }
 
         $weekday     = strtolower($date->format('l'));
         $slotMinutes = ($listing->slot_duration ?? 1) * 60;
@@ -740,10 +745,11 @@ class ListingService
 
         $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
 
-        $listings = $this->listingModel::with(['venue'])
+        $listings = $this->listingModel::with(['venue', 'sportsCategory'])
             ->when($categoryIds, function ($query, $categoryIds) {
                 $query->whereNotIn('sports_category_id', $categoryIds);
             })
+            ->where('venue', 'status', 'active')
             ->take(3)
             ->get()
             ->map(function ($listing) {
