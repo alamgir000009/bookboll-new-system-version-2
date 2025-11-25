@@ -542,25 +542,27 @@ class ListingService
         $isHoliday = $specialDay?->type === 'holiday';
 
         $listing = [
-            'is_holiday'      => $isHoliday,
-            'id'              => $listing->id,
-            'name'            => $listing->name,
-            'venue_id'        => $listing->venue_id,
-            'price'           => $listing->base_price,
-            'description'     => $listing->description,
-            'venue'           => $listing->venue?->name,
-            'addons'          => $listing->addons ?? [],
-            'duration'        => $listing->slot_duration,
-            'loyalty_points'  => $listing->loyalty_points,
-            'calendar_color'  => $listing->calendar_color,
-            'online_payment'  => $listing->online_payment,
-            'payment_options' => $listing->payment_options,
-            'amenities'       => $listing->amenities ?? [],
-            'special_day'     => $specialDay?->description,
-            'map_address'     => $listing->venue?->maps_url,
-            'images'          => $listing->images_urls ?? [],
-            'sport'           => $listing->sportsCategory?->name,
-            'rating'          => round($listing->average_rating, 1),
+            'is_holiday'              => $isHoliday,
+            'id'                      => $listing->id,
+            'name'                    => $listing->name,
+            'venue_id'                => $listing->venue_id,
+            'price'                   => $listing->base_price,
+            'description'             => $listing->description,
+            'venue'                   => $listing->venue?->name,
+            'addons'                  => $listing->addons ?? [],
+            'duration'                => $listing->slot_duration,
+            'loyalty_points'          => $listing->loyalty_points,
+            'calendar_color'          => $listing->calendar_color,
+            'online_payment'          => $listing->online_payment,
+            'payment_options'         => $listing->payment_options,
+            'amenities'               => $listing->amenities ?? [],
+            'special_day'             => $specialDay?->description,
+            'map_address'             => $listing->venue?->maps_url,
+            'images'                  => $listing->images_urls ?? [],
+            'sport'                   => $listing->sportsCategory?->name,
+            'max_multiple_bookings'   => $listing->max_multiple_bookings,
+            'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+            'rating'                  => round($listing->average_rating, 1),
         ];
 
         return sendSuccess('Listing fetched successfully', compact('listing'));
@@ -724,11 +726,9 @@ class ListingService
                 'available_count'     => $availableCount,
                 'duration'            => $duration,
                 'time'                => "{$slotStart} - {$slotEnd}",
-                'price'                   => round($price, 2),
-                'capacity'                => $listing->capacity,
-                'max_bookings_per_slot'   => $listing->max_bookings_per_slot,
-                'max_multiple_bookings'   => $listing->max_multiple_bookings,
-                'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+                'price'                 => round($price, 2),
+                'capacity'              => $listing->capacity,
+                'max_bookings_per_slot' => $listing->max_bookings_per_slot,
             ]);
 
             $start->addMinutes($slotMinutes);
@@ -749,7 +749,7 @@ class ListingService
             ->when($categoryIds, function ($query, $categoryIds) {
                 $query->whereNotIn('sports_category_id', $categoryIds);
             })
-            ->where('venue', 'status', 'active')
+            ->whereRelation('venue', 'status', 'active')
             ->take(3)
             ->get()
             ->map(function ($listing) {
