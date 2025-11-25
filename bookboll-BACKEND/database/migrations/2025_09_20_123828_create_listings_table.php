@@ -23,7 +23,7 @@ return new class extends Migration
             $table->boolean('allow_multiple_bookings')->default(false);
             $table->integer('max_multiple_bookings')->nullable();
             $table->integer('capacity');
-            $table->integer('slot_duration')->comment('In hours');
+            $table->float('slot_duration')->comment('In hours');
             $table->integer('loyalty_points')->nullable();
             $table->string('calendar_color')->default('#0000FF');
             $table->json('payment_options');

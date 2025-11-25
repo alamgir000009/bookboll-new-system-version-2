@@ -226,7 +226,7 @@ class ListingService
             'allow_multiple_bookings'            => 'nullable|boolean',
             'max_multiple_bookings'              => 'nullable|integer|min:1|required_if:allow_multiple_bookings,true',
             'capacity'                           => 'required|integer|min:1',
-            'slot_duration'                      => 'required|numeric|min:0.5',
+            'slot_duration'                      => 'required|numeric|min:0',
             'loyalty_points'                     => 'nullable|integer|min:0',
             'calendar_color'                     => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
             'online_payment'                     => 'required|boolean',
