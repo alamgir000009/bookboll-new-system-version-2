@@ -49,6 +49,7 @@ if (! class_exists('PaymentStatus')) {
 if (! class_exists('BookingPaymentStatus')) {
     class BookingPaymentStatus
     {
+        public const FREE         = 'free';
         public const PENDING      = 'pending';
         public const FULLY_PAID   = 'fully_paid';
         public const DEPOSIT_PAID = 'deposit_paid';
@@ -67,6 +68,7 @@ if (! class_exists('BookingPaymentStatus')) {
 if (! class_exists('BookingPaymentMethod')) {
     class BookingPaymentMethod
     {
+        public const FREE                         = 'free';
         public const PAID_CHEQUE                  = 'paid_cheque';
         public const ONLINE_PAYMENT               = 'online_payment';
         public const CASH_ON_ARRIVAL              = 'cash_on_arrival';
@@ -76,6 +78,7 @@ if (! class_exists('BookingPaymentMethod')) {
         public static function list(): array
         {
             return [
+                self::FREE,
                 self::PAID_CHEQUE,
                 self::ONLINE_PAYMENT,
                 self::CASH_ON_ARRIVAL,

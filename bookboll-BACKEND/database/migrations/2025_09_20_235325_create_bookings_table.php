@@ -34,9 +34,10 @@ return new class extends Migration
             $table->timestamp('refunded_at')->nullable();
             $table->enum('status', BookingStatus::list())->default(BookingStatus::PENDING);
             $table->enum('payment_status', BookingPaymentStatus::list())->nullable();
-            $table->enum('payment_method', BookingPaymentMethod::list())->default(BookingPaymentMethod::CASH_ON_ARRIVAL);
+            $table->enum('payment_method', BookingPaymentMethod::list())->nullable();
             $table->json('payment_breakdown')->nullable();
             $table->integer('loyalty_points_earned')->nullable();
+            $table->boolean('is_free')->default(false);
             $table->timestamps();
 
             $table->index(['user_id', 'venue_id', 'listing_id']);

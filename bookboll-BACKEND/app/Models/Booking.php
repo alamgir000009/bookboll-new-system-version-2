@@ -13,12 +13,14 @@ class Booking extends Model
         'notes',
         'status',
         'user_id',
+        'is_free',
         'end_time',
         'duration',
         'subtotal',
         'venue_id',
         'listing_id',
         'start_time',
+        'booking_id',
         'total_price',
         'refunded_at',
         'promocode_id',
@@ -29,7 +31,6 @@ class Booking extends Model
         'payment_method',
         'refunded_amount',
         'discount_amount',
-        'booking_id',
         'payment_breakdown',
         'full_payment_received',
         'loyalty_points_earned',
@@ -48,13 +49,14 @@ class Booking extends Model
     public function getDueAmountAttribute()
     {
         $dueAmount = 0;
-        if ($this->payment_status === \BookingPaymentStatus::DEPOSIT_PAID) {
+        if ($this->is_free) {
+            return $dueAmount;
+        } elseif ($this->payment_status === \BookingPaymentStatus::DEPOSIT_PAID) {
             $breakdown = $this->payment_breakdown;
             $dueAmount = $breakdown['remaining_amount'] ?? 0;
         } else {
             $dueAmount = $this->total_price;
         }
-
         return $dueAmount;
     }
 

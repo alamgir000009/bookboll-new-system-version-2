@@ -343,7 +343,7 @@ class BookingService
             'date'               => 'required|date',
             'start_time'         => 'required|date_format:H:i',
             'end_time'           => 'required|date_format:H:i',
-            'payment_method'     => 'required|in:cash_on_arrival,paid_cheque,paid_wire_transfer',
+            'payment_method'     => 'nullable|in:free,cash_on_arrival,paid_cheque,paid_wire_transfer',
             'selected_add_ons'   => 'nullable|array',
             'selected_add_ons.*' => 'exists:add_ons,id',
             'promocode'          => 'nullable|string|max:50',
@@ -381,6 +381,7 @@ class BookingService
                 'cash_on_arrival'    => BookingPaymentStatus::PENDING,
                 'paid_cheque'        => BookingPaymentStatus::FULLY_PAID,
                 'paid_wire_transfer' => BookingPaymentStatus::FULLY_PAID,
+                'free'               => BookingPaymentStatus::FULLY_PAID,
             };
 
             $depositAmount = 0;
@@ -411,7 +412,12 @@ class BookingService
                 'start_time'            => $formData['start_time'],
                 'listing_id'            => $formData['listing_id'],
                 'loyalty_points_earned' => $listing->loyalty_points ?? 0,
-                'full_payment_received' => in_array($paymentMethod, [BookingPaymentMethod::PAID_CHEQUE, BookingPaymentMethod::PAID_WIRE_TRANSFER]),
+                'full_payment_received' => in_array($paymentMethod, [
+                    BookingPaymentMethod::FREE,
+                    BookingPaymentMethod::PAID_CHEQUE,
+                    BookingPaymentMethod::PAID_WIRE_TRANSFER,
+                ]),
+                'is_free'               => $paymentMethod === BookingPaymentMethod::FREE,
                 'payment_breakdown'     => [
                     'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
                     'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
@@ -440,27 +446,33 @@ class BookingService
                 'description' => 'Booking created by ' . auth()->user()->name,
             ]);
 
-            $this->paymentModel::create([
-                'user_id'    => $user->id,
-                'booking_id' => $booking->id,
-                'type'       => PaymentType::FULL,
-                'amount'     => $booking->total_price,
-                'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
-                'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
-                'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
-                'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
-                'method' => $paymentMethod == BookingPaymentMethod::PAID_CHEQUE ? PaymentMethod::CHEQUE : ($paymentMethod == BookingPaymentMethod::PAID_WIRE_TRANSFER ? PaymentMethod::WIRE_TRANSFER : PaymentMethod::CASH),
-            ]);
+            if (! $booking->is_free) {
 
-            if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
-                $booking->history()->create([
-                    'user_id'     => $user->id,
-                    'action'      => $request->payment_method,
-                    'description' => 'Payment ' . str_replace('_', ' ', $request->payment_method),
+                $this->paymentModel::create([
+                    'user_id'    => $user->id,
+                    'booking_id' => $booking->id,
+                    'type'       => PaymentType::FULL,
+                    'amount'     => $booking->total_price,
+                    'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                    'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
+                    'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                    'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
+                    'method' => $paymentMethod == BookingPaymentMethod::PAID_CHEQUE ? PaymentMethod::CHEQUE : ($paymentMethod == BookingPaymentMethod::PAID_WIRE_TRANSFER ? PaymentMethod::WIRE_TRANSFER : PaymentMethod::CASH),
                 ]);
+
+                if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
+                    $booking->history()->create([
+                        'user_id'     => $user->id,
+                        'action'      => $request->payment_method,
+                        'description' => 'Payment ' . str_replace('_', ' ', $request->payment_method),
+                    ]);
+                }
+
             }
 
-            createBookingInvoiceWithNotification($booking, $user);
+            if (! $booking->is_free) {
+                createBookingInvoiceWithNotification($booking, $user);
+            }
 
             unlockSlot($request, $listing, $user, $booking);
 
