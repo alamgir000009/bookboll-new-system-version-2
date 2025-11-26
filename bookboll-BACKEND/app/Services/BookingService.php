@@ -642,7 +642,7 @@ class BookingService
             'payment_method_id'    => 'nullable|string',
             'payment_intent_id'    => 'nullable|required_if:payment_method,online_payment,deposit_remaining_on_arrival',
             'save_payment_details' => 'nullable|boolean',
-            'boooking_quantity'    => 'required|numeric|min:1',
+            'booking_quantity'     => 'required|numeric|min:1',
         ]);
 
         try {
@@ -695,196 +695,202 @@ class BookingService
                 }
             }
 
-            $listing = Listing::findOrFail($formData['listing_id']);
+            $createdBookings = collect();
 
-            $validationErrors = $this->validateBooking($formData);
-            if (! empty($validationErrors)) {
-                DB::rollBack();
-                return sendError('Validation failed', $validationErrors, 422);
-            }
+            for ($i = 0; $i < $formData['booking_quantity']; $i++) {
 
-            $weekday = strtolower(Carbon::parse($request->date)->format('l'));
+                $listing = Listing::findOrFail($formData['listing_id']);
 
-            $specialDay = SpecialDay::with('timeBlocks')
-                ->where('venue_id', $listing->venue_id)
-                ->where(function ($q) use ($listing) {
-                    $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
-                })
-                ->whereDate('date', $request->date)->active()->first();
-
-            $basePrice = determineSlotPrice($listing, $weekday, $formData['start_time'], $formData['end_time'], $specialDay);
-
-            $startTime = Carbon::parse($formData['start_time']);
-            $endTime   = Carbon::parse($formData['end_time']);
-
-            $subtotal = $basePrice;
-
-            $addOnCost = 0;
-            if (! empty($formData['add_ons'])) {
-                $addOnCost = AddOn::whereIn('id', $formData['add_ons'])->sum('price');
-            }
-            $subtotal += $addOnCost;
-
-            $promocode = null;
-            $discount  = 0;
-            if ($formData['promocode']) {
-
-                $promocode = Promocode::where('code', $formData['promocode'])->active()->first();
-
-                if (! $promocode || ! $promocode->isValidForOrder(
-                    $subtotal,
-                    $user->id,
-                    $formData['payment_method'],
-                    $formData['venue_id'],
-                    $formData['listing_id']
-                )) {
-                    return sendError('Invalid or inapplicable promocode');
+                $validationErrors = $this->validateBooking($formData);
+                if (! empty($validationErrors)) {
+                    DB::rollBack();
+                    return sendError('Validation failed', $validationErrors, 422);
                 }
 
-                $discount = $promocode->applyDiscount($subtotal);
-                $promocode->incrementUsage($user->id);
-            }
+                $weekday = strtolower(Carbon::parse($request->date)->format('l'));
 
-            $totalPrice = $subtotal - $discount;
+                $specialDay = SpecialDay::with('timeBlocks')
+                    ->where('venue_id', $listing->venue_id)
+                    ->where(function ($q) use ($listing) {
+                        $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+                    })
+                    ->whereDate('date', $request->date)->active()->first();
 
-            $paymentStatus = match (trim($formData['payment_method'])) {
-                'cash_on_arrival'              => BookingPaymentStatus::PENDING,
-                'online_payment'               => BookingPaymentStatus::FULLY_PAID,
-                'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
-            };
+                $basePrice = determineSlotPrice($listing, $weekday, $formData['start_time'], $formData['end_time'], $specialDay);
 
-            $depositAmount = 0;
+                $startTime = Carbon::parse($formData['start_time']);
+                $endTime   = Carbon::parse($formData['end_time']);
 
-            if (! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
-                $deposit = $listing->payment_options['deposit'];
+                $subtotal = $basePrice;
 
-                if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
-                    $depositAmount = $deposit['amount'];
-                } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
-                    $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
+                $addOnCost = 0;
+                if (! empty($formData['add_ons'])) {
+                    $addOnCost = AddOn::whereIn('id', $formData['add_ons'])->sum('price');
                 }
-            }
+                $subtotal += $addOnCost;
 
-            $booking = $this->bookingModel::create([
-                'user_id'               => $user->id,
-                'subtotal'              => $subtotal,
-                'discount_amount'       => $discount,
-                'total_price'           => $totalPrice,
-                'payment_status'        => $paymentStatus,
-                'promocode_id'          => $promocode?->id,
-                'date'                  => $formData['date'],
-                'notes'                 => $formData['notes'],
-                'venue_id'              => $formData['venue_id'],
-                'end_time'              => $formData['end_time'],
-                'status'                => BookingStatus::PENDING,
-                'start_time'            => $formData['start_time'],
-                'listing_id'            => $formData['listing_id'],
-                'payment_method'        => $formData['payment_method'],
-                'loyalty_points_earned' => $listing->loyalty_points ?? 0,
-                'full_payment_received' => $paymentStatus == BookingPaymentStatus::FULLY_PAID,
-                'payment_breakdown'     => [
-                    'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
-                    'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
-                    'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - $depositAmount : 0,
-                    'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
-                ],
-            ]);
+                $promocode = null;
+                $discount  = 0;
+                if ($formData['promocode']) {
 
-            $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
+                    $promocode = Promocode::where('code', $formData['promocode'])->active()->first();
 
-            foreach ($resources as $resource) {
-                $booking->resourcesAllocated()->attach($resource->id, ['quantity' => $resource->pivot->quantity]);
-            }
+                    if (! $promocode || ! $promocode->isValidForOrder(
+                        $subtotal,
+                        $user->id,
+                        $formData['payment_method'],
+                        $formData['venue_id'],
+                        $formData['listing_id']
+                    )) {
+                        return sendError('Invalid or inapplicable promocode');
+                    }
 
-            if (! empty($formData['add_ons'])) {
-                $booking->addOns()->sync($formData['add_ons']);
-            }
-
-            if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
-
-                $paymentOptions = $listing ? $listing->payment_options : null;
-
-                if (! $paymentOptions || empty($paymentOptions['deposit'])) {
-                    throw new Exception('Deposit configuration missing for this listing.');
+                    $discount = $promocode->applyDiscount($subtotal);
+                    $promocode->incrementUsage($user->id);
                 }
 
-                $deposit = $paymentOptions['deposit'];
+                $totalPrice = $subtotal - $discount;
 
-                if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
-                    $depositAmount = $deposit['amount'];
-                } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
-                    $depositAmount = round($totalPrice * ($deposit['percentage'] / 100), 2);
+                $paymentStatus = match (trim($formData['payment_method'])) {
+                    'cash_on_arrival'              => BookingPaymentStatus::PENDING,
+                    'online_payment'               => BookingPaymentStatus::FULLY_PAID,
+                    'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
+                };
+
+                $depositAmount = 0;
+
+                if (! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
+                    $deposit = $listing->payment_options['deposit'];
+
+                    if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
+                        $depositAmount = $deposit['amount'];
+                    } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                        $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
+                    }
+                }
+
+                $booking = $this->bookingModel::create([
+                    'user_id'               => $user->id,
+                    'subtotal'              => $subtotal,
+                    'discount_amount'       => $discount,
+                    'total_price'           => $totalPrice,
+                    'payment_status'        => $paymentStatus,
+                    'promocode_id'          => $promocode?->id,
+                    'date'                  => $formData['date'],
+                    'notes'                 => $formData['notes'],
+                    'venue_id'              => $formData['venue_id'],
+                    'status'                => BookingStatus::PENDING,
+                    'start_time'            => $startTime,
+                    'end_time'              => $endTime,
+                    'listing_id'            => $formData['listing_id'],
+                    'payment_method'        => $formData['payment_method'],
+                    'loyalty_points_earned' => $listing->loyalty_points ?? 0,
+                    'full_payment_received' => $paymentStatus == BookingPaymentStatus::FULLY_PAID,
+                    'payment_breakdown'     => [
+                        'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
+                        'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
+                        'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - $depositAmount : 0,
+                        'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
+                    ],
+                ]);
+
+                $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
+
+                foreach ($resources as $resource) {
+                    $booking->resourcesAllocated()->attach($resource->id, ['quantity' => $resource->pivot->quantity]);
+                }
+
+                if (! empty($formData['add_ons'])) {
+                    $booking->addOns()->sync($formData['add_ons']);
+                }
+
+                if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
+
+                    $paymentOptions = $listing ? $listing->payment_options : null;
+
+                    if (! $paymentOptions || empty($paymentOptions['deposit'])) {
+                        throw new Exception('Deposit configuration missing for this listing.');
+                    }
+
+                    $deposit = $paymentOptions['deposit'];
+
+                    if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
+                        $depositAmount = $deposit['amount'];
+                    } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                        $depositAmount = round($totalPrice * ($deposit['percentage'] / 100), 2);
+                    } else {
+                        throw new Exception('Invalid deposit configuration: must specify amount or percentage.');
+                    }
+
+                    $this->paymentModel::create([
+                        'charge_id'         => $chargeId,
+                        'user_id'           => $user->id,
+                        'booking_id'        => $booking->id,
+                        'amount'            => $depositAmount,
+                        'payment_intent_id' => $paymentIntentId,
+                        'status'            => PaymentStatus::PAID,
+                        'type'              => PaymentType::DEPOSIT,
+                        'method'            => PaymentMethod::ONLINE,
+                        'date'              => now()->format('Y-m-d'),
+                        'notes'             => 'Deposit payment for booking #' . $booking->booking_id,
+                        'payment_id'        => generatePaymentId($booking->id, PaymentType::DEPOSIT),
+                    ]);
+
+                    $this->paymentModel::create([
+                        'date'       => null,
+                        'user_id'    => $user->id,
+                        'booking_id' => $booking->id,
+                        'method'     => PaymentMethod::CASH,
+                        'type'       => PaymentType::REMAINING,
+                        'status'     => PaymentStatus::PENDING,
+                        'amount'     => $totalPrice - $depositAmount,
+                        'notes'      => 'Remaining payment pending for booking #' . $booking->booking_id,
+                        'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
+                    ]);
                 } else {
-                    throw new Exception('Invalid deposit configuration: must specify amount or percentage.');
+                    $booking->payments()->create([
+                        'charge_id'         => $chargeId,
+                        'user_id'           => $user->id,
+                        'amount'            => $totalPrice,
+                        'payment_intent_id' => $paymentIntentId,
+                        'type'              => PaymentType::FULL,
+                        'payment_id'        => generatePaymentId($booking->id, PaymentType::FULL),
+                        'date'              => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
+                        'method'            => $formData['payment_method'] == 'online_payment' ? PaymentMethod::ONLINE : PaymentMethod::CASH,
+                        'status'            => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                        'notes'             => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
+                    ]);
                 }
 
-                $this->paymentModel::create([
-                    'charge_id'         => $chargeId,
-                    'user_id'           => $user->id,
-                    'booking_id'        => $booking->id,
-                    'amount'            => $depositAmount,
-                    'payment_intent_id' => $paymentIntentId,
-                    'status'            => PaymentStatus::PAID,
-                    'type'              => PaymentType::DEPOSIT,
-                    'method'            => PaymentMethod::ONLINE,
-                    'date'              => now()->format('Y-m-d'),
-                    'notes'             => 'Deposit payment for booking #' . $booking->booking_id,
-                    'payment_id'        => generatePaymentId($booking->id, PaymentType::DEPOSIT),
-                ]);
-
-                $this->paymentModel::create([
-                    'date'       => null,
-                    'user_id'    => $user->id,
-                    'booking_id' => $booking->id,
-                    'method'     => PaymentMethod::CASH,
-                    'type'       => PaymentType::REMAINING,
-                    'status'     => PaymentStatus::PENDING,
-                    'amount'     => $totalPrice - $depositAmount,
-                    'notes'      => 'Remaining payment pending for booking #' . $booking->booking_id,
-                    'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
-                ]);
-            } else {
-                $booking->payments()->create([
-                    'charge_id'         => $chargeId,
-                    'user_id'           => $user->id,
-                    'amount'            => $totalPrice,
-                    'payment_intent_id' => $paymentIntentId,
-                    'type'              => PaymentType::FULL,
-                    'payment_id'        => generatePaymentId($booking->id, PaymentType::FULL),
-                    'date'              => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
-                    'method'            => $formData['payment_method'] == 'online_payment' ? PaymentMethod::ONLINE : PaymentMethod::CASH,
-                    'status'            => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
-                    'notes'             => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
-                ]);
-            }
-
-            $booking->history()->create([
-                'user_id'     => $user->id,
-                'action'      => 'booking_created',
-                'description' => 'Booking created via API.',
-            ]);
-
-            if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
                 $booking->history()->create([
                     'user_id'     => $user->id,
-                    'description' => 'Deposit payment processed.',
-                    'action'      => BookingPaymentStatus::DEPOSIT_PAID,
+                    'action'      => 'booking_created',
+                    'description' => 'Booking created via API.',
                 ]);
-            }
 
-            createBookingInvoiceWithNotification($booking, $user);
+                if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
+                    $booking->history()->create([
+                        'user_id'     => $user->id,
+                        'description' => 'Deposit payment processed.',
+                        'action'      => BookingPaymentStatus::DEPOSIT_PAID,
+                    ]);
+                }
 
-            unlockSlot($request, $listing, $user, $booking);
+                createBookingInvoiceWithNotification($booking, $user);
 
-            if ($booking->loyalty_points_earned > 0) {
-                $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id);
+                unlockSlot($request, $listing, $user, $booking);
+
+                if ($booking->loyalty_points_earned > 0) {
+                    $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id);
+                }
+
+                $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name', 'invoices']);
+                $createdBookings->push($booking);
             }
 
             DB::commit();
 
-            $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name', 'invoices']);
-
-            return sendSuccess('Booking confirmed successfully', compact('booking'));
+            return sendSuccess('Booking confirmed successfully', ['bookings' => $createdBookings]);
 
         } catch (Exception $e) {
 
