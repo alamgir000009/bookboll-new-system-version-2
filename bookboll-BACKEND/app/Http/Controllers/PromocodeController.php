@@ -86,8 +86,6 @@ class PromocodeController extends Controller
 
         $discount = $promocode->applyDiscount($request->order_amount);
 
-        $promocode->incrementUsage($request->user_id);
-
         return sendSuccess('Promocode applied successfully', [
             'promocode' => [
                 'discount_amount'  => $discount,

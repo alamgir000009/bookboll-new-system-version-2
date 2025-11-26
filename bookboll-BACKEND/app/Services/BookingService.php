@@ -696,6 +696,54 @@ class BookingService
             }
 
             $createdBookings = collect();
+            $listing         = Listing::findOrFail($formData['listing_id']);
+
+            $weekday = strtolower(Carbon::parse($request->date)->format('l'));
+
+            $specialDay = SpecialDay::with('timeBlocks')
+                ->where('venue_id', $listing->venue_id)
+                ->where(function ($q) use ($listing) {
+                    $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+                })
+                ->whereDate('date', $request->date)->active()->first();
+
+            $basePrice = determineSlotPrice(
+                $listing,
+                $weekday,
+                $formData['start_time'],
+                $formData['end_time'],
+                $specialDay
+            );
+
+            $addOnCost = ! empty($formData['add_ons'])
+                ? AddOn::whereIn('id', $formData['add_ons'])->sum('price')
+                : 0;
+
+            $singleSubtotal = round($basePrice + $addOnCost, 2);
+
+            $combinedSubtotal = round($singleSubtotal * $formData['booking_quantity'], 2);
+
+            $totalDiscount = 0;
+
+            $promocode = null;
+            if ($formData['promocode']) {
+                $promocode = Promocode::where('code', $formData['promocode'])->active()->first();
+
+                if (! $promocode || ! $promocode->isValidForOrder(
+                    $combinedSubtotal,
+                    $user->id,
+                    $formData['payment_method'],
+                    $formData['venue_id'],
+                    $formData['listing_id']
+                )) {
+                    return sendError('Invalid or inapplicable promocode');
+                }
+
+                $totalDiscount = $promocode->applyDiscount($combinedSubtotal);
+                $promocode->incrementUsage($user->id);
+            }
+
+            $discountPerBooking = round($totalDiscount / $formData['booking_quantity'], 2);
 
             for ($i = 0; $i < $formData['booking_quantity']; $i++) {
 
@@ -727,29 +775,10 @@ class BookingService
                 if (! empty($formData['add_ons'])) {
                     $addOnCost = AddOn::whereIn('id', $formData['add_ons'])->sum('price');
                 }
-                $subtotal += $addOnCost;
 
-                $promocode = null;
-                $discount  = 0;
-                if ($formData['promocode']) {
-
-                    $promocode = Promocode::where('code', $formData['promocode'])->active()->first();
-
-                    if (! $promocode || ! $promocode->isValidForOrder(
-                        $subtotal,
-                        $user->id,
-                        $formData['payment_method'],
-                        $formData['venue_id'],
-                        $formData['listing_id']
-                    )) {
-                        return sendError('Invalid or inapplicable promocode');
-                    }
-
-                    $discount = $promocode->applyDiscount($subtotal);
-                    $promocode->incrementUsage($user->id);
-                }
-
-                $totalPrice = $subtotal - $discount;
+                $subtotal   = $singleSubtotal;
+                $discount   = $discountPerBooking;
+                $totalPrice = round($subtotal - $discount, 2);
 
                 $paymentStatus = match (trim($formData['payment_method'])) {
                     'cash_on_arrival'              => BookingPaymentStatus::PENDING,
@@ -865,7 +894,7 @@ class BookingService
                 $booking->history()->create([
                     'user_id'     => $user->id,
                     'action'      => 'booking_created',
-                    'description' => 'Booking created via API.',
+                    'description' => 'Booking created by customer.',
                 ]);
 
                 if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
