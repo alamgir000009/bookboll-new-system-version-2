@@ -614,7 +614,7 @@ class BookingService
     {
         $bookings = $this->bookingModel::with(['listing:id,name', 'venue:id,name', 'user:id,name', 'user.tags'])
             ->when($request->date, fn($q) =>
-                $q->whereDate('start_time', $request->date))
+                $q->whereDate('date', $request->date))
             ->when($request->venue_id, fn($q) =>
                 $q->where('venue_id', $request->venue_id))
             ->when($request->listing_id, fn($q) =>
