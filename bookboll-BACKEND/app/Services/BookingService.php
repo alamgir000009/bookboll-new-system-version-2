@@ -1338,6 +1338,61 @@ class BookingService
             return sendError('Failed to confirm booking: ' . $e->getMessage());
         }
     }
+    public function completed($request)
+    {
+        $booking = $this->bookingModel::with('user')->findOrFail($request->booking_id);
+
+        try {
+
+            DB::beginTransaction();
+
+            if ($booking->status != BookingStatus::CONFIRMED) {
+                return sendError('Booking cannot be completed (not confirmed)');
+            }
+
+            $booking->update(['status' => BookingStatus::COMPLETED]);
+
+            $booking->history()->create([
+                'user_id'     => auth()->id(),
+                'action'      => 'booking_completed',
+                'description' => 'Booking completed by ' . auth()->user()->name,
+            ]);
+
+            // try {
+            //     $booking->load('venue:id,name,maps_url');
+            //     $user = $booking->user;
+            //     $user->notify(new BookingConfirmedUserNotification($booking));
+            // } catch (Exception $e) {
+            //     Log::error("Booking confirmation notification failed: " . $e->getMessage(), ['booking_id' => $booking->id]);
+            // }
+
+            DB::commit();
+
+            $booking->load([
+                'user',
+                'addOns',
+                'history',
+                'payments',
+                'invoices',
+                'promocode',
+                'venue:id,name',
+                'listing:id,name',
+                'resourcesAllocated',
+                'history.user:id,name',
+            ]);
+
+            return sendSuccess('Booking marked as completed successfully', compact('booking'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Failed to completed booking #{$booking->id}: " . $e->getMessage(), [
+                'request'    => $request->all(),
+                'booking_id' => $booking->id,
+                'exception'  => $e,
+            ]);
+            return sendError('Failed to confirm booking: ' . $e->getMessage());
+        }
+    }
 
     public function generateInvoice($request)
     {

@@ -97,6 +97,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('dashboard-data', [BookingController::class, 'dashboardData']);
         Route::get('dashboard/chart', [BookingController::class, 'dashboardChart']);
 
+        Route::post('bookings/completed', [BookingController::class, 'completed']);
         Route::post('bookings/confirm', [BookingController::class, 'confirm']);
         Route::post('bookings/generate-invoice', [BookingController::class, 'generateInvoice']);
         Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory']);
