@@ -278,16 +278,16 @@
                 <tr>
                     <td>{{ $booking->listing->name ?? 'Booking Slot' }}</td>
                     <td>1</td>
-                    <td>${{ number_format($booking->subtotal - ($booking->addOns->sum('price') ?? 0), 2) }}</td>
-                    <td class="price">${{ number_format($booking->subtotal - ($booking->addOns->sum('price') ?? 0), 2) }}</td>
+                    <td>QAR {{ number_format($booking->subtotal - ($booking->addOns->sum('price') ?? 0), 2) }}</td>
+                    <td class="price">QAR {{ number_format($booking->subtotal - ($booking->addOns->sum('price') ?? 0), 2) }}</td>
                 </tr>
                 @if($booking->addOns && $booking->addOns->count() > 0)
                 @foreach($booking->addOns as $addOn)
                 <tr>
                     <td>{{ $addOn->name }} (Add-on)</td>
                     <td>1</td>
-                    <td>${{ number_format($addOn->price, 2) }}</td>
-                    <td class="price">${{ number_format($addOn->price, 2) }}</td>
+                    <td>QAR {{ number_format($addOn->price, 2) }}</td>
+                    <td class="price">QAR {{ number_format($addOn->price, 2) }}</td>
                 </tr>
                 @endforeach
                 @endif
@@ -298,24 +298,24 @@
             @if($booking->discount_amount > 0)
             <div class="total-row">
                 <span class="total-label">Subtotal</span>
-                <span class="total-value">${{ number_format($booking->subtotal, 2) }}</span>
+                <span class="total-value">QAR {{ number_format($booking->subtotal, 2) }}</span>
             </div>
             <div class="total-row highlight">
                 <span class="total-label">Discount ({{ $booking->promocode_id ? $booking->promocode->code : 'Other' }})</span>
-                <span class="total-value">- ${{ number_format($booking->discount_amount, 2) }}</span>
+                <span class="total-value">- QAR {{ number_format($booking->discount_amount, 2) }}</span>
             </div>
             @endif
             <div class="total-row grand-total">
                 <span class="total-label">Total</span>
-                <span class="total-value">${{ number_format($booking->total_price, 2) }}</span>
+                <span class="total-value">QAR {{ number_format($booking->total_price, 2) }}</span>
             </div>
         </div>
 
         @if($booking->payment_breakdown && ($booking->payment_breakdown['deposit_amount'] ?? 0) > 0)
         <div class="payment-info">
             <strong>Payment Breakdown:</strong><br>
-            Deposit Paid: ${{ number_format($booking->payment_breakdown['deposit_amount'], 2) }} (Online)<br>
-            Remaining Due: ${{ number_format($booking->payment_breakdown['remaining_amount'], 2) }} (Cash on Arrival)
+            Deposit Paid: QAR {{ number_format($booking->payment_breakdown['deposit_amount'], 2) }} (Online)<br>
+            Remaining Due: QAR {{ number_format($booking->payment_breakdown['remaining_amount'], 2) }} (Cash on Arrival)
         </div>
         @else
         <div class="payment-info">

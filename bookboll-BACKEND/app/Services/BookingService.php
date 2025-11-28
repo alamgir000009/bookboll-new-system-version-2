@@ -123,7 +123,7 @@ class BookingService
 
     public function dashboardData()
     {
-        $recentBookings = $this->bookingModel->take(3)->get();
+        $recentBookings = $this->bookingModel->whereNotIn('status', [BookingStatus::COMPLETED])->latest('id')->take(3)->get();
 
         $total_redeemed = LoyaltyPoint::where('type', 'debit')->sum('points');
         $total_earned   = LoyaltyPoint::where('type', 'credit')->sum('points');
