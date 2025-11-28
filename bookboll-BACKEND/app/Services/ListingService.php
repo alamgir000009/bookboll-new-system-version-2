@@ -607,10 +607,21 @@ class ListingService
             return sendError('This date is currently locked by another user. Please try again later.');
         }
 
-        // ---- Get schedule for the day ----
-        $schedule = $listing->schedules->firstWhere('day', $weekday) ?? $listing->venue?->schedules?->firstWhere('day', $weekday);
+        // ---- Get ALL schedules for the day ----
+        $venueSchedules = $listing->venue?->schedules
+            ->where('day', $weekday)
+            ->where('is_open', true)
+            ->sortBy('start_time')
+            ->values();
 
-        if (! $schedule || ! $schedule->is_open) {
+        $listingSchedules = $listing->schedules
+            ->where('day', $weekday)
+            ->where('is_open', true)
+            ->sortBy('start_time')
+            ->values();
+
+        // Venue must have schedules for the day (venue must be open)
+        if ($venueSchedules->isEmpty()) {
             return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
         }
 
@@ -626,23 +637,59 @@ class ListingService
 
         $isHoliday = $specialDay?->type === 'holiday';
 
+        // If it's a holiday, return early with no slots
+        if ($isHoliday) {
+            return sendSuccess('No available schedule for this day (Holiday)', ['timeSlots' => []]);
+        }
+
+        // If special day exists and has time blocks, use those instead of normal schedule
+        if ($specialDay && $specialDay->timeBlocks->isNotEmpty()) {
+            $availableBlocks = $specialDay->timeBlocks
+                ->sortBy('start_time')
+                ->map(function ($block) {
+                    return [
+                        'start_time' => $block->start_time,
+                        'end_time' => $block->end_time,
+                    ];
+                })
+                ->values();
+        } else {
+            // Find overlapping periods between venue and listing schedules
+            $availableBlocks = $this->findOverlappingScheduleBlocks(
+                $listingSchedules,
+                $venueSchedules
+            );
+        }
+
+        if ($availableBlocks->isEmpty()) {
+            return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
+        }
+
         // ---- Get Bookings ----
         $bookings = Booking::where('listing_id', $listing->id)
             ->where('date', $date)
             ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
-            ->get(['start_time', 'end_time']);
+            ->with('resourcesAllocated')
+            ->get(['id', 'start_time', 'end_time', 'status']);
 
-        // ---- Generate time slots ----
-        $timeSlots = $this->generateTimeSlots(
-            $schedule->start_time,
-            $schedule->end_time,
-            $slotMinutes,
-            $listing,
-            $weekday,
-            $specialDay,
-            $bookings,
-            $isHoliday
-        );
+        // ---- Generate time slots for all available blocks ----
+        $timeSlots = collect();
+        foreach ($availableBlocks as $block) {
+            $slots = $this->generateTimeSlots(
+                $block['start_time'],
+                $block['end_time'],
+                $slotMinutes,
+                $listing,
+                $weekday,
+                $specialDay,
+                $bookings,
+                $isHoliday
+            );
+            $timeSlots = $timeSlots->merge($slots);
+        }
+
+        // Sort time slots by start time
+        $timeSlots = $timeSlots->sortBy('start_time')->values();
 
         $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
 
@@ -659,6 +706,79 @@ class ListingService
         );
 
         return sendSuccess('Listing slots fetched successfully', compact('timeSlots'));
+    }
+
+    protected function findOverlappingScheduleBlocks($listingSchedules, $venueSchedules)
+    {
+        $overlappingBlocks = collect();
+
+        // If listing has no specific schedules, use venue schedules as fallback
+        if ($listingSchedules->isEmpty()) {
+            return $venueSchedules->map(function ($schedule) {
+                return [
+                    'start_time' => $schedule->start_time,
+                    'end_time' => $schedule->end_time,
+                ];
+            });
+        }
+
+        // Venue schedules should already be checked before calling this method
+        // Find overlapping periods between listing and venue schedules
+        foreach ($listingSchedules as $listingSchedule) {
+            $listingStart = Carbon::parse($listingSchedule->start_time);
+            $listingEnd = Carbon::parse($listingSchedule->end_time);
+
+            foreach ($venueSchedules as $venueSchedule) {
+                $venueStart = Carbon::parse($venueSchedule->start_time);
+                $venueEnd = Carbon::parse($venueSchedule->end_time);
+
+                // Check if schedules overlap
+                if ($listingStart->lt($venueEnd) && $listingEnd->gt($venueStart)) {
+                    // Calculate overlap
+                    $overlapStart = $listingStart->gt($venueStart) ? $listingStart : $venueStart;
+                    $overlapEnd = $listingEnd->lt($venueEnd) ? $listingEnd : $venueEnd;
+
+                    // Only add if there's a valid overlap (start < end)
+                    if ($overlapStart->lt($overlapEnd)) {
+                        $overlappingBlocks->push([
+                            'start_time' => $overlapStart->format('H:i'),
+                            'end_time' => $overlapEnd->format('H:i'),
+                        ]);
+                    }
+                }
+            }
+        }
+
+        // Merge overlapping blocks if they are adjacent or overlap
+        return $this->mergeAdjacentBlocks($overlappingBlocks->sortBy('start_time')->values());
+    }
+
+    protected function mergeAdjacentBlocks($blocks)
+    {
+        if ($blocks->isEmpty()) {
+            return $blocks;
+        }
+
+        $merged = collect();
+        $current = $blocks->first();
+
+        foreach ($blocks->skip(1) as $block) {
+            $currentEnd = Carbon::parse($current['end_time']);
+            $blockStart = Carbon::parse($block['start_time']);
+
+            // If blocks are adjacent or overlapping, merge them
+            if ($blockStart->lte($currentEnd)) {
+                $blockEnd = Carbon::parse($block['end_time']);
+                $current['end_time'] = $currentEnd->gt($blockEnd) ? $current['end_time'] : $block['end_time'];
+            } else {
+                // No overlap, save current and start new
+                $merged->push($current);
+                $current = $block;
+            }
+        }
+
+        $merged->push($current);
+        return $merged;
     }
 
     protected function generateTimeSlots($startTime, $endTime, $slotMinutes, $listing, $weekday, $specialDay, $bookings, $isHoliday)
