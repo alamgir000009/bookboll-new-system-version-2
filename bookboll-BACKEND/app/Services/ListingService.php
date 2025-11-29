@@ -384,10 +384,10 @@ class ListingService
             'loyalty_points'          => $data['loyalty_points'] ?? 0,
             'description'             => $data['description'] ?? null,
             'payment_options'         => $data['payment_options'] ?? [],
-            'max_multiple_bookings'   => $data['max_multiple_bookings'],
-            'allow_multiple_bookings' => $data['allow_multiple_bookings'],
             'max_bookings_per_slot'   => $data['max_bookings_per_slot'] ?? 1,
             'calendar_color'          => $data['calendar_color'] ?? '#0000FF',
+            'max_multiple_bookings'   => $data['max_multiple_bookings'] ?? null,
+            'allow_multiple_bookings' => $data['allow_multiple_bookings'] ? 1 : 0,
         ];
     }
 
@@ -649,7 +649,7 @@ class ListingService
                 ->map(function ($block) {
                     return [
                         'start_time' => $block->start_time,
-                        'end_time' => $block->end_time,
+                        'end_time'   => $block->end_time,
                     ];
                 })
                 ->values();
@@ -717,7 +717,7 @@ class ListingService
             return $venueSchedules->map(function ($schedule) {
                 return [
                     'start_time' => $schedule->start_time,
-                    'end_time' => $schedule->end_time,
+                    'end_time'   => $schedule->end_time,
                 ];
             });
         }
@@ -726,23 +726,23 @@ class ListingService
         // Find overlapping periods between listing and venue schedules
         foreach ($listingSchedules as $listingSchedule) {
             $listingStart = Carbon::parse($listingSchedule->start_time);
-            $listingEnd = Carbon::parse($listingSchedule->end_time);
+            $listingEnd   = Carbon::parse($listingSchedule->end_time);
 
             foreach ($venueSchedules as $venueSchedule) {
                 $venueStart = Carbon::parse($venueSchedule->start_time);
-                $venueEnd = Carbon::parse($venueSchedule->end_time);
+                $venueEnd   = Carbon::parse($venueSchedule->end_time);
 
                 // Check if schedules overlap
                 if ($listingStart->lt($venueEnd) && $listingEnd->gt($venueStart)) {
                     // Calculate overlap
                     $overlapStart = $listingStart->gt($venueStart) ? $listingStart : $venueStart;
-                    $overlapEnd = $listingEnd->lt($venueEnd) ? $listingEnd : $venueEnd;
+                    $overlapEnd   = $listingEnd->lt($venueEnd) ? $listingEnd : $venueEnd;
 
                     // Only add if there's a valid overlap (start < end)
                     if ($overlapStart->lt($overlapEnd)) {
                         $overlappingBlocks->push([
                             'start_time' => $overlapStart->format('H:i'),
-                            'end_time' => $overlapEnd->format('H:i'),
+                            'end_time'   => $overlapEnd->format('H:i'),
                         ]);
                     }
                 }
@@ -759,7 +759,7 @@ class ListingService
             return $blocks;
         }
 
-        $merged = collect();
+        $merged  = collect();
         $current = $blocks->first();
 
         foreach ($blocks->skip(1) as $block) {
@@ -768,7 +768,7 @@ class ListingService
 
             // If blocks are adjacent or overlapping, merge them
             if ($blockStart->lte($currentEnd)) {
-                $blockEnd = Carbon::parse($block['end_time']);
+                $blockEnd            = Carbon::parse($block['end_time']);
                 $current['end_time'] = $currentEnd->gt($blockEnd) ? $current['end_time'] : $block['end_time'];
             } else {
                 // No overlap, save current and start new
