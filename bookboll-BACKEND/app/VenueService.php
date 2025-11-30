@@ -53,17 +53,35 @@ class VenueService
         // Validate that end_time is after start_time for each schedule entry
         foreach ($schedules as $index => $schedule) {
             if ($schedule['is_open'] && isset($schedule['start_time']) && isset($schedule['end_time'])) {
-                $startTime = str_replace(':', '', $schedule['start_time']);
-                $endTime   = str_replace(':', '', $schedule['end_time']);
+                $startTimeStr = $schedule['start_time'];
+                $endTimeStr   = $schedule['end_time'];
 
-                // Handle 24:00 as valid (represents midnight/end of day)
-                // For comparison, treat 24:00 as 2400 which is greater than any time
-                if ($endTime === '2400') {
-                    // 24:00 is always valid as end time
+                // Handle 24-hour operation (00:00 to 00:00)
+                if ($startTimeStr === '00:00' && $endTimeStr === '00:00') {
+                    // 24-hour operation is valid
                     continue;
                 }
 
-                if ((int) $endTime <= (int) $startTime) {
+                // Convert to minutes for easier comparison
+                $startMinutes = $this->timeToMinutes($startTimeStr);
+                $endMinutes   = $this->timeToMinutes($endTimeStr);
+
+                // Handle wrap-around times (e.g., 23:30 to 00:00 means until midnight)
+                if ($endMinutes === 0 && $endTimeStr === '00:00') {
+                    // End time is midnight (00:00), which is valid for any start time
+                    // This represents "until end of day"
+                    continue;
+                }
+
+                // Normal case: end must be after start
+                // But if end is 00:00 and start is not 00:00, it's a wrap-around (valid)
+                if ($endMinutes === 0 && $startMinutes > 0) {
+                    // Wrap-around case: 23:xx to 00:00 is valid
+                    continue;
+                }
+
+                // For same-day times, end must be after start
+                if ($endMinutes <= $startMinutes && $endMinutes !== 0) {
                     return sendError("Schedule entry #{$index}: end_time must be after start_time", [], 422);
                 }
             }
@@ -89,6 +107,7 @@ class VenueService
 
     public function update($request, $id)
     {
+        logger($request->all());
         $venue    = $this->venueModel->findOrFail($id);
         $formData = $request->validate([
             'name'                  => ['required', 'string', 'max:255'],
@@ -110,17 +129,35 @@ class VenueService
         // Validate that end_time is after start_time for each schedule entry
         foreach ($schedules as $index => $schedule) {
             if ($schedule['is_open'] && isset($schedule['start_time']) && isset($schedule['end_time'])) {
-                $startTime = str_replace(':', '', $schedule['start_time']);
-                $endTime   = str_replace(':', '', $schedule['end_time']);
+                $startTimeStr = $schedule['start_time'];
+                $endTimeStr   = $schedule['end_time'];
 
-                // Handle 24:00 as valid (represents midnight/end of day)
-                // For comparison, treat 24:00 as 2400 which is greater than any time
-                if ($endTime === '2400') {
-                    // 24:00 is always valid as end time
+                // Handle 24-hour operation (00:00 to 00:00)
+                if ($startTimeStr === '00:00' && $endTimeStr === '00:00') {
+                    // 24-hour operation is valid
                     continue;
                 }
 
-                if ((int) $endTime <= (int) $startTime) {
+                // Convert to minutes for easier comparison
+                $startMinutes = $this->timeToMinutes($startTimeStr);
+                $endMinutes   = $this->timeToMinutes($endTimeStr);
+
+                // Handle wrap-around times (e.g., 23:30 to 00:00 means until midnight)
+                if ($endMinutes === 0 && $endTimeStr === '00:00') {
+                    // End time is midnight (00:00), which is valid for any start time
+                    // This represents "until end of day"
+                    continue;
+                }
+
+                // Normal case: end must be after start
+                // But if end is 00:00 and start is not 00:00, it's a wrap-around (valid)
+                if ($endMinutes === 0 && $startMinutes > 0) {
+                    // Wrap-around case: 23:xx to 00:00 is valid
+                    continue;
+                }
+
+                // For same-day times, end must be after start
+                if ($endMinutes <= $startMinutes && $endMinutes !== 0) {
                     return sendError("Schedule entry #{$index}: end_time must be after start_time", [], 422);
                 }
             }
@@ -185,5 +222,21 @@ class VenueService
             DB::rollBack();
             return sendError('Failed to update sort order: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Convert time string (HH:MM) to minutes since midnight
+     *
+     * @param string $time Time in HH:MM format
+     * @return int Minutes since midnight
+     */
+    protected function timeToMinutes($time)
+    {
+        if ($time === '00:00' || $time === '24:00') {
+            return 0; // Treat both 00:00 and 24:00 as midnight
+        }
+
+        list($hours, $minutes) = explode(':', $time);
+        return (int) $hours * 60 + (int) $minutes;
     }
 }
