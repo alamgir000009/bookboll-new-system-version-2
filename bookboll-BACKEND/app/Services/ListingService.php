@@ -244,7 +244,7 @@ class ListingService
             'schedule.*.day'                     => 'required|in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
             'schedule.*.is_open'                 => 'required|boolean',
             'schedule.*.start_time'              => 'required_if:schedule.*.is_open,true|date_format:H:i',
-            'schedule.*.end_time'                => 'required_if:schedule.*.start_time,*,schedule.*.is_open,true|after:schedule.*.start_time',
+            'schedule.*.end_time'                => 'required_if:schedule.*.is_open,true|date_format:H:i',
             'pricing_groups'                     => 'nullable|array',
             'pricing_groups.*.name'              => 'nullable|string|max:255',
             'pricing_groups.*.start_time'        => 'required|date_format:H:i',
@@ -271,6 +271,11 @@ class ListingService
         $parsedData = $this->parseJsonFields($parsedData);
 
         $this->validateComplexData($parsedData, $isUpdate);
+
+        // Validate schedule times (handles 24-hour and wrap-around times)
+        if (isset($parsedData['schedule'])) {
+            $this->validateScheduleTimes($parsedData['schedule']);
+        }
 
         return $parsedData;
     }
@@ -341,7 +346,7 @@ class ListingService
             'schedule.*.day'                     => 'required|in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
             'schedule.*.is_open'                 => 'required|boolean',
             'schedule.*.start_time'              => 'required_if:schedule.*.is_open,true|date_format:H:i',
-            'schedule.*.end_time'                => 'required_if:schedule.*.start_time,*,schedule.*.is_open,true|after:schedule.*.start_time',
+            'schedule.*.end_time'                => 'required_if:schedule.*.is_open,true|date_format:H:i',
 
             'pricing_groups'                     => 'nullable|array',
             'pricing_groups.*.name'              => 'nullable|string|max:255',
@@ -417,8 +422,88 @@ class ListingService
 
     protected function syncSchedules(Listing $listing, array $scheduleData): void
     {
-        $listing->schedules()->delete();
-        $this->createSchedules($listing, $scheduleData);
+        // Load existing schedules
+        $existingSchedules = $listing->schedules()->get();
+
+        // Normalize new schedules for comparison (only open schedules)
+        $normalizedNewSchedules = collect($scheduleData)
+            ->filter(function ($schedule) {
+                return $schedule['is_open'] ?? false;
+            })
+            ->map(function ($schedule) {
+                return [
+                    'day'        => $schedule['day'],
+                    'is_open'    => true,
+                    'start_time' => $schedule['start_time'] ?? null,
+                    'end_time'   => $schedule['end_time'] ?? null,
+                ];
+            });
+
+        // Normalize existing schedules for comparison
+        $normalizedExistingSchedules = $existingSchedules->map(function ($schedule) {
+            // Convert datetime to string format for comparison
+            $startTime = $schedule->start_time ?
+                (is_string($schedule->start_time) ? $schedule->start_time : $schedule->start_time->format('H:i'))
+                : null;
+            $endTime = $schedule->end_time ?
+                (is_string($schedule->end_time) ? $schedule->end_time : $schedule->end_time->format('H:i'))
+                : null;
+
+            return [
+                'id'         => $schedule->id,
+                'day'        => $schedule->day,
+                'is_open'    => $schedule->is_open,
+                'start_time' => $startTime,
+                'end_time'   => $endTime,
+            ];
+        });
+
+        // Find schedules to delete (exist in DB but not in new data)
+        $schedulesToDelete = $normalizedExistingSchedules->filter(function ($existing) use ($normalizedNewSchedules) {
+            return ! $normalizedNewSchedules->contains(function ($new) use ($existing) {
+                return $this->schedulesMatch($existing, $new);
+            });
+        });
+
+        // Find schedules to create (exist in new data but not in DB)
+        $schedulesToCreate = $normalizedNewSchedules->filter(function ($new) use ($normalizedExistingSchedules) {
+            return ! $normalizedExistingSchedules->contains(function ($existing) use ($new) {
+                return $this->schedulesMatch($existing, $new);
+            });
+        });
+
+        // Delete schedules that no longer exist
+        if ($schedulesToDelete->isNotEmpty()) {
+            $idsToDelete = $schedulesToDelete->pluck('id')->toArray();
+            $listing->schedules()->whereIn('id', $idsToDelete)->delete();
+        }
+
+        // Create new schedules
+        foreach ($schedulesToCreate as $schedule) {
+            Schedule::create([
+                'is_open'    => true,
+                'listing_id' => $listing->id,
+                'day'        => $schedule['day'],
+                'venue_id'   => $listing->venue_id,
+                'end_time'   => $schedule['end_time'],
+                'start_time' => $schedule['start_time'],
+            ]);
+        }
+    }
+
+    /**
+     * Check if two schedule entries match
+     *
+     * @param array $schedule1
+     * @param array $schedule2
+     * @return bool
+     */
+    protected function schedulesMatch($schedule1, $schedule2)
+    {
+        return $schedule1['day'] === $schedule2['day'] &&
+               $schedule1['is_open'] === $schedule2['is_open'] &&
+               $schedule1['start_time'] === $schedule2['start_time'] &&
+               $schedule1['end_time'] === $schedule2['end_time'];
     }
 
     protected function uploadImages(array $images): array
@@ -1113,5 +1198,69 @@ class ListingService
             \Illuminate\Support\Facades\Log::error('Failed to update sort order: ' . $e->getMessage(), ["Exception" => $e]);
             return sendError('Failed to update sort order.');
         }
+    }
+
+    /**
+     * Validate schedule times - handles 24-hour operation and wrap-around times
+     *
+     * @param array $schedules
+     * @return void
+     * @throws ValidationException
+     */
+    protected function validateScheduleTimes(array $schedules): void
+    {
+        foreach ($schedules as $index => $schedule) {
+            if ($schedule['is_open'] && isset($schedule['start_time']) && isset($schedule['end_time'])) {
+                $startTimeStr = $schedule['start_time'];
+                $endTimeStr   = $schedule['end_time'];
+
+                // Handle 24-hour operation (00:00 to 00:00)
+                if ($startTimeStr === '00:00' && $endTimeStr === '00:00') {
+                    // 24-hour operation is valid
+                    continue;
+                }
+
+                // Convert to minutes for easier comparison
+                $startMinutes = $this->timeToMinutes($startTimeStr);
+                $endMinutes   = $this->timeToMinutes($endTimeStr);
+
+                // Handle wrap-around times (e.g., 23:30 to 00:00 means until midnight)
+                if ($endMinutes === 0 && $endTimeStr === '00:00') {
+                    // End time is midnight (00:00), which is valid for any start time
+                    // This represents "until end of day"
+                    continue;
+                }
+
+                // Normal case: end must be after start
+                // But if end is 00:00 and start is not 00:00, it's a wrap-around (valid)
+                if ($endMinutes === 0 && $startMinutes > 0) {
+                    // Wrap-around case: 23:xx to 00:00 is valid
+                    continue;
+                }
+
+                // For same-day times, end must be after start
+                if ($endMinutes <= $startMinutes && $endMinutes !== 0) {
+                    throw ValidationException::withMessages([
+                        "schedule.{$index}.end_time" => ["The schedule.{$index}.end_time field must be a date after schedule.{$index}.start_time."]
+                    ]);
+                }
+            }
+        }
+    }
+
+    /**
+     * Convert time string (HH:MM) to minutes since midnight
+     *
+     * @param string $time Time in HH:MM format
+     * @return int Minutes since midnight
+     */
+    protected function timeToMinutes($time)
+    {
+        if ($time === '00:00' || $time === '24:00') {
+            return 0; // Treat both 00:00 and 24:00 as midnight
+        }
+
+        list($hours, $minutes) = explode(':', $time);
+        return (int) $hours * 60 + (int) $minutes;
     }
 }
