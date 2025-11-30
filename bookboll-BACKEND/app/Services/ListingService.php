@@ -28,11 +28,13 @@ class ListingService
         $search           = $request->search ?? null;
 
         $query = $this->listingModel::with([
-            'venue',
-            'pricingGroups',
             'addOns',
-            'resources',
             'assets',
+            'resources',
+            'pricingGroups',
+            'venue'     => function ($q) {
+                $q->orderBy('sort_order', 'ASC');
+            },
             'schedules' => function ($q) {
                 $q->where('is_open', true)->orderBy('day');
             },
@@ -556,14 +558,14 @@ class ListingService
                 ->first();
 
             // If not found by exact path, try to find by filename
-            if (!$asset) {
+            if (! $asset) {
                 $filename = basename($path);
-                $asset = Asset::where('listing_id', $listingId)
+                $asset    = Asset::where('listing_id', $listingId)
                     ->whereRaw("SUBSTRING_INDEX(path, '/', -1) = ?", [$filename])
                     ->first();
             }
 
-            if (!$asset) {
+            if (! $asset) {
                 return sendError('Image not found in listing assets', [], 404);
             }
 
