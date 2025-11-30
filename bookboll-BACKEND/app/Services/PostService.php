@@ -270,4 +270,18 @@ class PostService
 
         return sendSuccess('Blog articles fetched successfully', compact('blogArticles', 'featuredArticle'));
     }
+
+    public function getPostBySlug($slug)
+    {
+        $post = $this->postModel->where('slug', $slug)
+            ->where('status', Post::PUBLISHED)
+            ->with(['author', 'category', 'tags'])
+            ->first();
+
+        if (!$post) {
+            return sendError('Post not found', [], 404);
+        }
+
+        return sendSuccess('Post fetched successfully', compact('post'));
+    }
 }

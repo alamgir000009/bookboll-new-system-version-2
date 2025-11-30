@@ -164,6 +164,7 @@ Route::prefix('customer')->group(function () {
 Route::get('home-page-data', [HelperController::class, 'homePageData']);
 Route::get('blog-categories', [PostCategoryController::class, 'blogCategories']);
 Route::get('blog-articles', [PostController::class, 'blogArticles']);
+Route::get('blog-articles/{slug}', [PostController::class, 'blogPostDetails']);
 Route::get('sports-categories', [SportsCategoryController::class, 'sportsCategories']);
 Route::post('contact-us', [HelperController::class, 'contactUs']);
 Route::get('fetch-venues', [VenueController::class, 'fetchVenues']);
