@@ -73,6 +73,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('add-ons', AddOnController::class);
 
         Route::post('listings/sort', [ListingController::class, 'sort']);
+        Route::post('listings/{id}/images', [ListingController::class, 'uploadImage']);
+        Route::delete('listings/{id}/images', [ListingController::class, 'deleteImage']);
         Route::apiResource('listings', ListingController::class);
 
         Route::apiResource('promocodes', PromocodeController::class);

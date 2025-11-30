@@ -78,8 +78,21 @@ class Listing extends Model
         return Review::whereRelation('booking', 'listing_id', $this->id);
     }
 
+    public function assets()
+    {
+        return $this->hasMany(Asset::class)->orderBy('sort_order');
+    }
+
     public function getImagesUrlsAttribute($images)
     {
+        // Use assets relationship if available, otherwise fall back to old JSON field
+        if ($this->relationLoaded('assets') || $this->assets()->exists()) {
+            return $this->assets->map(function ($asset) {
+                return $asset->url;
+            })->toArray();
+        }
+
+        // Fallback to old JSON field for backward compatibility
         $images = $this->attributes['images_urls'] ?? null;
 
         if (! empty($images)) {
@@ -87,7 +100,12 @@ class Listing extends Model
 
             $newImages = [];
             foreach ($images as $image) {
-                $newImages[] = url("storage/{$image}");
+                // If it's already a URL, return as is, otherwise convert path to URL
+                if (strpos($image, 'http') === 0 || strpos($image, '/storage/') !== false) {
+                    $newImages[] = $image;
+                } else {
+                    $newImages[] = url("storage/{$image}");
+                }
             }
 
             return $newImages;

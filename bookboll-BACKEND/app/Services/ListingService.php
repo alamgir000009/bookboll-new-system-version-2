@@ -1,6 +1,7 @@
 <?php
 namespace App\Services;
 
+use App\Models\Asset;
 use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\Schedule;
@@ -31,6 +32,7 @@ class ListingService
             'pricingGroups',
             'addOns',
             'resources',
+            'assets',
             'schedules' => function ($q) {
                 $q->where('is_open', true)->orderBy('day');
             },
@@ -83,8 +85,7 @@ class ListingService
             }
 
             if ($request->hasFile('images')) {
-                $imageUrls = $this->uploadImages($request->file('images'));
-                $listing->update(['images_urls' => $imageUrls]);
+                $this->uploadImagesAsAssets($listing, $request->file('images'));
             }
 
             if (! empty($formData['schedule'])) {
@@ -108,6 +109,7 @@ class ListingService
                 'pricingGroups',
                 'addOns',
                 'resources',
+                'assets',
             ]);
 
             return sendSuccess('Listing created successfully', compact('listing'));
@@ -131,12 +133,14 @@ class ListingService
             $listingUpdateData = $this->extractListingData($formData);
 
             if ($request->hasFile('images')) {
-                $this->deleteOldImages($listing->images_urls);
-                $imageUrls                        = $this->uploadImages($request->file('images'));
-                $listingUpdateData['images_urls'] = $imageUrls;
-            } else {
-                unset($listingUpdateData['images_urls']);
+                // Delete old assets
+                $this->deleteListingAssets($listing);
+                // Upload new images as assets
+                $this->uploadImagesAsAssets($listing, $request->file('images'));
             }
+
+            // Remove images_urls from update data as we're using Asset model now
+            unset($listingUpdateData['images_urls']);
 
             $listing->update($listingUpdateData);
 
@@ -186,7 +190,7 @@ class ListingService
 
     public function show($id)
     {
-        $listing = $this->listingModel->with(['schedules', 'addOns', 'resources', 'pricingGroups'])->findOrFail($id);
+        $listing = $this->listingModel->with(['schedules', 'addOns', 'resources', 'pricingGroups', 'assets'])->findOrFail($id);
         return sendSuccess('Listing deleted successfully', compact('listing'));
     }
 
@@ -438,6 +442,155 @@ class ListingService
         }
     }
 
+    protected function uploadImagesAsAssets(Listing $listing, array $images): void
+    {
+        $sortOrder = Asset::where('listing_id', $listing->id)->max('sort_order') ?? 0;
+
+        foreach ($images as $image) {
+            if ($image->isValid()) {
+                $uploadedPath = $image->store('listings', 'public');
+
+                Asset::create([
+                    'listing_id' => $listing->id,
+                    'path'       => $uploadedPath,
+                    'type'       => 'image',
+                    'sort_order' => ++$sortOrder,
+                ]);
+            }
+        }
+    }
+
+    protected function deleteListingAssets(Listing $listing): void
+    {
+        $assets = Asset::where('listing_id', $listing->id)->get();
+
+        foreach ($assets as $asset) {
+            // Delete file from storage
+            if (Storage::disk('public')->exists($asset->path)) {
+                Storage::disk('public')->delete($asset->path);
+            }
+            // Delete asset record
+            $asset->delete();
+        }
+    }
+
+    public function uploadImage($request, $listingId)
+    {
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:5120', // 5MB max
+        ]);
+
+        try {
+            $listing = $this->listingModel->findOrFail($listingId);
+
+            // Upload the new image
+            if ($request->hasFile('image')) {
+                $uploadedPath = $request->file('image')->store('listings', 'public');
+
+                // Get the current max sort_order to append at the end
+                $maxSortOrder = Asset::where('listing_id', $listingId)->max('sort_order') ?? 0;
+
+                // Create asset record
+                $asset = Asset::create([
+                    'listing_id' => $listingId,
+                    'path'       => $uploadedPath,
+                    'type'       => 'image',
+                    'sort_order' => $maxSortOrder + 1,
+                ]);
+
+                // Get the full URL for the uploaded image
+                $uploadedUrl = $asset->url;
+
+                // Get total images count
+                $totalImages = Asset::where('listing_id', $listingId)->count();
+
+                return sendSuccess('Image uploaded successfully', [
+                    'listing_id'   => $listing->id,
+                    'image_url'    => $uploadedUrl,
+                    'image_path'   => $uploadedPath,
+                    'asset_id'     => $asset->id,
+                    'total_images' => $totalImages,
+                ]);
+            }
+
+            return sendError('No image file provided', [], 400);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return sendError('Listing not found', [], 404);
+        } catch (\Exception $e) {
+            return sendError('Failed to upload image: ' . $e->getMessage(), [], 500);
+        }
+    }
+
+    public function deleteImage($request, $listingId)
+    {
+        $request->validate([
+            'url' => 'required|string',
+        ]);
+
+        try {
+            $listing = $this->listingModel->findOrFail($listingId);
+
+            // Extract the file path from the URL (passed as query parameter)
+            $imageUrl = $request->query('url');
+
+            // Handle both full URL and relative path
+            if (strpos($imageUrl, '/storage/') !== false) {
+                // Extract path from URL: /storage/listings/filename.jpg -> listings/filename.jpg
+                $urlPath = parse_url($imageUrl, PHP_URL_PATH);
+                $path    = str_replace('/storage/', '', $urlPath);
+            } elseif (strpos($imageUrl, 'storage/') === 0) {
+                // Handle storage/listings/filename.jpg
+                $path = str_replace('storage/', '', $imageUrl);
+            } else {
+                // If it's already a relative path like "listings/filename.jpg"
+                $path = $imageUrl;
+            }
+
+            // Remove leading slash if present
+            $path = ltrim($path, '/');
+
+            // Find asset by path
+            $asset = Asset::where('listing_id', $listingId)
+                ->where('path', $path)
+                ->first();
+
+            // If not found by exact path, try to find by filename
+            if (!$asset) {
+                $filename = basename($path);
+                $asset = Asset::where('listing_id', $listingId)
+                    ->whereRaw("SUBSTRING_INDEX(path, '/', -1) = ?", [$filename])
+                    ->first();
+            }
+
+            if (!$asset) {
+                return sendError('Image not found in listing assets', [], 404);
+            }
+
+            // Check if file exists before deleting
+            if (Storage::disk('public')->exists($asset->path)) {
+                // Delete the file from storage
+                Storage::disk('public')->delete($asset->path);
+            }
+
+            // Delete the asset record
+            $asset->delete();
+
+            // Get remaining images count
+            $remainingImages = Asset::where('listing_id', $listingId)->count();
+
+            return sendSuccess('Image deleted successfully', [
+                'listing_id'       => $listing->id,
+                'remaining_images' => $remainingImages,
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return sendError('Listing not found', [], 404);
+        } catch (\Exception $e) {
+            return sendError('Failed to delete image: ' . $e->getMessage(), [], 500);
+        }
+    }
+
     public function fetchListings($request)
     {
         $date             = $request->date ?? null;
@@ -448,7 +601,7 @@ class ListingService
         $categories       = $request->categories ?? [];
         $records_per_page = $request->records_per_page ?? null;
 
-        $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns'])
+        $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns', 'assets'])
             ->active()
             ->whereRelation('venue', 'status', 'active')
             ->orderBy('sort_order', 'ASC')
@@ -530,6 +683,7 @@ class ListingService
         $listing = $this->listingModel::with([
             'venue:id,name,maps_url',
             'sportsCategory:id,name',
+            'assets',
         ])->findOrFail($id);
 
         $specialDay = SpecialDay::with('timeBlocks')
@@ -588,6 +742,7 @@ class ListingService
             'schedules',
             'pricingGroups',
             'venue.schedules',
+            'assets',
         ])->findOrFail($listingId);
 
         if (! $listing->venue || $listing->venue->status !== 'active') {
@@ -857,7 +1012,7 @@ class ListingService
 
         $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
 
-        $listings = $this->listingModel::with(['venue', 'sportsCategory'])
+        $listings = $this->listingModel::with(['venue', 'sportsCategory', 'assets'])
             ->when($categoryIds, function ($query, $categoryIds) {
                 $query->whereNotIn('sports_category_id', $categoryIds);
             })
@@ -888,9 +1043,12 @@ class ListingService
 
     public function fetchAddons($listing_id)
     {
-        $listing = $this->listingModel->with(['addons' => function ($query) {
-            $query->orderBy('sort_order', 'ASC');
-        }])->findOrFail($listing_id);
+        $listing = $this->listingModel->with([
+            'addons' => function ($query) {
+                $query->orderBy('sort_order', 'ASC');
+            },
+            'assets',
+        ])->findOrFail($listing_id);
 
         $addons = $listing->addons->map(function ($addon) {
             return [

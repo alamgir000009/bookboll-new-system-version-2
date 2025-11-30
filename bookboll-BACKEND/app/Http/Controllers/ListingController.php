@@ -64,4 +64,14 @@ class ListingController extends Controller
     {
         return $this->listingService->updateSortOrder($request);
     }
+
+    public function uploadImage(Request $request, $id)
+    {
+        return $this->listingService->uploadImage($request, $id);
+    }
+
+    public function deleteImage(Request $request, $id)
+    {
+        return $this->listingService->deleteImage($request, $id);
+    }
 }
