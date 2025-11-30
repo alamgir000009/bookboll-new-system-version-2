@@ -3,6 +3,7 @@
 use App\Models\Invoice;
 use App\Models\SlotLock;
 use App\Models\User;
+use App\Notifications\BookingConfirmedUserNotification;
 use App\Notifications\BookingCreatedAdminNotification;
 use App\Notifications\BookingCreatedUserNotification;
 use App\Services\AuditLogService;
@@ -400,7 +401,7 @@ if (! function_exists('generatePaymentId')) {
 
         // Add microtime to ensure uniqueness when multiple bookings are created simultaneously
         $uniqueSuffix = substr(str_replace('.', '', microtime(true)), -6);
-        
+
         return 'PAY-' . $bookingId . '-' . $typeAbbr . '-' . $uniqueSuffix;
     }
 }
@@ -432,7 +433,6 @@ if (! function_exists('determineSlotPrice')) {
 
         return $price;
     }
-
 
     if (! function_exists('generateInvoiceId')) {
         function generateInvoiceId()
@@ -526,5 +526,47 @@ if (! function_exists('getFormattedDuration')) {
         }
 
         return $duration;
+    }
+}
+
+if (! function_exists('autoConfirmBookingIfPaid')) {
+    function autoConfirmBookingIfPaid($booking)
+    {
+        try {
+
+            if (in_array($booking->status, [BookingStatus::CONFIRMED, BookingStatus::CANCELLED, BookingStatus::COMPLETED])) {
+                return;
+            }
+
+            $isFullyPaid = $booking->payment_status === BookingPaymentStatus::FULLY_PAID;
+
+            $totalPaid  = $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
+            $totalPrice = $booking->total_price;
+
+            if ($isFullyPaid && $totalPaid >= $totalPrice) {
+                $booking->update(['status' => BookingStatus::CONFIRMED]);
+
+                $booking->history()->create([
+                    'user_id'     => $booking->user_id,
+                    'action'      => 'booking_confirmed',
+                    'description' => 'Booking automatically confirmed after payment completion.',
+                ]);
+                try {
+                    $booking->load('venue:id,name,maps_url');
+                    $user = $booking->user;
+                    $user->notify(new BookingConfirmedUserNotification($booking));
+                } catch (Exception $e) {
+                    Log::error("Booking confirmation notification failed: " . $e->getMessage(), [
+                        'booking_id' => $booking->id,
+                        'exception'  => $e,
+                    ]);
+                }
+            }
+        } catch (Exception $e) {
+            Log::error("Failed to auto-confirm booking #{$booking->id}: " . $e->getMessage(), [
+                'booking_id' => $booking->id,
+                'exception'  => $e,
+            ]);
+        }
     }
 }

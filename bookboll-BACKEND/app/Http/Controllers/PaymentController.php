@@ -5,9 +5,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\PaymentMethod as PaymentMethodModel;
 use App\Models\StripeSession;
+use App\Notifications\BookingConfirmedUserNotification;
 use App\Services\PaymentService;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
+use BookingStatus;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -267,6 +269,14 @@ class PaymentController extends Controller
                 'payment_status'        => BookingPaymentStatus::FULLY_PAID,
                 'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
             ]);
+
+            // Auto-confirm bookings and send confirmation emails
+            foreach ($bookingIds as $bookingId) {
+                $booking = Booking::find($bookingId);
+                if ($booking) {
+                    autoConfirmBookingIfPaid($booking);
+                }
+            }
 
             $stripeSession->update(['processed' => true]);
 
