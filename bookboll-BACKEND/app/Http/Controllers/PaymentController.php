@@ -80,13 +80,13 @@ class PaymentController extends Controller
             ];
 
             $paymentIntentData = [
-                'amount'               => $request->amount,
-                'currency'             => $request->currency,
-                'customer'             => $user->stripe_id,
                 'payment_method_types' => ['card'],
                 'metadata'             => $metadata,
-                'description'          => 'Booking payment intent',
                 'setup_future_usage'   => 'off_session',
+                'amount'               => $request->amount,
+                'customer'             => $user->stripe_id,
+                'currency'             => $request->currency,
+                'description'          => 'Bookboll Booking payment intent for user #' . $user->email,
             ];
 
             if ($request->saved_payment_method_id) {
@@ -97,32 +97,30 @@ class PaymentController extends Controller
                     return sendError('Payment method not found or does not belong to you');
                 }
 
-                // If we have the Stripe payment method ID stored, use it directly
                 if ($savedPaymentMethod->stripe_payment_method_id) {
-                    // Verify the payment method still exists in Stripe and belongs to the user
                     try {
                         $stripePm = $user->findPaymentMethod($savedPaymentMethod->stripe_payment_method_id);
                         if ($stripePm) {
                             $paymentIntentData['payment_method'] = $savedPaymentMethod->stripe_payment_method_id;
                         } else {
                             Log::warning('Stripe payment method not found for saved payment method', [
-                                'saved_payment_method_id' => $request->saved_payment_method_id,
+                                'saved_payment_method_id'  => $request->saved_payment_method_id,
                                 'stripe_payment_method_id' => $savedPaymentMethod->stripe_payment_method_id,
-                                'user_id'                 => $user->id,
+                                'user_id'                  => $user->id,
                             ]);
                             return sendError('Saved payment method is no longer available in Stripe. Please use a different payment method.', [], 404);
                         }
                     } catch (Exception $e) {
                         Log::error('Error retrieving Stripe payment method', [
-                            'saved_payment_method_id' => $request->saved_payment_method_id,
+                            'saved_payment_method_id'  => $request->saved_payment_method_id,
                             'stripe_payment_method_id' => $savedPaymentMethod->stripe_payment_method_id,
-                            'user_id'                 => $user->id,
-                            'error'                   => $e->getMessage(),
+                            'user_id'                  => $user->id,
+                            'error'                    => $e->getMessage(),
                         ]);
                         return sendError('Error retrieving saved payment method. Please use a different payment method.', [], 500);
                     }
                 } else {
-                    // Fallback: Try to match by card details if stripe_payment_method_id is not stored
+
                     $stripePaymentMethods = $user->paymentMethods();
 
                     $matchingStripePaymentMethod = null;
@@ -136,7 +134,6 @@ class PaymentController extends Controller
                                 $card->exp_year === $savedPaymentMethod->exp_year
                             ) {
                                 $matchingStripePaymentMethod = $stripePm;
-                                // Update the saved payment method with the Stripe ID for future use
                                 $savedPaymentMethod->update(['stripe_payment_method_id' => $stripePm->id]);
                                 break;
                             }
