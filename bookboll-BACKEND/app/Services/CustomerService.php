@@ -86,7 +86,18 @@ class CustomerService
         $customer = $this->customerModel::findOrFail($id);
 
         $request->validate(['status' => 'required|in:active,blocked']);
+
         $customer->update(['status' => $request->input('status')]);
+
+        if ($customer->status == User::BLOCKED) {
+            $customer->tokens()->where('name', 'bookboll-customer-login-api-token')->delete();
+            $customer->blocking_reason = $request->reason;
+            $customer->save();
+        } else {
+            $customer->blocking_reason = null;
+            $customer->save();
+        }
+
         $customer->load('tags');
 
         return sendSuccess('Customer status updated successfully', compact('customer'));

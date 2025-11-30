@@ -29,6 +29,7 @@ class User extends Authenticatable
         'provider_id',
         'nationality',
         'date_of_birth',
+        'blocking_reason',
         'loyalty_tier_id',
     ];
 

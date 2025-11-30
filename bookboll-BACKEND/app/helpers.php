@@ -513,3 +513,20 @@ if (! function_exists('createBookingInvoiceWithNotification')) {
         }
     }
 }
+
+if (! function_exists('getFormattedDuration')) {
+    function getFormattedDuration($slotMinutes)
+    {
+        $hours   = floor($slotMinutes / 60);
+        $minutes = $slotMinutes % 60;
+        if ($hours > 0 && $minutes > 0) {
+            $duration = $hours . ' hour' . ($hours > 1 ? 's' : '') . ' ' . $minutes . ' minute' . ($minutes > 1 ? 's' : '');
+        } elseif ($hours > 0) {
+            $duration = $hours . ' hour' . ($hours > 1 ? 's' : '');
+        } else {
+            $duration = $minutes . ' minute' . ($minutes > 1 ? 's' : '');
+        }
+
+        return $duration;
+    }
+}

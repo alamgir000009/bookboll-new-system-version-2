@@ -509,7 +509,6 @@ class ListingService
                 'price'           => $listing->base_price,
                 'description'     => $listing->description,
                 'venue'           => $listing->venue?->name,
-                'duration'        => $listing->slot_duration,
                 'slot_duration'   => $listing->slot_duration,
                 'loyalty_points'  => $listing->loyalty_points,
                 'payment_options' => $listing->payment_options,
@@ -517,6 +516,7 @@ class ListingService
                 'images'          => $listing->images_urls ?? [],
                 'sport'           => $listing->sportsCategory?->name,
                 'rating'          => round($listing->average_rating, 1),
+                'duration'        => getFormattedDuration($listing->slot_duration * 60),
             ];
         });
 
@@ -826,15 +826,7 @@ class ListingService
 
             $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
 
-            $hours   = floor($slotMinutes / 60);
-            $minutes = $slotMinutes % 60;
-            if ($hours > 0 && $minutes > 0) {
-                $duration = $hours . ' hour' . ($hours > 1 ? 's' : '') . ' ' . $minutes . ' minute' . ($minutes > 1 ? 's' : '');
-            } elseif ($hours > 0) {
-                $duration = $hours . ' hour' . ($hours > 1 ? 's' : '');
-            } else {
-                $duration = $minutes . ' minute' . ($minutes > 1 ? 's' : '');
-            }
+            $duration = getFormattedDuration($slotMinutes);
 
             $slots->push([
                 'start_time'          => $slotStart,
@@ -879,7 +871,6 @@ class ListingService
                     'price'           => $listing->base_price,
                     'description'     => $listing->description,
                     'venue'           => $listing->venue?->name,
-                    'duration'        => $listing->slot_duration,
                     'loyaltyPoints'   => $listing->loyalty_points,
                     'payment_options' => $listing->payment_options,
                     'map_address'     => $listing->venue?->maps_url,
@@ -888,6 +879,7 @@ class ListingService
                     'category'        => $listing->sportsCategory?->name,
                     'icon'            => $listing->sportsCategory?->sportsType?->icon,
                     'rating'          => round($listing->average_rating, 1),
+                    'duration'        => getFormattedDuration($listing->slot_duration * 60),
                 ];
             });
 
