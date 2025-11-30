@@ -165,19 +165,8 @@ class VenueService
 
         $venue->update($formData);
 
-        // Delete all existing schedules for this venue
-        $venue->schedules()->delete();
-
-        // Create new schedules (allowing multiple entries per day)
-        foreach ($schedules as $schedule) {
-            $scheduleData = [
-                'day'        => $schedule['day'],
-                'is_open'    => $schedule['is_open'],
-                'start_time' => $schedule['is_open'] ? ($schedule['start_time'] ?? null) : null,
-                'end_time'   => $schedule['is_open'] ? ($schedule['end_time'] ?? null) : null,
-            ];
-            $venue->schedules()->create($scheduleData);
-        }
+        // Sync schedules intelligently - only update what changed
+        $this->syncSchedules($venue, $schedules);
 
         $venue->load('schedules');
 
@@ -238,5 +227,87 @@ class VenueService
 
         list($hours, $minutes) = explode(':', $time);
         return (int) $hours * 60 + (int) $minutes;
+    }
+
+    /**
+     * Sync schedules intelligently - only update what changed
+     *
+     * @param Venue $venue
+     * @param array $newSchedules
+     * @return void
+     */
+    protected function syncSchedules($venue, array $newSchedules)
+    {
+        // Load existing schedules
+        $existingSchedules = $venue->schedules()->get();
+
+        // Normalize new schedules for comparison
+        $normalizedNewSchedules = collect($newSchedules)->map(function ($schedule) {
+            return [
+                'day'        => $schedule['day'],
+                'is_open'    => $schedule['is_open'],
+                'start_time' => $schedule['is_open'] ? ($schedule['start_time'] ?? null) : null,
+                'end_time'   => $schedule['is_open'] ? ($schedule['end_time'] ?? null) : null,
+            ];
+        });
+
+        // Normalize existing schedules for comparison
+        $normalizedExistingSchedules = $existingSchedules->map(function ($schedule) {
+            // Convert datetime to string format for comparison
+            $startTime = $schedule->start_time ?
+                (is_string($schedule->start_time) ? $schedule->start_time : $schedule->start_time->format('H:i'))
+                : null;
+            $endTime = $schedule->end_time ?
+                (is_string($schedule->end_time) ? $schedule->end_time : $schedule->end_time->format('H:i'))
+                : null;
+
+            return [
+                'id'         => $schedule->id,
+                'day'        => $schedule->day,
+                'is_open'    => $schedule->is_open,
+                'start_time' => $startTime,
+                'end_time'   => $endTime,
+            ];
+        });
+
+        // Find schedules to delete (exist in DB but not in new data)
+        $schedulesToDelete = $normalizedExistingSchedules->filter(function ($existing) use ($normalizedNewSchedules) {
+            return ! $normalizedNewSchedules->contains(function ($new) use ($existing) {
+                return $this->schedulesMatch($existing, $new);
+            });
+        });
+
+        // Find schedules to create (exist in new data but not in DB)
+        $schedulesToCreate = $normalizedNewSchedules->filter(function ($new) use ($normalizedExistingSchedules) {
+            return ! $normalizedExistingSchedules->contains(function ($existing) use ($new) {
+                return $this->schedulesMatch($existing, $new);
+            });
+        });
+
+        // Delete schedules that no longer exist
+        if ($schedulesToDelete->isNotEmpty()) {
+            $idsToDelete = $schedulesToDelete->pluck('id')->toArray();
+            $venue->schedules()->whereIn('id', $idsToDelete)->delete();
+        }
+
+        // Create new schedules
+        foreach ($schedulesToCreate as $schedule) {
+            $venue->schedules()->create($schedule);
+        }
+    }
+
+    /**
+     * Check if two schedule entries match
+     *
+     * @param array $schedule1
+     * @param array $schedule2
+     * @return bool
+     */
+    protected function schedulesMatch($schedule1, $schedule2)
+    {
+        return $schedule1['day'] === $schedule2['day'] &&
+               $schedule1['is_open'] === $schedule2['is_open'] &&
+               $schedule1['start_time'] === $schedule2['start_time'] &&
+               $schedule1['end_time'] === $schedule2['end_time'];
     }
 }
