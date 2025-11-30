@@ -70,7 +70,7 @@ class HelperController extends Controller
                     return [
                         'start_time'     => $block->start_time,
                         'end_time'       => $block->end_time,
-                        'price_per_hour'  => $block->price_per_hour,
+                        'price_per_hour' => $block->price_per_hour,
                         'price_currency' => $block->price_currency,
                     ];
                 }),
@@ -85,12 +85,9 @@ class HelperController extends Controller
         $total_reviews  = Review::count();
         $average_rating = Review::avg('overall_rating') ?? 0;
 
-        $reviews = Review::with([
-            'user:id,name,image',
-            'booking.listing:id,name,venue_id',
-            'booking.venue:id,name',
-        ])
-            ->whereHas('user')
+        $reviews = Review::withWhereHas('user:id,name,image')
+            ->withWhereHas('booking.listing:id,name,venue_id')
+            ->withWhereHas('booking.venue:id,name')
             ->inRandomOrder()->take(2)->get()->map(function ($review) {
             return [
                 "user_name"      => $review->user->name,

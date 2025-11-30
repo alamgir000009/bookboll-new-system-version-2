@@ -852,6 +852,7 @@ class ListingService
             'id'                      => $listing->id,
             'name'                    => $listing->name,
             'venue_id'                => $listing->venue_id,
+            'capacity'                => $listing->capacity,
             'price'                   => $listing->base_price,
             'description'             => $listing->description,
             'venue'                   => $listing->venue?->name,
@@ -1154,6 +1155,66 @@ class ListingService
         }
 
         return $slots->values();
+    }
+
+    public function fetchRecurringBookedSlots($request)
+    {
+        $request->validate([
+            'listing_id'  => 'required|numeric|exists:listings,id',
+            'start_time'  => 'required|date_format:H:i',
+            'end_time'    => 'required|date_format:H:i',
+            'date'        => 'required|date',
+            'start_date'  => 'required|date',
+            'end_date'    => 'required|date',
+        ]);
+
+        try {
+            $listingId = $request->listing_id;
+            $startTime = $request->start_time;
+            $endTime   = $request->end_time;
+            $date      = Carbon::parse($request->date);
+            $startDate = Carbon::parse($request->start_date);
+            $endDate   = Carbon::parse($request->end_date);
+
+            // Verify listing exists
+            $listing = $this->listingModel->findOrFail($listingId);
+
+            // Find bookings that match:
+            // 1. Same listing
+            // 2. Same time slot (start_time and end_time)
+            // 3. Date between start_date and end_date
+            // 4. Not cancelled or completed
+            $bookedDates = Booking::where('listing_id', $listingId)
+                ->where('start_time', $startTime)
+                ->where('end_time', $endTime)
+                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
+                ->pluck('date')
+                ->map(function ($date) {
+                    return Carbon::parse($date)->format('Y-m-d');
+                })
+                ->unique()
+                ->values()
+                ->toArray();
+
+            return sendSuccess('Recurring booked slots fetched successfully', [
+                'listing_id'   => $listingId,
+                'start_time'   => $startTime,
+                'end_time'     => $endTime,
+                'selected_date' => $date->format('Y-m-d'),
+                'date_range'   => [
+                    'start_date' => $startDate->format('Y-m-d'),
+                    'end_date'   => $endDate->format('Y-m-d'),
+                ],
+                'booked_dates' => $bookedDates,
+                'total_booked' => count($bookedDates),
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return sendError('Listing not found', [], 404);
+        } catch (\Exception $e) {
+            return sendError('Failed to fetch recurring booked slots: ' . $e->getMessage(), [], 500);
+        }
     }
 
     public function updateSortOrder($request)

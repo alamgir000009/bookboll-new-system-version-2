@@ -175,6 +175,7 @@ Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggeste
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing']);
 Route::get('fetch-time-slots', [ListingController::class, 'fetchTimeSlots']);
 Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons']);
+Route::get('fetch-recurring-booked-slots', [ListingController::class, 'fetchRecurringBookedSlots']);
 Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode']);
 
 Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe']);
