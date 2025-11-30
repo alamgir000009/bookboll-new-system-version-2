@@ -63,7 +63,6 @@ class SpecialDayService
 
     public function bulkCreate($request)
     {
-        logger($request->all());
         $validated = $request->validate([
             'dates'                        => 'required|array|min:1',
             'dates.*'                      => 'required|date_format:Y-m-d',
