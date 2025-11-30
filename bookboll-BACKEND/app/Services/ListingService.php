@@ -230,7 +230,7 @@ class ListingService
             'base_price'                         => 'required|numeric|min:0',
             'max_bookings_per_slot'              => 'required|integer|min:1',
             'allow_multiple_bookings'            => 'nullable|boolean',
-            'max_multiple_bookings'              => 'nullable|integer|min:1|required_if:allow_multiple_bookings,true',
+            'max_multiple_bookings'              => 'nullable|integer|min:1|required_if:allow_multiple_bookings,true|lte:max_bookings_per_slot',
             'capacity'                           => 'required|integer|min:1',
             'slot_duration'                      => 'required|numeric|min:0',
             'loyalty_points'                     => 'nullable|integer|min:0',
@@ -443,10 +443,10 @@ class ListingService
         $normalizedExistingSchedules = $existingSchedules->map(function ($schedule) {
             // Convert datetime to string format for comparison
             $startTime = $schedule->start_time ?
-                (is_string($schedule->start_time) ? $schedule->start_time : $schedule->start_time->format('H:i'))
+            (is_string($schedule->start_time) ? $schedule->start_time : $schedule->start_time->format('H:i'))
                 : null;
             $endTime = $schedule->end_time ?
-                (is_string($schedule->end_time) ? $schedule->end_time : $schedule->end_time->format('H:i'))
+            (is_string($schedule->end_time) ? $schedule->end_time : $schedule->end_time->format('H:i'))
                 : null;
 
             return [
@@ -501,9 +501,9 @@ class ListingService
     protected function schedulesMatch($schedule1, $schedule2)
     {
         return $schedule1['day'] === $schedule2['day'] &&
-               $schedule1['is_open'] === $schedule2['is_open'] &&
-               $schedule1['start_time'] === $schedule2['start_time'] &&
-               $schedule1['end_time'] === $schedule2['end_time'];
+            $schedule1['is_open'] === $schedule2['is_open'] &&
+            $schedule1['start_time'] === $schedule2['start_time'] &&
+            $schedule1['end_time'] === $schedule2['end_time'];
     }
 
     protected function uploadImages(array $images): array
@@ -743,24 +743,89 @@ class ListingService
 
         $listings->getCollection()->transform(function ($listing) {
             return [
-                'id'              => $listing->id,
-                'name'            => $listing->name,
-                'add_ons'         => $listing->addOns,
-                'price'           => $listing->base_price,
-                'description'     => $listing->description,
-                'venue'           => $listing->venue?->name,
-                'slot_duration'   => $listing->slot_duration,
-                'loyalty_points'  => $listing->loyalty_points,
-                'payment_options' => $listing->payment_options,
-                'map_address'     => $listing->venue?->maps_url,
-                'images'          => $listing->images_urls ?? [],
-                'sport'           => $listing->sportsCategory?->name,
-                'rating'          => round($listing->average_rating, 1),
-                'duration'        => getFormattedDuration($listing->slot_duration * 60),
+                'id'                      => $listing->id,
+                'name'                    => $listing->name,
+                'add_ons'                 => $listing->addOns,
+                'price'                   => $listing->base_price,
+                'description'             => $listing->description,
+                'venue'                   => $listing->venue?->name,
+                'slot_duration'           => $listing->slot_duration,
+                'loyalty_points'          => $listing->loyalty_points,
+                'payment_options'         => $listing->payment_options,
+                'map_address'             => $listing->venue?->maps_url,
+                'images'                  => $listing->images_urls ?? [],
+                'sport'                   => $listing->sportsCategory?->name,
+                'max_multiple_bookings'   => $listing->max_multiple_bookings,
+                'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+                'rating'                  => round($listing->average_rating, 1),
+                'duration'                => getFormattedDuration($listing->slot_duration * 60),
             ];
         });
 
         return sendSuccess("Listings fetched successfully", compact('listings'));
+    }
+
+    public function fetchSuggestions($request)
+    {
+        $categoryType = $request->category ?? null;
+
+        $sportsType = SportsType::withCount('listings')->where("title", $categoryType)->first();
+
+        $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
+
+        $listings = $this->listingModel::with(['venue', 'sportsCategory', 'assets'])
+            ->when($categoryIds, function ($query, $categoryIds) {
+                $query->whereNotIn('sports_category_id', $categoryIds);
+            })
+            ->whereRelation('venue', 'status', 'active')
+            ->take(3)
+            ->get()
+            ->map(function ($listing) {
+                return [
+                    'id'                      => $listing->id,
+                    'name'                    => $listing->name,
+                    'price'                   => $listing->base_price,
+                    'description'             => $listing->description,
+                    'venue'                   => $listing->venue?->name,
+                    'loyaltyPoints'           => $listing->loyalty_points,
+                    'payment_options'         => $listing->payment_options,
+                    'map_address'             => $listing->venue?->maps_url,
+                    'images'                  => $listing->images_urls ?? [],
+                    'sport'                   => $listing->sportsCategory?->name,
+                    'category'                => $listing->sportsCategory?->name,
+                    'max_multiple_bookings'   => $listing->max_multiple_bookings,
+                    'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+                    'icon'                    => $listing->sportsCategory?->sportsType?->icon,
+                    'rating'                  => round($listing->average_rating, 1),
+                    'duration'                => getFormattedDuration($listing->slot_duration * 60),
+                ];
+            });
+
+        return sendSuccess("Listings fetched successfully", compact('listings', 'sportsType'));
+    }
+
+    public function fetchAddons($listing_id)
+    {
+        $listing = $this->listingModel->with([
+            'addons' => function ($query) {
+                $query->orderBy('sort_order', 'ASC');
+            },
+            'assets',
+        ])->findOrFail($listing_id);
+
+        $addons = $listing->addons->map(function ($addon) {
+            return [
+                'recommended'     => true,
+                'id'              => $addon->id,
+                'name'            => $addon->name,
+                'image'           => $addon->image,
+                'price'           => $addon->price ?? 0,
+                'description'     => $addon->description,
+                'hours_extension' => $addon->hours_extension,
+            ];
+        });
+
+        return sendSuccess('Addons fetched successfully', compact('addons'));
     }
 
     public function listing($id)
@@ -1091,67 +1156,6 @@ class ListingService
         return $slots->values();
     }
 
-    public function fetchSuggestions($request)
-    {
-        $categoryType = $request->category ?? null;
-
-        $sportsType = SportsType::withCount('listings')->where("title", $categoryType)->first();
-
-        $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
-
-        $listings = $this->listingModel::with(['venue', 'sportsCategory', 'assets'])
-            ->when($categoryIds, function ($query, $categoryIds) {
-                $query->whereNotIn('sports_category_id', $categoryIds);
-            })
-            ->whereRelation('venue', 'status', 'active')
-            ->take(3)
-            ->get()
-            ->map(function ($listing) {
-                return [
-                    'id'              => $listing->id,
-                    'name'            => $listing->name,
-                    'price'           => $listing->base_price,
-                    'description'     => $listing->description,
-                    'venue'           => $listing->venue?->name,
-                    'loyaltyPoints'   => $listing->loyalty_points,
-                    'payment_options' => $listing->payment_options,
-                    'map_address'     => $listing->venue?->maps_url,
-                    'images'          => $listing->images_urls ?? [],
-                    'sport'           => $listing->sportsCategory?->name,
-                    'category'        => $listing->sportsCategory?->name,
-                    'icon'            => $listing->sportsCategory?->sportsType?->icon,
-                    'rating'          => round($listing->average_rating, 1),
-                    'duration'        => getFormattedDuration($listing->slot_duration * 60),
-                ];
-            });
-
-        return sendSuccess("Listings fetched successfully", compact('listings', 'sportsType'));
-    }
-
-    public function fetchAddons($listing_id)
-    {
-        $listing = $this->listingModel->with([
-            'addons' => function ($query) {
-                $query->orderBy('sort_order', 'ASC');
-            },
-            'assets',
-        ])->findOrFail($listing_id);
-
-        $addons = $listing->addons->map(function ($addon) {
-            return [
-                'recommended'     => true,
-                'id'              => $addon->id,
-                'name'            => $addon->name,
-                'image'           => $addon->image,
-                'price'           => $addon->price ?? 0,
-                'description'     => $addon->description,
-                'hours_extension' => $addon->hours_extension,
-            ];
-        });
-
-        return sendSuccess('Addons fetched successfully', compact('addons'));
-    }
-
     public function updateSortOrder($request)
     {
         $request->validate([
@@ -1241,7 +1245,7 @@ class ListingService
                 // For same-day times, end must be after start
                 if ($endMinutes <= $startMinutes && $endMinutes !== 0) {
                     throw ValidationException::withMessages([
-                        "schedule.{$index}.end_time" => ["The schedule.{$index}.end_time field must be a date after schedule.{$index}.start_time."]
+                        "schedule.{$index}.end_time" => ["The schedule.{$index}.end_time field must be a date after schedule.{$index}.start_time."],
                     ]);
                 }
             }
