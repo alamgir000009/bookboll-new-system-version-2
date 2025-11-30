@@ -391,13 +391,17 @@ if (! function_exists('logActivity')) {
 if (! function_exists('generatePaymentId')) {
     function generatePaymentId(int $bookingId, string $type): string
     {
-        $typeAbbr = match ($type) {
+        $typeAbbr = match (strtolower($type)) {
             'deposit'   => 'DEP',
             'remaining' => 'REM',
-            default     => '',
+            'full'      => 'FUL',
+            default     => 'PAY',
         };
 
-        return 'PAY-' . $bookingId . $typeAbbr;
+        // Add microtime to ensure uniqueness when multiple bookings are created simultaneously
+        $uniqueSuffix = substr(str_replace('.', '', microtime(true)), -6);
+        
+        return 'PAY-' . $bookingId . '-' . $typeAbbr . '-' . $uniqueSuffix;
     }
 }
 
@@ -429,12 +433,6 @@ if (! function_exists('determineSlotPrice')) {
         return $price;
     }
 
-    if (! function_exists('generatePaymentId')) {
-        function generatePaymentId($bookingId, $type)
-        {
-            return 'PAY-' . $bookingId . '-' . strtoupper($type) . '-' . time();
-        }
-    }
 
     if (! function_exists('generateInvoiceId')) {
         function generateInvoiceId()
