@@ -8,50 +8,7 @@ class VenueTableSeeder extends Seeder
 {
     public function run(): void
     {
-        $schedules = [
-            [
-                "day"        => "monday",
-                "is_open"    => "1",
-                "start_time" => "00:00",
-                "end_time"   => "23:00",
-            ],
-            [
-                "day"        => "tuesday",
-                "is_open"    => 1,
-                "start_time" => "06:00",
-                "end_time"   => "23:00",
-            ],
-            [
-                "day"        => "wednesday",
-                "is_open"    => 1,
-                "start_time" => "06:00",
-                "end_time"   => "23:00",
-            ],
-            [
-                "day"        => "thursday",
-                "is_open"    => 1,
-                "start_time" => "06:00",
-                "end_time"   => "23:00",
-            ],
-            [
-                "day"        => "friday",
-                "is_open"    => 1,
-                "start_time" => "06:00",
-                "end_time"   => "23:00",
-            ],
-            [
-                "day"        => "saturday",
-                "is_open"    => 1,
-                "start_time" => "06:00",
-                "end_time"   => "23:00",
-            ],
-            [
-                "day"        => "sunday",
-                "is_open"    => 1,
-                "start_time" => "06:00",
-                "end_time"   => "23:00",
-            ],
-        ];
+        $days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
         for ($i = 1; $i <= 5; $i++) {
 
@@ -64,8 +21,25 @@ class VenueTableSeeder extends Seeder
                 "maps_url"              => "https://maps.app.goo.gl/j8bnWW1A5taQB9Rx6",
             ]);
 
-            foreach ($schedules as $schedule) {
-                $venue->schedules()->create($schedule);
+            foreach ($days as $day) {
+                for ($slot = 0; $slot < 5; $slot++) {
+                    $startMinutes = $slot * 30;
+                    $startHour    = floor($startMinutes / 60);
+                    $startMin     = $startMinutes % 60;
+                    $startTime    = sprintf('%02d:%02d', $startHour, $startMin);
+
+                    $endMinutes = $startMinutes + 30;
+                    $endHour    = floor($endMinutes / 60);
+                    $endMin     = $endMinutes % 60;
+                    $endTime    = sprintf('%02d:%02d', $endHour, $endMin);
+
+                    $venue->schedules()->create([
+                        "day"        => $day,
+                        "is_open"    => true,
+                        "start_time" => $startTime,
+                        "end_time"   => $endTime,
+                    ]);
+                }
             }
         }
     }
