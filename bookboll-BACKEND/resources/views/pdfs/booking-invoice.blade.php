@@ -102,10 +102,15 @@
         }
 
         .booking-info {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
+            display: flex;
+            justify-content: space-between;
+            gap: 30px;
             font-size: 11px;
+        }
+
+        .booking-info > div {
+            flex: 1;
+            width: 48%;
         }
 
         .booking-row {
@@ -249,28 +254,51 @@
         </div>
 
         <div class="booking-details">
-            <div class="booking-title">Booking Details</div>
+            <div class="booking-title">Booking & Payment Details</div>
             <div class="booking-info">
+                <!-- Left Side: Booking Details -->
                 <div>
+                    <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Booking Information</div>
                     <div class="booking-row"><span>Venue:</span> <span>{{ $booking?->venue->name ?? 'N/A' }}</span></div>
                     @if($booking?->venue->maps_url)
                     <div class="booking-row">
                         <span>Map Link:</span>
                         <span>
-                            <a href="{{ $booking->venue->maps_url }}" target="_blank" class="text-blue-500 underline">
+                            <a href="{{ $booking->venue->maps_url }}" target="_blank" style="color: #3498db; text-decoration: underline;">
                                 View Map
                             </a>
                         </span>
                     </div>
                     @endif
                     <div class="booking-row"><span>Listing:</span> <span>{{ $booking?->listing->name ?? 'N/A' }}</span></div>
-                </div>
-                <div>
                     <div class="booking-row"><span>Date:</span> <span>{{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}</span></div>
                     <div class="booking-row"><span>Time:</span> <span>
-                            {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} To
+                            {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} -
                             {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}</span></div>
-                    <div class="booking-row"><span>Duration:</span> <span>{{ $booking->duration }} hours</span></div>
+                    <div class="booking-row"><span>Duration:</span> <span>{{ $booking->duration ?? 0 }} hours</span></div>
+                    @if($booking->status)
+                    <div class="booking-row"><span>Status:</span> <span style="font-weight: 600; color: {{ $booking->status === 'confirmed' ? '#27ae60' : ($booking->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($booking->status) }}</span></div>
+                    @endif
+                </div>
+                <!-- Right Side: Payment Details -->
+                <div>
+                    <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Payment Information</div>
+                    @if($booking->payments && $booking->payments->count() > 0)
+                        @foreach($booking->payments as $index => $payment)
+                        <div class="booking-row"><span>Payment ID:</span> <span>{{ $payment->payment_id ?? 'N/A' }}</span></div>
+                        <div class="booking-row"><span>Type:</span> <span>{{ ucfirst(str_replace('_', ' ', $payment->type ?? 'Full')) }}</span></div>
+                        <div class="booking-row"><span>Status:</span> <span style="font-weight: 600; color: {{ $payment->status === 'paid' ? '#27ae60' : ($payment->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($payment->status ?? 'N/A') }}</span></div>
+                        @if($payment->date)
+                        <div class="booking-row"><span>Date:</span> <span>{{ \Carbon\Carbon::parse($payment->date)->format('F d, Y') }}</span></div>
+                        @endif
+                        @if(!$loop->last)
+                        <hr style="margin: 8px 0; border: none; border-top: 1px solid #e0e0e0;">
+                        @endif
+                        @endforeach
+                    @else
+                        <div class="booking-row"><span>Payment Status:</span> <span style="font-weight: 600; color: {{ $booking->payment_status === 'fully_paid' ? '#27ae60' : ($booking->payment_status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst(str_replace('_', ' ', $booking->payment_status ?? 'Pending')) }}</span></div>
+                        <div class="booking-row"><span>Payment Method:</span> <span>{{ ucfirst(str_replace('_', ' ', $booking->payment_method ?? 'N/A')) }}</span></div>
+                    @endif
                 </div>
             </div>
         </div>
