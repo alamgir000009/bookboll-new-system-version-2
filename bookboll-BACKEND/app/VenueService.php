@@ -107,7 +107,6 @@ class VenueService
 
     public function update($request, $id)
     {
-        logger($request->all());
         $venue    = $this->venueModel->findOrFail($id);
         $formData = $request->validate([
             'name'                  => ['required', 'string', 'max:255'],
