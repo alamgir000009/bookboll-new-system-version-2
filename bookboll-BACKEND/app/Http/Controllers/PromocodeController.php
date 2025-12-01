@@ -56,13 +56,13 @@ class PromocodeController extends Controller
     public function applyPromocode(Request $request)
     {
         $request->validate([
-            'promocode'        => 'required|string',
-            'order_amount'     => 'required|numeric|min:0',
-            'user_id'          => 'nullable|exists:users,id',
-            'payment_method'   => 'nullable|string',
-            'venue_id'         => 'nullable|exists:venues,id',
-            'listing_id'       => 'nullable|exists:listings,id',
-            'booking_quantity' => 'nullable|numeric',
+            'promocode'      => 'required|string',
+            'order_amount'   => 'required|numeric|min:0',
+            'user_id'        => 'nullable|exists:users,id',
+            'payment_method' => 'nullable|string',
+            'venue_id'       => 'nullable|exists:venues,id',
+            'listing_id'     => 'nullable|exists:listings,id',
+            'quantity'       => 'nullable|numeric',
         ]);
 
         $promocode = Promocode::where('code', $request->promocode)->active()->first();

@@ -604,7 +604,7 @@ class BookingService
             ->count();
 
         // Get booking quantity from data if provided (for validation)
-        $bookingQuantity = $data['booking_quantity'] ?? 1;
+        $bookingQuantity = $data['quantity'] ?? 1;
         $maxBookings     = $listing->max_bookings_per_slot ?? 1;
 
         // Check if we can fit the requested quantity
@@ -652,12 +652,13 @@ class BookingService
             'phone'                           => 'required|string|min:5',
             'add_ons'                         => 'nullable|array',
             'add_ons.*'                       => 'exists:add_ons,id',
-            'booking_quantity'                => 'required|numeric|min:1',
+            'quantity'                        => 'required|numeric|min:1',
             'recurring_bookings'              => 'nullable|array',
             'recurring_bookings.*.date'       => 'required|date|after:date',
             'recurring_bookings.*.start_time' => 'required|date_format:H:i',
             'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
             'recurring_bookings.*.price'      => 'required|numeric|min:0',
+            'recurring_bookings.*.quantity'   => 'required|numeric|min:1',
             'recurring_bookings.*.add_ons'    => 'nullable|array',
             'recurring_bookings.*.add_ons.*'  => 'exists:add_ons,id',
         ]);
@@ -688,7 +689,8 @@ class BookingService
                 }
 
                 $recurringValidationData = array_merge($formData, [
-                    'date' => $recurring['date'],
+                    'date'     => $recurring['date'],
+                    'quantity' => $recurring['quantity'] ?? 1,
                 ]);
 
                 $validationErrors = $this->validateBooking($recurringValidationData);
@@ -733,12 +735,15 @@ class BookingService
             'payment_method_id'               => 'nullable|string',
             'payment_intent_id'               => 'nullable|required_if:payment_method,online_payment,deposit_remaining_on_arrival',
             'save_payment_details'            => 'nullable|boolean',
-            'booking_quantity'                => 'required|numeric|min:1',
+            'quantity'                        => 'required|numeric|min:1',
             'recurring_bookings'              => 'nullable|array',
             'recurring_bookings.*.date'       => 'required|date|after:date',
             'recurring_bookings.*.start_time' => 'required|date_format:H:i',
             'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
             'recurring_bookings.*.price'      => 'required|numeric|min:0',
+            'recurring_bookings.*.quantity'   => 'required|numeric|min:1',
+            'recurring_bookings.*.add_ons'   => 'nullable|array',
+            'recurring_bookings.*.add_ons.*' => 'exists:add_ons,id',
         ]);
 
         try {
@@ -817,18 +822,27 @@ class BookingService
 
             $singleSubtotal = round($basePrice + $addOnCost, 2);
 
-            // Calculate total bookings (base + recurring)
+            // Calculate total bookings (base + recurring with their own quantities)
             $recurringBookings      = $formData['recurring_bookings'] ?? [];
-            $totalRecurringBookings = count($recurringBookings) * $formData['booking_quantity'];
-            $totalBookings          = $formData['booking_quantity'] + $totalRecurringBookings;
+            $totalRecurringBookings = 0;
+            foreach ($recurringBookings as $recurring) {
+                $totalRecurringBookings += $recurring['quantity'] ?? 1;
+            }
+            $totalBookings = $formData['quantity'] + $totalRecurringBookings;
 
-            // Calculate combined subtotal including recurring bookings
-            $baseSubtotal      = round($singleSubtotal * $formData['booking_quantity'], 2);
+            // Calculate combined subtotal including recurring bookings with their own add-ons
+            $baseSubtotal      = round($singleSubtotal * $formData['quantity'], 2);
             $recurringSubtotal = 0;
             foreach ($recurringBookings as $recurring) {
-                // Add add-ons cost to recurring price
-                $recurringSingleSubtotal = round($recurring['price'] + $addOnCost, 2);
-                $recurringSubtotal += $recurringSingleSubtotal * $formData['booking_quantity'];
+                // Calculate add-ons cost for this recurring booking
+                $recurringAddOnCost = ! empty($recurring['add_ons'])
+                    ? AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
+                    : 0;
+
+                // Calculate subtotal for this recurring booking (price + its own add-ons)
+                $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
+                $recurringQuantity = $recurring['quantity'] ?? 1;
+                $recurringSubtotal += $recurringSingleSubtotal * $recurringQuantity;
             }
             $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
 
@@ -856,7 +870,7 @@ class BookingService
             $discountPerBooking = $totalBookings > 0 ? round($totalDiscount / $totalBookings, 2) : 0;
 
             // Create base bookings
-            for ($i = 0; $i < $formData['booking_quantity']; $i++) {
+            for ($i = 0; $i < $formData['quantity']; $i++) {
                 $booking = $this->createSingleBooking(
                     $user,
                     $formData,
@@ -907,14 +921,26 @@ class BookingService
                     return sendError('Validation failed for recurring booking on ' . $recurring['date'], $validationErrors, 422);
                 }
 
-                // Calculate price for recurring booking (use provided price + add-ons)
-                $recurringSingleSubtotal = round($recurring['price'] + $addOnCost, 2);
+                // Calculate add-ons cost for this recurring booking
+                $recurringAddOnCost = ! empty($recurring['add_ons'])
+                    ? AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
+                    : 0;
 
-                // Create booking_quantity bookings for this recurring date
-                for ($i = 0; $i < $formData['booking_quantity']; $i++) {
+                // Calculate price for recurring booking (use provided price + its own add-ons)
+                $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
+
+                // Get quantity for this recurring booking
+                $recurringQuantity = $recurring['quantity'] ?? 1;
+
+                // Prepare form data for this recurring booking with its own add_ons
+                $recurringFormData = $formData;
+                $recurringFormData['add_ons'] = $recurring['add_ons'] ?? [];
+
+                // Create bookings for this recurring date using its own quantity
+                for ($i = 0; $i < $recurringQuantity; $i++) {
                     $booking = $this->createSingleBooking(
                         $user,
-                        $formData,
+                        $recurringFormData,
                         $recurring['date'],
                         $recurring['start_time'],
                         $recurring['end_time'],
