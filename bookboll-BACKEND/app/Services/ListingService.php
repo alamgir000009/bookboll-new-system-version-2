@@ -1184,104 +1184,67 @@ class ListingService
     public function fetchRecurringBookedSlots($request)
     {
         $request->validate([
-            'booking_quantity' => 'required|numeric|min:1',
-            'listing_id'       => 'required|numeric|exists:listings,id',
-            'start_time'       => 'required|date_format:H:i',
-            'end_time'         => 'required|date_format:H:i',
-            'date'             => 'required|date',
-            'start_date'       => 'required|date',
-            'end_date'         => 'required|date',
+            'listing_id' => 'required|numeric|exists:listings,id',
+            'start_time' => 'required|date_format:H:i',
+            'end_time'   => 'required|date_format:H:i',
+            'start_date' => 'required|date',
+            'end_date'   => 'required|date',
         ]);
 
         try {
-            $listingId       = $request->listing_id;
-            $startTime       = $request->start_time;
-            $endTime         = $request->end_time;
-            $baseDate        = Carbon::parse($request->date);
-            $startDate       = Carbon::parse($request->start_date);
-            $endDate         = Carbon::parse($request->end_date);
-            $bookingQuantity = (int) $request->booking_quantity;
+            $listingId = $request->listing_id;
+            $startTime = $request->start_time;
+            $endTime   = $request->end_time;
+            $startDate = Carbon::parse($request->start_date);
+            $endDate   = Carbon::parse($request->end_date);
 
-            // Verify listing exists and get max_bookings_per_slot
             $listing = $this->listingModel->findOrFail($listingId);
             $maxBookingsPerSlot = $listing->max_bookings_per_slot ?? 1;
 
-            // Generate all dates in the range
-            $allDates = collect();
-            $currentDate = $startDate->copy();
-            while ($currentDate->lte($endDate)) {
-                // Skip the base booking date as it's already being booked
-                if ($currentDate->format('Y-m-d') !== $baseDate->format('Y-m-d')) {
-                    $allDates->push($currentDate->format('Y-m-d'));
-                }
-                $currentDate->addDay();
-            }
-
-            // Get existing bookings for the time slot in the date range
-            // Group by date and count bookings per date
-            $existingBookings = Booking::where('listing_id', $listingId)
-                ->where('start_time', $startTime)
-                ->where('end_time', $endTime)
+            $bookings = Booking::where('listing_id', $listingId)
                 ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
-                ->select('date', DB::raw('COUNT(*) as booking_count'))
-                ->groupBy('date')
-                ->get()
-                ->keyBy(function ($item) {
-                    return Carbon::parse($item->date)->format('Y-m-d');
-                });
+                ->where(function ($q) use ($startTime, $endTime) {
+                    $q->whereRaw('TIME(start_time) < ?', [$endTime])
+                        ->whereRaw('TIME(end_time) > ?', [$startTime]);
+                })
+                ->get(['id', 'date', 'start_time', 'end_time']);
 
-            // Analyze each date for availability
-            $fullyBookedDates = [];
-            $availableDates   = [];
-            $partiallyBookedDates = [];
+            $bookedDates = [];
+            foreach ($bookings as $booking) {
+                $dateStr = Carbon::parse($booking->date)->format('Y-m-d');
+                if (! isset($bookedDates[$dateStr])) {
+                    $bookedDates[$dateStr] = 0;
+                }
+                $bookedDates[$dateStr]++;
+            }
 
-            foreach ($allDates as $dateStr) {
-                $existingCount = $existingBookings->get($dateStr)->booking_count ?? 0;
-                $availableSlots = $maxBookingsPerSlot - $existingCount;
-                $canAccommodate = $availableSlots >= $bookingQuantity;
+            $datesInfo = [];
+            $currentDate = $startDate->copy();
+            while ($currentDate->lte($endDate)) {
+                $dateStr = $currentDate->format('Y-m-d');
+                $bookedCount = $bookedDates[$dateStr] ?? 0;
 
-                $dateInfo = [
+                $datesInfo[] = [
                     'date'            => $dateStr,
-                    'existing_bookings' => $existingCount,
-                    'available_slots'  => max(0, $availableSlots),
-                    'max_bookings'     => $maxBookingsPerSlot,
-                    'requested_quantity' => $bookingQuantity,
+                    'booked_count'    => $bookedCount,
+                    'available_slots' => max(0, $maxBookingsPerSlot - $bookedCount),
+                    'max_bookings'    => $maxBookingsPerSlot,
                 ];
 
-                if ($canAccommodate) {
-                    // Fully available - can accommodate the requested quantity
-                    $availableDates[] = $dateInfo;
-                } elseif ($availableSlots > 0) {
-                    // Partially available - some slots available but not enough for requested quantity
-                    $dateInfo['can_accommodate'] = $availableSlots;
-                    $partiallyBookedDates[] = $dateInfo;
-                } else {
-                    // Fully booked - no slots available
-                    $fullyBookedDates[] = $dateStr;
-                }
+                $currentDate->addDay();
             }
 
             return sendSuccess('Recurring booked slots fetched successfully', [
                 'listing_id'            => $listingId,
                 'start_time'            => $startTime,
                 'end_time'              => $endTime,
-                'base_date'             => $baseDate->format('Y-m-d'),
                 'date_range'            => [
                     'start_date' => $startDate->format('Y-m-d'),
                     'end_date'   => $endDate->format('Y-m-d'),
                 ],
-                'booking_quantity'      => $bookingQuantity,
                 'max_bookings_per_slot' => $maxBookingsPerSlot,
-                'fully_booked_dates'    => $fullyBookedDates,
-                'available_dates'       => $availableDates,
-                'partially_booked_dates' => $partiallyBookedDates,
-                'summary'               => [
-                    'total_dates_checked'    => $allDates->count(),
-                    'fully_booked_count'     => count($fullyBookedDates),
-                    'available_count'         => count($availableDates),
-                    'partially_booked_count'  => count($partiallyBookedDates),
-                ],
+                'dates'                 => $datesInfo,
             ]);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
@@ -1333,9 +1296,9 @@ class ListingService
             return sendSuccess('Sort order updated successfully.', [
                 'data' => ['updated_listings' => $listingIds],
             ]);
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
-            \Illuminate\Support\Facades\Log::error('Failed to update sort order: ' . $e->getMessage(), ["Exception" => $e]);
+            Log::error('Failed to update sort order: ' . $e->getMessage(), ["Exception" => $e]);
             return sendError('Failed to update sort order.');
         }
     }
