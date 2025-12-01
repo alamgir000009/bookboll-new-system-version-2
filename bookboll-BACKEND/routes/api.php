@@ -134,6 +134,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards']);
         Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard']);
 
+        Route::post('bookings/validate', [BookingController::class, 'validateBooking']);
         Route::post('bookings/confirm', [BookingController::class, 'confirmBooking']);
         Route::get('bookings/upcoming', [BookingController::class, 'upcoming']);
         Route::get('bookings/recent', [BookingController::class, 'recent']);

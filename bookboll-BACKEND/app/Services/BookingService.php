@@ -603,9 +603,14 @@ class BookingService
             })
             ->count();
 
-        $maxBookings = $listing->max_bookings_per_slot ?? 1;
-        if ($overlaps >= $maxBookings) {
-            $errors['capacity'] = "Max {$maxBookings} bookings per slot reached ({$overlaps} existing)";
+        // Get booking quantity from data if provided (for validation)
+        $bookingQuantity = $data['booking_quantity'] ?? 1;
+        $maxBookings     = $listing->max_bookings_per_slot ?? 1;
+
+        // Check if we can fit the requested quantity
+        $availableSlots = $maxBookings - $overlaps;
+        if ($bookingQuantity > $availableSlots) {
+            $errors['capacity'] = "Requested {$bookingQuantity} booking(s) but only {$availableSlots} slot(s) available. Max {$maxBookings} bookings per slot ({$overlaps} already booked)";
         }
 
         return $errors;
@@ -635,9 +640,81 @@ class BookingService
         return sendSuccess('Customer booking history fetched', compact('bookings'));
     }
 
+    public function validateBookingRequest($request)
+    {
+        $formData = $request->validate([
+            'venue_id'                        => 'required|exists:venues,id',
+            'listing_id'                      => 'required|exists:listings,id',
+            'promocode'                       => 'nullable|string',
+            'date'                            => 'required|date|after_or_equal:today',
+            'start_time'                      => 'required|date_format:H:i',
+            'end_time'                        => 'required|date_format:H:i',
+            'phone'                           => 'required|string|min:5',
+            'add_ons'                         => 'nullable|array',
+            'add_ons.*'                       => 'exists:add_ons,id',
+            'booking_quantity'                => 'required|numeric|min:1',
+            'recurring_bookings'              => 'nullable|array',
+            'recurring_bookings.*.date'       => 'required|date|after:date',
+            'recurring_bookings.*.start_time' => 'required|date_format:H:i',
+            'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
+            'recurring_bookings.*.price'      => 'required|numeric|min:0',
+            'recurring_bookings.*.add_ons'    => 'nullable|array',
+            'recurring_bookings.*.add_ons.*'  => 'exists:add_ons,id',
+        ]);
+
+        $errors = [];
+
+        $baseValidationErrors = $this->validateBooking($formData);
+        if (! empty($baseValidationErrors)) {
+            $errors['base_booking'] = $baseValidationErrors;
+        }
+
+        $recurringBookings = $formData['recurring_bookings'] ?? [];
+        if (! empty($recurringBookings)) {
+            $baseDate      = Carbon::parse($formData['date']);
+            $baseStartTime = $formData['start_time'];
+            $baseEndTime   = $formData['end_time'];
+
+            foreach ($recurringBookings as $index => $recurring) {
+                $recurringErrors = [];
+
+                if ($recurring['start_time'] !== $baseStartTime || $recurring['end_time'] !== $baseEndTime) {
+                    $recurringErrors['times'] = 'Recurring booking times must match base booking times';
+                }
+
+                $recurringDate = Carbon::parse($recurring['date']);
+                if ($recurringDate->lte($baseDate)) {
+                    $recurringErrors['date'] = 'Recurring booking date must be after the base booking date';
+                }
+
+                $recurringValidationData = array_merge($formData, [
+                    'date' => $recurring['date'],
+                ]);
+
+                $validationErrors = $this->validateBooking($recurringValidationData);
+                if (! empty($validationErrors)) {
+                    $recurringErrors = array_merge($recurringErrors, $validationErrors);
+                }
+
+                if (! empty($recurringErrors)) {
+                    $errors['recurring_bookings'][$index] = $recurringErrors;
+                }
+            }
+        }
+
+        if (! empty($errors)) {
+            Log::error("Booking validation errors", ["Errors" => $errors]);
+            return sendError('Validation failed', $errors, 422);
+        }
+
+        return sendSuccess('Booking validation passed', [
+            'valid'   => true,
+            'message' => 'All validations passed. Booking can be processed.',
+        ]);
+    }
+
     public function createBooking($request)
     {
-        logger($request->all());
         $user = auth()->user();
 
         $formData = $request->validate([
@@ -1561,7 +1638,6 @@ class BookingService
                 $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id);
             }
 
-            // Auto-confirm booking if payment is fully paid
             if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
                 autoConfirmBookingIfPaid($booking);
             }
@@ -1580,5 +1656,4 @@ class BookingService
             return null;
         }
     }
-
 }
