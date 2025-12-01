@@ -723,7 +723,7 @@ class BookingService
             'promocode'                       => 'nullable|string',
             'date'                            => 'required|date|after_or_equal:today',
             'start_time'                      => 'required|date_format:H:i',
-            'end_time'                        => 'required|date_format:H:i|after:start_time',
+            'end_time'                        => 'required|date_format:H:i',
             'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival',
             'agree_to_terms'                  => 'required|accepted',
             'notes'                           => 'nullable|string|max:500',
@@ -737,7 +737,7 @@ class BookingService
             'recurring_bookings'              => 'nullable|array',
             'recurring_bookings.*.date'       => 'required|date|after:date',
             'recurring_bookings.*.start_time' => 'required|date_format:H:i',
-            'recurring_bookings.*.end_time'   => 'required|date_format:H:i|after:recurring_bookings.*.start_time',
+            'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
             'recurring_bookings.*.price'      => 'required|numeric|min:0',
         ]);
 
