@@ -252,8 +252,18 @@
             <div class="booking-title">Booking Details</div>
             <div class="booking-info">
                 <div>
-                    <div class="booking-row"><span>Venue:</span> <span>{{ $booking->venue->name ?? 'N/A' }}</span></div>
-                    <div class="booking-row"><span>Listing:</span> <span>{{ $booking->listing->name ?? 'N/A' }}</span></div>
+                    <div class="booking-row"><span>Venue:</span> <span>{{ $booking?->venue->name ?? 'N/A' }}</span></div>
+                    @if($booking?->venue->maps_url)
+                    <div class="booking-row">
+                        <span>Map Link:</span>
+                        <span>
+                            <a href="{{ $booking->venue->maps_url }}" target="_blank" class="text-blue-500 underline">
+                                View Map
+                            </a>
+                        </span>
+                    </div>
+                    @endif
+                    <div class="booking-row"><span>Listing:</span> <span>{{ $booking?->listing->name ?? 'N/A' }}</span></div>
                 </div>
                 <div>
                     <div class="booking-row"><span>Date:</span> <span>{{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}</span></div>
