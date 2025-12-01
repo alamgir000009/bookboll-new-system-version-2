@@ -165,8 +165,9 @@
         <div class="two-column">
             <div>
                 <strong>Invoice To:</strong><br>
-                {{ $payment->user->name ?? 'N/A' }}<br>
-                {{ $payment->user->email ?? '' }}<br>
+                {{ $payment?->user?->name ?? 'N/A' }}<br>
+                {{ $payment?->user?->email ?? '' }}<br>
+                {{ $payment?->user?->phone ?? '' }}<br>
             </div>
             <div class="invoice-title">
                 <h2>Invoice #{{ $payment->id }}</h2>
@@ -178,11 +179,19 @@
         <table>
             <tr>
                 <th>Booking ID</th>
-                <td>#{{ $payment->booking_id }}</td>
+                <td>{{ $payment?->booking?->booking_id }}</td>
+            </tr>
+            <tr>
+                <th>Payment ID</th>
+                <td>{{ $payment->payment_id }}</td>
             </tr>
             <tr>
                 <th>Venue</th>
-                <td>{{ $payment->booking->venue->name ?? 'N/A' }}</td>
+                <td>{{ $payment?->booking?->venue->name ?? 'N/A' }}</td>
+            </tr>
+            <tr>
+                <th>Payment Type</th>
+                <td>{{ ucfirst($payment->type) }}</td>
             </tr>
             <tr>
                 <th>Payment Method</th>
@@ -191,6 +200,10 @@
             <tr>
                 <th>Status</th>
                 <td>{{ ucfirst($payment->status) }}</td>
+            </tr>
+            <tr>
+                <th>Notes</th>
+                <td>{{ $payment->notes }}</td>
             </tr>
         </table>
 

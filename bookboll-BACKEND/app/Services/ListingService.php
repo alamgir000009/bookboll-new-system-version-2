@@ -4,6 +4,7 @@ namespace App\Services;
 use App\Models\Asset;
 use App\Models\Booking;
 use App\Models\Listing;
+use App\Models\Resource;
 use App\Models\Schedule;
 use App\Models\Setting;
 use App\Models\SlotLock;
@@ -107,11 +108,11 @@ class ListingService
 
             $listing->load([
                 'venue',
-                'schedules' => function ($q) {$q->where('is_open', true);},
-                'pricingGroups',
                 'addOns',
-                'resources',
                 'assets',
+                'resources',
+                'pricingGroups',
+                'schedules' => function ($q) {$q->where('is_open', true);},
             ]);
 
             return sendSuccess('Listing created successfully', compact('listing'));
@@ -272,7 +273,6 @@ class ListingService
 
         $this->validateComplexData($parsedData, $isUpdate);
 
-        // Validate schedule times (handles 24-hour and wrap-around times)
         if (isset($parsedData['schedule'])) {
             $this->validateScheduleTimes($parsedData['schedule']);
         }
@@ -363,6 +363,25 @@ class ListingService
         ];
 
         $validator = \Validator::make($data, $rules);
+
+        $validator->after(function ($validator) use ($data) {
+            if (! empty($data['resources']) && is_array($data['resources'])) {
+                foreach ($data['resources'] as $index => $resourceData) {
+                    if (! isset($resourceData['id']) || ! isset($resourceData['quantity'])) {
+                        continue;
+                    }
+
+                    $resource = Resource::find($resourceData['id']);
+
+                    if ($resource && $resourceData['quantity'] > $resource->total_quantity) {
+                        $validator->errors()->add(
+                            "resources.$index.quantity",
+                            "The selected resource requirements quantity ({$resourceData['quantity']}) exceeds the resource total stock ({$resource->total_quantity})."
+                        );
+                    }
+                }
+            }
+        });
 
         if ($validator->fails()) {
             throw ValidationException::withMessages($validator->errors()->messages());
@@ -1160,12 +1179,12 @@ class ListingService
     public function fetchRecurringBookedSlots($request)
     {
         $request->validate([
-            'listing_id'  => 'required|numeric|exists:listings,id',
-            'start_time'  => 'required|date_format:H:i',
-            'end_time'    => 'required|date_format:H:i',
-            'date'        => 'required|date',
-            'start_date'  => 'required|date',
-            'end_date'    => 'required|date',
+            'listing_id' => 'required|numeric|exists:listings,id',
+            'start_time' => 'required|date_format:H:i',
+            'end_time'   => 'required|date_format:H:i',
+            'date'       => 'required|date',
+            'start_date' => 'required|date',
+            'end_date'   => 'required|date',
         ]);
 
         try {
@@ -1198,16 +1217,16 @@ class ListingService
                 ->toArray();
 
             return sendSuccess('Recurring booked slots fetched successfully', [
-                'listing_id'   => $listingId,
-                'start_time'   => $startTime,
-                'end_time'     => $endTime,
+                'listing_id'    => $listingId,
+                'start_time'    => $startTime,
+                'end_time'      => $endTime,
                 'selected_date' => $date->format('Y-m-d'),
-                'date_range'   => [
+                'date_range'    => [
                     'start_date' => $startDate->format('Y-m-d'),
                     'end_date'   => $endDate->format('Y-m-d'),
                 ],
-                'booked_dates' => $bookedDates,
-                'total_booked' => count($bookedDates),
+                'booked_dates'  => $bookedDates,
+                'total_booked'  => count($bookedDates),
             ]);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
