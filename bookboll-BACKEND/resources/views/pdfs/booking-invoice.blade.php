@@ -102,15 +102,7 @@
         }
 
         .booking-info {
-            display: flex;
-            justify-content: space-between;
-            gap: 30px;
             font-size: 11px;
-        }
-
-        .booking-info > div {
-            flex: 1;
-            width: 48%;
         }
 
         .booking-row {
@@ -207,22 +199,30 @@
 </head>
 <body>
     <div class="container">
-        <div style="width: 100%; margin-bottom: 20px;">
+        <!-- Header with Bookbool Logo -->
+        <div style="width: 100%; margin-bottom: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 15px 20px; border-radius: 6px;">
             <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
                 <tr>
-                    <td style="width: 60%; vertical-align: top; padding-right: 40px;">
-                        <div style="font-weight: bold; font-size: 18px; margin-bottom: 5px;">Venue Booking Service</div>
-                        <div style="line-height: 1.4; font-size: 12px;">
-                            {{ \CompnayInfo::ADDRESS }}<br>
-                            {{ \CompnayInfo::CITY }}, {{ \CompnayInfo::POSTAL_CODE }}<br>
-                            Email: {{ \CompnayInfo::EMAIL }}<br>
-                            Phone: {{ \CompnayInfo::PHONE }}
-                        </div>
+                    <td style="width: 70%; vertical-align: middle;">
+                        <table style="border-collapse: collapse; border-spacing: 0;">
+                            <tr>
+                                <td style="vertical-align: middle; padding-right: 12px;">
+                                    <img src="https://osamasafdar.com/bookboll-logo.jpeg" alt="Bookboll" style="height: 45px; width: auto;" onerror="this.style.display='none'">
+                                </td>
+                                <td style="vertical-align: middle;">
+                                    <div style="font-weight: bold; font-size: 18px; color: #ffffff; margin-bottom: 3px;">{{ \CompnayInfo::NAME ?? 'Bookbool' }}</div>
+                                    <div style="line-height: 1.4; font-size: 10px; color: rgba(255,255,255,0.95);">
+                                        {{ \CompnayInfo::ADDRESS ?? '' }}<br>
+                                        {{ \CompnayInfo::EMAIL ?? '' }} | {{ \CompnayInfo::PHONE ?? '' }}
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
                     </td>
-                    <td style="width: 40%; vertical-align: top; text-align: right;">
-                        <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">Invoice #{{ $invoiceNumber }}</div>
-                        <div style="font-size: 12px; line-height: 1.4;">
-                            Date: {{ now()->format('F d, Y') }}
+                    <td style="width: 30%; vertical-align: middle; text-align: right;">
+                        <div style="background: rgba(255,255,255,0.2); padding: 8px 15px; border-radius: 6px; display: inline-block;">
+                            <div style="font-size: 8px; color: rgba(255,255,255,0.9); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Booking Invoice</div>
+                            <div style="font-weight: bold; font-size: 18px; color: #ffffff;">#{{ $invoiceNumber }}</div>
                         </div>
                     </td>
                 </tr>
@@ -255,52 +255,54 @@
 
         <div class="booking-details">
             <div class="booking-title">Booking & Payment Details</div>
-            <div class="booking-info">
-                <!-- Left Side: Booking Details -->
-                <div>
-                    <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Booking Information</div>
-                    <div class="booking-row"><span>Venue:</span> <span>{{ $booking?->venue->name ?? 'N/A' }}</span></div>
-                    @if($booking?->venue->maps_url)
-                    <div class="booking-row">
-                        <span>Map Link:</span>
-                        <span>
-                            <a href="{{ $booking->venue->maps_url }}" target="_blank" style="color: #3498db; text-decoration: underline;">
-                                View Map
-                            </a>
-                        </span>
-                    </div>
-                    @endif
-                    <div class="booking-row"><span>Listing:</span> <span>{{ $booking?->listing->name ?? 'N/A' }}</span></div>
-                    <div class="booking-row"><span>Date:</span> <span>{{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}</span></div>
-                    <div class="booking-row"><span>Time:</span> <span>
-                            {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} -
-                            {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}</span></div>
-                    <div class="booking-row"><span>Duration:</span> <span>{{ $booking->duration ?? 0 }} hours</span></div>
-                    @if($booking->status)
-                    <div class="booking-row"><span>Status:</span> <span style="font-weight: 600; color: {{ $booking->status === 'confirmed' ? '#27ae60' : ($booking->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($booking->status) }}</span></div>
-                    @endif
-                </div>
-                <!-- Right Side: Payment Details -->
-                <div>
-                    <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Payment Information</div>
-                    @if($booking->payments && $booking->payments->count() > 0)
-                        @foreach($booking->payments as $index => $payment)
-                        <div class="booking-row"><span>Payment ID:</span> <span>{{ $payment->payment_id ?? 'N/A' }}</span></div>
-                        <div class="booking-row"><span>Type:</span> <span>{{ ucfirst(str_replace('_', ' ', $payment->type ?? 'Full')) }}</span></div>
-                        <div class="booking-row"><span>Status:</span> <span style="font-weight: 600; color: {{ $payment->status === 'paid' ? '#27ae60' : ($payment->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($payment->status ?? 'N/A') }}</span></div>
-                        @if($payment->date)
-                        <div class="booking-row"><span>Date:</span> <span>{{ \Carbon\Carbon::parse($payment->date)->format('F d, Y') }}</span></div>
+            <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
+                <tr>
+                    <!-- Left Side: Booking Details -->
+                    <td style="width: 50%; vertical-align: top; padding-right: 20px;">
+                        <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Booking Information</div>
+                        <div class="booking-row"><span>Venue:</span> <span>{{ $booking?->venue->name ?? 'N/A' }}</span></div>
+                        @if($booking?->venue->maps_url)
+                        <div class="booking-row">
+                            <span>Map Link:</span>
+                            <span>
+                                <a href="{{ $booking->venue->maps_url }}" target="_blank" style="color: #3498db; text-decoration: underline;">
+                                    View Map
+                                </a>
+                            </span>
+                        </div>
                         @endif
-                        @if(!$loop->last)
-                        <hr style="margin: 8px 0; border: none; border-top: 1px solid #e0e0e0;">
+                        <div class="booking-row"><span>Listing:</span> <span>{{ $booking?->listing->name ?? 'N/A' }}</span></div>
+                        <div class="booking-row"><span>Date:</span> <span>{{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}</span></div>
+                        <div class="booking-row"><span>Time:</span> <span>
+                                {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} -
+                                {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}</span></div>
+                        <div class="booking-row"><span>Duration:</span> <span>{{ $booking->duration ?? 0 }} hours</span></div>
+                        @if($booking->status)
+                        <div class="booking-row"><span>Status:</span> <span style="font-weight: 600; color: {{ $booking->status === 'confirmed' ? '#27ae60' : ($booking->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($booking->status) }}</span></div>
                         @endif
-                        @endforeach
-                    @else
-                        <div class="booking-row"><span>Payment Status:</span> <span style="font-weight: 600; color: {{ $booking->payment_status === 'fully_paid' ? '#27ae60' : ($booking->payment_status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst(str_replace('_', ' ', $booking->payment_status ?? 'Pending')) }}</span></div>
-                        <div class="booking-row"><span>Payment Method:</span> <span>{{ ucfirst(str_replace('_', ' ', $booking->payment_method ?? 'N/A')) }}</span></div>
-                    @endif
-                </div>
-            </div>
+                    </td>
+                    <!-- Right Side: Payment Details -->
+                    <td style="width: 50%; vertical-align: top; padding-left: 20px;">
+                        <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Payment Information</div>
+                        @if($booking->payments && $booking->payments->count() > 0)
+                            @foreach($booking->payments as $index => $payment)
+                            <div class="booking-row"><span>Payment ID:</span> <span>{{ $payment->payment_id ?? 'N/A' }}</span></div>
+                            <div class="booking-row"><span>Type:</span> <span>{{ ucfirst(str_replace('_', ' ', $payment->type ?? 'Full')) }}</span></div>
+                            <div class="booking-row"><span>Status:</span> <span style="font-weight: 600; color: {{ $payment->status === 'paid' ? '#27ae60' : ($payment->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($payment->status ?? 'N/A') }}</span></div>
+                            @if($payment->date)
+                            <div class="booking-row"><span>Date:</span> <span>{{ \Carbon\Carbon::parse($payment->date)->format('F d, Y') }}</span></div>
+                            @endif
+                            @if(!$loop->last)
+                            <hr style="margin: 8px 0; border: none; border-top: 1px solid #e0e0e0;">
+                            @endif
+                            @endforeach
+                        @else
+                            <div class="booking-row"><span>Payment Status:</span> <span style="font-weight: 600; color: {{ $booking->payment_status === 'fully_paid' ? '#27ae60' : ($booking->payment_status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst(str_replace('_', ' ', $booking->payment_status ?? 'Pending')) }}</span></div>
+                            <div class="booking-row"><span>Payment Method:</span> <span>{{ ucfirst(str_replace('_', ' ', $booking->payment_method ?? 'N/A')) }}</span></div>
+                        @endif
+                    </td>
+                </tr>
+            </table>
         </div>
 
         <table class="items-table">
