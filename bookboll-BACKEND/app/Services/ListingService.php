@@ -1151,24 +1151,27 @@ class ListingService
 
             $isAvailable = ! $isHoliday && $availableCount > 0 && $allResourcesAvailable;
 
-            $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
+            if ($isAvailable) {
 
-            $duration = getFormattedDuration($slotMinutes);
+                $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
 
-            $slots->push([
-                'start_time'          => $slotStart,
-                'end_time'            => $slotEnd,
-                'is_holiday'          => $isHoliday,
-                'available'           => $isAvailable,
-                'booked'              => $bookedCount,
-                'available_resources' => $availableQty,
-                'available_count'     => $availableCount,
-                'duration'            => $duration,
-                'time'                => "{$slotStart} - {$slotEnd}",
-                'price'                 => round($price, 2),
-                'capacity'              => $listing->capacity,
-                'max_bookings_per_slot' => $listing->max_bookings_per_slot,
-            ]);
+                $duration = getFormattedDuration($slotMinutes);
+
+                $slots->push([
+                    'start_time'          => $slotStart,
+                    'end_time'            => $slotEnd,
+                    'duration'            => $duration,
+                    'is_holiday'          => $isHoliday,
+                    'available'           => $isAvailable,
+                    'booked'              => $bookedCount,
+                    'available_resources' => $availableQty,
+                    'available_count'     => $availableCount,
+                    'capacity'            => $listing->capacity,
+                    'time'                => "{$slotStart} - {$slotEnd}",
+                    'price'                 => round($price, 2),
+                    'max_bookings_per_slot' => $listing->max_bookings_per_slot,
+                ]);
+            }
 
             $start->addMinutes($slotMinutes);
         }
