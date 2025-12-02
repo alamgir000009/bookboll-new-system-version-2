@@ -409,29 +409,32 @@ if (! function_exists('generatePaymentId')) {
 if (! function_exists('determineSlotPrice')) {
     function determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay)
     {
-        $price = $listing->base_price;
+        // Priority: 1. Special Day > 2. Pricing Groups > 3. Base Price
 
-        foreach ($listing->pricingGroups as $group) {
-            if (in_array($weekday, $group->days)) {
-                if (strtotime($slotStart) >= strtotime($group->start_time) &&
-                    strtotime($slotEnd) <= strtotime($group->end_time)) {
-                    $price = $group->price_per_hour;
-                    break;
-                }
-            }
-        }
-
-        if ($specialDay && $specialDay->timeBlocks->count()) {
+        // 1. Check Special Day first (highest priority)
+        if ($specialDay && $specialDay->timeBlocks && $specialDay->timeBlocks->count()) {
             foreach ($specialDay->timeBlocks as $block) {
                 if (strtotime($slotStart) >= strtotime($block->start_time) &&
                     strtotime($slotEnd) <= strtotime($block->end_time)) {
-                    $price = $block->price_per_hour ?? $price;
-                    break;
+                    return $block->price_per_hour ?? $listing->base_price;
                 }
             }
         }
 
-        return $price;
+        // 2. Check Pricing Groups (if no special day match)
+        if ($listing->relationLoaded('pricingGroups')) {
+            foreach ($listing->pricingGroups as $group) {
+                if (in_array($weekday, $group->days)) {
+                    if (strtotime($slotStart) >= strtotime($group->start_time) &&
+                        strtotime($slotEnd) <= strtotime($group->end_time)) {
+                        return $group->price_per_hour;
+                    }
+                }
+            }
+        }
+
+        // 3. Return Base Price (fallback)
+        return $listing->base_price;
     }
 
     if (! function_exists('generateInvoiceId')) {
