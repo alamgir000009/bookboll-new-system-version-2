@@ -317,6 +317,14 @@
                         <div class="booking-row">
                             <table>
                                 <tr>
+                                    <td>Payment Method:</td>
+                                    <td>{{ ucfirst(str_replace('_', ' ', $payment->method ?? 'Cash')) }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
                                     <td>Status:</td>
                                     <td style="font-weight: 600; color: {{ $payment->status === 'paid' ? '#27ae60' : ($payment->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($payment->status ?? 'N/A') }}</td>
                                 </tr>
