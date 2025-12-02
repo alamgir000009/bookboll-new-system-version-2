@@ -1198,7 +1198,7 @@ class ListingService
             $startDate = Carbon::parse($request->start_date);
             $endDate   = Carbon::parse($request->end_date);
 
-            $listing = $this->listingModel->findOrFail($listingId);
+            $listing            = $this->listingModel->findOrFail($listingId);
             $maxBookingsPerSlot = $listing->max_bookings_per_slot ?? 1;
 
             $bookings = Booking::where('listing_id', $listingId)
@@ -1219,17 +1219,62 @@ class ListingService
                 $bookedDates[$dateStr]++;
             }
 
-            $datesInfo = [];
-            $currentDate = $startDate->copy();
+            // Fetch all special days for the date range
+            $specialDays = SpecialDay::with('timeBlocks')
+                ->where('venue_id', $listing->venue_id)
+                ->where(function ($q) use ($listing) {
+                    $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+                })
+                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->active()
+                ->get()
+                ->keyBy(function ($day) {
+                    return Carbon::parse($day->date)->format('Y-m-d');
+                });
+
+            logger("Day", [$specialDays]);
+
+            $datesInfo     = [];
+            $currentDate   = $startDate->copy();
+            $hours_per_day = (strtotime($endTime) - strtotime($startTime)) / 3600; // Assuming $startTime and $endTime are 'H:i' strings; adjust if full datetimes
+
             while ($currentDate->lte($endDate)) {
-                $dateStr = $currentDate->format('Y-m-d');
+                $dateStr     = $currentDate->format('Y-m-d');
                 $bookedCount = $bookedDates[$dateStr] ?? 0;
+
+                // Check special day for this date
+                $specialDay  = $specialDays->get($dateStr);
+                $isHoliday   = $specialDay && $specialDay->type === 'holiday';
+                $isAvailable = true;
+                $dayPrice    = $listing->base_price;
+
+                if ($specialDay && $specialDay->timeBlocks && $specialDay->timeBlocks->isNotEmpty()) {
+                    $matchingBlock = $specialDay->timeBlocks->first(function ($block) use ($startTime, $endTime) {
+                        return $startTime >= $block->start_time && $endTime <= $block->end_time;
+                    });
+
+                    if (! $matchingBlock) {
+                        $isAvailable = false;
+                    } else {
+                        $dayPrice = $matchingBlock->price_per_hour * $hours_per_day;
+                    }
+                }
+
+                if ($isHoliday) {
+                    $isAvailable = false;
+                }
+
+                if (! $isAvailable) {
+                    $bookedCount = $maxBookingsPerSlot;
+                }
 
                 $datesInfo[] = [
                     'date'            => $dateStr,
+                    'price'           => $dayPrice,
                     'booked_count'    => $bookedCount,
-                    'available_slots' => max(0, $maxBookingsPerSlot - $bookedCount),
                     'max_bookings'    => $maxBookingsPerSlot,
+                    'is_available'    => $isAvailable || ($bookedCount == $maxBookingsPerSlot),
+                    'available_slots' => max(0, $maxBookingsPerSlot - $bookedCount),
                 ];
 
                 $currentDate->addDay();
