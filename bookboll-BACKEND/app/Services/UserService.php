@@ -229,6 +229,10 @@ class UserService
 
             $user = User::where('provider_id', $googleId)->orWhere('email', $email)->first();
 
+            if ($user && $user->status == User::BLOCKED) {
+                return sendError('Your account is block by admin please contact for further details');
+            }
+
             if (! $user) {
                 $user = $this->userModel->create([
                     'name'              => $name,
@@ -265,11 +269,14 @@ class UserService
     {
         try {
 
-            $user = $this->userModel->whereRelation('roles', 'customer')
-                ->whereEmail($request->email)->first();
+            $user = $this->userModel->whereRelation('roles', 'name', 'customer')->whereEmail($request->email)->first();
 
             if (! $user || ! password_verify($request->password, $user->password)) {
                 return sendError('Invalid credentials');
+            }
+
+            if ($user && $user->status == User::BLOCKED) {
+                return sendError('Your account is block by admin please contact for further details');
             }
 
             $token = $user->createToken('bookboll-customer-login-api-token')->plainTextToken;
@@ -281,6 +288,7 @@ class UserService
 
             return sendSuccess('Login successful', $response);
         } catch (Exception $e) {
+            Log::error("Customer Login Error: " . $e->getMessage(), ["Exception" => $e]);
             return sendError('Something went wrong during login');
         }
     }

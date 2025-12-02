@@ -101,4 +101,9 @@ class BookingController extends Controller
     {
         return $this->bookingService->recent($request);
     }
+
+    public function validateBooking(Request $request)
+    {
+        return $this->bookingService->validateBookingRequest($request);
+    }
 }

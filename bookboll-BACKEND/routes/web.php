@@ -22,3 +22,9 @@ Route::get('logs-000009', [LogViewerController::class, 'index']);
 
 Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentSuccess'])->name('payment.success');
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
+
+Route::get('test', function() {
+    $booking = \App\Models\Booking::find(71);
+    $invoiceNumber = "TEsttttttt";
+    return view('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
+});

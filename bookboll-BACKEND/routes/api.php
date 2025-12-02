@@ -73,6 +73,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('add-ons', AddOnController::class);
 
         Route::post('listings/sort', [ListingController::class, 'sort']);
+        Route::post('listings/{id}/images', [ListingController::class, 'uploadImage']);
+        Route::delete('listings/{id}/images', [ListingController::class, 'deleteImage']);
         Route::apiResource('listings', ListingController::class);
 
         Route::apiResource('promocodes', PromocodeController::class);
@@ -132,6 +134,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards']);
         Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard']);
 
+        Route::post('bookings/validate', [BookingController::class, 'validateBooking']);
         Route::post('bookings/confirm', [BookingController::class, 'confirmBooking']);
         Route::get('bookings/upcoming', [BookingController::class, 'upcoming']);
         Route::get('bookings/recent', [BookingController::class, 'recent']);
@@ -164,6 +167,7 @@ Route::prefix('customer')->group(function () {
 Route::get('home-page-data', [HelperController::class, 'homePageData']);
 Route::get('blog-categories', [PostCategoryController::class, 'blogCategories']);
 Route::get('blog-articles', [PostController::class, 'blogArticles']);
+Route::get('blog-articles/{slug}', [PostController::class, 'blogPostDetails']);
 Route::get('sports-categories', [SportsCategoryController::class, 'sportsCategories']);
 Route::post('contact-us', [HelperController::class, 'contactUs']);
 Route::get('fetch-venues', [VenueController::class, 'fetchVenues']);
@@ -172,6 +176,7 @@ Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggeste
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing']);
 Route::get('fetch-time-slots', [ListingController::class, 'fetchTimeSlots']);
 Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons']);
+Route::get('fetch-recurring-booked-slots', [ListingController::class, 'fetchRecurringBookedSlots']);
 Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode']);
 
 Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe']);

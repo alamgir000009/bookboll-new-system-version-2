@@ -92,50 +92,121 @@ class SpecialDayService
         try {
 
             $createdSpecialDays = [];
+            $updatedSpecialDays = [];
 
             foreach ($validated['dates'] as $dateString) {
 
-                $exists = SpecialDay::where('venue_id', $validated['venue_id'])
-                    ->where('date', $dateString)
-                    ->where('listing_id', $validated['listing_id'])
-                    ->exists();
+                // Find existing special day - handle null listing_id properly
+                $query = SpecialDay::where('venue_id', $validated['venue_id'])
+                    ->where('date', $dateString);
 
-                if ($exists) {
-                    DB::rollBack();
-                    return sendError("Special day already exists for date: {$dateString}");
+                if ($validated['listing_id'] === null) {
+                    $query->whereNull('listing_id');
+                } else {
+                    $query->where('listing_id', $validated['listing_id']);
                 }
 
-                $specialDay = SpecialDay::create([
-                    'venue_id'    => $validated['venue_id'],
-                    'listing_id'  => $validated['listing_id'],
-                    'date'        => $dateString,
-                    'type'        => $validated['type'],
-                    'description' => $validated['description'] ?? null,
-                    'status'      => 'active',
-                ]);
+                $existingSpecialDay = $query->first();
 
-                if ($validated['type'] == 'special' && ! empty($validated['time_blocks'])) {
-                    foreach ($validated['time_blocks'] as $block) {
+                if ($existingSpecialDay) {
+                    // Special day already exists - update it based on the new type and time blocks
+                    // Handle conversion scenarios
+                    if ($existingSpecialDay->type === 'holiday' && $validated['type'] === 'special') {
+                        // Convert holiday to special day and add time blocks
+                        $existingSpecialDay->update([
+                            'type'        => 'special',
+                            'description' => $validated['description'] ?? $existingSpecialDay->description,
+                        ]);
 
-                        $specialDay->timeBlocks()->create([
-                            'start_time'     => $block['start_time'],
-                            'end_time'       => $block['end_time'],
-                            'price_per_hour' => $block['price_per_hour'],
-                            'price_currency' => $block['price_currency'] ?? 'qar',
+                        // Add new time blocks (don't delete existing ones if any)
+                        if (!empty($validated['time_blocks'])) {
+                            foreach ($validated['time_blocks'] as $block) {
+                                $existingSpecialDay->timeBlocks()->create([
+                                    'start_time'     => $block['start_time'],
+                                    'end_time'       => $block['end_time'],
+                                    'price_per_hour' => $block['price_per_hour'],
+                                    'price_currency' => $block['price_currency'] ?? 'qar',
+                                ]);
+                            }
+                        }
+                    } elseif ($existingSpecialDay->type === 'special' && $validated['type'] === 'holiday') {
+                        // Convert special day to holiday (remove all time blocks)
+                        $existingSpecialDay->update([
+                            'type'        => 'holiday',
+                            'description' => $validated['description'] ?? $existingSpecialDay->description,
+                        ]);
+                        $existingSpecialDay->timeBlocks()->delete();
+                    } elseif ($existingSpecialDay->type === 'special' && $validated['type'] === 'special') {
+                        // Add more time blocks to existing special day
+                        $existingSpecialDay->update([
+                            'description' => $validated['description'] ?? $existingSpecialDay->description,
+                        ]);
+
+                        // Add new time blocks (append to existing ones)
+                        if (!empty($validated['time_blocks'])) {
+                            foreach ($validated['time_blocks'] as $block) {
+                                $existingSpecialDay->timeBlocks()->create([
+                                    'start_time'     => $block['start_time'],
+                                    'end_time'       => $block['end_time'],
+                                    'price_per_hour' => $block['price_per_hour'],
+                                    'price_currency' => $block['price_currency'] ?? 'qar',
+                                ]);
+                            }
+                        }
+                    } elseif ($existingSpecialDay->type === 'holiday' && $validated['type'] === 'holiday') {
+                        // Update holiday description if provided
+                        $existingSpecialDay->update([
+                            'description' => $validated['description'] ?? $existingSpecialDay->description,
                         ]);
                     }
-                }
 
-                $createdSpecialDays[] = $specialDay->load(['venue', 'listing', 'timeBlocks']);
+                    $updatedSpecialDays[] = $existingSpecialDay->load(['venue', 'listing', 'timeBlocks']);
+                } else {
+                    // Create new special day
+                    $specialDay = SpecialDay::create([
+                        'venue_id'    => $validated['venue_id'],
+                        'listing_id'  => $validated['listing_id'],
+                        'date'        => $dateString,
+                        'type'        => $validated['type'],
+                        'description' => $validated['description'] ?? null,
+                        'status'      => 'active',
+                    ]);
+
+                    if ($validated['type'] == 'special' && !empty($validated['time_blocks'])) {
+                        foreach ($validated['time_blocks'] as $block) {
+                            $specialDay->timeBlocks()->create([
+                                'start_time'     => $block['start_time'],
+                                'end_time'       => $block['end_time'],
+                                'price_per_hour' => $block['price_per_hour'],
+                                'price_currency' => $block['price_currency'] ?? 'qar',
+                            ]);
+                        }
+                    }
+
+                    $createdSpecialDays[] = $specialDay->load(['venue', 'listing', 'timeBlocks']);
+                }
             }
 
             DB::commit();
 
-            return sendSuccess('Special days created successfully.', ['specialDays' => $createdSpecialDays]);
+            $message = 'Special days processed successfully.';
+            $data = [
+                'created' => $createdSpecialDays,
+                'updated' => $updatedSpecialDays,
+            ];
+
+            if (!empty($createdSpecialDays) && !empty($updatedSpecialDays)) {
+                $message = 'Special days created and updated successfully.';
+            } elseif (!empty($updatedSpecialDays)) {
+                $message = 'Special days updated successfully.';
+            }
+
+            return sendSuccess($message, $data);
         } catch (\Throwable $e) {
             DB::rollBack();
+            Log::error('Failed to process special days: ' . $e->getMessage(), ['exception' => $e]);
 
-            return sendError('Failed to create special days: ' . $e->getMessage());
+            return sendError('Failed to process special days: ' . $e->getMessage());
         }
     }
 

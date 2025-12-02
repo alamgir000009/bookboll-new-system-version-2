@@ -60,8 +60,23 @@ class ListingController extends Controller
         return $this->listingService->fetchAddons($listing_id);
     }
 
+    public function fetchRecurringBookedSlots(Request $request)
+    {
+        return $this->listingService->fetchRecurringBookedSlots($request);
+    }
+
     public function sort(Request $request)
     {
         return $this->listingService->updateSortOrder($request);
+    }
+
+    public function uploadImage(Request $request, $id)
+    {
+        return $this->listingService->uploadImage($request, $id);
+    }
+
+    public function deleteImage(Request $request, $id)
+    {
+        return $this->listingService->deleteImage($request, $id);
     }
 }

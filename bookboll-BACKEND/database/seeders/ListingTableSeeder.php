@@ -20,8 +20,36 @@ class ListingTableSeeder extends Seeder
         $paymentOptionsJson = str_replace("'", '"', "{'cash_on_arrival':true,'deposit':{'amount':50.00,'percentage':50}}");
         $paymentOptions     = json_decode($paymentOptionsJson, true) ?: [];
 
-        $scheduleJson = str_replace("'", '"', "[{'day':'monday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'tuesday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'wednesday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'thursday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'friday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'saturday','is_open':true,'start_time':'06:00','end_time':'22:00'},{'day':'sunday','is_open':true,'start_time':'06:00','end_time':'22:00'}]");
-        $schedule     = json_decode($scheduleJson, true) ?: [];
+        // Generate 30-minute schedule slots from 06:00 to 22:00 for each day
+        $days              = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        $schedule          = [];
+        $startHour         = 6;
+        $startMinute       = 0;
+        $totalStartMinutes = $startHour * 60 + $startMinute;               // 360 minutes (06:00)
+        $totalEndMinutes   = 22 * 60;                                      // 1320 minutes (22:00)
+        $numSlots          = ($totalEndMinutes - $totalStartMinutes) / 30; // 32 slots
+
+        foreach ($days as $day) {
+            for ($slot = 0; $slot < $numSlots; $slot++) {
+                $currentStartMinutes = $totalStartMinutes + ($slot * 30);
+                $currentEndMinutes   = $currentStartMinutes + 30;
+
+                $startHourSlot = floor($currentStartMinutes / 60);
+                $startMinSlot  = $currentStartMinutes % 60;
+                $startTime     = sprintf('%02d:%02d', $startHourSlot, $startMinSlot);
+
+                $endHourSlot = floor($currentEndMinutes / 60);
+                $endMinSlot  = $currentEndMinutes % 60;
+                $endTime     = sprintf('%02d:%02d', $endHourSlot, $endMinSlot);
+
+                $schedule[] = [
+                    'day'        => $day,
+                    'is_open'    => true,
+                    'start_time' => $startTime,
+                    'end_time'   => $endTime,
+                ];
+            }
+        }
 
         $pricingGroupsJson = str_replace("'", '"', "[{'name':'Peak Time','start_time':'18:00','end_time':'22:00','price_per_hour':150.00,'days':['monday','tuesday','wednesday','thursday','friday','saturday']},{'name':'Off-Peak Time','start_time':'06:00','end_time':'18:00','price_per_hour':80.00,'days':['monday','tuesday','wednesday','thursday','friday','saturday']}]");
         $pricingGroups     = json_decode($pricingGroupsJson, true) ?: [];

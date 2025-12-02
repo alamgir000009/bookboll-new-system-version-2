@@ -1,8 +1,10 @@
 <?php
 namespace App\Services;
 
+use App\Models\Asset;
 use App\Models\Booking;
 use App\Models\Listing;
+use App\Models\Resource;
 use App\Models\Schedule;
 use App\Models\Setting;
 use App\Models\SlotLock;
@@ -11,8 +13,10 @@ use App\Models\SportsCategory;
 use App\Models\SportsType;
 use BookingStatus;
 use Carbon\Carbon;
+use Exception;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
@@ -27,10 +31,13 @@ class ListingService
         $search           = $request->search ?? null;
 
         $query = $this->listingModel::with([
-            'venue',
-            'pricingGroups',
             'addOns',
+            'assets',
             'resources',
+            'pricingGroups',
+            'venue'     => function ($q) {
+                $q->orderBy('sort_order', 'ASC');
+            },
             'schedules' => function ($q) {
                 $q->where('is_open', true)->orderBy('day');
             },
@@ -83,8 +90,7 @@ class ListingService
             }
 
             if ($request->hasFile('images')) {
-                $imageUrls = $this->uploadImages($request->file('images'));
-                $listing->update(['images_urls' => $imageUrls]);
+                $this->uploadImagesAsAssets($listing, $request->file('images'));
             }
 
             if (! empty($formData['schedule'])) {
@@ -104,10 +110,11 @@ class ListingService
 
             $listing->load([
                 'venue',
-                'schedules' => function ($q) {$q->where('is_open', true);},
-                'pricingGroups',
                 'addOns',
+                'assets',
                 'resources',
+                'pricingGroups',
+                'schedules' => function ($q) {$q->where('is_open', true);},
             ]);
 
             return sendSuccess('Listing created successfully', compact('listing'));
@@ -131,12 +138,14 @@ class ListingService
             $listingUpdateData = $this->extractListingData($formData);
 
             if ($request->hasFile('images')) {
-                $this->deleteOldImages($listing->images_urls);
-                $imageUrls                        = $this->uploadImages($request->file('images'));
-                $listingUpdateData['images_urls'] = $imageUrls;
-            } else {
-                unset($listingUpdateData['images_urls']);
+                // Delete old assets
+                $this->deleteListingAssets($listing);
+                // Upload new images as assets
+                $this->uploadImagesAsAssets($listing, $request->file('images'));
             }
+
+            // Remove images_urls from update data as we're using Asset model now
+            unset($listingUpdateData['images_urls']);
 
             $listing->update($listingUpdateData);
 
@@ -186,7 +195,7 @@ class ListingService
 
     public function show($id)
     {
-        $listing = $this->listingModel->with(['schedules', 'addOns', 'resources', 'pricingGroups'])->findOrFail($id);
+        $listing = $this->listingModel->with(['schedules', 'addOns', 'resources', 'pricingGroups', 'assets'])->findOrFail($id);
         return sendSuccess('Listing deleted successfully', compact('listing'));
     }
 
@@ -224,7 +233,7 @@ class ListingService
             'base_price'                         => 'required|numeric|min:0',
             'max_bookings_per_slot'              => 'required|integer|min:1',
             'allow_multiple_bookings'            => 'nullable|boolean',
-            'max_multiple_bookings'              => 'nullable|integer|min:1|required_if:allow_multiple_bookings,true',
+            'max_multiple_bookings'              => 'nullable|integer|min:1|required_if:allow_multiple_bookings,true|lte:max_bookings_per_slot',
             'capacity'                           => 'required|integer|min:1',
             'slot_duration'                      => 'required|numeric|min:0',
             'loyalty_points'                     => 'nullable|integer|min:0',
@@ -238,7 +247,7 @@ class ListingService
             'schedule.*.day'                     => 'required|in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
             'schedule.*.is_open'                 => 'required|boolean',
             'schedule.*.start_time'              => 'required_if:schedule.*.is_open,true|date_format:H:i',
-            'schedule.*.end_time'                => 'required_if:schedule.*.start_time,*,schedule.*.is_open,true|after:schedule.*.start_time',
+            'schedule.*.end_time'                => 'required_if:schedule.*.is_open,true|date_format:H:i',
             'pricing_groups'                     => 'nullable|array',
             'pricing_groups.*.name'              => 'nullable|string|max:255',
             'pricing_groups.*.start_time'        => 'required|date_format:H:i',
@@ -265,6 +274,10 @@ class ListingService
         $parsedData = $this->parseJsonFields($parsedData);
 
         $this->validateComplexData($parsedData, $isUpdate);
+
+        if (isset($parsedData['schedule'])) {
+            $this->validateScheduleTimes($parsedData['schedule']);
+        }
 
         return $parsedData;
     }
@@ -335,7 +348,7 @@ class ListingService
             'schedule.*.day'                     => 'required|in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
             'schedule.*.is_open'                 => 'required|boolean',
             'schedule.*.start_time'              => 'required_if:schedule.*.is_open,true|date_format:H:i',
-            'schedule.*.end_time'                => 'required_if:schedule.*.start_time,*,schedule.*.is_open,true|after:schedule.*.start_time',
+            'schedule.*.end_time'                => 'required_if:schedule.*.is_open,true|date_format:H:i',
 
             'pricing_groups'                     => 'nullable|array',
             'pricing_groups.*.name'              => 'nullable|string|max:255',
@@ -352,6 +365,25 @@ class ListingService
         ];
 
         $validator = \Validator::make($data, $rules);
+
+        $validator->after(function ($validator) use ($data) {
+            if (! empty($data['resources']) && is_array($data['resources'])) {
+                foreach ($data['resources'] as $index => $resourceData) {
+                    if (! isset($resourceData['id']) || ! isset($resourceData['quantity'])) {
+                        continue;
+                    }
+
+                    $resource = Resource::find($resourceData['id']);
+
+                    if ($resource && $resourceData['quantity'] > $resource->total_quantity) {
+                        $validator->errors()->add(
+                            "resources.$index.quantity",
+                            "The selected resource requirements quantity ({$resourceData['quantity']}) exceeds the resource total stock ({$resource->total_quantity})."
+                        );
+                    }
+                }
+            }
+        });
 
         if ($validator->fails()) {
             throw ValidationException::withMessages($validator->errors()->messages());
@@ -411,8 +443,88 @@ class ListingService
 
     protected function syncSchedules(Listing $listing, array $scheduleData): void
     {
-        $listing->schedules()->delete();
-        $this->createSchedules($listing, $scheduleData);
+        // Load existing schedules
+        $existingSchedules = $listing->schedules()->get();
+
+        // Normalize new schedules for comparison (only open schedules)
+        $normalizedNewSchedules = collect($scheduleData)
+            ->filter(function ($schedule) {
+                return $schedule['is_open'] ?? false;
+            })
+            ->map(function ($schedule) {
+                return [
+                    'day'        => $schedule['day'],
+                    'is_open'    => true,
+                    'start_time' => $schedule['start_time'] ?? null,
+                    'end_time'   => $schedule['end_time'] ?? null,
+                ];
+            });
+
+        // Normalize existing schedules for comparison
+        $normalizedExistingSchedules = $existingSchedules->map(function ($schedule) {
+            // Convert datetime to string format for comparison
+            $startTime = $schedule->start_time ?
+            (is_string($schedule->start_time) ? $schedule->start_time : $schedule->start_time->format('H:i'))
+                : null;
+            $endTime = $schedule->end_time ?
+            (is_string($schedule->end_time) ? $schedule->end_time : $schedule->end_time->format('H:i'))
+                : null;
+
+            return [
+                'id'         => $schedule->id,
+                'day'        => $schedule->day,
+                'is_open'    => $schedule->is_open,
+                'start_time' => $startTime,
+                'end_time'   => $endTime,
+            ];
+        });
+
+        // Find schedules to delete (exist in DB but not in new data)
+        $schedulesToDelete = $normalizedExistingSchedules->filter(function ($existing) use ($normalizedNewSchedules) {
+            return ! $normalizedNewSchedules->contains(function ($new) use ($existing) {
+                return $this->schedulesMatch($existing, $new);
+            });
+        });
+
+        // Find schedules to create (exist in new data but not in DB)
+        $schedulesToCreate = $normalizedNewSchedules->filter(function ($new) use ($normalizedExistingSchedules) {
+            return ! $normalizedExistingSchedules->contains(function ($existing) use ($new) {
+                return $this->schedulesMatch($existing, $new);
+            });
+        });
+
+        // Delete schedules that no longer exist
+        if ($schedulesToDelete->isNotEmpty()) {
+            $idsToDelete = $schedulesToDelete->pluck('id')->toArray();
+            $listing->schedules()->whereIn('id', $idsToDelete)->delete();
+        }
+
+        // Create new schedules
+        foreach ($schedulesToCreate as $schedule) {
+            Schedule::create([
+                'is_open'    => true,
+                'listing_id' => $listing->id,
+                'day'        => $schedule['day'],
+                'venue_id'   => $listing->venue_id,
+                'end_time'   => $schedule['end_time'],
+                'start_time' => $schedule['start_time'],
+            ]);
+        }
+    }
+
+    /**
+     * Check if two schedule entries match
+     *
+     * @param array $schedule1
+     * @param array $schedule2
+     * @return bool
+     */
+    protected function schedulesMatch($schedule1, $schedule2)
+    {
+        return $schedule1['day'] === $schedule2['day'] &&
+            $schedule1['is_open'] === $schedule2['is_open'] &&
+            $schedule1['start_time'] === $schedule2['start_time'] &&
+            $schedule1['end_time'] === $schedule2['end_time'];
     }
 
     protected function uploadImages(array $images): array
@@ -438,6 +550,155 @@ class ListingService
         }
     }
 
+    protected function uploadImagesAsAssets(Listing $listing, array $images): void
+    {
+        $sortOrder = Asset::where('listing_id', $listing->id)->max('sort_order') ?? 0;
+
+        foreach ($images as $image) {
+            if ($image->isValid()) {
+                $uploadedPath = $image->store('listings', 'public');
+
+                Asset::create([
+                    'listing_id' => $listing->id,
+                    'path'       => $uploadedPath,
+                    'type'       => 'image',
+                    'sort_order' => ++$sortOrder,
+                ]);
+            }
+        }
+    }
+
+    protected function deleteListingAssets(Listing $listing): void
+    {
+        $assets = Asset::where('listing_id', $listing->id)->get();
+
+        foreach ($assets as $asset) {
+            // Delete file from storage
+            if (Storage::disk('public')->exists($asset->path)) {
+                Storage::disk('public')->delete($asset->path);
+            }
+            // Delete asset record
+            $asset->delete();
+        }
+    }
+
+    public function uploadImage($request, $listingId)
+    {
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:5120', // 5MB max
+        ]);
+
+        try {
+            $listing = $this->listingModel->findOrFail($listingId);
+
+            // Upload the new image
+            if ($request->hasFile('image')) {
+                $uploadedPath = $request->file('image')->store('listings', 'public');
+
+                // Get the current max sort_order to append at the end
+                $maxSortOrder = Asset::where('listing_id', $listingId)->max('sort_order') ?? 0;
+
+                // Create asset record
+                $asset = Asset::create([
+                    'listing_id' => $listingId,
+                    'path'       => $uploadedPath,
+                    'type'       => 'image',
+                    'sort_order' => $maxSortOrder + 1,
+                ]);
+
+                // Get the full URL for the uploaded image
+                $uploadedUrl = $asset->url;
+
+                // Get total images count
+                $totalImages = Asset::where('listing_id', $listingId)->count();
+
+                return sendSuccess('Image uploaded successfully', [
+                    'listing_id'   => $listing->id,
+                    'image_url'    => $uploadedUrl,
+                    'image_path'   => $uploadedPath,
+                    'asset_id'     => $asset->id,
+                    'total_images' => $totalImages,
+                ]);
+            }
+
+            return sendError('No image file provided', [], 400);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return sendError('Listing not found', [], 404);
+        } catch (\Exception $e) {
+            return sendError('Failed to upload image: ' . $e->getMessage(), [], 500);
+        }
+    }
+
+    public function deleteImage($request, $listingId)
+    {
+        $request->validate([
+            'url' => 'required|string',
+        ]);
+
+        try {
+            $listing = $this->listingModel->findOrFail($listingId);
+
+            // Extract the file path from the URL (passed as query parameter)
+            $imageUrl = $request->query('url');
+
+            // Handle both full URL and relative path
+            if (strpos($imageUrl, '/storage/') !== false) {
+                // Extract path from URL: /storage/listings/filename.jpg -> listings/filename.jpg
+                $urlPath = parse_url($imageUrl, PHP_URL_PATH);
+                $path    = str_replace('/storage/', '', $urlPath);
+            } elseif (strpos($imageUrl, 'storage/') === 0) {
+                // Handle storage/listings/filename.jpg
+                $path = str_replace('storage/', '', $imageUrl);
+            } else {
+                // If it's already a relative path like "listings/filename.jpg"
+                $path = $imageUrl;
+            }
+
+            // Remove leading slash if present
+            $path = ltrim($path, '/');
+
+            // Find asset by path
+            $asset = Asset::where('listing_id', $listingId)
+                ->where('path', $path)
+                ->first();
+
+            // If not found by exact path, try to find by filename
+            if (! $asset) {
+                $filename = basename($path);
+                $asset    = Asset::where('listing_id', $listingId)
+                    ->whereRaw("SUBSTRING_INDEX(path, '/', -1) = ?", [$filename])
+                    ->first();
+            }
+
+            if (! $asset) {
+                return sendError('Image not found in listing assets', [], 404);
+            }
+
+            // Check if file exists before deleting
+            if (Storage::disk('public')->exists($asset->path)) {
+                // Delete the file from storage
+                Storage::disk('public')->delete($asset->path);
+            }
+
+            // Delete the asset record
+            $asset->delete();
+
+            // Get remaining images count
+            $remainingImages = Asset::where('listing_id', $listingId)->count();
+
+            return sendSuccess('Image deleted successfully', [
+                'listing_id'       => $listing->id,
+                'remaining_images' => $remainingImages,
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return sendError('Listing not found', [], 404);
+        } catch (\Exception $e) {
+            return sendError('Failed to delete image: ' . $e->getMessage(), [], 500);
+        }
+    }
+
     public function fetchListings($request)
     {
         $date             = $request->date ?? null;
@@ -448,7 +709,7 @@ class ListingService
         $categories       = $request->categories ?? [];
         $records_per_page = $request->records_per_page ?? null;
 
-        $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns'])
+        $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns', 'assets'])
             ->active()
             ->whereRelation('venue', 'status', 'active')
             ->orderBy('sort_order', 'ASC')
@@ -503,24 +764,89 @@ class ListingService
 
         $listings->getCollection()->transform(function ($listing) {
             return [
-                'id'              => $listing->id,
-                'name'            => $listing->name,
-                'add_ons'         => $listing->addOns,
-                'price'           => $listing->base_price,
-                'description'     => $listing->description,
-                'venue'           => $listing->venue?->name,
-                'duration'        => $listing->slot_duration,
-                'slot_duration'   => $listing->slot_duration,
-                'loyalty_points'  => $listing->loyalty_points,
-                'payment_options' => $listing->payment_options,
-                'map_address'     => $listing->venue?->maps_url,
-                'images'          => $listing->images_urls ?? [],
-                'sport'           => $listing->sportsCategory?->name,
-                'rating'          => round($listing->average_rating, 1),
+                'id'                      => $listing->id,
+                'name'                    => $listing->name,
+                'add_ons'                 => $listing->addOns,
+                'price'                   => $listing->base_price,
+                'description'             => $listing->description,
+                'venue'                   => $listing->venue?->name,
+                'slot_duration'           => $listing->slot_duration,
+                'loyalty_points'          => $listing->loyalty_points,
+                'payment_options'         => $listing->payment_options,
+                'map_address'             => $listing->venue?->maps_url,
+                'images'                  => $listing->images_urls ?? [],
+                'sport'                   => $listing->sportsCategory?->name,
+                'max_multiple_bookings'   => $listing->max_multiple_bookings,
+                'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+                'rating'                  => round($listing->average_rating, 1),
+                'duration'                => getFormattedDuration($listing->slot_duration * 60),
             ];
         });
 
         return sendSuccess("Listings fetched successfully", compact('listings'));
+    }
+
+    public function fetchSuggestions($request)
+    {
+        $categoryType = $request->category ?? null;
+
+        $sportsType = SportsType::withCount('listings')->where("title", $categoryType)->first();
+
+        $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
+
+        $listings = $this->listingModel::with(['venue', 'sportsCategory', 'assets'])
+            ->when($categoryIds, function ($query, $categoryIds) {
+                $query->whereNotIn('sports_category_id', $categoryIds);
+            })
+            ->whereRelation('venue', 'status', 'active')
+            ->take(3)
+            ->get()
+            ->map(function ($listing) {
+                return [
+                    'id'                      => $listing->id,
+                    'name'                    => $listing->name,
+                    'price'                   => $listing->base_price,
+                    'description'             => $listing->description,
+                    'venue'                   => $listing->venue?->name,
+                    'loyaltyPoints'           => $listing->loyalty_points,
+                    'payment_options'         => $listing->payment_options,
+                    'map_address'             => $listing->venue?->maps_url,
+                    'images'                  => $listing->images_urls ?? [],
+                    'sport'                   => $listing->sportsCategory?->name,
+                    'category'                => $listing->sportsCategory?->name,
+                    'max_multiple_bookings'   => $listing->max_multiple_bookings,
+                    'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+                    'icon'                    => $listing->sportsCategory?->sportsType?->icon,
+                    'rating'                  => round($listing->average_rating, 1),
+                    'duration'                => getFormattedDuration($listing->slot_duration * 60),
+                ];
+            });
+
+        return sendSuccess("Listings fetched successfully", compact('listings', 'sportsType'));
+    }
+
+    public function fetchAddons($listing_id)
+    {
+        $listing = $this->listingModel->with([
+            'addons' => function ($query) {
+                $query->orderBy('sort_order', 'ASC');
+            },
+            'assets',
+        ])->findOrFail($listing_id);
+
+        $addons = $listing->addons->map(function ($addon) {
+            return [
+                'recommended'     => true,
+                'id'              => $addon->id,
+                'name'            => $addon->name,
+                'image'           => $addon->image,
+                'price'           => $addon->price ?? 0,
+                'description'     => $addon->description,
+                'hours_extension' => $addon->hours_extension,
+            ];
+        });
+
+        return sendSuccess('Addons fetched successfully', compact('addons'));
     }
 
     public function listing($id)
@@ -530,6 +856,7 @@ class ListingService
         $listing = $this->listingModel::with([
             'venue:id,name,maps_url',
             'sportsCategory:id,name',
+            'assets',
         ])->findOrFail($id);
 
         $specialDay = SpecialDay::with('timeBlocks')
@@ -546,6 +873,7 @@ class ListingService
             'id'                      => $listing->id,
             'name'                    => $listing->name,
             'venue_id'                => $listing->venue_id,
+            'capacity'                => $listing->capacity,
             'price'                   => $listing->base_price,
             'description'             => $listing->description,
             'venue'                   => $listing->venue?->name,
@@ -588,6 +916,7 @@ class ListingService
             'schedules',
             'pricingGroups',
             'venue.schedules',
+            'assets',
         ])->findOrFail($listingId);
 
         if (! $listing->venue || $listing->venue->status !== 'active') {
@@ -824,32 +1153,27 @@ class ListingService
 
             $isAvailable = ! $isHoliday && $availableCount > 0 && $allResourcesAvailable;
 
-            $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
+            if ($isAvailable) {
 
-            $hours   = floor($slotMinutes / 60);
-            $minutes = $slotMinutes % 60;
-            if ($hours > 0 && $minutes > 0) {
-                $duration = $hours . ' hour' . ($hours > 1 ? 's' : '') . ' ' . $minutes . ' minute' . ($minutes > 1 ? 's' : '');
-            } elseif ($hours > 0) {
-                $duration = $hours . ' hour' . ($hours > 1 ? 's' : '');
-            } else {
-                $duration = $minutes . ' minute' . ($minutes > 1 ? 's' : '');
+                $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
+
+                $duration = getFormattedDuration($slotMinutes);
+
+                $slots->push([
+                    'start_time'          => $slotStart,
+                    'end_time'            => $slotEnd,
+                    'duration'            => $duration,
+                    'is_holiday'          => $isHoliday,
+                    'available'           => $isAvailable,
+                    'booked'              => $bookedCount,
+                    'available_resources' => $availableQty,
+                    'available_count'     => $availableCount,
+                    'capacity'            => $listing->capacity,
+                    'time'                => "{$slotStart} - {$slotEnd}",
+                    'price'                 => round($price, 2),
+                    'max_bookings_per_slot' => $listing->max_bookings_per_slot,
+                ]);
             }
-
-            $slots->push([
-                'start_time'          => $slotStart,
-                'end_time'            => $slotEnd,
-                'is_holiday'          => $isHoliday,
-                'available'           => $isAvailable,
-                'booked'              => $bookedCount,
-                'available_resources' => $availableQty,
-                'available_count'     => $availableCount,
-                'duration'            => $duration,
-                'time'                => "{$slotStart} - {$slotEnd}",
-                'price'                 => round($price, 2),
-                'capacity'              => $listing->capacity,
-                'max_bookings_per_slot' => $listing->max_bookings_per_slot,
-            ]);
 
             $start->addMinutes($slotMinutes);
         }
@@ -857,62 +1181,123 @@ class ListingService
         return $slots->values();
     }
 
-    public function fetchSuggestions($request)
+    public function fetchRecurringBookedSlots($request)
     {
-        $categoryType = $request->category ?? null;
+        $request->validate([
+            'listing_id' => 'required|numeric|exists:listings,id',
+            'start_time' => 'required|date_format:H:i',
+            'end_time'   => 'required|date_format:H:i',
+            'start_date' => 'required|date',
+            'end_date'   => 'required|date',
+        ]);
 
-        $sportsType = SportsType::withCount('listings')->where("title", $categoryType)->first();
+        try {
+            $listingId = $request->listing_id;
+            $startTime = $request->start_time;
+            $endTime   = $request->end_time;
+            $startDate = Carbon::parse($request->start_date);
+            $endDate   = Carbon::parse($request->end_date);
 
-        $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
+            $listing            = $this->listingModel->findOrFail($listingId);
+            $maxBookingsPerSlot = $listing->max_bookings_per_slot ?? 1;
 
-        $listings = $this->listingModel::with(['venue', 'sportsCategory'])
-            ->when($categoryIds, function ($query, $categoryIds) {
-                $query->whereNotIn('sports_category_id', $categoryIds);
-            })
-            ->whereRelation('venue', 'status', 'active')
-            ->take(3)
-            ->get()
-            ->map(function ($listing) {
-                return [
-                    'id'              => $listing->id,
-                    'name'            => $listing->name,
-                    'price'           => $listing->base_price,
-                    'description'     => $listing->description,
-                    'venue'           => $listing->venue?->name,
-                    'duration'        => $listing->slot_duration,
-                    'loyaltyPoints'   => $listing->loyalty_points,
-                    'payment_options' => $listing->payment_options,
-                    'map_address'     => $listing->venue?->maps_url,
-                    'images'          => $listing->images_urls ?? [],
-                    'sport'           => $listing->sportsCategory?->name,
-                    'category'        => $listing->sportsCategory?->name,
-                    'icon'            => $listing->sportsCategory?->sportsType?->icon,
-                    'rating'          => round($listing->average_rating, 1),
+            $bookings = Booking::where('listing_id', $listingId)
+                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
+                ->where(function ($q) use ($startTime, $endTime) {
+                    $q->whereRaw('TIME(start_time) < ?', [$endTime])
+                        ->whereRaw('TIME(end_time) > ?', [$startTime]);
+                })
+                ->get(['id', 'date', 'start_time', 'end_time']);
+
+            $bookedDates = [];
+            foreach ($bookings as $booking) {
+                $dateStr = Carbon::parse($booking->date)->format('Y-m-d');
+                if (! isset($bookedDates[$dateStr])) {
+                    $bookedDates[$dateStr] = 0;
+                }
+                $bookedDates[$dateStr]++;
+            }
+
+            // Fetch all special days for the date range
+            $specialDays = SpecialDay::with('timeBlocks')
+                ->where('venue_id', $listing->venue_id)
+                ->where(function ($q) use ($listing) {
+                    $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+                })
+                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->active()
+                ->get()
+                ->keyBy(function ($day) {
+                    return Carbon::parse($day->date)->format('Y-m-d');
+                });
+
+            logger("Day", [$specialDays]);
+
+            $datesInfo     = [];
+            $currentDate   = $startDate->copy();
+            $hours_per_day = (strtotime($endTime) - strtotime($startTime)) / 3600; // Assuming $startTime and $endTime are 'H:i' strings; adjust if full datetimes
+
+            while ($currentDate->lte($endDate)) {
+                $dateStr     = $currentDate->format('Y-m-d');
+                $bookedCount = $bookedDates[$dateStr] ?? 0;
+
+                // Check special day for this date
+                $specialDay  = $specialDays->get($dateStr);
+                $isHoliday   = $specialDay && $specialDay->type === 'holiday';
+                $isAvailable = true;
+                $dayPrice    = $listing->base_price;
+
+                if ($specialDay && $specialDay->timeBlocks && $specialDay->timeBlocks->isNotEmpty()) {
+                    $matchingBlock = $specialDay->timeBlocks->first(function ($block) use ($startTime, $endTime) {
+                        return $startTime >= $block->start_time && $endTime <= $block->end_time;
+                    });
+
+                    if (! $matchingBlock) {
+                        $isAvailable = false;
+                    } else {
+                        $dayPrice = $matchingBlock->price_per_hour * $hours_per_day;
+                    }
+                }
+
+                if ($isHoliday) {
+                    $isAvailable = false;
+                }
+
+                if (! $isAvailable) {
+                    $bookedCount = $maxBookingsPerSlot;
+                }
+
+                $datesInfo[] = [
+                    'date'            => $dateStr,
+                    'price'           => $dayPrice,
+                    'booked_count'    => $bookedCount,
+                    'max_bookings'    => $maxBookingsPerSlot,
+                    'is_available'    => $isAvailable || ($bookedCount == $maxBookingsPerSlot),
+                    'available_slots' => max(0, $maxBookingsPerSlot - $bookedCount),
                 ];
-            });
 
-        return sendSuccess("Listings fetched successfully", compact('listings', 'sportsType'));
-    }
+                $currentDate->addDay();
+            }
 
-    public function fetchAddons($listing_id)
-    {
-        $listing = $this->listingModel->with(['addons' => function ($query) {
-            $query->orderBy('sort_order', 'ASC');
-        }])->findOrFail($listing_id);
+            return sendSuccess('Recurring booked slots fetched successfully', [
+                'listing_id'            => $listingId,
+                'start_time'            => $startTime,
+                'end_time'              => $endTime,
+                'date_range'            => [
+                    'start_date' => $startDate->format('Y-m-d'),
+                    'end_date'   => $endDate->format('Y-m-d'),
+                ],
+                'max_bookings_per_slot' => $maxBookingsPerSlot,
+                'dates'                 => $datesInfo,
+            ]);
 
-        $addons = $listing->addons->map(function ($addon) {
-            return [
-                'recommended'     => true,
-                'id'              => $addon->id,
-                'name'            => $addon->name,
-                'image'           => $addon->image,
-                'price'           => $addon->price ?? 0,
-                'description'     => $addon->description,
-                'hours_extension' => $addon->hours_extension,
-            ];
-        });
-
-        return sendSuccess('Addons fetched successfully', compact('addons'));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return sendError('Listing not found');
+        } catch (Exception $e) {
+            Log::error('Booked recurring slots error: ' . $e->getMessage(), ["Exception" => $e]);
+            return sendError('Failed to fetch recurring booked slots: ' . $e->getMessage(), [], 500);
+        }
     }
 
     public function updateSortOrder($request)
@@ -956,10 +1341,74 @@ class ListingService
             return sendSuccess('Sort order updated successfully.', [
                 'data' => ['updated_listings' => $listingIds],
             ]);
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
-            \Illuminate\Support\Facades\Log::error('Failed to update sort order: ' . $e->getMessage(), ["Exception" => $e]);
+            Log::error('Failed to update sort order: ' . $e->getMessage(), ["Exception" => $e]);
             return sendError('Failed to update sort order.');
         }
+    }
+
+    /**
+     * Validate schedule times - handles 24-hour operation and wrap-around times
+     *
+     * @param array $schedules
+     * @return void
+     * @throws ValidationException
+     */
+    protected function validateScheduleTimes(array $schedules): void
+    {
+        foreach ($schedules as $index => $schedule) {
+            if ($schedule['is_open'] && isset($schedule['start_time']) && isset($schedule['end_time'])) {
+                $startTimeStr = $schedule['start_time'];
+                $endTimeStr   = $schedule['end_time'];
+
+                // Handle 24-hour operation (00:00 to 00:00)
+                if ($startTimeStr === '00:00' && $endTimeStr === '00:00') {
+                    // 24-hour operation is valid
+                    continue;
+                }
+
+                // Convert to minutes for easier comparison
+                $startMinutes = $this->timeToMinutes($startTimeStr);
+                $endMinutes   = $this->timeToMinutes($endTimeStr);
+
+                // Handle wrap-around times (e.g., 23:30 to 00:00 means until midnight)
+                if ($endMinutes === 0 && $endTimeStr === '00:00') {
+                    // End time is midnight (00:00), which is valid for any start time
+                    // This represents "until end of day"
+                    continue;
+                }
+
+                // Normal case: end must be after start
+                // But if end is 00:00 and start is not 00:00, it's a wrap-around (valid)
+                if ($endMinutes === 0 && $startMinutes > 0) {
+                    // Wrap-around case: 23:xx to 00:00 is valid
+                    continue;
+                }
+
+                // For same-day times, end must be after start
+                if ($endMinutes <= $startMinutes && $endMinutes !== 0) {
+                    throw ValidationException::withMessages([
+                        "schedule.{$index}.end_time" => ["The schedule.{$index}.end_time field must be a date after schedule.{$index}.start_time."],
+                    ]);
+                }
+            }
+        }
+    }
+
+    /**
+     * Convert time string (HH:MM) to minutes since midnight
+     *
+     * @param string $time Time in HH:MM format
+     * @return int Minutes since midnight
+     */
+    protected function timeToMinutes($time)
+    {
+        if ($time === '00:00' || $time === '24:00') {
+            return 0; // Treat both 00:00 and 24:00 as midnight
+        }
+
+        list($hours, $minutes) = explode(':', $time);
+        return (int) $hours * 60 + (int) $minutes;
     }
 }

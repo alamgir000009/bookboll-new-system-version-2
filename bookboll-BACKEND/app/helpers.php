@@ -3,6 +3,7 @@
 use App\Models\Invoice;
 use App\Models\SlotLock;
 use App\Models\User;
+use App\Notifications\BookingConfirmedUserNotification;
 use App\Notifications\BookingCreatedAdminNotification;
 use App\Notifications\BookingCreatedUserNotification;
 use App\Services\AuditLogService;
@@ -391,13 +392,17 @@ if (! function_exists('logActivity')) {
 if (! function_exists('generatePaymentId')) {
     function generatePaymentId(int $bookingId, string $type): string
     {
-        $typeAbbr = match ($type) {
+        $typeAbbr = match (strtolower($type)) {
             'deposit'   => 'DEP',
             'remaining' => 'REM',
-            default     => '',
+            'full'      => 'FUL',
+            default     => 'PAY',
         };
 
-        return 'PAY-' . $bookingId . $typeAbbr;
+        // Add microtime to ensure uniqueness when multiple bookings are created simultaneously
+        $uniqueSuffix = substr(str_replace('.', '', microtime(true)), -6);
+
+        return 'PAY-' . $bookingId . '-' . $typeAbbr . '-' . $uniqueSuffix;
     }
 }
 
@@ -427,13 +432,6 @@ if (! function_exists('determineSlotPrice')) {
         }
 
         return $price;
-    }
-
-    if (! function_exists('generatePaymentId')) {
-        function generatePaymentId($bookingId, $type)
-        {
-            return 'PAY-' . $bookingId . '-' . strtoupper($type) . '-' . time();
-        }
     }
 
     if (! function_exists('generateInvoiceId')) {
@@ -510,6 +508,65 @@ if (! function_exists('createBookingInvoiceWithNotification')) {
 
         } catch (Exception $e) {
             Log::error("Booking created notification errors: " . $e->getMessage(), ["Exception" => $e]);
+        }
+    }
+}
+
+if (! function_exists('getFormattedDuration')) {
+    function getFormattedDuration($slotMinutes)
+    {
+        $hours   = floor($slotMinutes / 60);
+        $minutes = $slotMinutes % 60;
+        if ($hours > 0 && $minutes > 0) {
+            $duration = $hours . ' hour' . ($hours > 1 ? 's' : '') . ' ' . $minutes . ' minute' . ($minutes > 1 ? 's' : '');
+        } elseif ($hours > 0) {
+            $duration = $hours . ' hour' . ($hours > 1 ? 's' : '');
+        } else {
+            $duration = $minutes . ' minute' . ($minutes > 1 ? 's' : '');
+        }
+
+        return $duration;
+    }
+}
+
+if (! function_exists('autoConfirmBookingIfPaid')) {
+    function autoConfirmBookingIfPaid($booking)
+    {
+        try {
+
+            if (in_array($booking->status, [BookingStatus::CONFIRMED, BookingStatus::CANCELLED, BookingStatus::COMPLETED])) {
+                return;
+            }
+
+            $isFullyPaid = $booking->payment_status === BookingPaymentStatus::FULLY_PAID;
+
+            $totalPaid  = $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
+            $totalPrice = $booking->total_price;
+
+            if ($isFullyPaid && $totalPaid >= $totalPrice) {
+                $booking->update(['status' => BookingStatus::CONFIRMED]);
+
+                $booking->history()->create([
+                    'user_id'     => $booking->user_id,
+                    'action'      => 'booking_confirmed',
+                    'description' => 'Booking automatically confirmed after payment completion.',
+                ]);
+                try {
+                    $booking->load('venue:id,name,maps_url');
+                    $user = $booking->user;
+                    $user->notify(new BookingConfirmedUserNotification($booking));
+                } catch (Exception $e) {
+                    Log::error("Booking confirmation notification failed: " . $e->getMessage(), [
+                        'booking_id' => $booking->id,
+                        'exception'  => $e,
+                    ]);
+                }
+            }
+        } catch (Exception $e) {
+            Log::error("Failed to auto-confirm booking #{$booking->id}: " . $e->getMessage(), [
+                'booking_id' => $booking->id,
+                'exception'  => $e,
+            ]);
         }
     }
 }

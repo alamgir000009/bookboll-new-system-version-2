@@ -147,42 +147,88 @@
             margin-right: auto;
         }
 
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+        }
+
     </style>
 </head>
 <body>
-    <div class="invoice-container">
-        <!-- Header -->
-        <div class="header">
-            @if(isset($company['logo']))
-            <img src="{{ public_path($company['logo']) }}" alt="Company Logo" style="max-height: 60px; margin-bottom: 10px;">
-            @endif
-            <h1>{{ $company['name'] }}</h1>
-            <p>{{ $company['address'] }}</p>
-            <p>{{ $company['email'] }} | {{ $company['phone'] }}</p>
+    <div class="container">
+        <div style="width: 96%; margin-bottom: 10px; background-color: #667eea; padding: 15px;">
+            <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
+                <tr>
+                    <td style="width: 70%; vertical-align: middle;">
+                        <table style="border-collapse: collapse; border-spacing: 0;">
+                            <tr>
+                                <td style="vertical-align: middle; padding-right: 12px;">
+                                    <img src="{{ public_path('bookboll-logo.jpeg') }}" alt="Bookboll" style="height: 45px; width: auto;" onerror="this.style.display='none'">
+                                </td>
+                                <td style="vertical-align: middle;">
+                                    <div style="font-weight: bold; font-size: 18px; color: #ffffff; margin-bottom: 3px;">{{ \CompnayInfo::NAME ?? 'Bookbool' }}</div>
+                                    <div style="line-height: 1.4; font-size: 10px; color: #ffffff;">
+                                        {{ \CompnayInfo::ADDRESS ?? '' }}<br>
+                                        {{ \CompnayInfo::EMAIL ?? '' }} | {{ \CompnayInfo::PHONE ?? '' }}
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                    <td style="width: 30%; vertical-align: middle; text-align: right;">
+                        <table style="border-collapse: collapse; border-spacing: 0; margin-left: auto;">
+                            <tr>
+                                <td style="background-color: #ffffff; padding: 8px 15px; text-align: center;">
+                                    <div style="font-size: 8px; color: #667eea; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Booking Invoice</div>
+                                    <div style="font-weight: bold; font-size: 18px; color: #667eea;">#{{ $payment->id }}</div>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
         </div>
 
-        <!-- Invoice Info -->
-        <div class="two-column">
-            <div>
-                <strong>Invoice To:</strong><br>
-                {{ $payment->user->name ?? 'N/A' }}<br>
-                {{ $payment->user->email ?? '' }}<br>
-            </div>
-            <div class="invoice-title">
-                <h2>Invoice #{{ $payment->id }}</h2>
-                <span>Date: {{ $date }}</span>
-            </div>
+        <div style="width: 100%; margin-bottom: 10px;">
+            <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
+                <tr>
+                    <td style="width: 50%; vertical-align: top; padding-right: 20px;">
+                        <div style="font-weight: bold; margin-bottom: 5px;">Bill To</div>
+                        <div style="line-height: 1.4;">
+                            {{ $payment->user->name ?? 'N/A' }}<br>
+                            {{ $payment->user->email ?? 'N/A' }}<br>
+                            Phone: {{ $payment->user->phone ?? 'N/A' }}
+                        </div>
+                    </td>
+                    <td class="invoice-title" style="width: 50%; vertical-align: top; text-align: right; padding-left: 20px;">
+                        <div style="font-weight: bold; margin-bottom: 5px;">Invoice #{{ $payment->id }}</div>
+                        <div style="line-height: 1.4;">
+                            <span>Date: {{ $date }}</span>
+                        </div>
+                    </td>
+                </tr>
+            </table>
         </div>
 
         <!-- Payment Details -->
         <table>
             <tr>
                 <th>Booking ID</th>
-                <td>#{{ $payment->booking_id }}</td>
+                <td>{{ $payment?->booking?->booking_id }}</td>
+            </tr>
+            <tr>
+                <th>Payment ID</th>
+                <td>{{ $payment->payment_id }}</td>
             </tr>
             <tr>
                 <th>Venue</th>
-                <td>{{ $payment->booking->venue->name ?? 'N/A' }}</td>
+                <td>{{ $payment?->booking?->venue->name ?? 'N/A' }}</td>
+            </tr>
+            <tr>
+                <th>Payment Type</th>
+                <td>{{ ucfirst($payment->type) }}</td>
             </tr>
             <tr>
                 <th>Payment Method</th>
@@ -191,6 +237,10 @@
             <tr>
                 <th>Status</th>
                 <td>{{ ucfirst($payment->status) }}</td>
+            </tr>
+            <tr>
+                <th>Notes</th>
+                <td>{{ $payment->notes }}</td>
             </tr>
         </table>
 

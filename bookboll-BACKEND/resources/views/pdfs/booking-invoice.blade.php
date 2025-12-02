@@ -19,76 +19,12 @@
             max-width: 800px;
             margin: 0 auto;
             background: white;
-            padding: 40px;
-            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
-            border-radius: 8px;
+            padding: 20px;
         }
 
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 40px;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 20px;
-        }
-
-        .company-info {
-            text-align: left;
-        }
-
-        .company-name {
-            font-size: 24px;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 5px;
-        }
-
-        .company-details {
-            color: #7f8c8d;
-            font-size: 11px;
-        }
-
-        .invoice-meta {
-            text-align: right;
-        }
-
-        .invoice-number {
-            font-size: 18px;
-            font-weight: bold;
-            color: #34495e;
-            margin-bottom: 10px;
-        }
-
-        .invoice-date {
-            color: #7f8c8d;
-        }
-
-        .bill-to {
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            margin-bottom: 30px;
-        }
-
-        .bill-to-section {
-            flex: 1;
-        }
-
-        .bill-to-title {
-            font-size: 14px;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-        }
-
-        .bill-to-details {
-            color: #555;
-        }
 
         .booking-details {
-            margin-bottom: 30px;
+            margin-bottom: 10px;
         }
 
         .booking-title {
@@ -102,16 +38,27 @@
         }
 
         .booking-info {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
             font-size: 11px;
         }
 
         .booking-row {
-            display: flex;
-            justify-content: space-between;
             margin-bottom: 5px;
+        }
+
+        .booking-row table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .booking-row td:first-child {
+            width: 40%;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .booking-row td:last-child {
+            width: 60%;
+            text-align: right;
         }
 
         .items-table {
@@ -145,15 +92,26 @@
         }
 
         .totals {
-            float: right;
             width: 40%;
+            margin-left: auto;
         }
 
         .total-row {
-            display: flex;
-            justify-content: space-between;
             margin-bottom: 10px;
             font-size: 12px;
+        }
+
+        .total-row table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .total-row td:first-child {
+            text-align: left;
+        }
+
+        .total-row td:last-child {
+            text-align: right;
         }
 
         .total-label {
@@ -176,7 +134,6 @@
             margin-top: 30px;
             padding: 15px;
             background-color: #f8f9fa;
-            border-radius: 4px;
             font-size: 11px;
             color: #555;
         }
@@ -202,29 +159,41 @@
 </head>
 <body>
     <div class="container">
-        <div style="width: 100%; margin-bottom: 20px;">
+        <!-- Header with Bookbool Logo -->
+        <div style="width: 96%; margin-bottom: 10px; background-color: #667eea; padding: 15px;">
             <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
                 <tr>
-                    <td style="width: 60%; vertical-align: top; padding-right: 40px;">
-                        <div style="font-weight: bold; font-size: 18px; margin-bottom: 5px;">Venue Booking Service</div>
-                        <div style="line-height: 1.4; font-size: 12px;">
-                            {{ \CompnayInfo::ADDRESS }}<br>
-                            {{ \CompnayInfo::CITY }}, {{ \CompnayInfo::POSTAL_CODE }}<br>
-                            Email: {{ \CompnayInfo::EMAIL }}<br>
-                            Phone: {{ \CompnayInfo::PHONE }}
-                        </div>
+                    <td style="width: 70%; vertical-align: middle;">
+                        <table style="border-collapse: collapse; border-spacing: 0;">
+                            <tr>
+                                <td style="vertical-align: middle; padding-right: 12px;">
+                                    <img src="{{ public_path('bookboll-logo.jpeg') }}" alt="Bookboll" style="height: 45px; width: auto;" onerror="this.style.display='none'">
+                                </td>
+                                <td style="vertical-align: middle;">
+                                    <div style="font-weight: bold; font-size: 18px; color: #ffffff; margin-bottom: 3px;">{{ \CompnayInfo::NAME ?? 'Bookbool' }}</div>
+                                    <div style="line-height: 1.4; font-size: 10px; color: #ffffff;">
+                                        {{ \CompnayInfo::ADDRESS ?? '' }}<br>
+                                        {{ \CompnayInfo::EMAIL ?? '' }} | {{ \CompnayInfo::PHONE ?? '' }}
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
                     </td>
-                    <td style="width: 40%; vertical-align: top; text-align: right;">
-                        <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">Invoice #{{ $invoiceNumber }}</div>
-                        <div style="font-size: 12px; line-height: 1.4;">
-                            Date: {{ now()->format('F d, Y') }}
-                        </div>
+                    <td style="width: 30%; vertical-align: middle; text-align: right;">
+                        <table style="border-collapse: collapse; border-spacing: 0; margin-left: auto;">
+                            <tr>
+                                <td style="background-color: #ffffff; padding: 8px 15px; text-align: center;">
+                                    <div style="font-size: 8px; color: #667eea; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Booking Invoice</div>
+                                    <div style="font-weight: bold; font-size: 18px; color: #667eea;">#{{ $invoiceNumber }}</div>
+                                </td>
+                            </tr>
+                        </table>
                     </td>
                 </tr>
             </table>
         </div>
 
-        <div style="width: 100%; margin-bottom: 20px;">
+        <div style="width: 100%; margin-bottom: 10px;">
             <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
                 <tr>
                     <td style="width: 50%; vertical-align: top; padding-right: 20px;">
@@ -249,20 +218,153 @@
         </div>
 
         <div class="booking-details">
-            <div class="booking-title">Booking Details</div>
-            <div class="booking-info">
-                <div>
-                    <div class="booking-row"><span>Venue:</span> <span>{{ $booking->venue->name ?? 'N/A' }}</span></div>
-                    <div class="booking-row"><span>Listing:</span> <span>{{ $booking->listing->name ?? 'N/A' }}</span></div>
-                </div>
-                <div>
-                    <div class="booking-row"><span>Date:</span> <span>{{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}</span></div>
-                    <div class="booking-row"><span>Time:</span> <span>
-                            {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} To
-                            {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}</span></div>
-                    <div class="booking-row"><span>Duration:</span> <span>{{ $booking->duration }} hours</span></div>
-                </div>
-            </div>
+            <div class="booking-title">Booking & Payment Details</div>
+            <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
+                <tr>
+                    <!-- Left Side: Booking Details -->
+                    <td style="width: 50%; vertical-align: top; padding-right: 20px;">
+                        <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Booking Information</div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Venue:</td>
+                                    <td>{{ $booking?->venue->name ?? 'N/A' }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        @if($booking?->venue->maps_url)
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Map Link:</td>
+                                    <td><a href="{{ $booking->venue->maps_url }}" target="_blank" style="color: #3498db; text-decoration: underline;">View Map</a></td>
+                                </tr>
+                            </table>
+                        </div>
+                        @endif
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Listing:</td>
+                                    <td>{{ $booking?->listing->name ?? 'N/A' }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Date:</td>
+                                    <td>{{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Time:</td>
+                                    <td>{{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} - {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Duration:</td>
+                                    <td>{{ $booking->duration ?? 0 }} hours</td>
+                                </tr>
+                            </table>
+                        </div>
+                        @if($booking->status)
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Status:</td>
+                                    <td style="font-weight: 600; color: {{ $booking->status === 'confirmed' ? '#27ae60' : ($booking->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($booking->status) }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        @endif
+                    </td>
+                    <!-- Right Side: Payment Details -->
+                    <td style="width: 50%; vertical-align: top; padding-left: 20px;">
+                        <div style="font-weight: bold; color: #2c3e50; margin-bottom: 8px; font-size: 11px; text-transform: uppercase;">Payment Information</div>
+                        @if($booking->payments && $booking->payments->count() > 0)
+                        @foreach($booking->payments as $index => $payment)
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Payment ID:</td>
+                                    <td>{{ $payment->payment_id ?? 'N/A' }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Amount:</td>
+                                    <td>QAR {{ number_format($payment->amount ?? 0, 2) }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Type:</td>
+                                    <td>{{ ucfirst(str_replace('_', ' ', $payment->type ?? 'Full')) }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Payment Method:</td>
+                                    <td>{{ ucfirst(str_replace('_', ' ', $payment->method ?? 'Cash')) }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Status:</td>
+                                    <td style="font-weight: 600; color: {{ $payment->status === 'paid' ? '#27ae60' : ($payment->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($payment->status ?? 'N/A') }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        @if($payment->date)
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Date:</td>
+                                    <td>{{ \Carbon\Carbon::parse($payment->date)->format('F d, Y') }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        @endif
+                        @if(!$loop->last)
+                        <div style="margin: 8px 0; border-top: 1px solid #e0e0e0;"></div>
+                        @endif
+                        @endforeach
+                        @else
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Payment Status:</td>
+                                    <td style="font-weight: 600; color: {{ $booking->payment_status === 'fully_paid' ? '#27ae60' : ($booking->payment_status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst(str_replace('_', ' ', $booking->payment_status ?? 'Pending')) }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="booking-row">
+                            <table>
+                                <tr>
+                                    <td>Payment Method:</td>
+                                    <td>{{ ucfirst(str_replace('_', ' ', $booking->payment_method ?? 'N/A')) }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        @endif
+                    </td>
+                </tr>
+            </table>
         </div>
 
         <table class="items-table">
@@ -297,17 +399,29 @@
         <div class="totals">
             @if($booking->discount_amount > 0)
             <div class="total-row">
-                <span class="total-label">Subtotal</span>
-                <span class="total-value">QAR {{ number_format($booking->subtotal, 2) }}</span>
+                <table>
+                    <tr>
+                        <td class="total-label">Subtotal</td>
+                        <td class="total-value">QAR {{ number_format($booking->subtotal, 2) }}</td>
+                    </tr>
+                </table>
             </div>
             <div class="total-row highlight">
-                <span class="total-label">Discount ({{ $booking->promocode_id ? $booking->promocode->code : 'Other' }})</span>
-                <span class="total-value">- QAR {{ number_format($booking->discount_amount, 2) }}</span>
+                <table>
+                    <tr>
+                        <td class="total-label">Discount ({{ $booking->promocode_id ? $booking->promocode->code : 'Other' }})</td>
+                        <td class="total-value">- QAR {{ number_format($booking->discount_amount, 2) }}</td>
+                    </tr>
+                </table>
             </div>
             @endif
             <div class="total-row grand-total">
-                <span class="total-label">Total</span>
-                <span class="total-value">QAR {{ number_format($booking->total_price, 2) }}</span>
+                <table>
+                    <tr>
+                        <td class="total-label">Total</td>
+                        <td class="total-value">QAR {{ number_format($booking->total_price, 2) }}</td>
+                    </tr>
+                </table>
             </div>
         </div>
 
@@ -324,10 +438,10 @@
         </div>
         @endif
 
-        <div class="footer">
+        {{-- <div class="footer">
             <p>Thank you for your booking! If you have any questions, please contact us at {{ \CompnayInfo::EMAIL }}.</p>
             <p>This is an electronic invoice. For terms and conditions, visit our website.</p>
-        </div>
+        </div> --}}
     </div>
 </body>
 </html>

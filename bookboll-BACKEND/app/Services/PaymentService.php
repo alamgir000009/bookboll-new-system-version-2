@@ -338,6 +338,9 @@ class PaymentService
                     ]);
                 }
 
+                if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
+                    autoConfirmBookingIfPaid($booking);
+                }
             }
 
             DB::commit();
