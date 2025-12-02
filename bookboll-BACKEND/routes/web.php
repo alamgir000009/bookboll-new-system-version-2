@@ -24,7 +24,9 @@ Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentS
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
 
 Route::get('test', function() {
-    $booking = \App\Models\Booking::find(71);
+    $booking = \App\Models\Booking::find(220);
     $invoiceNumber = "TEsttttttt";
+    // return view('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
+
     return view('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
 });

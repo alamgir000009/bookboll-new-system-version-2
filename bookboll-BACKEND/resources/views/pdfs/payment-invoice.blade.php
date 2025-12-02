@@ -6,10 +6,6 @@
     <title>Invoice #{{ $payment->id }}</title>
 
     <style>
-        @page {
-            margin: 40px 25px;
-        }
-
         body {
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             font-size: 12px;
@@ -23,7 +19,7 @@
             max-width: 800px;
             margin: 0 auto;
             padding: 25px;
-            border: 1px solid #eee;
+            border: 0;
             border-radius: 8px;
             background: #fff;
         }
@@ -67,6 +63,7 @@
         table {
             width: 100%;
             border-collapse: collapse;
+            border: 0;
             margin-bottom: 25px;
         }
 
@@ -76,11 +73,13 @@
             text-align: left;
             padding: 10px;
             font-size: 13px;
+            border: 0;
             border-bottom: 1px solid #ddd;
         }
 
         table td {
             padding: 10px;
+            border: 0;
             border-bottom: 1px solid #eee;
             font-size: 13px;
         }
@@ -154,10 +153,15 @@
             padding: 20px;
         }
 
+        @page {
+            margin: 20px;
+        }
+
     </style>
 </head>
 <body>
     <div class="container">
+        <!-- Header with Bookbool Logo -->
         <div style="width: 96%; margin-bottom: 10px; background-color: #667eea; padding: 15px;">
             <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
                 <tr>
@@ -182,7 +186,7 @@
                             <tr>
                                 <td style="background-color: #ffffff; padding: 8px 15px; text-align: center;">
                                     <div style="font-size: 8px; color: #667eea; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Booking Invoice</div>
-                                    <div style="font-weight: bold; font-size: 18px; color: #667eea;">#{{ $payment->id }}</div>
+                                    <div style="font-weight: bold; font-size: 18px; color: #667eea;">#{{ $payment->payment_id }}</div>
                                 </td>
                             </tr>
                         </table>
@@ -192,9 +196,9 @@
         </div>
 
         <div style="width: 100%; margin-bottom: 10px;">
-            <table style="width: 100%; border-collapse: collapse; border-spacing: 0;">
+            <table style="width: 100%; border-collapse: collapse; border-spacing: 0; border: 0;">
                 <tr>
-                    <td style="width: 50%; vertical-align: top; padding-right: 20px;">
+                    <td style="width: 50%; vertical-align: top; padding-right: 20px; border: 0;">
                         <div style="font-weight: bold; margin-bottom: 5px;">Bill To</div>
                         <div style="line-height: 1.4;">
                             {{ $payment->user->name ?? 'N/A' }}<br>
@@ -202,10 +206,11 @@
                             Phone: {{ $payment->user->phone ?? 'N/A' }}
                         </div>
                     </td>
-                    <td class="invoice-title" style="width: 50%; vertical-align: top; text-align: right; padding-left: 20px;">
-                        <div style="font-weight: bold; margin-bottom: 5px;">Invoice #{{ $payment->id }}</div>
+                    <td style="width: 50%; vertical-align: top; text-align: right; padding-left: 20px; border: 0;">
+                        <div style="font-weight: bold; margin-bottom: 5px;">Payment #</div>
                         <div style="line-height: 1.4;">
-                            <span>Date: {{ $date }}</span>
+                            #{{ $payment->payment_id ?? $payment->id }}<br>
+                            {{ $date }}
                         </div>
                     </td>
                 </tr>
