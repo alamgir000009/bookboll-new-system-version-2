@@ -3,14 +3,19 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Models\Listing;
+use App\Models\Payment;
 use App\Models\Promocode;
 use App\Models\Venue;
+use BookingPaymentMethod;
+use BookingPaymentStatus;
 use Carbon\Carbon;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use PaymentStatus;
+use PaymentType;
 
 class PromocodeService
 {
@@ -333,9 +338,14 @@ class PromocodeService
 
         try {
 
-            DB::beginTransaction();
-
             $booking = $this->bookingModel::findOrFail($validated['booking_id']);
+
+            // Do not allow promocode changes on fully paid bookings
+            if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
+                return sendError('Cannot apply promocode to a fully paid booking');
+            }
+
+            DB::beginTransaction();
 
             if ($booking->promocode_id) {
                 return sendError('A promocode has already been applied to this booking');
@@ -349,6 +359,7 @@ class PromocodeService
 
             $isDeposit = $booking->payment_method === 'deposit_remaining_on_arrival';
             if ($isDeposit && ($booking->payment_breakdown || isset($validated['payment_breakdown']))) {
+                // Adjust remaining amount in payment breakdown
                 $breakdown                     = $validated['payment_breakdown'] ?? $booking->payment_breakdown;
                 $currentRemaining              = $breakdown['remaining_amount'] ?? 0;
                 $newRemaining                  = max(0, $currentRemaining - $validated['discount_amount']);
@@ -356,6 +367,28 @@ class PromocodeService
 
                 $booking->payment_breakdown = $breakdown;
                 $booking->save();
+
+                // Also update the remaining payment record (if exists)
+                /** @var Payment|null $remainingPayment */
+                $remainingPayment = $booking->payments()
+                    ->where('type', PaymentType::REMAINING)
+                    ->where('status', PaymentStatus::PENDING)
+                    ->first();
+
+                if ($remainingPayment) {
+                    $remainingPayment->update(['amount' => $newRemaining]);
+                }
+            } else {
+                // Non-deposit bookings: update pending full payment (if any) to match new total_price
+                /** @var Payment|null $pendingFull */
+                $pendingFull = $booking->payments()
+                    ->where('type', PaymentType::FULL)
+                    ->where('status', PaymentStatus::PENDING)
+                    ->first();
+
+                if ($pendingFull) {
+                    $pendingFull->update(['amount' => $booking->total_price]);
+                }
             }
 
             $promocode->incrementUsage($booking->user_id);
@@ -369,6 +402,9 @@ class PromocodeService
             ]);
 
             DB::commit();
+
+            // Regenerate invoice so PDF matches updated totals
+            $this->regenerateBookingInvoice($booking);
 
             $booking->load([
                 'user',
@@ -399,12 +435,16 @@ class PromocodeService
     public function removePromocodeFromBooking($bookingId)
     {
 
-        $booking = $this->bookingModel::with('promocode')->whereHas('promocode')->findOrFail($bookingId);
+        $booking = $this->bookingModel::with(['promocode', 'payments', 'user'])->whereHas('promocode')->findOrFail($bookingId);
+
+        // Do not allow promocode changes on fully paid bookings
+        if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
+            return sendError('Cannot remove promocode from a fully paid booking');
+        }
 
         try {
-            DB::beginTransaction();
-
             $oldPromocode = $booking->promocode;
+            DB::beginTransaction();
 
             if ($oldPromocode) {
 
@@ -415,15 +455,35 @@ class PromocodeService
                 $booking->update([
                     'discount_amount' => 0,
                     'promocode_id'    => null,
-                    'total_price'     => $booking->subtotal ?? $booking->total_price,
+                    'total_price'     => $booking->total_price ? $booking->total_price - $booking->discount_amount : $booking->subtotal,
                 ]);
 
-                if ($booking->payment_method === 'deposit_remaining_on_arrival' && $booking->payment_breakdown) {
+                // Adjust payment structures
+                if ($booking->payment_method === BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL && $booking->payment_breakdown) {
+                    // For deposit bookings: increase remaining amount back
                     $updatedBreakdown                     = $booking->payment_breakdown;
                     $currentRemaining                     = $updatedBreakdown['remaining_amount'] ?? 0;
                     $updatedBreakdown['remaining_amount'] = $currentRemaining + $originalDiscount;
                     $booking->payment_breakdown           = $updatedBreakdown;
                     $booking->save();
+
+                    $remainingPayment = $booking->payments()
+                        ->where('type', PaymentType::REMAINING)
+                        ->where('status', PaymentStatus::PENDING)
+                        ->first();
+
+                    if ($remainingPayment) {
+                        $remainingPayment->update(['amount' => $updatedBreakdown['remaining_amount']]);
+                    }
+                } else {
+                    $pendingFull = $booking->payments()
+                        ->where('type', PaymentType::FULL)
+                        ->where('status', PaymentStatus::PENDING)
+                        ->first();
+
+                    if ($pendingFull) {
+                        $pendingFull->update(['amount' => $booking->total_price]);
+                    }
                 }
 
                 $booking->history()->create([
@@ -434,6 +494,10 @@ class PromocodeService
 
                 Log::info("Promocode removed from booking #{$booking->booking_id} by admin " . auth()->id());
             }
+
+            DB::commit();
+
+            $this->regenerateBookingInvoice($booking);
 
             $booking->load([
                 'user',
@@ -448,8 +512,6 @@ class PromocodeService
                 'history.user:id,name',
             ]);
 
-            DB::commit();
-
             return sendSuccess('Booking updated successfully', compact('booking'));
 
         } catch (Exception $e) {
@@ -460,6 +522,40 @@ class PromocodeService
             ]);
 
             return sendError('Failed to update booking: ' . $e->getMessage());
+        }
+    }
+
+    protected function regenerateBookingInvoice(Booking $booking): void
+    {
+        try {
+            $booking->loadMissing('user');
+            $user = $booking->user;
+
+            if (! $user) {
+                return;
+            }
+
+            $existingInvoices = $user->invoices()->where('booking_id', $booking->id)->get();
+            foreach ($existingInvoices as $invoice) {
+                $invoice->status = 're_generated';
+                $invoice->save();
+            }
+
+            $invoiceNumber = generateInvoiceId();
+            $invoicePath   = generateAndStoreInvoicePdf($booking, $invoiceNumber);
+
+            $user->invoices()->create([
+                'user_id'        => $user->id,
+                'status'         => 'generated',
+                'path'           => $invoicePath,
+                'booking_id'     => $booking->id,
+                'invoice_number' => $invoiceNumber,
+            ]);
+        } catch (Exception $e) {
+            Log::error("Failed to regenerate invoice for booking #{$booking->id}: " . $e->getMessage(), [
+                'booking_id' => $booking->id,
+                'exception'  => $e,
+            ]);
         }
     }
 }
