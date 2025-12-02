@@ -742,8 +742,8 @@ class BookingService
             'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
             'recurring_bookings.*.price'      => 'required|numeric|min:0',
             'recurring_bookings.*.quantity'   => 'required|numeric|min:1',
-            'recurring_bookings.*.add_ons'   => 'nullable|array',
-            'recurring_bookings.*.add_ons.*' => 'exists:add_ons,id',
+            'recurring_bookings.*.add_ons'    => 'nullable|array',
+            'recurring_bookings.*.add_ons.*'  => 'exists:add_ons,id',
         ]);
 
         try {
@@ -841,36 +841,89 @@ class BookingService
 
                 // Calculate subtotal for this recurring booking (price + its own add-ons)
                 $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
-                $recurringQuantity = $recurring['quantity'] ?? 1;
+                $recurringQuantity       = $recurring['quantity'] ?? 1;
                 $recurringSubtotal += $recurringSingleSubtotal * $recurringQuantity;
             }
             $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
 
-            // Apply promocode to total combined subtotal
+            // Step 1: Validate promocode against the entire combined amount (base + all recurring bookings)
             $totalDiscount = 0;
             $promocode     = null;
             if ($formData['promocode']) {
                 $promocode = Promocode::where('code', $formData['promocode'])->active()->first();
 
-                if (! $promocode || ! $promocode->isValidForOrder(
+                if (! $promocode) {
+                    return sendError('Invalid or inactive promocode');
+                }
+
+                // Validate promocode against the entire combined subtotal
+
+                $isValidPromocode = $promocode->isValidForOrder(
                     $combinedSubtotal,
                     $user->id,
                     $formData['payment_method'],
                     $formData['venue_id'],
                     $formData['listing_id']
-                )) {
-                    return sendError('Invalid or inapplicable promocode');
+                );
+
+                if (! $isValidPromocode) {
+                    return sendError('Promocode is not applicable');
                 }
 
+                // Step 2: Calculate total discount from the entire combined amount
                 $totalDiscount = $promocode->applyDiscount($combinedSubtotal);
                 $promocode->incrementUsage($user->id);
             }
 
-            // Calculate discount per booking
-            $discountPerBooking = $totalBookings > 0 ? round($totalDiscount / $totalBookings, 2) : 0;
+            // Step 3: Split discount manually across all bookings (base + recurring)
+            // Distribute discount proportionally to avoid rounding issues
+            $discounts = [];
 
-            // Create base bookings
+            // Initialize discounts array for all bookings
+            if ($totalBookings > 0) {
+                if ($totalDiscount > 0) {
+                    // Calculate base discount per booking
+                    $baseDiscountPerBooking = round($totalDiscount / $totalBookings, 2);
+
+                    // Calculate total discount if all bookings get base discount
+                    $calculatedTotal = $baseDiscountPerBooking * $totalBookings;
+
+                    // Handle rounding difference
+                    $roundingDifference = round($totalDiscount - $calculatedTotal, 2);
+
+                    // Distribute discount: base discount for all, add rounding difference to first booking
+                    for ($i = 0; $i < $totalBookings; $i++) {
+                        if ($i === 0) {
+                            // First booking gets the rounding difference to ensure exact total
+                            $discounts[] = round($baseDiscountPerBooking + $roundingDifference, 2);
+                        } else {
+                            $discounts[] = $baseDiscountPerBooking;
+                        }
+                    }
+
+                    // Verify total matches (for safety)
+                    $verifyTotal = round(array_sum($discounts), 2);
+                    if (abs($verifyTotal - $totalDiscount) > 0.01) {
+                        // Adjust if there's still a difference
+                        $adjustment   = round($totalDiscount - $verifyTotal, 2);
+                        $discounts[0] = round($discounts[0] + $adjustment, 2);
+                    }
+                } else {
+                    // No discount, fill array with zeros
+                    for ($i = 0; $i < $totalBookings; $i++) {
+                        $discounts[] = 0;
+                    }
+                }
+            }
+
+            // Track discount index for manual distribution
+            $discountIndex = 0;
+
+            // Create base bookings with manually split discount
             for ($i = 0; $i < $formData['quantity']; $i++) {
+                $bookingDiscount = $discounts[$discountIndex] ?? 0;
+                $discountIndex++;
+
                 $booking = $this->createSingleBooking(
                     $user,
                     $formData,
@@ -878,7 +931,7 @@ class BookingService
                     $formData['start_time'],
                     $formData['end_time'],
                     $singleSubtotal,
-                    $discountPerBooking,
+                    $bookingDiscount,
                     $promocode,
                     $paymentIntentId,
                     $chargeId,
@@ -933,11 +986,14 @@ class BookingService
                 $recurringQuantity = $recurring['quantity'] ?? 1;
 
                 // Prepare form data for this recurring booking with its own add_ons
-                $recurringFormData = $formData;
+                $recurringFormData            = $formData;
                 $recurringFormData['add_ons'] = $recurring['add_ons'] ?? [];
 
-                // Create bookings for this recurring date using its own quantity
+                // Create bookings for this recurring date using its own quantity with manually split discount
                 for ($i = 0; $i < $recurringQuantity; $i++) {
+                    $bookingDiscount = $discounts[$discountIndex] ?? 0;
+                    $discountIndex++;
+
                     $booking = $this->createSingleBooking(
                         $user,
                         $recurringFormData,
@@ -945,7 +1001,7 @@ class BookingService
                         $recurring['start_time'],
                         $recurring['end_time'],
                         $recurringSingleSubtotal,
-                        $discountPerBooking,
+                        $bookingDiscount,
                         $promocode,
                         $paymentIntentId,
                         $chargeId,

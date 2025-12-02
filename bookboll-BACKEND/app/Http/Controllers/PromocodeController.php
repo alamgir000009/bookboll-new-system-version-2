@@ -71,9 +71,11 @@ class PromocodeController extends Controller
             return sendError('Invalid or inactive promocode');
         }
 
+        $user_id  = $request->user_id ?? auth()->user()?->id ?? null;
+
         $isValid = $promocode->isValidForOrder(
             $request->order_amount,
-            $request->user_id,
+            $user_id,
             $request->payment_method,
             $request->venue_id,
             $request->listing_id
