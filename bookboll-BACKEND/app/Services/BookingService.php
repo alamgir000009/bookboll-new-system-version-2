@@ -1578,7 +1578,6 @@ class BookingService
             'sportsCategories' => 'nullable|boolean',
         ]);
 
-        // Initialize all as empty arrays to avoid undefined variable issues
         $listings         = [];
         $venues           = [];
         $users            = [];
