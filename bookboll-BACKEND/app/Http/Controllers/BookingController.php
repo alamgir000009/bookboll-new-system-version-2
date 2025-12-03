@@ -106,4 +106,14 @@ class BookingController extends Controller
     {
         return $this->bookingService->validateBookingRequest($request);
     }
+
+    public function mobileBookingsList(Request $request)
+    {
+        return $this->bookingService->mobileBookingsList($request);
+    }
+
+    public function mobileBookingsFilterOptions(Request $request)
+    {
+        return $this->bookingService->mobileBookingsFilterOptions($request);
+    }
 }

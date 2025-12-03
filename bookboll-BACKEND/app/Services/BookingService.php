@@ -9,6 +9,7 @@ use App\Models\Payment;
 use App\Models\Promocode;
 use App\Models\Resource;
 use App\Models\SpecialDay;
+use App\Models\SportsCategory;
 use App\Models\User;
 use App\Models\Venue;
 use App\Notifications\BookingCancelledUserNotification;
@@ -1566,6 +1567,236 @@ class BookingService
             ->orderBy('date', 'desc')->orderBy('start_time', 'asc')->get();
 
         return sendSuccess("Recent bookings fetched successfully", compact('bookings'));
+    }
+
+    public function mobileBookingsFilterOptions($request)
+    {
+        $data = $request->validate([
+            'listings'         => 'nullable|boolean',
+            'venues'           => 'nullable|boolean',
+            'users'            => 'nullable|boolean',
+            'sportsCategories' => 'nullable|boolean',
+        ]);
+
+        // Initialize all as empty arrays to avoid undefined variable issues
+        $listings         = [];
+        $venues           = [];
+        $users            = [];
+        $sportsCategories = [];
+
+        if (! empty($data['listings'])) {
+            $listings = Listing::select('id', 'name', 'venue_id')
+                ->with(['venue:id,name'])
+                ->active()
+                ->orderBy('name')
+                ->get()
+                ->map(function ($listing) {
+                    return [
+                        'id'    => $listing->id,
+                        'name'  => $listing->name,
+                        'venue' => $listing->venue?->name,
+                    ];
+                });
+        }
+
+        if (! empty($data['venues'])) {
+            $venues = Venue::select('id', 'name')
+                ->active()
+                ->orderBy('name')
+                ->get()
+                ->map(function ($venue) {
+                    return [
+                        'id'   => $venue->id,
+                        'name' => $venue->name,
+                    ];
+                });
+        }
+
+        if (! empty($data['sportsCategories'])) {
+            $sportsCategories = SportsCategory::select('id', 'name', 'sports_type_id')
+                ->with(['sportsType:id,title'])
+                ->active()
+                ->orderBy('name')
+                ->get()
+                ->map(function ($category) {
+                    return [
+                        'id'          => $category->id,
+                        'name'        => $category->name,
+                        'sports_type' => $category->sportsType?->title,
+                    ];
+                });
+        }
+
+        if (! empty($data['users'])) {
+            $users = User::select('id', 'name', 'email', 'phone')
+                ->whereHas('roles', fn($q) => $q->where('name', 'customer'))
+                ->active()
+                ->orderBy('name')
+                ->get()
+                ->map(function ($user) {
+                    return [
+                        'id'    => $user->id,
+                        'name'  => $user->name,
+                        'email' => $user->email,
+                        'phone' => $user->phone,
+                    ];
+                });
+        }
+
+        $statuses = BookingStatus::list();
+
+        return sendSuccess('Filter options fetched successfully', [
+            'listings'         => $listings,
+            'venues'           => $venues,
+            'users'            => $users,
+            'sportsCategories' => $sportsCategories,
+            'statuses'         => $statuses,
+        ]);
+    }
+
+    public function mobileBookingsList($request)
+    {
+        $data = $request->validate([
+            'type'             => 'nullable|in:upcoming,recent,all',
+            'listing_ids'      => 'nullable|array',
+            'listing_ids.*'    => 'exists:listings,id',
+            'venue_ids'        => 'nullable|array',
+            'venue_ids.*'      => 'exists:venues,id',
+            'user_ids'         => 'nullable|array',
+            'user_ids.*'       => 'exists:users,id',
+            'statuses'         => 'nullable|array',
+            'statuses.*'       => 'in:pending,confirmed,completed,cancelled',
+            'search'           => 'nullable|string|max:255',
+            'date_from'        => 'nullable|date',
+            'date_to'          => 'nullable|date|after_or_equal:date_from',
+            'page'             => 'nullable|integer|min:1',
+            'records_per_page' => 'nullable|integer|min:1|max:100',
+            'sort_by'          => 'nullable|in:date,created_at,start_time',
+            'sort_order'       => 'nullable|in:asc,desc',
+            'group_by_date'    => 'nullable|boolean',
+        ]);
+
+        $today          = Carbon::today();
+        $sortBy         = $data['sort_by'] ?? 'date';
+        $sortOrder      = $data['sort_order'] ?? 'desc';
+        $recordsPerPage = $data['records_per_page'] ?? 10;
+        $groupByDate    = $data['group_by_date'] ?? false;
+
+        $query = $this->bookingModel::with([
+            'history',
+            'payments',
+            'promocode',
+            'latestInvoice',
+            'resourcesAllocated',
+            'history.user:id,name',
+            'addOns:id,name,price',
+            'venue:id,name,maps_url',
+            'listing:id,name,venue_id',
+            'user:id,name,email,phone,image',
+        ]);
+
+        if (isset($data['type'])) {
+            if ($data['type'] === 'upcoming') {
+                $query->where('date', '>=', $today);
+            } elseif ($data['type'] === 'recent') {
+                $query->where('date', '<', $today);
+            }
+        }
+
+        if (isset($data['listing_ids']) && is_array($data['listing_ids']) && count($data['listing_ids']) > 0) {
+            $query->whereIn('listing_id', $data['listing_ids']);
+        }
+
+        if (isset($data['venue_ids']) && is_array($data['venue_ids']) && count($data['venue_ids']) > 0) {
+            $query->whereIn('venue_id', $data['venue_ids']);
+        }
+
+        if (isset($data['user_ids']) && is_array($data['user_ids']) && count($data['user_ids']) > 0) {
+            $query->whereIn('user_id', $data['user_ids']);
+        }
+
+        if (isset($data['statuses'])) {
+            $query->whereIn('status', $data['statuses']);
+        }
+
+        if (isset($data['date_from'])) {
+            $query->whereDate('date', '>=', $data['date_from']);
+        }
+
+        if (isset($data['date_to'])) {
+            $query->whereDate('date', '<=', $data['date_to']);
+        }
+
+        if (isset($data['search']) && ! empty($data['search'])) {
+            $search = $data['search'];
+            $query->where(function ($q) use ($search) {
+                $q->where('booking_id', 'LIKE', "%{$search}%")
+                    ->orWhereHas('listing', function ($l) use ($search) {
+                        $l->where('name', 'LIKE', "%{$search}%");
+                    })
+                    ->orWhereHas('venue', function ($v) use ($search) {
+                        $v->where('name', 'LIKE', "%{$search}%");
+                    })
+                    ->orWhereHas('user', function ($u) use ($search) {
+                        $u->where('name', 'LIKE', "%{$search}%")
+                            ->orWhere('email', 'LIKE', "%{$search}%")
+                            ->orWhere('phone', 'LIKE', "%{$search}%");
+                    })
+                    ->orWhere('notes', 'LIKE', "%{$search}%");
+            });
+        }
+
+        if ($sortBy === 'date') {
+            $query->orderBy('date', $sortOrder)->orderBy('start_time', $sortOrder === 'desc' ? 'asc' : 'desc');
+        } elseif ($sortBy === 'start_time') {
+            $query->orderBy('date', $sortOrder)->orderBy('start_time', $sortOrder);
+        } else {
+            $query->orderBy('created_at', $sortOrder);
+        }
+
+        if ($groupByDate) {
+            $bookings = $query->get()->groupBy(function ($booking) {
+                return Carbon::parse($booking->date)->format('Y-m-d');
+            });
+
+            $groupedData = [];
+            foreach ($bookings as $date => $dateBookings) {
+                $groupedData[] = [
+                    'date'           => $date,
+                    'count'          => $dateBookings->count(),
+                    'bookings'       => $dateBookings->values(),
+                    'date_formatted' => Carbon::parse($date)->format('d F Y'),
+                ];
+            }
+
+            usort($groupedData, function ($a, $b) use ($sortOrder) {
+                return $sortOrder === 'desc'
+                    ? strcmp($b['date'], $a['date'])
+                    : strcmp($a['date'], $b['date']);
+            });
+
+            return sendSuccess('Bookings fetched successfully', [
+                'grouped'  => true,
+                'bookings' => $groupedData,
+                'total'    => $query->count(),
+            ]);
+        } else {
+
+            $bookings = $query->paginate($recordsPerPage);
+
+            return sendSuccess('Bookings fetched successfully', [
+                'bookings'   => $bookings->items(),
+                'pagination' => [
+                    'current_page'     => $bookings->currentPage(),
+                    'last_page'        => $bookings->lastPage(),
+                    'records_per_page' => $bookings->perPage(),
+                    'total'            => $bookings->total(),
+                    'from'             => $bookings->firstItem(),
+                    'to'               => $bookings->lastItem(),
+                ],
+                'grouped'    => false,
+            ]);
+        }
     }
 
     protected function createSingleBooking(
