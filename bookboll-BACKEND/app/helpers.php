@@ -5,9 +5,26 @@ use App\Models\SlotLock;
 use App\Models\User;
 use App\Notifications\BookingConfirmedUserNotification;
 use App\Notifications\BookingCreatedAdminNotification;
-use App\Notifications\BookingCreatedUserNotification;
 use App\Services\AuditLogService;
 use Barryvdh\DomPDF\Facade\Pdf;
+use App\Notifications\BookingCreatedUserNotification;
+
+
+if (! class_exists('MobileApps')) {
+    class MobileApps
+    {
+        public const ADMIN    = 'admin_mobile_app';
+        public const CUSTOMER = 'customer_mobile_app';
+
+        public static function list(): array
+        {
+            return [
+                self::ADMIN,
+                self::CUSTOMER,
+            ];
+        }
+    }
+}
 
 if (! class_exists('BookingStatus')) {
     class BookingStatus

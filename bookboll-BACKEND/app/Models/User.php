@@ -35,8 +35,17 @@ class User extends Authenticatable
 
     protected $hidden = [
         'password',
-        'stripe_id',
         'remember_token',
+        // Stripe/Cashier related fields
+        'stripe_id',
+        'pm_type',
+        'pm_last_four',
+        'trial_ends_at',
+        // OAuth provider fields
+        'provider',
+        'provider_id',
+        // Internal admin fields
+        'blocking_reason',
     ];
 
     protected function casts(): array

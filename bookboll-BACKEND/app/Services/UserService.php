@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use MobileApps;
 use Spatie\Permission\Models\Role;
 
 class UserService
@@ -93,7 +94,7 @@ class UserService
         $response = [
             'roles'           => $roles,
             'assigned_venues' => $user->venues,
-            'user'            => $user->setHidden(['roles']),
+            'user'            => $user,
             'loyalty_points'  => LoyaltyPoint::balance($user->id) ?? 0,
             'loyalty_tier'    => [
                 'name'           => $user->loyaltyTier->name ?? 'Bronze',
@@ -179,6 +180,8 @@ class UserService
 
     public function login($request)
     {
+        $requestFrom = $request->header('from') ?? null;
+
         try {
 
             $user = $this->userModel->where("email", $request->email)->first();
@@ -187,17 +190,28 @@ class UserService
                 return sendError('Invalid credentials');
             }
 
-            $token = $user->createToken('bookboll-api-token')->plainTextToken;
+            if ($requestFrom == MobileApps::ADMIN) {
+                $token = $user->createToken('bookboll-admin-mobile-app-api-token')->plainTextToken;
+            } else {
+                $token = $user->createToken('bookboll-admin-web-api-token')->plainTextToken;
+            }
+
             $roles = $user->getRoleNames();
 
+            $permissions = $user->getAllPermissions()->pluck('name');
+
+            $user->makeHidden(['roles']);
+
             $response = [
+                'user'            => $user,
                 'token'           => $token,
-                'user'            => $user->setHidden(['roles']),
                 'roles'           => $roles,
+                'permissions'     => $permissions,
                 'assigned_venues' => $user->venues,
             ];
 
             return sendSuccess('Login successful', $response);
+
         } catch (Exception $e) {
             return sendError('Something went wrong during login');
         }
@@ -254,7 +268,7 @@ class UserService
 
             DB::commit();
 
-            $user->setHidden(['roles']);
+            $user->makeHidden(['roles']);
 
             return sendSuccess("Logged in with google", compact('token', 'user'));
 
@@ -281,9 +295,11 @@ class UserService
 
             $token = $user->createToken('bookboll-customer-login-api-token')->plainTextToken;
 
+            $user->makeHidden(['roles']);
+
             $response = [
                 'token' => $token,
-                'user'  => $user->setHidden(['roles']),
+                'user'  => $user,
             ];
 
             return sendSuccess('Login successful', $response);
@@ -306,10 +322,11 @@ class UserService
 
     public function loginUser()
     {
-        $user     = auth()->user();
+        $user = auth()->user();
+        $user->makeHidden(['roles']);
         $roles    = $user->getRoleNames();
         $response = [
-            'user'  => $user->setHidden(['roles']),
+            'user'  => $user,
             'roles' => $roles,
         ];
         return sendSuccess("Logged in user fetched susccessfully", $response);
