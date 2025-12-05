@@ -488,11 +488,17 @@ if (! function_exists('determineSlotPrice')) {
     }
 }
 
-if (! function_exists('unlockSlot')) {
-    function unlockSlot($request, $listing, $user, $booking)
+if (! function_exists('getSessionId')) {
+    function getSessionId($user)
     {
-        $ipAddress = $request->ip();
-        $sessionId = $user ? 'user_' . $user->id : 'guest_' . md5($ipAddress . $request->userAgent());
+        return $user ? "user_{$user->id}" : 'guest_' . md5(request()->ip() . request()->userAgent());
+    }
+}
+
+if (! function_exists('unlockSlot')) {
+    function unlockSlot($listing, $user, $booking)
+    {
+        $sessionId = getSessionId($user);
 
         SlotLock::where('listing_id', $listing->id)
             ->whereDate('date', $booking->date)

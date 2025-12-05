@@ -481,7 +481,7 @@ class BookingService
                 ]);
             }
 
-            unlockSlot($request, $listing, $user, $booking);
+            unlockSlot( $listing, $user, $booking);
 
             // Loyalty points will be added when booking is confirmed, not on creation
 
@@ -1960,7 +1960,7 @@ class BookingService
 
             createBookingInvoiceWithNotification($booking, $user);
 
-            unlockSlot($request, $listing, $user, $booking);
+            unlockSlot( $listing, $user, $booking);
 
             // Loyalty points will be added when booking is confirmed, not on creation
 
