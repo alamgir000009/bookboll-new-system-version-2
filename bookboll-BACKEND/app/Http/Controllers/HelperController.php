@@ -20,8 +20,12 @@ class HelperController extends Controller
 {
     public function extraData()
     {
-        $venues   = Venue::with(['listings:id,venue_id,name', 'schedules'])->get(['id', 'name']);
-        $listings = Listing::with(['venue'])->get(['id', 'name', 'venue_id', 'calendar_color']);
+        $venues = Venue::with(['listings:id,venue_id,name', 'schedules'])
+            ->orderBy('sort_order', 'ASC')
+            ->get(['id', 'name']);
+        $listings = Listing::with(['venue'])
+            ->get(['id', 'name', 'venue_id', 'calendar_color']);
+
         return sendSuccess('Data fetched successfully', compact('venues', 'listings'));
     }
 
