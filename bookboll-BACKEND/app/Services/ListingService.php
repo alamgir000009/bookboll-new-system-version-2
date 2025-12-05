@@ -909,7 +909,7 @@ class ListingService
         $ipAddress = $request->ip();
         $listingId = $request->listing_id;
         $date      = Carbon::parse(request('date', now()->toDateString()));
-        $sessionId = $user ? 'user_' . $user->id : 'guest_' . md5($ipAddress . $request->userAgent());
+        $sessionId = getSessionId($user);
 
         $listing = $this->listingModel::with([
             'venue',
@@ -949,8 +949,8 @@ class ListingService
             ->sortBy('start_time')
             ->values();
 
-        // Venue must have schedules for the day (venue must be open)
-        if ($venueSchedules->isEmpty()) {
+        // Venue and listing must have schedules for the day (venue must be open)
+        if ($venueSchedules->isEmpty() || $listingSchedules->isEmpty()) {
             return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
         }
 
@@ -1040,16 +1040,6 @@ class ListingService
     protected function findOverlappingScheduleBlocks($listingSchedules, $venueSchedules)
     {
         $overlappingBlocks = collect();
-
-        // If listing has no specific schedules, use venue schedules as fallback
-        if ($listingSchedules->isEmpty()) {
-            return $venueSchedules->map(function ($schedule) {
-                return [
-                    'start_time' => $schedule->start_time,
-                    'end_time'   => $schedule->end_time,
-                ];
-            });
-        }
 
         // Venue schedules should already be checked before calling this method
         // Find overlapping periods between listing and venue schedules
