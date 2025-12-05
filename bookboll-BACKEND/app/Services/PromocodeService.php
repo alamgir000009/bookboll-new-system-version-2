@@ -27,7 +27,9 @@ class PromocodeService
         $records_per_page = $request->records_per_page ?? 10;
         $search           = $request->search ?? null;
 
-        $query = $this->promocodeModel::with(['venues', 'listings', 'users'])->latest()
+        $query = $this->promocodeModel::with(['venues', 'listings', 'users'])
+            ->nonReminderPromocodes() // Exclude reminder promocodes from admin listing
+            ->latest()
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('code', 'LIKE', "%{$search}%")
@@ -58,10 +60,16 @@ class PromocodeService
         $query = $this->promocodeModel::with(['venues', 'listings'])
             ->active()
             ->where(function ($q) use ($user) {
-                $q->whereDoesntHave('users')
-                    ->orWhereHas('users', function ($subQ) use ($user) {
-                        $subQ->where('user_id', $user->id);
-                    });
+                // Show promocodes that are either:
+                // 1. Not assigned to any users (available to all users) - AND not reminder promocodes
+                // 2. Assigned to the current user (including reminder promocodes)
+                $q->where(function ($subQ) {
+                    $subQ->whereDoesntHave('users')
+                        ->where('is_reminder_promocode', false);
+                })
+                ->orWhereHas('users', function ($subQ) use ($user) {
+                    $subQ->where('user_id', $user->id);
+                });
             })
             ->latest()
             ->when($search, function ($query, $search) {
