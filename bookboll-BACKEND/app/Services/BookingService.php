@@ -469,11 +469,16 @@ class BookingService
                         'description' => 'Payment ' . str_replace('_', ' ', $request->payment_method),
                     ]);
                 }
-
             }
 
             if (! $booking->is_free) {
                 createBookingInvoiceWithNotification($booking, $user);
+            } else {
+                $booking->history()->create([
+                    'user_id'     => $user->id,
+                    'action'      => 'booking_created',
+                    'description' => 'This booking is created as free by ' . auth()->user()->name . ' it marked as fully paid',
+                ]);
             }
 
             unlockSlot($request, $listing, $user, $booking);
