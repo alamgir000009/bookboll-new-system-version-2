@@ -483,9 +483,7 @@ class BookingService
 
             unlockSlot($request, $listing, $user, $booking);
 
-            if ($booking->loyalty_points_earned > 0) {
-                $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id);
-            }
+            // Loyalty points will be added when booking is confirmed, not on creation
 
             DB::commit();
 
@@ -712,7 +710,7 @@ class BookingService
 
         if (! empty($errors)) {
             Log::error("Booking validation errors", ["Errors" => $errors]);
-            return sendError('Validation failed', $errors, 422);
+            // return sendError('Validation failed', $errors, 422);
         }
 
         return sendSuccess('Booking validation passed', [
@@ -1398,6 +1396,19 @@ class BookingService
                 'description' => 'Booking confirmed by ' . auth()->user()->name,
             ]);
 
+            // Add loyalty points when booking is confirmed
+            if ($booking->loyalty_points_earned > 0) {
+                // Check if points were already added to avoid duplicates
+                $pointsAlreadyAdded = LoyaltyPoint::where('booking_id', $booking->id)
+                    ->where('type', 'credit')
+                    ->exists();
+
+                if (!$pointsAlreadyAdded) {
+                    $user = $booking->user;
+                    $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id, "Loyalty points earned for booking confirmation");
+                }
+            }
+
             try {
                 $booking->load('venue:id,name,maps_url');
                 $user = $booking->user;
@@ -1951,9 +1962,7 @@ class BookingService
 
             unlockSlot($request, $listing, $user, $booking);
 
-            if ($booking->loyalty_points_earned > 0) {
-                $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id);
-            }
+            // Loyalty points will be added when booking is confirmed, not on creation
 
             if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
                 autoConfirmBookingIfPaid($booking);

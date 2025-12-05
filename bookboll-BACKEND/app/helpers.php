@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Invoice;
+use App\Models\LoyaltyPoint;
 use App\Models\SlotLock;
 use App\Models\User;
 use App\Notifications\BookingConfirmedUserNotification;
@@ -571,6 +572,20 @@ if (! function_exists('autoConfirmBookingIfPaid')) {
                     'action'      => 'booking_confirmed',
                     'description' => 'Booking automatically confirmed after payment completion.',
                 ]);
+
+                // Add loyalty points when booking is auto-confirmed
+                if ($booking->loyalty_points_earned > 0) {
+                    // Check if points were already added to avoid duplicates
+                    $pointsAlreadyAdded = LoyaltyPoint::where('booking_id', $booking->id)
+                        ->where('type', 'credit')
+                        ->exists();
+
+                    if (!$pointsAlreadyAdded) {
+                        $user = $booking->user;
+                        $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id, "Loyalty points earned for booking auto-confirmation");
+                    }
+                }
+
                 try {
                     $booking->load('venue:id,name,maps_url');
                     $user = $booking->user;

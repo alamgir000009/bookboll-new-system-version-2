@@ -10,6 +10,7 @@ class LoyaltyPoint extends Model
         'points',
         'reason',
         'user_id',
+        'booking_id',
         'order_id',
     ];
 
