@@ -91,6 +91,20 @@ class SettingTableSeeder extends Seeder
                 'type'        => 'integer',
                 'description' => 'After the following days booking reminders emaill will be sent',
             ],
+            // Reminder Promocode percentage
+            [
+                'key'         => 'reminder_promocode_discount_percentage',
+                'value'       => 10,
+                'type'        => 'integer',
+                'description' => 'The following percentage will be applied to the reminder promocode',
+            ],
+            // Reminder Promocode validity days
+            [
+                'key'         => 'reminder_promocode_validity_days',
+                'value'       => 30,
+                'type'        => 'integer',
+                'description' => 'The following number of days the reminder promocode will be valid',
+            ],
         ];
 
         foreach ($defaults as $setting) {

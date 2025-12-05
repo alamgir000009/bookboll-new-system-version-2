@@ -60,9 +60,6 @@ class PromocodeService
         $query = $this->promocodeModel::with(['venues', 'listings'])
             ->active()
             ->where(function ($q) use ($user) {
-                // Show promocodes that are either:
-                // 1. Not assigned to any users (available to all users) - AND not reminder promocodes
-                // 2. Assigned to the current user (including reminder promocodes)
                 $q->where(function ($subQ) {
                     $subQ->whereDoesntHave('users')
                         ->where('is_reminder_promocode', false);

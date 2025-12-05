@@ -18,8 +18,9 @@ class SendBookingReminders extends Command
 
     public function handle()
     {
-        $reminderDays = (int) Setting::where('key', 'reminder_emails_after_days')->value('value') ?: 7;
+        $reminderDays       = (int) Setting::where('key', 'reminder_emails_after_days')->value('value') ?: 7;
         $discountPercentage = (float) Setting::where('key', 'reminder_promocode_discount_percentage')->value('value') ?: 10;
+        $validityDays       = (int) Setting::where('key', 'reminder_promocode_validity_days')->value('value') ?: 7;
 
         if ($reminderDays <= 0) {
             return 0;
@@ -30,7 +31,7 @@ class SendBookingReminders extends Command
             ->get();
 
         if ($users->isEmpty()) {
-            $this->info('No users found with completed bookings.');
+            Log::info('No users found with completed bookings.');
             return 0;
         }
 
@@ -73,34 +74,30 @@ class SendBookingReminders extends Command
                                     ->where('type', BookingReminderNotification::class)
                                     ->count() + 1;
 
-                                // Generate unique promocode
                                 $promocodeCode = $this->generateUniquePromocode($user->id);
 
-                                // Create promocode for the user
                                 $promocode = Promocode::create([
-                                    'code'                  => $promocodeCode,
-                                    'status'                => 'active',
-                                    'description'           => "Special discount code for coming back! Get {$discountPercentage}% off your next booking.",
-                                    'discount_type'         => 'percentage',
-                                    'discount_value'         => $discountPercentage,
-                                    'valid_from'            => Carbon::today(),
-                                    'expires_at'            => Carbon::today()->addDays(30), // Valid for 30 days
-                                    'usage_limit'           => 1, // Can be used once
-                                    'per_user_limit'         => 1,
-                                    'payment_methods'       => 'all',
+                                    'usage_limit'           => 1,
+                                    'per_user_limit'        => 1,
                                     'min_order_amount'      => null,
                                     'max_discount_amount'   => null,
                                     'is_reminder_promocode' => true,
+                                    'payment_methods'       => 'all',
+                                    'status'                => 'active',
+                                    'discount_type'         => 'percentage',
+                                    'code'                  => $promocodeCode,
+                                    'valid_from'            => Carbon::today(),
+                                    'discount_value'        => $discountPercentage,
+                                    'expires_at'            => Carbon::today()->addDays($validityDays),
+                                    'description'           => "Special discount code for coming back! Get {$discountPercentage}% off your next booking.",
                                 ]);
 
-                                // Attach promocode to user via pivot table
                                 $promocode->users()->attach($user->id, ['usage_count' => 0]);
 
                                 $user->notify(new BookingReminderNotification($daysSinceBooking, $promocode));
 
                                 DB::commit();
 
-                                $this->info("Reminder #{$reminderNumber} sent to {$user->name} ({$user->email}) — {$daysSinceBooking} days inactive. Promocode: {$promocodeCode}");
                                 Log::info("Reminder #{$reminderNumber} sent to {$user->name} ({$user->email}) — {$daysSinceBooking} days inactive. Promocode: {$promocodeCode}");
 
                                 $sentCount++;
@@ -123,23 +120,18 @@ class SendBookingReminders extends Command
         return 0;
     }
 
-    /**
-     * Generate a unique promocode for the user
-     */
     private function generateUniquePromocode(int $userId): string
     {
         $maxAttempts = 10;
         $attempts    = 0;
 
         do {
-            // Generate code: REMINDER + hash
-            $code = 'REMINDER' . strtoupper(substr(md5($userId . time() . $attempts), 0, 6));
+            $code   = 'REMINDER' . strtoupper(substr(md5($userId . time() . $attempts), 0, 6));
             $exists = Promocode::where('code', $code)->exists();
             $attempts++;
         } while ($exists && $attempts < $maxAttempts);
 
         if ($exists) {
-            // Fallback: use timestamp-based code
             $code = 'REMINDER' . strtoupper(substr(md5($userId . microtime(true)), 0, 8));
         }
 

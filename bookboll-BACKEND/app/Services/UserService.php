@@ -284,6 +284,7 @@ class UserService
         try {
 
             $user = $this->userModel->whereRelation('roles', 'name', 'customer')->whereEmail($request->email)->first();
+            logger($user);
 
             if (! $user || ! password_verify($request->password, $user->password)) {
                 return sendError('Invalid credentials');
