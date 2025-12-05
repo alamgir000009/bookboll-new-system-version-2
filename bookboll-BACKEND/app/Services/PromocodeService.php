@@ -27,7 +27,7 @@ class PromocodeService
         $records_per_page = $request->records_per_page ?? 10;
         $search           = $request->search ?? null;
 
-        $query = $this->promocodeModel::with(['venues', 'listings'])->latest()
+        $query = $this->promocodeModel::with(['venues', 'listings', 'users'])->latest()
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('code', 'LIKE', "%{$search}%")
@@ -43,6 +43,33 @@ class PromocodeService
             ->when($request->status ?? null, fn($q, $status) => $q->where('status', $status))
             ->when($request->discount_type ?? null, fn($q, $type) => $q->where('discount_type', $type))
             ->when($request->payment_methods ?? null, fn($q, $type) => $q->where('payment_methods', $type));
+
+        $promocodes = $query->paginate($records_per_page);
+
+        return sendSuccess('Promocodes fetched successfully', compact('promocodes'));
+    }
+
+    public function customerPromocodes($request)
+    {
+        $user             = auth()->user();
+        $search           = $request->search ?? null;
+        $records_per_page = $request->records_per_page ?? 10;
+
+        $query = $this->promocodeModel::with(['venues', 'listings'])
+            ->active()
+            ->where(function ($q) use ($user) {
+                $q->whereDoesntHave('users')
+                    ->orWhereHas('users', function ($subQ) use ($user) {
+                        $subQ->where('user_id', $user->id);
+                    });
+            })
+            ->latest()
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('code', 'LIKE', "%{$search}%")
+                        ->orWhere('description', 'LIKE', "%{$search}%");
+                });
+            });
 
         $promocodes = $query->paginate($records_per_page);
 
@@ -66,9 +93,22 @@ class PromocodeService
                 $promocode->listings()->sync($request->listings);
             }
 
+            if ($request->has('users')) {
+                $users = $request->users ?? [];
+                if (empty($users)) {
+                    $promocode->users()->detach();
+                } else {
+                    $syncData = [];
+                    foreach ($users as $userId) {
+                        $syncData[$userId] = ['usage_count' => 0];
+                    }
+                    $promocode->users()->sync($syncData);
+                }
+            }
+
             DB::commit();
 
-            $promocode->load(['venues', 'listings']);
+            $promocode->load(['venues', 'listings', 'users']);
 
             return sendSuccess('Promocode created successfully', compact('promocode'), 201);
 
@@ -96,9 +136,26 @@ class PromocodeService
                 $promocode->listings()->sync($request->listings ?? []);
             }
 
+            if ($request->has('users')) {
+                $users = $request->users ?? [];
+                if (empty($users)) {
+                    $promocode->users()->detach();
+                } else {
+                    $existingUsers = $promocode->users()->pluck('user_id')->toArray();
+                    $syncData      = [];
+                    foreach ($users as $userId) {
+                        $existingPivot     = $promocode->users()->where('user_id', $userId)->first();
+                        $syncData[$userId] = [
+                            'usage_count' => $existingPivot?->pivot->usage_count ?? 0,
+                        ];
+                    }
+                    $promocode->users()->sync($syncData);
+                }
+            }
+
             DB::commit();
 
-            $promocode->load(['venues', 'listings']);
+            $promocode->load(['venues', 'listings', 'users']);
 
             return sendSuccess('Promocode updated successfully', compact('promocode'));
 
@@ -117,7 +174,7 @@ class PromocodeService
 
     public function validateForUse($code, $orderAmount, $userId = null, $paymentMethod = null, $venueId = null, $listingId = null)
     {
-        $promocode = $this->promocodeModel::where('code', $code)->first();
+        $promocode = $this->promocodeModel::with('users')->where('code', $code)->first();
 
         if (! $promocode || ! $promocode->isValidForOrder($orderAmount, $userId, $paymentMethod, $venueId, $listingId)) {
             throw ValidationException::withMessages([
@@ -181,6 +238,8 @@ class PromocodeService
             'venues.*'            => 'exists:venues,id',
             'listings'            => 'nullable|array',
             'listings.*'          => 'exists:listings,id',
+            'users'               => 'nullable|array',
+            'users.*'             => 'exists:users,id',
         ];
 
         if ($isUpdate) {
@@ -204,7 +263,7 @@ class PromocodeService
 
         try {
 
-            $promocode = Promocode::where('code', $validated['code'])->first();
+            $promocode = Promocode::with('users')->where('code', $validated['code'])->first();
 
             if (! $promocode) {
                 return $this->invalidResponse('Promocode not found');
@@ -218,18 +277,16 @@ class PromocodeService
                     return $this->invalidResponse('Promocode has expired');
                 }
             } else {
-                // For never-expiring, still check valid_from
+
                 if ($now->lt($promocode->valid_from)) {
                     return $this->invalidResponse('Promocode is not yet active');
                 }
             }
 
-            // Step 3: Check usage limit (used_count vs usage_limit)
             if ($promocode->usage_limit && $promocode->used_count >= $promocode->usage_limit) {
                 return $this->invalidResponse('Promocode usage limit reached');
             }
 
-            // Step 4: Check per-user usage limit (from used_by_users JSON)
             if ($promocode->per_user_limit) {
                 $userUsageCount = $promocode->used_by_users[$validated['user_id']] ?? 0;
                 if ($userUsageCount >= $promocode->per_user_limit) {
@@ -238,13 +295,12 @@ class PromocodeService
                 }
             }
 
-            // Step 5: Check minimum order amount
             if ($promocode->min_order_amount && $validated['amount'] < $promocode->min_order_amount) {
                 return $this->invalidResponse("Minimum amount required to use promocode is QAR {$promocode->min_order_amount}, your order is for QAR {$validated['amount']}");
             }
 
-            $paymentMethod = $validated['payment_method'] ?? null; // Optional in request
-            if ($paymentMethod) {                                  // Only check if provided
+            $paymentMethod = $validated['payment_method'] ?? null;
+            if ($paymentMethod) {
                 $paymentMethodMapping = [
                     'cash_on_arrival'              => 'pending_payment',
                     'deposit_remaining_on_arrival' => 'pending_payment',
@@ -256,8 +312,6 @@ class PromocodeService
 
                 $mappedPaymentMethod = $paymentMethodMapping[$paymentMethod] ?? $paymentMethod;
 
-                // Assume model's payment_methods is a comma-separated string (e.g., 'pending_payment,online_payment') or array-like
-                // To match JS: Treat as array of allowed methods
                 $validPaymentMethods = $this->parsePaymentMethods($promocode->payment_methods);
 
                 if (! empty($validPaymentMethods) && ! in_array($mappedPaymentMethod, $validPaymentMethods)) {
@@ -271,7 +325,6 @@ class PromocodeService
                 }
             }
 
-            // Step 7: Check venue restriction (load relation and check contains)
             if ($validated['venue_id']) {
                 $promocode->load('venues');
                 $applicableVenues = $promocode->venues->pluck('id')->toArray();
@@ -280,7 +333,6 @@ class PromocodeService
                 }
             }
 
-            // Step 8: Check listing restriction (optional; load if provided)
             $listingId = $validated['listing_id'] ?? null;
             if ($listingId) {
                 $promocode->load('listings');
@@ -290,7 +342,12 @@ class PromocodeService
                 }
             }
 
-            // All checks passed: Return valid with promocode object (matches JS return { valid: true, promocode })
+            $promocode->load('users');
+            $assignedUserIds = $promocode->users->pluck('id')->toArray();
+            if (! empty($assignedUserIds) && ! in_array($validated['user_id'], $assignedUserIds)) {
+                return $this->invalidResponse('This promocode is not available for your account');
+            }
+
             return response()->json([
                 'success' => true,
                 'data'    => [

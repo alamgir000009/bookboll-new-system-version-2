@@ -23,12 +23,12 @@ class Promocode extends Model
     ];
 
     protected $casts = [
-        'discount_value'      => 'decimal:2',
-        'min_order_amount'    => 'decimal:2',
-        'max_discount_amount' => 'decimal:2',
         'valid_from'          => 'date',
         'expires_at'          => 'date',
         'used_by_users'       => 'array',
+        'discount_value'      => 'decimal:2',
+        'min_order_amount'    => 'decimal:2',
+        'max_discount_amount' => 'decimal:2',
     ];
 
     public function venues()
@@ -102,6 +102,16 @@ class Promocode extends Model
             }
         }
 
+        if ($userId) {
+            if (! $this->relationLoaded('users')) {
+                $this->load('users');
+            }
+            $assignedUserIds = $this->users->pluck('id')->toArray();
+            if (! empty($assignedUserIds) && ! in_array($userId, $assignedUserIds)) {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -166,5 +176,25 @@ class Promocode extends Model
     public function getNeverExpiresAttribute()
     {
         return is_null($this->expires_at);
+    }
+
+    public function isAvailableToAllUsers(): bool
+    {
+        if (! $this->relationLoaded('users')) {
+            $this->load('users');
+        }
+        return $this->users->isEmpty();
+    }
+
+    public function isAvailableToUser(int $userId): bool
+    {
+        if ($this->isAvailableToAllUsers()) {
+            return true;
+        }
+
+        if (! $this->relationLoaded('users')) {
+            $this->load('users');
+        }
+        return $this->users->contains('id', $userId);
     }
 }

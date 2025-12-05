@@ -146,6 +146,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('bookings/{id}/cancel', [BookingController::class, 'cancel']);
         Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent']);
 
+        Route::get('promocodes', [PromocodeController::class, 'customerIndex']);
+
     });
 
 });

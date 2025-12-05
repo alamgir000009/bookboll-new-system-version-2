@@ -31,7 +31,7 @@ class HelperController extends Controller
 
     public function extraCustomers()
     {
-        $customers = User::role('customer')->get(['id', 'name']);
+        $customers = User::role('customer')->get(['id', 'name', 'email']);
         return sendSuccess('Data fetched successfully', compact('customers'));
     }
 

@@ -16,6 +16,11 @@ class PromocodeController extends Controller
         return $this->promocodeService->all($request);
     }
 
+    public function customerIndex(Request $request)
+    {
+        return $this->promocodeService->customerPromocodes($request);
+    }
+
     public function store(Request $request)
     {
         return $this->promocodeService->create($request);
@@ -65,7 +70,7 @@ class PromocodeController extends Controller
             'quantity'       => 'nullable|numeric',
         ]);
 
-        $promocode = Promocode::where('code', $request->promocode)->active()->first();
+        $promocode = Promocode::with('users')->where('code', $request->promocode)->active()->first();
 
         if (! $promocode) {
             return sendError('Invalid or inactive promocode');
