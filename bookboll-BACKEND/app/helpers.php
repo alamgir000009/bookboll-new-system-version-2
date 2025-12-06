@@ -499,7 +499,7 @@ if (! function_exists('unlockListingSlot')) {
     {
         $sessionId = getSessionId();
 
-        SlotLock::whereDate('date', $booking->date)
+        SlotLock::where('date', $booking->date)
             ->where('session_id', $sessionId)
             ->where('listing_id', $listing->id)
             ->delete();

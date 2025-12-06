@@ -79,4 +79,29 @@ class ListingController extends Controller
     {
         return $this->listingService->deleteImage($request, $id);
     }
+
+    public function lockSlot(Request $request)
+    {
+        return $this->listingService->lockSlot($request);
+    }
+
+    public function unlockSlot(Request $request)
+    {
+        return $this->listingService->unlockSlot($request);
+    }
+
+    public function unlockAllSlots(Request $request)
+    {
+        return $this->listingService->unlockAllSlots($request);
+    }
+
+    public function extendSlotLock(Request $request)
+    {
+        return $this->listingService->extendSlotLock($request);
+    }
+
+    public function checkSlotAvailability(Request $request)
+    {
+        return $this->listingService->checkSlotAvailability($request);
+    }
 }

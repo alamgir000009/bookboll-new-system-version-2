@@ -909,7 +909,7 @@ class ListingService
         $ipAddress = $request->ip();
         $listingId = $request->listing_id;
         $date      = Carbon::parse(request('date', now()->toDateString()));
-        $sessionId = getSessionId($user);
+        $sessionId = getSessionId();
 
         $listing = $this->listingModel::with([
             'venue',
@@ -926,15 +926,7 @@ class ListingService
         $weekday     = strtolower($date->format('l'));
         $slotMinutes = ($listing->slot_duration ?? 1) * 60;
 
-        $activeLock = SlotLock::where('listing_id', $listingId)
-            ->where('date', $date->toDateString())
-            ->where('locked_until', '>', now())
-            ->where('session_id', '!=', $sessionId)
-            ->exists();
-
-        if ($activeLock) {
-            return sendError('This date is currently locked by another user. Please try again later.');
-        }
+        // Note: We no longer lock the entire date, only specific slots
 
         // ---- Get ALL schedules for the day ----
         $venueSchedules = $listing->venue?->schedules
@@ -1005,6 +997,12 @@ class ListingService
             ->with('resourcesAllocated')
             ->get(['id', 'start_time', 'end_time', 'status']);
 
+        // ---- Get active slot locks for this listing and date ----
+        $activeLocks = SlotLock::where('listing_id', $listing->id)
+            ->where('date', $date->toDateString())
+            ->active()
+            ->get();
+
         // ---- Generate time slots for all available blocks ----
         $timeSlots = collect();
         foreach ($availableBlocks as $block) {
@@ -1016,27 +1014,16 @@ class ListingService
                 $weekday,
                 $specialDay,
                 $bookings,
-                $isHoliday
+                $isHoliday,
+                $activeLocks,
+                $sessionId,
+                $date
             );
             $timeSlots = $timeSlots->merge($slots);
         }
 
         // Sort time slots by start time
         $timeSlots = $timeSlots->sortBy('start_time')->values();
-
-        $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
-
-        SlotLock::updateOrCreate(
-            [
-                'session_id' => $sessionId,
-                'ip_address' => $ipAddress,
-                'listing_id' => $listing->id,
-                'date'       => $date->toDateString(),
-            ],
-            [
-                'locked_until' => now()->addMinutes($lockDuration),
-            ]
-        );
 
         return sendSuccess('Listing slots fetched successfully', compact('timeSlots'));
     }
@@ -1148,7 +1135,7 @@ class ListingService
         return $merged;
     }
 
-    protected function generateTimeSlots($startTime, $endTime, $slotMinutes, $listing, $weekday, $specialDay, $bookings, $isHoliday)
+    protected function generateTimeSlots($startTime, $endTime, $slotMinutes, $listing, $weekday, $specialDay, $bookings, $isHoliday, $activeLocks = null, $sessionId = null, $date = null)
     {
         $start = Carbon::parse($startTime);
         $end   = Carbon::parse($endTime);
@@ -1200,9 +1187,26 @@ class ListingService
                 }
             }
 
-            $isAvailable = ! $isHoliday && $availableCount > 0 && $allResourcesAvailable;
+            // Check if slot is locked by another user
+            $isLocked = false;
+            if ($activeLocks && $sessionId) {
+                $isLocked = $activeLocks->contains(function ($lock) use ($slotStart, $slotEnd, $sessionId) {
+                    // Check if slot overlaps with lock time and is from different session
+                    if ($lock->session_id === $sessionId) {
+                        return false; // User's own lock doesn't block them
+                    }
+                    return $this->slotsOverlap(
+                        $slotStart,
+                        $slotEnd,
+                        $lock->start_time ? Carbon::parse($lock->start_time)->format('H:i') : null,
+                        $lock->end_time ? Carbon::parse($lock->end_time)->format('H:i') : null
+                    );
+                });
+            }
 
-            if ($isAvailable) {
+            $isAvailable = ! $isHoliday && $availableCount > 0 && $allResourcesAvailable && ! $isLocked;
+
+            if ($isAvailable || $isLocked) {
 
                 $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
 
@@ -1214,6 +1218,7 @@ class ListingService
                     'duration'            => $duration,
                     'is_holiday'          => $isHoliday,
                     'available'           => $isAvailable,
+                    'is_locked'           => $isLocked,
                     'booked'              => $bookedCount,
                     'available_resources' => $availableQty,
                     'available_count'     => $availableCount,
@@ -1446,5 +1451,314 @@ class ListingService
 
         list($hours, $minutes) = explode(':', $time);
         return (int) $hours * 60 + (int) $minutes;
+    }
+
+    /**
+     * Lock a specific time slot for a user
+     *
+     * @param \Illuminate\Http\Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function lockSlot($request)
+    {
+        $request->validate([
+            'listing_id' => 'required|numeric|exists:listings,id',
+            'date'       => 'required|date|after_or_equal:today',
+            'start_time' => 'required|date_format:H:i',
+            'end_time'   => 'required|date_format:H:i|after:start_time',
+        ], [
+            'date.after_or_equal' => 'You cannot lock a slot for a past date.',
+            'end_time.after'      => 'End time must be after start time.',
+        ]);
+
+        try {
+
+            $user      = auth()->user();
+            $ipAddress = $request->ip();
+            $sessionId = getSessionId();
+            $listingId = $request->listing_id;
+            $startTime = $request->start_time;
+            $endTime   = $request->end_time;
+            $date      = Carbon::parse($request->date);
+
+            $listing = $this->listingModel->with('venue')->findOrFail($listingId);
+
+            if ($listing->status !== 'active' || ! $listing->venue || $listing->venue->status !== 'active') {
+                return sendError('Listing is not available for booking');
+            }
+
+            $existingBooking = Booking::where('listing_id', $listingId)
+                ->whereDate('date', $date)
+                ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
+                ->where(function ($q) use ($startTime, $endTime) {
+                    $q->whereRaw('TIME(start_time) < ?', [$endTime])
+                        ->whereRaw('TIME(end_time) > ?', [$startTime]);
+                })
+                ->exists();
+
+            if ($existingBooking) {
+                return sendError('This slot is already booked');
+            }
+
+            $existingLock = SlotLock::where('listing_id', $listingId)
+                ->where('date', $date->toDateString())
+                ->where('start_time', $startTime)
+                ->where('end_time', $endTime)
+                ->where('session_id', '!=', $sessionId)
+                ->active()
+                ->first();
+
+            if ($existingLock) {
+                return sendError('This slot is currently locked by another user. Please try again in a moment.');
+            }
+
+            $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
+
+            $lock = SlotLock::updateOrCreate(
+                [
+                    'start_time' => $startTime,
+                    'end_time'   => $endTime,
+                    'session_id' => $sessionId,
+                    'listing_id' => $listingId,
+                    'date'       => $date->toDateString(),
+                ],
+                [
+                    'user_id'      => $user?->id,
+                    'ip_address'   => $ipAddress,
+                    'locked_until' => now()->addMinutes($lockDuration),
+                ]
+            );
+
+            return sendSuccess('Slot locked successfully', [
+                'lock_id'      => $lock->id,
+                'listing_id'   => $listingId,
+                'start_time'   => $startTime,
+                'end_time'     => $endTime,
+                'date'         => $date->toDateString(),
+                'locked_until' => $lock->locked_until->toIso8601String(),
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return sendError('Listing not found', [], 404);
+        } catch (Exception $e) {
+            Log::error('Failed to lock slot: ' . $e->getMessage(), ['exception' => $e]);
+            return sendError('Failed to lock slot: ' . $e->getMessage());
+        }
+    }
+
+    public function unlockSlot($request)
+    {
+        $request->validate([
+            'listing_id' => 'required|numeric|exists:listings,id',
+            'date'       => 'required|date',
+            'start_time' => 'required|date_format:H:i',
+            'end_time'   => 'required|date_format:H:i',
+        ]);
+
+        try {
+
+            $sessionId = getSessionId();
+            $startTime = $request->start_time;
+            $endTime   = $request->end_time;
+            $listingId = $request->listing_id;
+            $date      = Carbon::parse($request->date);
+
+            $deleted = SlotLock::where('listing_id', $listingId)
+                ->where('date', $date->toDateString())
+                ->where('start_time', $startTime)
+                ->where('end_time', $endTime)
+                ->where('session_id', $sessionId)
+                ->delete();
+
+            if ($deleted) {
+                return sendSuccess('Slot unlocked successfully', [
+                    'listing_id' => $listingId,
+                    'date'       => $date->toDateString(),
+                    'start_time' => $startTime,
+                    'end_time'   => $endTime,
+                ]);
+            }
+
+            return sendError('Slot lock not found or already unlocked');
+
+        } catch (Exception $e) {
+            Log::error('Failed to unlock slot: ' . $e->getMessage(), ['exception' => $e]);
+            return sendError('Failed to unlock slot: ' . $e->getMessage());
+        }
+    }
+
+    public function unlockAllSlots($request)
+    {
+        $request->validate([
+            'listing_id' => 'nullable|numeric|exists:listings,id',
+            'date'       => 'nullable|date',
+        ]);
+
+        try {
+
+            $sessionId = getSessionId();
+
+            $query = SlotLock::where('session_id', $sessionId);
+
+            if ($request->has('listing_id')) {
+                $query->where('listing_id', $request->listing_id);
+            }
+
+            if ($request->has('date')) {
+                $query->where('date', Carbon::parse($request->date)->toDateString());
+            }
+
+            $deletedCount = $query->delete();
+
+            return sendSuccess('All slots unlocked successfully', [
+                'unlocked_count' => $deletedCount,
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Failed to unlock all slots: ' . $e->getMessage(), ['exception' => $e]);
+            return sendError('Failed to unlock all slots: ' . $e->getMessage());
+        }
+    }
+
+    public function extendSlotLock($request)
+    {
+        $request->validate([
+            'listing_id' => 'required|numeric|exists:listings,id',
+            'date'       => 'required|date',
+            'start_time' => 'required|date_format:H:i',
+            'end_time'   => 'required|date_format:H:i',
+        ]);
+
+        try {
+
+            $sessionId = getSessionId();
+            $listingId = $request->listing_id;
+            $date      = Carbon::parse($request->date);
+            $startTime = $request->start_time;
+            $endTime   = $request->end_time;
+
+            $lock = SlotLock::where('listing_id', $listingId)
+                ->where('date', $date->toDateString())
+                ->where('start_time', $startTime)
+                ->where('end_time', $endTime)
+                ->where('session_id', $sessionId)
+                ->first();
+
+            if (! $lock) {
+                return sendError('Slot lock not found');
+            }
+
+            $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
+
+            $lock->locked_until = now()->addMinutes($lockDuration);
+            $lock->save();
+
+            return sendSuccess('Slot lock extended successfully', [
+                'lock_id'      => $lock->id,
+                'start_time'   => $startTime,
+                'end_time'     => $endTime,
+                'listing_id'   => $listingId,
+                'date'         => $date->toDateString(),
+                'locked_until' => $lock->locked_until->toIso8601String(),
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Failed to extend slot lock: ' . $e->getMessage(), ['exception' => $e]);
+            return sendError('Failed to extend slot lock: ' . $e->getMessage(), [], 500);
+        }
+    }
+
+    public function checkSlotAvailability($request)
+    {
+        $request->validate([
+            'listing_id' => 'required|numeric|exists:listings,id',
+            'date'       => 'required|date|after_or_equal:today',
+            'start_time' => 'required|date_format:H:i',
+            'end_time'   => 'required|date_format:H:i|after:start_time',
+        ]);
+
+        try {
+
+            $listingId = $request->listing_id;
+            $date      = Carbon::parse($request->date);
+            $startTime = $request->start_time;
+            $endTime   = $request->end_time;
+            $sessionId = getSessionId();
+
+            $listing = $this->listingModel->with('venue')->findOrFail($listingId);
+
+            if ($listing->status !== 'active' || ! $listing->venue || $listing->venue->status !== 'active') {
+                return sendSuccess('Slot availability checked', [
+                    'available' => false,
+                    'reason'    => 'Listing is not available',
+                ]);
+            }
+
+            $existingBooking = Booking::where('listing_id', $listingId)
+                ->where('date', $date)
+                ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
+                ->where(function ($q) use ($startTime, $endTime) {
+                    $q->whereRaw('TIME(start_time) < ?', [$endTime])
+                        ->whereRaw('TIME(end_time) > ?', [$startTime]);
+                })
+                ->exists();
+
+            if ($existingBooking) {
+                return sendSuccess('Slot availability checked', [
+                    'available' => false,
+                    'reason'    => 'Slot is already booked',
+                ]);
+            }
+
+            $existingLock = SlotLock::where('listing_id', $listingId)
+                ->where('date', $date->toDateString())
+                ->where('start_time', $startTime)
+                ->where('end_time', $endTime)
+                ->where('session_id', '!=', $sessionId)
+                ->active()
+                ->first();
+
+            if ($existingLock) {
+                return sendSuccess('Slot availability checked', [
+                    'available'    => false,
+                    'reason'       => 'Slot is currently locked by another user',
+                    'locked_until' => $existingLock->locked_until->toIso8601String(),
+                ]);
+            }
+
+            return sendSuccess('Slot availability checked', [
+                'available' => true,
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return sendError('Listing not found', [], 404);
+        } catch (Exception $e) {
+            Log::error('Failed to check slot availability: ' . $e->getMessage(), ['exception' => $e]);
+            return sendError('Failed to check slot availability: ' . $e->getMessage());
+        }
+    }
+
+    protected function slotsOverlap($start1, $end1, $start2, $end2)
+    {
+        if (! $start2 || ! $end2) {
+            return false;
+        }
+
+        // Handle wrap-around times (e.g., 23:30 to 00:00)
+        $start1Minutes = $this->timeToMinutes($start1);
+        $end1Minutes   = $this->timeToMinutes($end1);
+        $start2Minutes = $this->timeToMinutes($start2);
+        $end2Minutes   = $this->timeToMinutes($end2);
+
+        // Handle midnight wrap-around
+        if ($end1 === '00:00') {
+            $end1Minutes = 24 * 60; // 1440 minutes (end of day)
+        }
+        if ($end2 === '00:00') {
+            $end2Minutes = 24 * 60;
+        }
+
+        // Check for overlap: slots overlap if start1 < end2 AND start2 < end1
+        return $start1Minutes < $end2Minutes && $start2Minutes < $end1Minutes;
     }
 }
