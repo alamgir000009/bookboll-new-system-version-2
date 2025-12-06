@@ -940,12 +940,18 @@ class ListingService
         $venueSchedules = $listing->venue?->schedules
             ->where('day', $weekday)
             ->where('is_open', true)
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
             ->sortBy('start_time')
             ->values();
+
+            logger($venueSchedules->toArray());
 
         $listingSchedules = $listing->schedules
             ->where('day', $weekday)
             ->where('is_open', true)
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
             ->sortBy('start_time')
             ->values();
 

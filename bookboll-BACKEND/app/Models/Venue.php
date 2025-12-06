@@ -25,7 +25,7 @@ class Venue extends Model
 
     public function schedules()
     {
-        return $this->hasMany(Schedule::class);
+        return $this->hasMany(Schedule::class)->whereNull('listing_id');
     }
 
     public function users()
