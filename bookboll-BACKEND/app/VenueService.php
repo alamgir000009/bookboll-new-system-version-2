@@ -50,37 +50,26 @@ class VenueService
         $schedules = $formData['schedule'];
         unset($formData['schedule']);
 
-        // Validate that end_time is after start_time for each schedule entry
         foreach ($schedules as $index => $schedule) {
             if ($schedule['is_open'] && isset($schedule['start_time']) && isset($schedule['end_time'])) {
                 $startTimeStr = $schedule['start_time'];
                 $endTimeStr   = $schedule['end_time'];
 
-                // Handle 24-hour operation (00:00 to 00:00)
                 if ($startTimeStr === '00:00' && $endTimeStr === '00:00') {
-                    // 24-hour operation is valid
                     continue;
                 }
 
-                // Convert to minutes for easier comparison
                 $startMinutes = $this->timeToMinutes($startTimeStr);
                 $endMinutes   = $this->timeToMinutes($endTimeStr);
 
-                // Handle wrap-around times (e.g., 23:30 to 00:00 means until midnight)
                 if ($endMinutes === 0 && $endTimeStr === '00:00') {
-                    // End time is midnight (00:00), which is valid for any start time
-                    // This represents "until end of day"
                     continue;
                 }
 
-                // Normal case: end must be after start
-                // But if end is 00:00 and start is not 00:00, it's a wrap-around (valid)
                 if ($endMinutes === 0 && $startMinutes > 0) {
-                    // Wrap-around case: 23:xx to 00:00 is valid
                     continue;
                 }
 
-                // For same-day times, end must be after start
                 if ($endMinutes <= $startMinutes && $endMinutes !== 0) {
                     return sendError("Schedule entry #{$index}: end_time must be after start_time", [], 422);
                 }
@@ -125,37 +114,26 @@ class VenueService
         $schedules = $formData['schedule'];
         unset($formData['schedule']);
 
-        // Validate that end_time is after start_time for each schedule entry
         foreach ($schedules as $index => $schedule) {
             if ($schedule['is_open'] && isset($schedule['start_time']) && isset($schedule['end_time'])) {
                 $startTimeStr = $schedule['start_time'];
                 $endTimeStr   = $schedule['end_time'];
 
-                // Handle 24-hour operation (00:00 to 00:00)
                 if ($startTimeStr === '00:00' && $endTimeStr === '00:00') {
-                    // 24-hour operation is valid
                     continue;
                 }
 
-                // Convert to minutes for easier comparison
                 $startMinutes = $this->timeToMinutes($startTimeStr);
                 $endMinutes   = $this->timeToMinutes($endTimeStr);
 
-                // Handle wrap-around times (e.g., 23:30 to 00:00 means until midnight)
                 if ($endMinutes === 0 && $endTimeStr === '00:00') {
-                    // End time is midnight (00:00), which is valid for any start time
-                    // This represents "until end of day"
                     continue;
                 }
 
-                // Normal case: end must be after start
-                // But if end is 00:00 and start is not 00:00, it's a wrap-around (valid)
                 if ($endMinutes === 0 && $startMinutes > 0) {
-                    // Wrap-around case: 23:xx to 00:00 is valid
                     continue;
                 }
 
-                // For same-day times, end must be after start
                 if ($endMinutes <= $startMinutes && $endMinutes !== 0) {
                     return sendError("Schedule entry #{$index}: end_time must be after start_time", [], 422);
                 }
@@ -164,7 +142,6 @@ class VenueService
 
         $venue->update($formData);
 
-        // Sync schedules intelligently - only update what changed
         $this->syncSchedules($venue, $schedules);
 
         $venue->load('schedules');
@@ -212,35 +189,20 @@ class VenueService
         }
     }
 
-    /**
-     * Convert time string (HH:MM) to minutes since midnight
-     *
-     * @param string $time Time in HH:MM format
-     * @return int Minutes since midnight
-     */
     protected function timeToMinutes($time)
     {
         if ($time === '00:00' || $time === '24:00') {
-            return 0; // Treat both 00:00 and 24:00 as midnight
+            return 0;
         }
 
         list($hours, $minutes) = explode(':', $time);
         return (int) $hours * 60 + (int) $minutes;
     }
 
-    /**
-     * Sync schedules intelligently - only update what changed
-     *
-     * @param Venue $venue
-     * @param array $newSchedules
-     * @return void
-     */
     protected function syncSchedules($venue, array $newSchedules)
     {
-        // Load existing schedules
         $existingSchedules = $venue->schedules()->get();
 
-        // Normalize new schedules for comparison
         $normalizedNewSchedules = collect($newSchedules)->map(function ($schedule) {
             return [
                 'day'        => $schedule['day'],
@@ -250,14 +212,12 @@ class VenueService
             ];
         });
 
-        // Normalize existing schedules for comparison
         $normalizedExistingSchedules = $existingSchedules->map(function ($schedule) {
-            // Convert datetime to string format for comparison
             $startTime = $schedule->start_time ?
-                (is_string($schedule->start_time) ? $schedule->start_time : $schedule->start_time->format('H:i'))
+            (is_string($schedule->start_time) ? $schedule->start_time : $schedule->start_time->format('H:i'))
                 : null;
             $endTime = $schedule->end_time ?
-                (is_string($schedule->end_time) ? $schedule->end_time : $schedule->end_time->format('H:i'))
+            (is_string($schedule->end_time) ? $schedule->end_time : $schedule->end_time->format('H:i'))
                 : null;
 
             return [
@@ -269,44 +229,33 @@ class VenueService
             ];
         });
 
-        // Find schedules to delete (exist in DB but not in new data)
         $schedulesToDelete = $normalizedExistingSchedules->filter(function ($existing) use ($normalizedNewSchedules) {
             return ! $normalizedNewSchedules->contains(function ($new) use ($existing) {
                 return $this->schedulesMatch($existing, $new);
             });
         });
 
-        // Find schedules to create (exist in new data but not in DB)
         $schedulesToCreate = $normalizedNewSchedules->filter(function ($new) use ($normalizedExistingSchedules) {
             return ! $normalizedExistingSchedules->contains(function ($existing) use ($new) {
                 return $this->schedulesMatch($existing, $new);
             });
         });
 
-        // Delete schedules that no longer exist
         if ($schedulesToDelete->isNotEmpty()) {
             $idsToDelete = $schedulesToDelete->pluck('id')->toArray();
             $venue->schedules()->whereIn('id', $idsToDelete)->delete();
         }
 
-        // Create new schedules
         foreach ($schedulesToCreate as $schedule) {
             $venue->schedules()->create($schedule);
         }
     }
 
-    /**
-     * Check if two schedule entries match
-     *
-     * @param array $schedule1
-     * @param array $schedule2
-     * @return bool
-     */
     protected function schedulesMatch($schedule1, $schedule2)
     {
         return $schedule1['day'] === $schedule2['day'] &&
-               $schedule1['is_open'] === $schedule2['is_open'] &&
-               $schedule1['start_time'] === $schedule2['start_time'] &&
-               $schedule1['end_time'] === $schedule2['end_time'];
+            $schedule1['is_open'] === $schedule2['is_open'] &&
+            $schedule1['start_time'] === $schedule2['start_time'] &&
+            $schedule1['end_time'] === $schedule2['end_time'];
     }
 }
