@@ -945,8 +945,6 @@ class ListingService
             ->sortBy('start_time')
             ->values();
 
-            logger($venueSchedules->toArray());
-
         $listingSchedules = $listing->schedules
             ->where('day', $weekday)
             ->where('is_open', true)
@@ -1053,9 +1051,19 @@ class ListingService
             $listingStart = Carbon::parse($listingSchedule->start_time);
             $listingEnd   = Carbon::parse($listingSchedule->end_time);
 
+            // Handle wrap-around: if end is 00:00, treat it as next day (24:00)
+            if ($listingEnd->format('H:i') === '00:00') {
+                $listingEnd->addDay();
+            }
+
             foreach ($venueSchedules as $venueSchedule) {
                 $venueStart = Carbon::parse($venueSchedule->start_time);
                 $venueEnd   = Carbon::parse($venueSchedule->end_time);
+
+                // Handle wrap-around: if end is 00:00, treat it as next day (24:00)
+                if ($venueEnd->format('H:i') === '00:00') {
+                    $venueEnd->addDay();
+                }
 
                 // Check if schedules overlap
                 if ($listingStart->lt($venueEnd) && $listingEnd->gt($venueStart)) {
@@ -1065,9 +1073,17 @@ class ListingService
 
                     // Only add if there's a valid overlap (start < end)
                     if ($overlapStart->lt($overlapEnd)) {
+                        // Format the end time - if it's next day's 00:00, format as '00:00'
+                        $overlapEndFormatted = $overlapEnd->format('H:i');
+
+                        // If the original end time was 00:00 and we added a day, format as 00:00
+                        if (($listingSchedule->end_time === '00:00' || $venueSchedule->end_time === '00:00') && $overlapEnd->day > $overlapStart->day) {
+                            $overlapEndFormatted = '00:00';
+                        }
+
                         $overlappingBlocks->push([
                             'start_time' => $overlapStart->format('H:i'),
-                            'end_time'   => $overlapEnd->format('H:i'),
+                            'end_time'   => $overlapEndFormatted,
                         ]);
                     }
                 }
@@ -1087,9 +1103,13 @@ class ListingService
         $merged  = collect();
         $current = $blocks->first();
 
+        logger("Blocks",[$blocks]);
+
         foreach ($blocks->skip(1) as $block) {
             $currentEnd = Carbon::parse($current['end_time']);
             $blockStart = Carbon::parse($block['start_time']);
+
+            logger("Block", ["Current End" => $currentEnd, "Block Start" => $blockStart]);
 
             // If blocks are adjacent or overlapping, merge them
             if ($blockStart->lte($currentEnd)) {
@@ -1103,6 +1123,8 @@ class ListingService
         }
 
         $merged->push($current);
+        logger("------------------------------",);
+        logger("Merged", [$merged]);
         return $merged;
     }
 
@@ -1110,15 +1132,31 @@ class ListingService
     {
         $start = Carbon::parse($startTime);
         $end   = Carbon::parse($endTime);
+
+        // Handle wrap-around: if end is 00:00, treat it as next day (24:00)
+        // Also handle case where end <= start (wrap-around like 23:30 to 00:00)
+        if ($endTime === '00:00' || $end->lte($start)) {
+            $end->addDay();
+        }
+
         $slots = collect();
 
         $listingResources = $listing->resources()->get(['resources.id', 'resources.total_quantity', 'listing_resource.quantity as required_qty']);
 
         while ($start->lt($end)) {
-            $slotStart = $start->format('H:i');
-            $slotEnd   = $start->copy()->addMinutes($slotMinutes)->format('H:i');
+            $slotStart     = $start->format('H:i');
+            $slotEndCarbon = $start->copy()->addMinutes($slotMinutes);
 
-            if (Carbon::parse($slotEnd)->gt($end)) {
+            // Format slot end time - if it crosses midnight, format as 00:00
+            if ($slotEndCarbon->day > $start->day) {
+                $slotEnd = '00:00';
+            } else {
+                $slotEnd = $slotEndCarbon->format('H:i');
+            }
+
+            // Only break if slot would extend beyond the end time
+            // Slots that end exactly at the end time should be included
+            if ($slotEndCarbon->gt($end)) {
                 break;
             }
 
