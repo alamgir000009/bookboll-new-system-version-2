@@ -243,7 +243,7 @@ class VenueService
 
         if ($schedulesToDelete->isNotEmpty()) {
             $idsToDelete = $schedulesToDelete->pluck('id')->toArray();
-            $venue->schedules()->whereIn('id', $idsToDelete)->delete();
+            $venue->schedules()->whereIn('id', $idsToDelete)->whereNull('listing_id')->delete();
         }
 
         foreach ($schedulesToCreate as $schedule) {
