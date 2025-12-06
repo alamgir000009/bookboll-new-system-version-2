@@ -1243,6 +1243,7 @@ class ListingService
             'end_time'   => 'required|date_format:H:i',
             'start_date' => 'required|date',
             'end_date'   => 'required|date',
+            'date'       => 'required|date',
         ]);
 
         try {
@@ -1251,6 +1252,7 @@ class ListingService
             $endTime   = $request->end_time;
             $startDate = Carbon::parse($request->start_date);
             $endDate   = Carbon::parse($request->end_date);
+            $date      = Carbon::parse($request->date);
 
             $listing            = $this->listingModel->with('pricingGroups')->findOrFail($listingId);
             $maxBookingsPerSlot = $listing->max_bookings_per_slot ?? 1;
