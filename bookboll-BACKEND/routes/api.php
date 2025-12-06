@@ -130,9 +130,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::prefix('customer')->group(function () {
 
-        Route::apiResource('reviews', ReviewController::class)->except(['show', 'index']);
-        Route::get('reviews/my', [ReviewController::class, 'myReviews']);
+        Route::get('my-reviews', [ReviewController::class, 'myReviews']);
         Route::patch('reviews/{review}/helpful', [ReviewController::class, 'helpful']);
+        Route::apiResource('reviews', ReviewController::class)->except(['show', 'index']);
         Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings']);
 
         Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards']);
@@ -191,4 +191,3 @@ Route::get('fetch-recurring-booked-slots', [ListingController::class, 'fetchRecu
 Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode']);
 
 Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe']);
-
