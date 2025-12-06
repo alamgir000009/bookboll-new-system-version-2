@@ -1257,6 +1257,11 @@ class ListingService
             $listing            = $this->listingModel->with('pricingGroups')->findOrFail($listingId);
             $maxBookingsPerSlot = $listing->max_bookings_per_slot ?? 1;
 
+            // Ensure that the search range starts from the base date, not earlier
+            $startDate = $startDate->lt($date) ? $date : $startDate;
+            $endDate   = $endDate->lt($date) ? $date : $endDate;
+
+            // Query bookings between the (adjusted) start and end dates
             $bookings = Booking::where('listing_id', $listingId)
                 ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
@@ -1292,6 +1297,12 @@ class ListingService
             $hours_per_day = (strtotime($endTime) - strtotime($startTime)) / 3600;
 
             while ($currentDate->lte($endDate)) {
+                // Ensure that the current date is after the base date
+                if ($currentDate->lt($date)) {
+                    $currentDate->addDay();
+                    continue; // Skip dates before the base date
+                }
+
                 $dateStr     = $currentDate->format('Y-m-d');
                 $bookedCount = $bookedDates[$dateStr] ?? 0;
                 $weekday     = strtolower($currentDate->format('l'));
