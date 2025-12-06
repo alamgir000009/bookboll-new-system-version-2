@@ -708,7 +708,7 @@ class BookingService
 
         if (! empty($errors)) {
             Log::error("Booking validation errors", ["Errors" => $errors]);
-            // return sendError('Validation failed', $errors, 422);
+            return sendError('Validation failed', $errors, 422);
         }
 
         return sendSuccess('Booking validation passed', [
