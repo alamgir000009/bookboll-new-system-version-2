@@ -1103,28 +1103,48 @@ class ListingService
         $merged  = collect();
         $current = $blocks->first();
 
-        logger("Blocks",[$blocks]);
-
         foreach ($blocks->skip(1) as $block) {
-            $currentEnd = Carbon::parse($current['end_time']);
-            $blockStart = Carbon::parse($block['start_time']);
+            $currentEndTime = $current['end_time'];
+            $blockStartTime = $block['start_time'];
 
-            logger("Block", ["Current End" => $currentEnd, "Block Start" => $blockStart]);
+            $shouldMerge = false;
 
-            // If blocks are adjacent or overlapping, merge them
-            if ($blockStart->lte($currentEnd)) {
-                $blockEnd            = Carbon::parse($block['end_time']);
-                $current['end_time'] = $currentEnd->gt($blockEnd) ? $current['end_time'] : $block['end_time'];
+            if ($currentEndTime === '00:00' && $blockStartTime === '00:00') {
+                $shouldMerge = true;
+            } elseif ($blockStartTime === '00:00') {
+                $currentEnd  = Carbon::parse($currentEndTime);
+                $shouldMerge = ($currentEnd->format('H') === '23');
+            } elseif ($currentEndTime === '00:00') {
+                $shouldMerge = false;
             } else {
-                // No overlap, save current and start new
+                $currentEnd  = Carbon::parse($currentEndTime);
+                $blockStart  = Carbon::parse($blockStartTime);
+                $shouldMerge = $blockStart->lte($currentEnd);
+            }
+
+            if ($shouldMerge) {
+                $currentEnd = Carbon::parse($currentEndTime);
+                $blockEnd   = Carbon::parse($block['end_time']);
+
+                if ($currentEndTime === '00:00') {
+                    $currentEnd->addDay();
+                }
+                if ($block['end_time'] === '00:00') {
+                    $blockEnd->addDay();
+                }
+
+                if ($currentEnd->gte($blockEnd)) {
+                    $current['end_time'] = $currentEndTime;
+                } else {
+                    $current['end_time'] = $block['end_time'];
+                }
+            } else {
                 $merged->push($current);
                 $current = $block;
             }
         }
 
         $merged->push($current);
-        logger("------------------------------",);
-        logger("Merged", [$merged]);
         return $merged;
     }
 
@@ -1133,8 +1153,6 @@ class ListingService
         $start = Carbon::parse($startTime);
         $end   = Carbon::parse($endTime);
 
-        // Handle wrap-around: if end is 00:00, treat it as next day (24:00)
-        // Also handle case where end <= start (wrap-around like 23:30 to 00:00)
         if ($endTime === '00:00' || $end->lte($start)) {
             $end->addDay();
         }
@@ -1147,15 +1165,12 @@ class ListingService
             $slotStart     = $start->format('H:i');
             $slotEndCarbon = $start->copy()->addMinutes($slotMinutes);
 
-            // Format slot end time - if it crosses midnight, format as 00:00
             if ($slotEndCarbon->day > $start->day) {
                 $slotEnd = '00:00';
             } else {
                 $slotEnd = $slotEndCarbon->format('H:i');
             }
 
-            // Only break if slot would extend beyond the end time
-            // Slots that end exactly at the end time should be included
             if ($slotEndCarbon->gt($end)) {
                 break;
             }
@@ -1253,7 +1268,6 @@ class ListingService
                 $bookedDates[$dateStr]++;
             }
 
-            // Fetch all special days for the date range
             $specialDays = SpecialDay::with('timeBlocks')
                 ->where('venue_id', $listing->venue_id)
                 ->where(function ($q) use ($listing) {
