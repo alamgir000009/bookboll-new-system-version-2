@@ -1494,10 +1494,10 @@ class ListingService
                     $q->whereRaw('TIME(start_time) < ?', [$endTime])
                         ->whereRaw('TIME(end_time) > ?', [$startTime]);
                 })
-                ->exists();
+                ->count();
 
-            if ($existingBooking) {
-                return sendError('This slot is already booked');
+            if ($existingBooking >= (int) $listing->max_bookings_per_slot) {
+                return sendError('This slot is already booked2');
             }
 
             $existingLock = SlotLock::where('listing_id', $listingId)

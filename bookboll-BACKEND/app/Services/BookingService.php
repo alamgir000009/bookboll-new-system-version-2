@@ -656,7 +656,7 @@ class BookingService
             'add_ons.*'                       => 'exists:add_ons,id',
             'quantity'                        => 'required|numeric|min:1',
             'recurring_bookings'              => 'nullable|array',
-            'recurring_bookings.*.date'       => 'required|date|after:date',
+            'recurring_bookings.*.date'       => 'required|date|after:today',
             'recurring_bookings.*.start_time' => 'required|date_format:H:i',
             'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
             'recurring_bookings.*.price'      => 'required|numeric|min:0',
@@ -739,7 +739,7 @@ class BookingService
             'save_payment_details'            => 'nullable|boolean',
             'quantity'                        => 'required|numeric|min:1',
             'recurring_bookings'              => 'nullable|array',
-            'recurring_bookings.*.date'       => 'required|date|after:date',
+            'recurring_bookings.*.date'       => 'required|date|after:today',
             'recurring_bookings.*.start_time' => 'required|date_format:H:i',
             'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
             'recurring_bookings.*.price'      => 'required|numeric|min:0',
@@ -960,10 +960,10 @@ class BookingService
                 // Validate recurring booking date
                 $recurringDate = Carbon::parse($recurring['date']);
                 $baseDate      = Carbon::parse($formData['date']);
-                if ($recurringDate->lte($baseDate)) {
-                    DB::rollBack();
-                    return sendError('Recurring booking dates must be after the base booking date');
-                }
+                // if ($recurringDate->lte($baseDate)) {
+                //     DB::rollBack();
+                //     return sendError('Recurring booking dates must be after the base booking date');
+                // }
 
                 // Validate recurring booking
                 $recurringValidationData = array_merge($formData, [
