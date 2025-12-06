@@ -6,10 +6,9 @@ use App\Models\SlotLock;
 use App\Models\User;
 use App\Notifications\BookingConfirmedUserNotification;
 use App\Notifications\BookingCreatedAdminNotification;
+use App\Notifications\BookingCreatedUserNotification;
 use App\Services\AuditLogService;
 use Barryvdh\DomPDF\Facade\Pdf;
-use App\Notifications\BookingCreatedUserNotification;
-
 
 if (! class_exists('MobileApps')) {
     class MobileApps
@@ -489,20 +488,20 @@ if (! function_exists('determineSlotPrice')) {
 }
 
 if (! function_exists('getSessionId')) {
-    function getSessionId($user)
+    function getSessionId()
     {
-        return $user ? "user_{$user->id}" : 'guest_' . md5(request()->ip() . request()->userAgent());
+        return "slot_locked_from_" . md5(request()->ip() . request()->userAgent());
     }
 }
 
-if (! function_exists('unlockSlot')) {
-    function unlockSlot($listing, $user, $booking)
+if (! function_exists('unlockListingSlot')) {
+    function unlockListingSlot($listing, $user, $booking)
     {
-        $sessionId = getSessionId($user);
+        $sessionId = getSessionId();
 
-        SlotLock::where('listing_id', $listing->id)
-            ->whereDate('date', $booking->date)
+        SlotLock::whereDate('date', $booking->date)
             ->where('session_id', $sessionId)
+            ->where('listing_id', $listing->id)
             ->delete();
     }
 }
@@ -586,7 +585,7 @@ if (! function_exists('autoConfirmBookingIfPaid')) {
                         ->where('type', 'credit')
                         ->exists();
 
-                    if (!$pointsAlreadyAdded) {
+                    if (! $pointsAlreadyAdded) {
                         $user = $booking->user;
                         $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id, "Loyalty points earned for booking auto-confirmation");
                     }

@@ -481,9 +481,7 @@ class BookingService
                 ]);
             }
 
-            unlockSlot( $listing, $user, $booking);
-
-            // Loyalty points will be added when booking is confirmed, not on creation
+            unlockListingSlot( $listing, $user, $booking);
 
             DB::commit();
 
@@ -1021,6 +1019,8 @@ class BookingService
                     $createdBookings->push($booking);
                 }
             }
+
+
 
             DB::commit();
 
@@ -1960,15 +1960,12 @@ class BookingService
 
             createBookingInvoiceWithNotification($booking, $user);
 
-            unlockSlot( $listing, $user, $booking);
-
-            // Loyalty points will be added when booking is confirmed, not on creation
-
             if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
                 autoConfirmBookingIfPaid($booking);
             }
 
             $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name', 'invoices']);
+            unlockListingSlot( $listing, $user, $booking);
 
             return $booking;
 
