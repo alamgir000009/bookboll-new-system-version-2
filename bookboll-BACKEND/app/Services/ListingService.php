@@ -1254,7 +1254,28 @@ class ListingService
             $endDate   = Carbon::parse($request->end_date);
             $date      = Carbon::parse($request->date);
 
-            $listing            = $this->listingModel->with('pricingGroups')->findOrFail($listingId);
+            $listing = $this->listingModel->with([
+                'venue',
+                'schedules',
+                'pricingGroups',
+                'venue.schedules',
+            ])->findOrFail($listingId);
+
+            // Check if venue is active
+            if (! $listing->venue || $listing->venue->status !== 'active') {
+                return sendSuccess('Recurring booked slots fetched successfully', [
+                    'listing_id'            => $listingId,
+                    'start_time'            => $startTime,
+                    'end_time'              => $endTime,
+                    'date_range'            => [
+                        'start_date' => $startDate->format('Y-m-d'),
+                        'end_date'   => $endDate->format('Y-m-d'),
+                    ],
+                    'max_bookings_per_slot' => 0,
+                    'dates'                 => [],
+                ]);
+            }
+
             $maxBookingsPerSlot = $listing->max_bookings_per_slot ?? 1;
 
             // Ensure that the search range starts from the base date, not earlier
@@ -1307,16 +1328,51 @@ class ListingService
                 $bookedCount = $bookedDates[$dateStr] ?? 0;
                 $weekday     = strtolower($currentDate->format('l'));
 
+                // Check if venue and listing have schedules for this weekday
+                $venueSchedules = $listing->venue?->schedules
+                    ->where('day', $weekday)
+                    ->where('is_open', true)
+                    ->whereNotNull('start_time')
+                    ->whereNotNull('end_time')
+                    ->values();
+
+                $listingSchedules = $listing->schedules
+                    ->where('day', $weekday)
+                    ->where('is_open', true)
+                    ->whereNotNull('start_time')
+                    ->whereNotNull('end_time')
+                    ->values();
+
+                // Check if venue and listing are open on this day
+                $isOpenOnDay = ! $venueSchedules->isEmpty() && ! $listingSchedules->isEmpty();
+
                 // Check special day for this date
                 $specialDay  = $specialDays->get($dateStr);
                 $isHoliday   = $specialDay && $specialDay->type === 'holiday';
-                $isAvailable = true;
+
+                // Check if the requested time slot overlaps with available schedule blocks
+                $isTimeSlotAvailable = false;
+                if ($isOpenOnDay && ! $isHoliday) {
+                    // If special day has time blocks, check if requested time overlaps
+                    if ($specialDay && $specialDay->timeBlocks->isNotEmpty()) {
+                        $isTimeSlotAvailable = $specialDay->timeBlocks->contains(function ($block) use ($startTime, $endTime) {
+                            // Time blocks store times as strings in H:i format
+                            $blockStart = $block->start_time;
+                            $blockEnd   = $block->end_time;
+                            return $this->slotsOverlap($startTime, $endTime, $blockStart, $blockEnd);
+                        });
+                    } else {
+                        // Check if requested time overlaps with venue and listing schedule overlap
+                        $overlappingBlocks = $this->findOverlappingScheduleBlocks($listingSchedules, $venueSchedules);
+                        $isTimeSlotAvailable = $overlappingBlocks->contains(function ($block) use ($startTime, $endTime) {
+                            return $this->slotsOverlap($startTime, $endTime, $block['start_time'], $block['end_time']);
+                        });
+                    }
+                }
+
+                $isAvailable = $isOpenOnDay && ! $isHoliday && $isTimeSlotAvailable;
 
                 $dayPrice = determineSlotPrice($listing, $weekday, $startTime, $endTime, $specialDay) * $hours_per_day;
-
-                if ($isHoliday) {
-                    $isAvailable = false;
-                }
 
                 if (! $isAvailable) {
                     $bookedCount = $maxBookingsPerSlot;
