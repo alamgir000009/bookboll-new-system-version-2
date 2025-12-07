@@ -1544,7 +1544,7 @@ class ListingService
             'listing_id' => 'required|numeric|exists:listings,id',
             'date'       => 'required|date|after_or_equal:today',
             'start_time' => 'required|date_format:H:i',
-            'end_time'   => 'required|date_format:H:i|after:start_time',
+            'end_time'   => 'required|date_format:H:i',
         ], [
             'date.after_or_equal' => 'You cannot lock a slot for a past date.',
             'end_time.after'      => 'End time must be after start time.',
