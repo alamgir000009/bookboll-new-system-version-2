@@ -106,9 +106,9 @@ class CustomerService
     public function createCustomer($request)
     {
         $formData = $request->validate([
-            'name'          => 'required|string|max:100',
+            'name'          => 'nullable|string|max:100',
             'email'         => 'required|email|unique:users,email',
-            'phone'         => 'required|string|min:6|max:20',
+            'phone'         => 'nullable|string|min:6|max:20',
             'password'      => 'nullable|min:8',
             'status'        => 'sometimes|in:' . $this->customerModel::ACTIVE . ',' . $this->customerModel::INACTIVE . ',' . $this->customerModel::BLOCKED,
             'date_of_birth' => 'nullable|date|before:today',

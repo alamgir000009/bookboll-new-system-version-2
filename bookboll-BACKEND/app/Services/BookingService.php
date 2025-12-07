@@ -406,160 +406,167 @@ class BookingService
     public function store($request)
     {
         $formData = $request->validate([
-            'venue_id'           => 'required|exists:venues,id',
-            'listing_id'         => 'required|exists:listings,id',
-            'user_id'            => 'required|exists:users,id',
-            'date'               => 'required|date',
-            'start_time'         => 'required|date_format:H:i',
-            'end_time'           => 'required|date_format:H:i',
-            'payment_method'     => 'nullable|in:free,cash_on_arrival,paid_cheque,paid_wire_transfer',
-            'selected_add_ons'   => 'nullable|array',
-            'selected_add_ons.*' => 'exists:add_ons,id',
-            'promocode'          => 'nullable|string|max:50',
-            'notes'              => 'nullable|string|max:1000',
-            'subtotal'           => 'nullable|numeric',
-            'total_price'        => 'nullable|numeric',
+            'bookings'                      => 'required|array',
+            'bookings.*.venue_id'           => 'required|exists:venues,id',
+            'bookings.*.listing_id'         => 'required|exists:listings,id',
+            'bookings.*.user_id'            => 'required|exists:users,id',
+            'bookings.*.date'               => 'required|date',
+            'bookings.*.start_time'         => 'required|date_format:H:i',
+            'bookings.*.end_time'           => 'required|date_format:H:i',
+            'bookings.*.payment_method'     => 'nullable|in:free,cash_on_arrival,paid_cheque,paid_wire_transfer',
+            'bookings.*.selected_add_ons'   => 'nullable|array',
+            'bookings.*.selected_add_ons.*' => 'exists:add_ons,id',
+            'bookings.*.promocode'          => 'nullable|string|max:50',
+            'bookings.*.notes'              => 'nullable|string|max:1000',
+            'bookings.*.subtotal'           => 'nullable|numeric',
+            'bookings.*.total_price'        => 'nullable|numeric',
         ]);
 
-        $listing = Listing::findOrFail($formData['listing_id']);
-        $user    = User::findOrFail($formData['user_id']);
+        $validationErrors = [];
+        foreach ($formData['bookings'] as $index => $bookingData) {
+            $errors = $this->validateBooking($bookingData);
+            if (! empty($errors)) {
+                $validationErrors[$index] = $errors;
+            }
+        }
 
-        $validationErrors = $this->validateBooking($formData);
         if (! empty($validationErrors)) {
             return sendError('Validation failed', $validationErrors, 422);
         }
 
-        $subtotal      = $request->subtotal;
-        $discount      = $request->discount_amount ?? 0;
-        $totalPrice    = $request->total_price;
-        $paymentMethod = $request->payment_method;
-
-        $promocode = null;
-        if (! empty($formData['promocode'])) {
-            $promocode = Promocode::where('code', strtoupper($formData['promocode']))->active()->first();
-            if (! $promocode) {
-                return sendError('Invalid promocode.');
-            }
-        }
-
         DB::beginTransaction();
-
         try {
+            $bookings = [];
+            foreach ($formData['bookings'] as $bookingData) {
+                $listing = Listing::findOrFail($bookingData['listing_id']);
+                $user    = User::findOrFail($bookingData['user_id']);
 
-            $paymentStatus = match (trim($paymentMethod)) {
-                'cash_on_arrival'    => BookingPaymentStatus::PENDING,
-                'paid_cheque'        => BookingPaymentStatus::FULLY_PAID,
-                'paid_wire_transfer' => BookingPaymentStatus::FULLY_PAID,
-                'free'               => BookingPaymentStatus::FULLY_PAID,
-            };
+                $subtotal      = $bookingData['subtotal'];
+                $discount      = $bookingData['discount_amount'] ?? 0;
+                $totalPrice    = $bookingData['total_price'];
+                $paymentMethod = $bookingData['payment_method'];
 
-            $depositAmount = 0;
-
-            if (! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
-                $deposit = $listing->payment_options['deposit'];
-
-                if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
-                    $depositAmount = $deposit['amount'];
-                } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
-                    $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
+                $promocode = null;
+                if (! empty($bookingData['promocode'])) {
+                    $promocode = Promocode::where('code', strtoupper($bookingData['promocode']))->active()->first();
+                    if (! $promocode) {
+                        return sendError('Invalid promocode.');
+                    }
                 }
-            }
 
-            $booking = $this->bookingModel::create([
-                'user_id'               => $user->id,
-                'subtotal'              => $subtotal,
-                'discount_amount'       => $discount,
-                'total_price'           => $totalPrice,
-                'payment_status'        => $paymentStatus,
-                'payment_method'        => $paymentMethod,
-                'promocode_id'          => $promocode?->id,
-                'date'                  => $formData['date'],
-                'notes'                 => $formData['notes'],
-                'venue_id'              => $formData['venue_id'],
-                'end_time'              => $formData['end_time'],
-                'status'                => BookingStatus::PENDING,
-                'start_time'            => $formData['start_time'],
-                'listing_id'            => $formData['listing_id'],
-                'loyalty_points_earned' => $listing->loyalty_points ?? 0,
-                'full_payment_received' => in_array($paymentMethod, [
-                    BookingPaymentMethod::FREE,
-                    BookingPaymentMethod::PAID_CHEQUE,
-                    BookingPaymentMethod::PAID_WIRE_TRANSFER,
-                ]),
-                'is_free'               => $paymentMethod === BookingPaymentMethod::FREE,
-                'payment_breakdown'     => [
-                    'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
-                    'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
-                    'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - $depositAmount : 0,
-                    'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
-                ],
-            ]);
+                $paymentStatus = match (trim($paymentMethod)) {
+                    'cash_on_arrival'    => BookingPaymentStatus::PENDING,
+                    'paid_cheque'        => BookingPaymentStatus::FULLY_PAID,
+                    'paid_wire_transfer' => BookingPaymentStatus::FULLY_PAID,
+                    'free'               => BookingPaymentStatus::FULLY_PAID,
+                };
 
-            if (! empty($formData['selected_add_ons'])) {
-                $booking->addOns()->attach($formData['selected_add_ons']);
-            }
+                $depositAmount = 0;
+                if (! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
+                    $deposit = $listing->payment_options['deposit'];
+                    if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
+                        $depositAmount = $deposit['amount'];
+                    } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                        $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
+                    }
+                }
 
-            $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
-
-            foreach ($resources as $resource) {
-                $booking->resourcesAllocated()->attach($resource->id, ['quantity' => $resource->pivot->quantity]);
-            }
-
-            if ($promocode) {
-                $promocode->incrementUsage($user->id);
-            }
-
-            $booking->history()->create([
-                'user_id'     => $user->id,
-                'action'      => 'booking_created',
-                'description' => 'Booking created by ' . auth()->user()->name,
-            ]);
-
-            if (! $booking->is_free) {
-
-                $this->paymentModel::create([
-                    'user_id'    => $user->id,
-                    'booking_id' => $booking->id,
-                    'type'       => PaymentType::FULL,
-                    'amount'     => $booking->total_price,
-                    'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
-                    'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
-                    'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
-                    'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
-                    'method' => $paymentMethod == BookingPaymentMethod::PAID_CHEQUE ? PaymentMethod::CHEQUE : ($paymentMethod == BookingPaymentMethod::PAID_WIRE_TRANSFER ? PaymentMethod::WIRE_TRANSFER : PaymentMethod::CASH),
+                $booking = $this->bookingModel::create([
+                    'user_id'               => $user->id,
+                    'subtotal'              => $subtotal,
+                    'discount_amount'       => $discount,
+                    'total_price'           => $totalPrice,
+                    'payment_status'        => $paymentStatus,
+                    'payment_method'        => $paymentMethod,
+                    'promocode_id'          => $promocode?->id,
+                    'date'                  => $bookingData['date'],
+                    'notes'                 => $bookingData['notes'],
+                    'venue_id'              => $bookingData['venue_id'],
+                    'end_time'              => $bookingData['end_time'],
+                    'status'                => BookingStatus::PENDING,
+                    'start_time'            => $bookingData['start_time'],
+                    'listing_id'            => $bookingData['listing_id'],
+                    'loyalty_points_earned' => $listing->loyalty_points ?? 0,
+                    'full_payment_received' => in_array($paymentMethod, [
+                        BookingPaymentMethod::FREE,
+                        BookingPaymentMethod::PAID_CHEQUE,
+                        BookingPaymentMethod::PAID_WIRE_TRANSFER,
+                    ]),
+                    'is_free'               => $paymentMethod === BookingPaymentMethod::FREE,
+                    'payment_breakdown'     => [
+                        'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
+                        'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
+                        'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - $depositAmount : 0,
+                        'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
+                    ],
                 ]);
 
-                if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
-                    $booking->history()->create([
-                        'user_id'     => $user->id,
-                        'action'      => $request->payment_method,
-                        'description' => 'Payment ' . str_replace('_', ' ', $request->payment_method),
-                    ]);
+                if (! empty($bookingData['selected_add_ons'])) {
+                    $booking->addOns()->attach($bookingData['selected_add_ons']);
                 }
-            }
 
-            if (! $booking->is_free) {
-                createBookingInvoiceWithNotification($booking, $user);
-            } else {
+                $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
+                foreach ($resources as $resource) {
+                    $booking->resourcesAllocated()->attach($resource->id, ['quantity' => $resource->pivot->quantity]);
+                }
+
+                if ($promocode) {
+                    $promocode->incrementUsage($user->id);
+                }
+
                 $booking->history()->create([
                     'user_id'     => $user->id,
                     'action'      => 'booking_created',
-                    'description' => 'This booking is created as free by ' . auth()->user()->name . ' it marked as fully paid',
+                    'description' => 'Booking created by ' . auth()->user()->name,
                 ]);
-            }
 
-            unlockListingSlot($listing, $user, $booking);
+                if (! $booking->is_free) {
+                    $this->paymentModel::create([
+                        'user_id'    => $user->id,
+                        'booking_id' => $booking->id,
+                        'type'       => PaymentType::FULL,
+                        'amount'     => $booking->total_price,
+                        'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                        'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
+                        'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                        'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
+                        'method' => $paymentMethod == BookingPaymentMethod::PAID_CHEQUE ? PaymentMethod::CHEQUE : ($paymentMethod == BookingPaymentMethod::PAID_WIRE_TRANSFER ? PaymentMethod::WIRE_TRANSFER : PaymentMethod::CASH),
+                    ]);
+
+                    if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
+                        $booking->history()->create([
+                            'user_id'     => $user->id,
+                            'action'      => $request->payment_method,
+                            'description' => 'Payment ' . str_replace('_', ' ', $request->payment_method),
+                        ]);
+                    }
+                }
+
+                if (! $booking->is_free) {
+                    createBookingInvoiceWithNotification($booking, $user);
+                } else {
+                    $booking->history()->create([
+                        'user_id'     => $user->id,
+                        'action'      => 'booking_created',
+                        'description' => 'This booking is created as free by ' . auth()->user()->name . ' it marked as fully paid',
+                    ]);
+                }
+
+                unlockListingSlot($listing, $user, $booking);
+
+                $bookings[] = $booking->load(['user', 'venue', 'listing', 'payments', 'addOns']);
+            }
 
             DB::commit();
 
-            return sendSuccess('Booking created successfully', [
-                'booking' => $booking->load(['user', 'venue', 'listing', 'payments', 'addOns']),
+            return sendSuccess('Bookings created successfully', [
+                'bookings' => $bookings,
             ]);
 
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Booking creation failed: ' . $e->getMessage(), ["Exception" => $e]);
-            return sendError('Failed to create booking', ['error' => $e->getMessage()], 500);
+            return sendError('Failed to create bookings', ['error' => $e->getMessage()], 500);
         }
     }
 

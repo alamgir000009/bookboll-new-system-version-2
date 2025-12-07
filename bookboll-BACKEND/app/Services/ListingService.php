@@ -119,7 +119,7 @@ class ListingService
 
             return sendSuccess('Listing created successfully', compact('listing'));
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
             return sendError('Failed to create listing: ' . $e->getMessage());
         }
