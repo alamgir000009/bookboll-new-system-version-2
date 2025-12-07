@@ -152,6 +152,9 @@ class ListingService
             if (isset($formData['add_ons'])) {
                 $listing->addOns()->sync($formData['add_ons']);
             }
+            elseif (empty($formData['add_ons'])) {
+                $listing->addOns()->delete();
+            }
 
             if (isset($formData['resources'])) {
                 $syncData = [];
@@ -187,7 +190,7 @@ class ListingService
 
             return sendSuccess('Listing updated successfully', compact('listing'));
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
             return sendError('Failed to update listing: ' . $e->getMessage());
         }
