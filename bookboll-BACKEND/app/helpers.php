@@ -245,6 +245,7 @@ if (! function_exists('getResourceFromRoute')) {
             'posts.store'               => 'Blog Post',
             'posts.update'              => 'Blog Post',
             'posts.destroy'             => 'Blog Post',
+            'posts.change-status'       => 'Blog Post',
 
             // Post Categories
             'post-categories.store'     => 'Post Category',
@@ -256,16 +257,28 @@ if (! function_exists('getResourceFromRoute')) {
             'bookings.update'           => 'Booking',
             'bookings.destroy'          => 'Booking',
             'bookings.cancel'           => 'Booking',
+            'bookings.completed'        => 'Booking',
+            'bookings.confirm'          => 'Booking',
+            'bookings.generate-invoice' => 'Booking',
+            'bookings.confirmBooking'   => 'Booking',
+            'bookings.pay'              => 'Booking',
 
             // Users
             'users.store'               => 'User',
             'users.update'              => 'User',
             'users.destroy'             => 'User',
+            'users.update-profile'      => 'User',
+            'users.updateProfile'       => 'User',
+            'users.updateCustomerProfile' => 'User',
+            'users.updateProfileImage'  => 'User',
+            'users.updatePreferences'   => 'User',
+            'users.changePassword'      => 'User',
 
             // Venues
             'venues.store'              => 'Venue',
             'venues.update'             => 'Venue',
             'venues.destroy'            => 'Venue',
+            'venues.sort'               => 'Venue',
 
             // Resources
             'resources.store'           => 'Resource',
@@ -276,34 +289,81 @@ if (! function_exists('getResourceFromRoute')) {
             'gift-cards.store'          => 'Gift Card',
             'gift-cards.update'         => 'Gift Card',
             'gift-cards.destroy'        => 'Gift Card',
+            'gift-cards.redeem'         => 'Gift Card',
+            'gift-cards.redeemGiftCard' => 'Gift Card',
 
             // Sports Categories
             'sports-categories.store'   => 'Sports Category',
             'sports-categories.update'  => 'Sports Category',
             'sports-categories.destroy' => 'Sports Category',
+            'sports-categories.sort'    => 'Sports Category',
+
+            // Sports Types
+            'sports-types.store'        => 'Sports Type',
+            'sports-types.update'       => 'Sports Type',
+            'sports-types.destroy'      => 'Sports Type',
+            'sports-types.sort'         => 'Sports Type',
 
             // Add-Ons
             'add-ons.store'             => 'Add-On',
             'add-ons.update'            => 'Add-On',
             'add-ons.destroy'           => 'Add-On',
+            'add-ons.sort'              => 'Add-On',
 
             // Listings
             'listings.store'            => 'Listing',
             'listings.update'           => 'Listing',
             'listings.destroy'          => 'Listing',
+            'listings.sort'              => 'Listing',
+            'listings.uploadImage'      => 'Listing',
+            'listings.deleteImage'      => 'Listing',
 
             // Promocode
-            'promocodes.store'          => 'Promocde',
-            'promocodes.update'         => 'Promocde',
-            'promocodes.destroy'        => 'Promocde',
+            'promocodes.store'          => 'Promocode',
+            'promocodes.update'         => 'Promocode',
+            'promocodes.destroy'        => 'Promocode',
+            'promocodes.apply'          => 'Promocode',
+            'promocodes.remove'         => 'Promocode',
+            'promocodes.applyPromocode' => 'Promocode',
 
             // Special Days
             'special-days.store'        => 'Special Day',
             'special-days.update'       => 'Special Day',
-            'special-days.destroy'      => 'Special Day',
+            'special-days.destroy'     => 'Special Day',
+            'special-days.bulk'        => 'Special Day',
+            'special-days.bulkCreate'   => 'Special Day',
 
             // Settings
             'settings.update'           => 'Setting',
+            'settings.updateSingle'     => 'Setting',
+
+            // Customers
+            'customers.store'           => 'Customer',
+            'customers.update'          => 'Customer',
+            'customers.destroy'         => 'Customer',
+            'customers.register'        => 'Customer',
+            'customers.createCustomer' => 'Customer',
+            'customers.updateTags'     => 'Customer',
+            'customers.updateStatus'   => 'Customer',
+
+            // Reviews
+            'reviews.store'             => 'Review',
+            'reviews.update'            => 'Review',
+            'reviews.destroy'           => 'Review',
+            'reviews.helpful'           => 'Review',
+
+            // Payments
+            'payments.store'            => 'Payment',
+            'payments.update'           => 'Payment',
+            'payments.destroy'          => 'Payment',
+            'payments.confirm'          => 'Payment',
+            'payments.confirmPayment'   => 'Payment',
+            'payments.generate-link'     => 'Payment',
+            'payments.generatePaymentLink' => 'Payment',
+            'payments.createPaymentIntent' => 'Payment',
+
+            // Newsletter
+            'newsletter.subscribe'      => 'Newsletter',
         ];
 
         foreach ($resourceMap as $routePattern => $resource) {
@@ -312,10 +372,29 @@ if (! function_exists('getResourceFromRoute')) {
             }
         }
 
+        // Fallback: Check route URI path if route name doesn't match
+        $routeUri = request()->route()?->uri() ?? '';
+        foreach ($resourceMap as $routePattern => $resource) {
+            $uriPattern = str_replace('.', '/', $routePattern);
+            if (str_contains($routeUri, $uriPattern) || str_contains($routeUri, str_replace('-', '/', $routePattern))) {
+                return $resource;
+            }
+        }
+
         if (str_contains($routeName, '.')) {
             $parts        = explode('.', $routeName);
             $resourceName = ucwords(str_replace(['store', 'update', 'destroy', 'create'], '', $parts[0]));
             return $resourceName ?: 'System';
+        }
+
+        // Final fallback: Try to extract resource from URI
+        if ($routeUri) {
+            $uriParts = explode('/', $routeUri);
+            foreach ($uriParts as $part) {
+                if (in_array($part, ['posts', 'venues', 'users', 'bookings', 'listings', 'customers', 'reviews', 'payments', 'promocodes', 'gift-cards', 'resources', 'add-ons', 'sports-categories', 'sports-types', 'special-days', 'post-categories', 'settings', 'newsletter'])) {
+                    return ucwords(str_replace('-', ' ', $part));
+                }
+            }
         }
 
         return 'System';
@@ -332,6 +411,10 @@ if (! function_exists('getResourceIdFromRequest')) {
         $request->route('resource_id') ??
         $request->route('gift_card_id') ??
         $request->route('sports_category_id') ??
+        $request->route('promocode') ??
+        $request->route('review') ??
+        $request->route('customer_id') ??
+        $request->route('key') ??
             'N/A';
 
         if ($id === 'N/A' && $request->isMethod('post')) {
@@ -355,18 +438,129 @@ if (! function_exists('extractSuccessDetails')) {
             $id = $data['id'];
 
             $detailsMap = [
+                // Blog Posts
                 'posts.store' => "Created Post #{$id}",
-                'users.store' => "Created user #{$id}",
-                'venues.store' => "Created venue #{$id}",
-                'add-ons.store' => "Created Add-On #{$id}",
-                'bookings.store' => "Created booking #{$id}",
-                'listings.store' => "Created Listing #{$id}",
-                'resources.store' => "Created resource #{$id}",
-                'gift-cards.store' => "Created gift card #{$id}",
-                'promocodes.store' => "Created Promocode #{$id}",
-                'special-days.store' => "Special Day Promocode #{$id}",
+                'posts.update' => "Updated Post #{$id}",
+                'posts.destroy' => "Deleted Post #{$id}",
+                'posts.change-status' => "Changed status for Post #{$id}",
+
+                // Post Categories
                 'post-categories.store' => "Created Blog Category #{$id}",
+                'post-categories.update' => "Updated Blog Category #{$id}",
+                'post-categories.destroy' => "Deleted Blog Category #{$id}",
+
+                // Users
+                'users.store' => "Created user #{$id}",
+                'users.update' => "Updated user #{$id}",
+                'users.destroy' => "Deleted user #{$id}",
+                'users.update-profile' => "Updated profile for user #{$id}",
+                'users.updateProfile' => "Updated profile for user #{$id}",
+                'users.updateCustomerProfile' => "Updated customer profile #{$id}",
+                'users.updateProfileImage' => "Updated profile image for user #{$id}",
+                'users.updatePreferences' => "Updated preferences for user #{$id}",
+                'users.changePassword' => "Changed password for user #{$id}",
+
+                // Venues
+                'venues.store' => "Created venue #{$id}",
+                'venues.update' => "Updated venue #{$id}",
+                'venues.destroy' => "Deleted venue #{$id}",
+                'venues.sort' => "Updated venue sort order",
+
+                // Resources
+                'resources.store' => "Created resource #{$id}",
+                'resources.update' => "Updated resource #{$id}",
+                'resources.destroy' => "Deleted resource #{$id}",
+
+                // Gift Cards
+                'gift-cards.store' => "Created gift card #{$id}",
+                'gift-cards.update' => "Updated gift card #{$id}",
+                'gift-cards.destroy' => "Deleted gift card #{$id}",
+                'gift-cards.redeem' => "Redeemed gift card #{$id}",
+                'gift-cards.redeemGiftCard' => "Redeemed gift card #{$id}",
+
+                // Sports Categories
                 'sports-categories.store' => "Created sports category #{$id}",
+                'sports-categories.update' => "Updated sports category #{$id}",
+                'sports-categories.destroy' => "Deleted sports category #{$id}",
+                'sports-categories.sort' => "Updated sports category sort order",
+
+                // Sports Types
+                'sports-types.store' => "Created sports type #{$id}",
+                'sports-types.update' => "Updated sports type #{$id}",
+                'sports-types.destroy' => "Deleted sports type #{$id}",
+                'sports-types.sort' => "Updated sports type sort order",
+
+                // Add-Ons
+                'add-ons.store' => "Created Add-On #{$id}",
+                'add-ons.update' => "Updated Add-On #{$id}",
+                'add-ons.destroy' => "Deleted Add-On #{$id}",
+                'add-ons.sort' => "Updated Add-On sort order",
+
+                // Listings
+                'listings.store' => "Created Listing #{$id}",
+                'listings.update' => "Updated Listing #{$id}",
+                'listings.destroy' => "Deleted Listing #{$id}",
+                'listings.sort' => "Updated Listing sort order",
+                'listings.uploadImage' => "Uploaded image for Listing #{$id}",
+                'listings.deleteImage' => "Deleted image for Listing #{$id}",
+
+                // Promocodes
+                'promocodes.store' => "Created Promocode #{$id}",
+                'promocodes.update' => "Updated Promocode #{$id}",
+                'promocodes.destroy' => "Deleted Promocode #{$id}",
+                'promocodes.apply' => "Applied Promocode #{$id}",
+                'promocodes.remove' => "Removed Promocode from booking #{$id}",
+                'promocodes.applyPromocode' => "Applied Promocode",
+
+                // Special Days
+                'special-days.store' => "Created Special Day #{$id}",
+                'special-days.update' => "Updated Special Day #{$id}",
+                'special-days.destroy' => "Deleted Special Day #{$id}",
+                'special-days.bulk' => "Bulk created Special Days",
+                'special-days.bulkCreate' => "Bulk created Special Days",
+
+                // Settings
+                'settings.update' => "Updated settings",
+                'settings.updateSingle' => "Updated setting",
+
+                // Customers
+                'customers.store' => "Created customer #{$id}",
+                'customers.update' => "Updated customer #{$id}",
+                'customers.destroy' => "Deleted customer #{$id}",
+                'customers.register' => "Registered customer #{$id}",
+                'customers.createCustomer' => "Created customer #{$id}",
+                'customers.updateTags' => "Updated tags for customer #{$id}",
+                'customers.updateStatus' => "Updated status for customer #{$id}",
+
+                // Bookings
+                'bookings.store' => "Created booking #{$id}",
+                'bookings.update' => "Updated booking #{$id}",
+                'bookings.destroy' => "Deleted booking #{$id}",
+                'bookings.cancel' => "Cancelled booking #{$id}",
+                'bookings.completed' => "Marked booking #{$id} as completed",
+                'bookings.confirm' => "Confirmed booking #{$id}",
+                'bookings.generate-invoice' => "Generated invoice for booking #{$id}",
+                'bookings.confirmBooking' => "Confirmed booking #{$id}",
+                'bookings.pay' => "Processed payment for booking #{$id}",
+
+                // Reviews
+                'reviews.store' => "Created review #{$id}",
+                'reviews.update' => "Updated review #{$id}",
+                'reviews.destroy' => "Deleted review #{$id}",
+                'reviews.helpful' => "Marked review #{$id} as helpful",
+
+                // Payments
+                'payments.store' => "Created payment #{$id}",
+                'payments.update' => "Updated payment #{$id}",
+                'payments.destroy' => "Deleted payment #{$id}",
+                'payments.confirm' => "Confirmed payment #{$id}",
+                'payments.confirmPayment' => "Confirmed payment #{$id}",
+                'payments.generate-link' => "Generated payment link",
+                'payments.generatePaymentLink' => "Generated payment link",
+                'payments.createPaymentIntent' => "Created payment intent",
+
+                // Newsletter
+                'newsletter.subscribe' => "Subscribed to newsletter",
             ];
 
             foreach ($detailsMap as $routePattern => $detail) {
