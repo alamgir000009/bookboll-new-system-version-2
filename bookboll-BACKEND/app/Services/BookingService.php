@@ -1111,7 +1111,7 @@ class BookingService
         $booking = $this->bookingModel::with(['user', 'venue', 'listing', 'payments', 'addOns', 'resourcesAllocated', 'promocode'])
             ->findOrFail($bookingId);
 
-        if (in_array($booking->status, [BookingStatus::CANCELLED, BookingStatus::COMPLETED])) {
+        if ($booking->status != BookingStatus::PENDING) {
             return sendError('Cannot update ' . $booking->status . ' bookings.');
         }
 
