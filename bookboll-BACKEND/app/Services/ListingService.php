@@ -1323,7 +1323,6 @@ class ListingService
 
             $datesInfo     = [];
             $currentDate   = $startDate->copy();
-            $hours_per_day = (strtotime($endTime) - strtotime($startTime)) / 3600;
 
             while ($currentDate->lte($endDate)) {
                 // Ensure that the current date is after the base date
@@ -1380,7 +1379,7 @@ class ListingService
 
                 $isAvailable = $isOpenOnDay && ! $isHoliday && $isTimeSlotAvailable;
 
-                $dayPrice = determineSlotPrice($listing, $weekday, $startTime, $endTime, $specialDay) * $hours_per_day;
+                $dayPrice = determineSlotPrice($listing, $weekday, $startTime, $endTime, $specialDay);
 
                 if (! $isAvailable) {
                     $bookedCount = $maxBookingsPerSlot;
