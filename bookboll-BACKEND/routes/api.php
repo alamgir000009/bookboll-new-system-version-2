@@ -23,17 +23,17 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\VenueController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('login', [UserController::class, 'login']);
-Route::post('register', [UserController::class, 'register']);
-Route::post('update-profile', [UserController::class, 'updateProfile'])->middleware('auth:sanctum');
-Route::post('change-password', [UserController::class, 'changePassword'])->middleware('auth:sanctum');
-Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail']);
-Route::post('reset-password', [UserController::class, 'reset']);
+Route::post('login', [UserController::class, 'login'])->name('login');
+Route::post('register', [UserController::class, 'register'])->name('register');
+Route::post('update-profile', [UserController::class, 'updateProfile'])->middleware('auth:sanctum')->name('update-profile');
+Route::post('change-password', [UserController::class, 'changePassword'])->middleware('auth:sanctum')->name('change-password');
+Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail'])->name('forgot-password');
+Route::post('reset-password', [UserController::class, 'reset'])->name('reset-password');
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
-    Route::post('logout', [UserController::class, 'logout']);
-    Route::get('me', [UserController::class, 'me']);
+    Route::post('logout', [UserController::class, 'logout'])->name('logout');
+    Route::get('me', [UserController::class, 'me'])->name('me');
 
     Route::prefix('admin')->group(function () {
 
@@ -42,7 +42,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('posts/change-status', [PostController::class, 'changeStatus']);
         Route::get('posts-tags', [PostController::class, 'postTagsList']);
 
-        Route::post('venues/sort', [VenueController::class, 'sort']);
+        Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
         Route::apiResource('venues', VenueController::class);
 
         Route::apiResource('users', UserController::class);
@@ -50,16 +50,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('users/update-profile', [UserController::class, 'updateProfile']);
         Route::post('customers/register', [CustomerController::class, 'createCustomer']);
 
-        Route::get('settings', [SettingController::class, 'index']);
-        Route::post('settings/{key}', [SettingController::class, 'updateSingle']);
-        Route::post('settings', [SettingController::class, 'update']);
+        Route::get('settings', [SettingController::class, 'index'])->name('settings.index');
+        Route::post('settings/{key}', [SettingController::class, 'updateSingle'])->name('settings.updateSingle');
+        Route::post('settings', [SettingController::class, 'update'])->name('settings.update');
 
         Route::apiResource('sports-types', SportsTypeController::class)->only(['store', 'update', 'destroy']);
-        Route::post('sports-types/sort', [SportsTypeController::class, 'sort']);
+        Route::post('sports-types/sort', [SportsTypeController::class, 'sort'])->name('sports-types.sort');
 
-        Route::post('sports-categories/sort', [SportsCategoryController::class, 'sort']);
+        Route::post('sports-categories/sort', [SportsCategoryController::class, 'sort'])->name('sports-categories.sort');
         Route::apiResource('sports-categories', SportsCategoryController::class);
-        Route::get('sports-categories/popular-emojis', [SportsCategoryController::class, 'popularEmojis']);
+        Route::get('sports-categories/popular-emojis', [SportsCategoryController::class, 'popularEmojis'])->name('sports-categories.popular-emojis');
 
         Route::apiResource('gift-cards', GiftCardController::class);
 
@@ -69,84 +69,84 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
         Route::get('audit-logs/export', [AuditLogController::class, 'export']);
 
-        Route::post('add-ons/sort', [AddOnController::class, 'sort']);
+        Route::post('add-ons/sort', [AddOnController::class, 'sort'])->name('add-ons.sort');
         Route::apiResource('add-ons', AddOnController::class);
 
-        Route::post('listings/sort', [ListingController::class, 'sort']);
-        Route::post('listings/{id}/images', [ListingController::class, 'uploadImage']);
-        Route::delete('listings/{id}/images', [ListingController::class, 'deleteImage']);
+        Route::post('listings/sort', [ListingController::class, 'sort'])->name('listings.sort');
+        Route::post('listings/{id}/images', [ListingController::class, 'uploadImage'])->name('listings.uploadImage');
+        Route::delete('listings/{id}/images', [ListingController::class, 'deleteImage'])->name('listings.deleteImage');
         Route::apiResource('listings', ListingController::class);
 
         Route::apiResource('promocodes', PromocodeController::class);
 
-        Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues']);
-        Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings']);
-        Route::post('promocodes/validate', [PromocodeController::class, 'validate']);
-        Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply']);
-        Route::post('promocodes/{booking}/remove', [PromocodeController::class, 'remove']);
+        Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues'])->name('promocodes.venues.search');
+        Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings'])->name('promocodes.listings.search');
+        Route::post('promocodes/validate', [PromocodeController::class, 'validate'])->name('promocodes.validate');
+        Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply'])->name('promocodes.apply');
+        Route::post('promocodes/{booking}/remove', [PromocodeController::class, 'remove'])->name('promocodes.remove');
 
-        Route::get('extra-data', [HelperController::class, 'extraData']);
-        Route::get('extra-customers', [HelperController::class, 'extraCustomers']);
-        Route::get('extra-resources', [HelperController::class, 'extraResources']);
-        Route::get('extra-add-ons', [HelperController::class, 'extraAddOns']);
-        Route::get('extra-sport-categories', [HelperController::class, 'extraSportCategories']);
-        Route::get('extra-data-for-listing', [HelperController::class, 'extraDataForListing']);
-        Route::get('extra-loyalty-data', [LoyaltyPointController::class, 'extraDataForLoyalty']);
-        Route::get('extra-special-days', [HelperController::class, 'extraSpecialDays']);
+        Route::get('extra-data', [HelperController::class, 'extraData'])->name('extra-data');
+        Route::get('extra-customers', [HelperController::class, 'extraCustomers'])->name('extra-customers');
+        Route::get('extra-resources', [HelperController::class, 'extraResources'])->name('extra-resources');
+        Route::get('extra-add-ons', [HelperController::class, 'extraAddOns'])->name('extra-add-ons');
+        Route::get('extra-sport-categories', [HelperController::class, 'extraSportCategories'])->name('extra-sport-categories');
+        Route::get('extra-data-for-listing', [HelperController::class, 'extraDataForListing'])->name('extra-data-for-listing');
+        Route::get('extra-loyalty-data', [LoyaltyPointController::class, 'extraDataForLoyalty'])->name('extra-loyalty-data');
+        Route::get('extra-special-days', [HelperController::class, 'extraSpecialDays'])->name('extra-special-days');
 
-        Route::post('test-email', [SettingController::class, 'sendTestEmail']);
+        Route::post('test-email', [SettingController::class, 'sendTestEmail'])->name('test-email');
 
-        Route::get('dashboard-data', [BookingController::class, 'dashboardData']);
-        Route::get('dashboard/chart', [BookingController::class, 'dashboardChart']);
+        Route::get('dashboard-data', [BookingController::class, 'dashboardData'])->name('dashboard-data');
+        Route::get('dashboard/chart', [BookingController::class, 'dashboardChart'])->name('dashboard.chart');
 
         // Admin Mobile App
-        Route::get('bookings/list', [BookingController::class, 'mobileBookingsList']);
-        Route::get('bookings/filter-options', [BookingController::class, 'mobileBookingsFilterOptions']);
+        Route::get('bookings/list', [BookingController::class, 'mobileBookingsList'])->name('bookings.list');
+        Route::get('bookings/filter-options', [BookingController::class, 'mobileBookingsFilterOptions'])->name('bookings.filter-options');
 
-        Route::post('bookings/completed', [BookingController::class, 'completed']);
-        Route::post('bookings/confirm', [BookingController::class, 'confirm']);
-        Route::post('bookings/generate-invoice', [BookingController::class, 'generateInvoice']);
-        Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory']);
-        Route::get('bookings/form-data', [BookingController::class, 'formData']);
-        Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar']);
-        Route::post('bookings/cancel', [BookingController::class, 'cancel']);
-        Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings']);
+        Route::post('bookings/completed', [BookingController::class, 'completed'])->name('bookings.completed');
+        Route::post('bookings/confirm', [BookingController::class, 'confirm'])->name('bookings.confirm');
+        Route::post('bookings/generate-invoice', [BookingController::class, 'generateInvoice'])->name('bookings.generate-invoice');
+        Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory'])->name('bookings.customer.history');
+        Route::get('bookings/form-data', [BookingController::class, 'formData'])->name('bookings.form-data');
+        Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar'])->name('bookings.calendar');
+        Route::post('bookings/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
+        Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings'])->name('bookings.due');
         Route::apiResource('bookings', BookingController::class);
 
-        Route::post('payments/confirm', [PaymentController::class, 'confirmPayment']);
-        Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink']);
-        Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice']);
+        Route::post('payments/confirm', [PaymentController::class, 'confirmPayment'])->name('payments.confirm');
+        Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink'])->name('payments.generate-link');
+        Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice'])->name('payments.invoice');
         Route::apiResource('payments', PaymentController::class);
 
         Route::apiResource('special-days', SpecialDayController::class);
-        Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar']);
-        Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate']);
+        Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar'])->name('special-days.calendar');
+        Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate'])->name('special-days.bulk');
 
         Route::apiResource('customers', CustomerController::class);
-        Route::put('customers/{id}/tags', [CustomerController::class, 'updateTags']);
-        Route::put('customers/{id}/status', [CustomerController::class, 'updateStatus']);
+        Route::put('customers/{id}/tags', [CustomerController::class, 'updateTags'])->name('customers.updateTags');
+        Route::put('customers/{id}/status', [CustomerController::class, 'updateStatus'])->name('customers.updateStatus');
 
     });
 
     Route::prefix('customer')->group(function () {
 
-        Route::get('my-reviews', [ReviewController::class, 'myReviews']);
-        Route::patch('reviews/{review}/helpful', [ReviewController::class, 'helpful']);
+        Route::get('my-reviews', [ReviewController::class, 'myReviews'])->name('customer.my-reviews');
+        Route::patch('reviews/{review}/helpful', [ReviewController::class, 'helpful'])->name('reviews.helpful');
         Route::apiResource('reviews', ReviewController::class)->except(['show', 'index']);
-        Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings']);
+        Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings'])->name('bookings.reviewable');
 
-        Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards']);
-        Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard']);
+        Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards'])->name('gift-cards.index');
+        Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard'])->name('gift-cards.redeem');
 
-        Route::post('bookings/validate', [BookingController::class, 'validateBooking']);
-        Route::post('bookings/confirm', [BookingController::class, 'confirmBooking']);
-        Route::get('bookings/upcoming', [BookingController::class, 'upcoming']);
-        Route::get('bookings/recent', [BookingController::class, 'recent']);
-        Route::post('bookings/{id}/pay', [BookingController::class, 'pay']);
-        Route::post('bookings/{id}/cancel', [BookingController::class, 'cancel']);
-        Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent']);
+        Route::post('bookings/validate', [BookingController::class, 'validateBooking'])->name('bookings.validate');
+        Route::post('bookings/confirm', [BookingController::class, 'confirmBooking'])->name('bookings.confirmBooking');
+        Route::get('bookings/upcoming', [BookingController::class, 'upcoming'])->name('bookings.upcoming');
+        Route::get('bookings/recent', [BookingController::class, 'recent'])->name('bookings.recent');
+        Route::post('bookings/{id}/pay', [BookingController::class, 'pay'])->name('bookings.pay');
+        Route::post('bookings/{id}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
+        Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent'])->name('payments.createPaymentIntent');
 
-        Route::get('promocodes', [PromocodeController::class, 'customerIndex']);
+        Route::get('promocodes', [PromocodeController::class, 'customerIndex'])->name('promocodes.customer.index');
 
     });
 
@@ -154,40 +154,40 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
 Route::prefix('customer')->group(function () {
 
-    Route::get('reviews', [ReviewController::class, 'index']);
-    Route::get('reviews/my', [ReviewController::class, 'myReviews']);
-    Route::post('login', [UserController::class, 'customerLogin']);
-    Route::post('google-login', [UserController::class, 'googleLogin']);
+    Route::get('reviews', [ReviewController::class, 'index'])->name('customer.reviews.index');
+    Route::get('reviews/my', [ReviewController::class, 'myReviews'])->name('customer.reviews.my');
+    Route::post('login', [UserController::class, 'customerLogin'])->name('customer.login');
+    Route::post('google-login', [UserController::class, 'googleLogin'])->name('customer.google-login');
 
     Route::middleware(['auth:sanctum'])->group(function () {
-        Route::get('preferences', [UserController::class, 'customerPreferences']);
-        Route::post('preferences', [UserController::class, 'updatePreferences']);
-        Route::get('profile', [UserController::class, 'getCustomerProfile']);
-        Route::post('update-profile', [UserController::class, 'updateCustomerProfile']);
-        Route::post('update-profile-image', [UserController::class, 'updateProfileImage']);
-        Route::get('payment-methods', [PaymentController::class, 'getPaymentMethods']);
+        Route::get('preferences', [UserController::class, 'customerPreferences'])->name('customer.preferences');
+        Route::post('preferences', [UserController::class, 'updatePreferences'])->name('customer.updatePreferences');
+        Route::get('profile', [UserController::class, 'getCustomerProfile'])->name('customer.profile');
+        Route::post('update-profile', [UserController::class, 'updateCustomerProfile'])->name('customer.updateCustomerProfile');
+        Route::post('update-profile-image', [UserController::class, 'updateProfileImage'])->name('customer.updateProfileImage');
+        Route::get('payment-methods', [PaymentController::class, 'getPaymentMethods'])->name('customer.payment-methods');
     });
 
 });
 
-Route::get('home-page-data', [HelperController::class, 'homePageData']);
-Route::get('blog-categories', [PostCategoryController::class, 'blogCategories']);
-Route::get('blog-articles', [PostController::class, 'blogArticles']);
-Route::get('blog-articles/{slug}', [PostController::class, 'blogPostDetails']);
-Route::get('sports-categories', [SportsCategoryController::class, 'sportsCategories']);
-Route::post('contact-us', [HelperController::class, 'contactUs']);
-Route::get('fetch-venues', [VenueController::class, 'fetchVenues']);
-Route::get('fetch-listings', [ListingController::class, 'fetchListings']);
-Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings']);
-Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing']);
-Route::get('fetch-time-slots', [ListingController::class, 'fetchTimeSlots']);
-Route::post('lock-slot', [ListingController::class, 'lockSlot']);
-Route::post('unlock-slot', [ListingController::class, 'unlockSlot']);
-Route::post('unlock-all-slots', [ListingController::class, 'unlockAllSlots']);
-Route::post('extend-slot-lock', [ListingController::class, 'extendSlotLock']);
-Route::post('check-slot-availability', [ListingController::class, 'checkSlotAvailability']);
-Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons']);
-Route::get('fetch-recurring-booked-slots', [ListingController::class, 'fetchRecurringBookedSlots']);
-Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode']);
+Route::get('home-page-data', [HelperController::class, 'homePageData'])->name('home-page-data');
+Route::get('blog-categories', [PostCategoryController::class, 'blogCategories'])->name('blog-categories');
+Route::get('blog-articles', [PostController::class, 'blogArticles'])->name('blog-articles');
+Route::get('blog-articles/{slug}', [PostController::class, 'blogPostDetails'])->name('blog-articles.show');
+Route::get('sports-categories', [SportsCategoryController::class, 'sportsCategories'])->name('sports-categories.public');
+Route::post('contact-us', [HelperController::class, 'contactUs'])->name('contact-us');
+Route::get('fetch-venues', [VenueController::class, 'fetchVenues'])->name('fetch-venues');
+Route::get('fetch-listings', [ListingController::class, 'fetchListings'])->name('fetch-listings');
+Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings'])->name('fetch-suggested-listings');
+Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing'])->name('fetch-listing');
+Route::get('fetch-time-slots', [ListingController::class, 'fetchTimeSlots'])->name('fetch-time-slots');
+Route::post('lock-slot', [ListingController::class, 'lockSlot'])->name('lock-slot');
+Route::post('unlock-slot', [ListingController::class, 'unlockSlot'])->name('unlock-slot');
+Route::post('unlock-all-slots', [ListingController::class, 'unlockAllSlots'])->name('unlock-all-slots');
+Route::post('extend-slot-lock', [ListingController::class, 'extendSlotLock'])->name('extend-slot-lock');
+Route::post('check-slot-availability', [ListingController::class, 'checkSlotAvailability'])->name('check-slot-availability');
+Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons'])->name('fetch-addons');
+Route::get('fetch-recurring-booked-slots', [ListingController::class, 'fetchRecurringBookedSlots'])->name('fetch-recurring-booked-slots');
+Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode'])->name('promocodes.applyPromocode');
 
-Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe']);
+Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe'])->name('newsletter.subscribe');
