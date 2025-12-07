@@ -588,6 +588,11 @@ if (! function_exists('autoConfirmBookingIfPaid')) {
                     if (! $pointsAlreadyAdded) {
                         $user = $booking->user;
                         $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id, "Loyalty points earned for booking auto-confirmation");
+                        $booking->history()->create([
+                            'user_id'     => auth()->id(),
+                            'action'      => 'loyalty_points_earned',
+                            'description' => "{$booking->loyalty_points_earned} loyalty points added to user #{$user->id} for booking auto-confirmation.",
+                        ]);
                     }
                 }
 

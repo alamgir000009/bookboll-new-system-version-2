@@ -481,7 +481,7 @@ class BookingService
                 ]);
             }
 
-            unlockListingSlot( $listing, $user, $booking);
+            unlockListingSlot($listing, $user, $booking);
 
             DB::commit();
 
@@ -1020,8 +1020,6 @@ class BookingService
                 }
             }
 
-
-
             DB::commit();
 
             return sendSuccess('Booking confirmed successfully', ['bookings' => $createdBookings]);
@@ -1403,9 +1401,14 @@ class BookingService
                     ->where('type', 'credit')
                     ->exists();
 
-                if (!$pointsAlreadyAdded) {
+                if (! $pointsAlreadyAdded) {
                     $user = $booking->user;
                     $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id, "Loyalty points earned for booking confirmation");
+                    $booking->history()->create([
+                        'user_id'     => auth()->id(),
+                        'action'      => 'loyalty_points_earned',
+                        'description' => "{$booking->loyalty_points_earned} loyalty points added to user #{$user->id} for booking auto-confirmation.",
+                    ]);
                 }
             }
 
@@ -1965,7 +1968,7 @@ class BookingService
             }
 
             $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name', 'invoices']);
-            unlockListingSlot( $listing, $user, $booking);
+            unlockListingSlot($listing, $user, $booking);
 
             return $booking;
 

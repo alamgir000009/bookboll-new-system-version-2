@@ -5,11 +5,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\PaymentMethod as PaymentMethodModel;
 use App\Models\StripeSession;
-use App\Notifications\BookingConfirmedUserNotification;
 use App\Services\PaymentService;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
-use BookingStatus;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -259,6 +257,11 @@ class PaymentController extends Controller
                             'status'            => PaymentStatus::PAID,
                             'method'            => PaymentMethod::ONLINE,
                             'date'              => now()->format('Y-m-d'),
+                        ]);
+                        $booking->history()->create([
+                            'user_id'     => auth()->id(),
+                            'action'      => 'payment_received',
+                            'description' => "Payment #{$payment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
                         ]);
                     }
                 }
