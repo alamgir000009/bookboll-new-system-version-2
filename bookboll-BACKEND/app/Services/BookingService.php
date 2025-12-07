@@ -129,13 +129,24 @@ class BookingService
         $total_redeemed = LoyaltyPoint::where('type', 'debit')->sum('points');
         $total_earned   = LoyaltyPoint::where('type', 'credit')->sum('points');
 
+        // Calculate payment totals
+        $totalCollected = $this->paymentModel->where('status', PaymentStatus::PAID)->sum('amount');
+        $totalPending   = $this->paymentModel->where('status', PaymentStatus::PENDING)->sum('amount');
+
         $widgets = [
             [
                 "name"       => "Total Revenue",
-                "value"      => $this->bookingModel->sum('total_price'),
+                "value"      => round($totalCollected, 2),
                 "change"     => "",
                 "changeType" => "increase",
                 "icon"       => "CurrencyDollarIcon",
+            ],
+            [
+                "name"       => "Pending Payments",
+                "value"      => round($totalPending, 2),
+                "change"     => "",
+                "changeType" => "increase",
+                "icon"       => "ClockIcon",
             ],
             [
                 "name"       => "Total Bookings",
@@ -190,21 +201,42 @@ class BookingService
             'selectedListings' => 'array|nullable',
         ]);
 
-        $payments = $this->paymentModel::whereBetween('payments.date', [$filters['dateFrom'], $filters['dateTo']])
-            ->join('bookings', 'payments.booking_id', '=', 'bookings.id')
+        // Get payments - include payments with dates in range OR null dates (pending payments)
+        $query = $this->paymentModel::join('bookings', 'payments.booking_id', '=', 'bookings.id')
+            ->where(function ($q) use ($filters) {
+                // Include payments with dates in range
+                $q->whereBetween('payments.date', [$filters['dateFrom'], $filters['dateTo']])
+                // OR pending payments (null date) created within the date range
+                    ->orWhere(function ($subQ) use ($filters) {
+                        $subQ->whereNull('payments.date')
+                            ->whereBetween('payments.created_at', [
+                                Carbon::parse($filters['dateFrom'])->startOfDay(),
+                                Carbon::parse($filters['dateTo'])->endOfDay(),
+                            ]);
+                    });
+            })
             ->when(! empty($filters['selectedVenues']), function ($q) use ($filters) {
                 return $q->whereIn('bookings.venue_id', $filters['selectedVenues']);
             })
             ->when(! empty($filters['selectedListings']), function ($q) use ($filters) {
                 return $q->whereIn('bookings.listing_id', $filters['selectedListings']);
-            })->get([
+            });
+
+        $payments = $query->select([
             'payments.id',
-            'payments.date',
+            DB::raw('DATE_FORMAT(payments.date, "%Y-%m-%d") as date'),
             'payments.status',
             'payments.method',
             'payments.amount',
+            'payments.created_at',
             'bookings.venue_id as venue_id',
-        ])->toArray();
+        ])->get()->map(function ($payment) {
+            $paymentArray = $payment->toArray();
+            if (isset($paymentArray['date']) && $paymentArray['date']) {
+                $paymentArray['date'] = substr($paymentArray['date'], 0, 10);
+            }
+            return $paymentArray;
+        })->toArray();
 
         if (! empty($filters['paymentMethods'])) {
             $payments = array_filter($payments, fn($p) => in_array($p['method'], $filters['paymentMethods']));
@@ -224,27 +256,29 @@ class BookingService
         }
 
         $transactionCount   = count($payments);
-        $completedPayments  = array_filter($payments, fn($p) => $p['status'] == 'paid' && in_array($p['method'], ['cash', 'cheque', 'wire_transfer', 'online']));
-        $averageTransaction = ! empty($completedPayments) ? $collectedTotal / count($completedPayments) : 0;
+        $paidPayments       = array_filter($payments, fn($p) => $p['status'] === PaymentStatus::PAID);
+        $averageTransaction = ! empty($paidPayments) ? $collectedTotal / count($paidPayments) : 0;
 
         return sendSuccess('Chart data fetched', [
             'chartData'    => $chartData,
             'maxValue'     => $maxValue ?: 1000,
             'paymentStats' => [
-                'total_collected_payments' => $collectedTotal,
-                'total_pending_payments'   => $pendingTotal,
+                'total_collected_payments' => round($collectedTotal, 2),
+                'total_pending_payments'   => round($pendingTotal, 2),
                 'total_transactions_count' => $transactionCount,
                 'average_transaction'      => round($averageTransaction, 2),
             ],
         ]);
     }
+
     private function groupPaymentsByPeriod(array $payments, string $timeRange, array $dateRange): array
     {
-        $grouped = [];
-        $start   = Carbon::parse($dateRange[0]);
-        $end     = Carbon::parse($dateRange[1]);
+        $grouped                                 = [];
+        list($startYear, $startMonth, $startDay) = explode('-', $dateRange[0]);
+        list($endYear, $endMonth, $endDay)       = explode('-', $dateRange[1]);
 
-        $collectedMethods = ['cash', 'cheque', 'wire_transfer', 'online'];
+        $start = Carbon::createFromDate((int) $startYear, (int) $startMonth, (int) $startDay, config('app.timezone'))->startOfDay();
+        $end   = Carbon::createFromDate((int) $endYear, (int) $endMonth, (int) $endDay, config('app.timezone'))->endOfDay();
 
         if ($timeRange == 'daily') {
             for ($d = $start->copy(); $d->lte($end); $d->addDay()) {
@@ -265,19 +299,52 @@ class BookingService
         }
 
         foreach ($payments as $payment) {
-            $date = Carbon::parse($payment['date']);
-            $key  = match ($timeRange) {
+            $amount = max(0, (float) ($payment['amount'] ?? 0));
+
+            $paymentDate = $payment['date'] ?? null;
+            $createdAt   = $payment['created_at'] ?? null;
+
+            if (! $paymentDate && ! $createdAt) {
+                continue;
+            }
+
+            if ($paymentDate) {
+
+                $dateStr = is_string($paymentDate)
+                    ? substr($paymentDate, 0, 10)
+                    : ($paymentDate instanceof \Carbon\Carbon
+                        ? $paymentDate->format('Y-m-d')
+                        : (string) $paymentDate);
+
+                list($year, $month, $day) = explode('-', $dateStr);
+                $date                     = Carbon::createFromDate((int) $year, (int) $month, (int) $day, config('app.timezone'))
+                    ->startOfDay();
+            } else {
+                $date = Carbon::parse($createdAt)->setTimezone(config('app.timezone'))->startOfDay();
+            }
+
+            if ($paymentDate && ($date->lt($start) || $date->gt($end))) {
+                continue;
+            }
+
+            $key = match ($timeRange) {
                 'daily'   => $date->format('Y-m-d'),
-                'weekly'  => $date->startOfWeek()->format('Y-m-d'),
+                'weekly'  => $date->copy()->startOfWeek()->format('Y-m-d'),
                 'monthly' => $date->format('Y-m'),
                 default   => $date->format('Y-m-d'),
             };
 
-            if (isset($grouped[$key])) {
-                $amount = max(0, (float) $payment['amount']);
-                if ($payment['status'] == PaymentStatus::PAID && in_array($payment['method'], $collectedMethods)) {
+            if ($payment['status'] === PaymentStatus::PAID) {
+                if (isset($grouped[$key])) {
                     $grouped[$key]['collected'] += $amount;
-                } else {
+                }
+            } else {
+                if (! isset($grouped[$key]) && ! $payment['date']) {
+                    $lastKey = array_key_last($grouped);
+                    if ($lastKey) {
+                        $grouped[$lastKey]['pending'] += $amount;
+                    }
+                } elseif (isset($grouped[$key])) {
                     $grouped[$key]['pending'] += $amount;
                 }
             }
