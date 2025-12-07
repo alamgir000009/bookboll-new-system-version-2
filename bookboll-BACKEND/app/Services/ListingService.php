@@ -694,7 +694,7 @@ class ListingService
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return sendError('Listing not found', [], 404);
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             return sendError('Failed to delete image: ' . $e->getMessage(), [], 500);
         }
     }
@@ -707,11 +707,15 @@ class ListingService
         $venue_id         = $request->venue_id ?? null;
         $sports_type      = $request->category ?? null;
         $categories       = $request->categories ?? [];
+        $exclude_id       = $request->exclude_id ?? null;
         $records_per_page = $request->records_per_page ?? null;
 
         $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns', 'assets'])
             ->active()
             ->whereRelation('venue', 'status', 'active')
+            ->whereHas('schedules', function ($q) {
+                $q->where('is_open', 1);
+            })
             ->orderBy('sort_order', 'ASC')
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -722,6 +726,9 @@ class ListingService
             })
             ->when($venue_id, function ($query, $venue_id) {
                 $query->whereRelation('venue', 'id', $venue_id);
+            })
+            ->when($exclude_id, function ($query, $exclude_id) {
+                $query->where('id', '!=', $exclude_id);
             })
             ->when($sports_type, function ($query, $sports_type) {
                 $query->whereHas('sportsCategory.sportsType', function ($q) use ($sports_type) {
@@ -789,6 +796,7 @@ class ListingService
     public function fetchSuggestions($request)
     {
         $categoryType = $request->category ?? null;
+        $limit        = $request->limit ?? 3;
 
         $sportsType = SportsType::withCount('listings')->where("title", $categoryType)->first();
 
@@ -799,7 +807,7 @@ class ListingService
                 $query->whereNotIn('sports_category_id', $categoryIds);
             })
             ->whereRelation('venue', 'status', 'active')
-            ->take(3)
+            ->take($limit)
             ->get()
             ->map(function ($listing) {
                 return [
