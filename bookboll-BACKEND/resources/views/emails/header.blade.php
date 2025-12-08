@@ -30,9 +30,10 @@
         }
 
         .header img {
-            max-width: 200px;
-            width: 200px;
+            max-width: 50px;
+            width: 50px;
             height: auto;
+            border-radius: 10px;
         }
 
         .header h2 {
@@ -106,5 +107,5 @@
 <body>
     <div class="container">
         <div class="header">
-            <img src="https://bookboll.ae/assets/images/logo_dark.png" alt="bookboll Logo">
+            <img src="{{ asset('bookboll-logo.jpeg') }}" alt="bookboll Logo">
         </div>
