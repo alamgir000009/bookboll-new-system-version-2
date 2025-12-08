@@ -1689,80 +1689,148 @@ class BookingService
             'venues'           => 'nullable|boolean',
             'users'            => 'nullable|boolean',
             'sportsCategories' => 'nullable|boolean',
+            'records_per_page' => 'nullable',
         ]);
 
-        $listings         = [];
-        $venues           = [];
-        $users            = [];
-        $sportsCategories = [];
+        $recordsPerPage = $request->input('records_per_page', 10);
 
+        // Determine pagination mode
+        $isPaginated = true;
+        if ($recordsPerPage === "all") {
+            $isPaginated = false;
+        } elseif (! ctype_digit((string) $recordsPerPage)) {
+            $recordsPerPage = 10;
+        }
+
+        /**
+         * Helper: Wrap consistent response for each list
+         */
+        $formatResponse = function ($result, $isPaginated) {
+            if ($isPaginated) {
+                return [
+                    'data'       => $result->items(),
+                    'pagination' => [
+                        'current_page'     => $result->currentPage(),
+                        'last_page'        => $result->lastPage(),
+                        'records_per_page' => $result->perPage(),
+                        'total'            => $result->total(),
+                        'from'             => $result->firstItem(),
+                        'to'               => $result->lastItem(),
+                    ],
+                ];
+            }
+
+            return [
+                'data'       => $result,
+                'pagination' => null,
+            ];
+        };
+
+        /** ---------------- Listings ---------------- **/
+        $listings = ['data' => [], 'pagination' => null];
         if (! empty($data['listings'])) {
-            $listings = Listing::select('id', 'name', 'venue_id')
+
+            $query = Listing::select('id', 'name', 'venue_id')
                 ->with(['venue:id,name'])
                 ->active()
-                ->orderBy('name')
-                ->get()
-                ->map(function ($listing) {
-                    return [
-                        'id'    => $listing->id,
-                        'name'  => $listing->name,
-                        'venue' => $listing->venue?->name,
-                    ];
-                });
+                ->orderBy('name');
+
+            $result = $isPaginated
+                ? $query->paginate($recordsPerPage)->through(fn($listing) => [
+                'id'    => $listing->id,
+                'name'  => $listing->name,
+                'venue' => $listing->venue?->name,
+            ])
+                : $query->get()->map(fn($listing) => [
+                'id'    => $listing->id,
+                'name'  => $listing->name,
+                'venue' => $listing->venue?->name,
+            ]);
+
+            $listings = $formatResponse($result, $isPaginated);
         }
 
+        /** ---------------- Venues ---------------- **/
+        $venues = ['data' => [], 'pagination' => null];
         if (! empty($data['venues'])) {
-            $venues = Venue::select('id', 'name')
+
+            $query = Venue::select('id', 'name')
                 ->active()
-                ->orderBy('name')
-                ->get()
-                ->map(function ($venue) {
-                    return [
-                        'id'   => $venue->id,
-                        'name' => $venue->name,
-                    ];
-                });
+                ->orderBy('name');
+
+            $result = $isPaginated
+                ? $query->paginate($recordsPerPage)->through(fn($venue) => [
+                'id'   => $venue->id,
+                'name' => $venue->name,
+            ])
+                : $query->get()->map(fn($venue) => [
+                'id'   => $venue->id,
+                'name' => $venue->name,
+            ]);
+
+            $venues = $formatResponse($result, $isPaginated);
         }
 
+        /** ---------------- Sports Categories ---------------- **/
+        $sportsCategories = ['data' => [], 'pagination' => null];
         if (! empty($data['sportsCategories'])) {
-            $sportsCategories = SportsCategory::select('id', 'name', 'sports_type_id')
+
+            $query = SportsCategory::select('id', 'name', 'sports_type_id')
                 ->with(['sportsType:id,title'])
                 ->active()
-                ->orderBy('name')
-                ->get()
-                ->map(function ($category) {
-                    return [
-                        'id'          => $category->id,
-                        'name'        => $category->name,
-                        'sports_type' => $category->sportsType?->title,
-                    ];
-                });
+                ->orderBy('name');
+
+            $result = $isPaginated
+                ? $query->paginate($recordsPerPage)->through(fn($category) => [
+                'id'          => $category->id,
+                'name'        => $category->name,
+                'sports_type' => $category->sportsType?->title,
+            ])
+                : $query->get()->map(fn($category) => [
+                'id'          => $category->id,
+                'name'        => $category->name,
+                'sports_type' => $category->sportsType?->title,
+            ]);
+
+            $sportsCategories = $formatResponse($result, $isPaginated);
         }
 
+        /** ---------------- Users (Customers Only) ---------------- **/
+        $users = ['data' => [], 'pagination' => null];
         if (! empty($data['users'])) {
-            $users = User::select('id', 'name', 'email', 'phone')
+
+            $query = User::select('id', 'name', 'email', 'phone')
                 ->whereHas('roles', fn($q) => $q->where('name', 'customer'))
                 ->active()
-                ->orderBy('name')
-                ->get()
-                ->map(function ($user) {
-                    return [
-                        'id'    => $user->id,
-                        'name'  => $user->name,
-                        'email' => $user->email,
-                        'phone' => $user->phone,
-                    ];
-                });
-        }
+                ->orderBy('name');
 
-        $statuses = BookingStatus::list();
+            $result = $isPaginated
+                ? $query->paginate($recordsPerPage)->through(fn($user) => [
+                'id'    => $user->id,
+                'name'  => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+            ])
+                : $query->get()->map(fn($user) => [
+                'id'    => $user->id,
+                'name'  => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+            ]);
+
+            $users = $formatResponse($result, $isPaginated);
+        }
 
         return sendSuccess('Filter options fetched successfully', [
             'listings'         => $listings,
             'venues'           => $venues,
             'users'            => $users,
             'sportsCategories' => $sportsCategories,
-            'statuses'         => $statuses,
+            'statuses'         => BookingStatus::list(),
+            'pagination'       => [
+                'enabled'  => $isPaginated,
+                'per_page' => $recordsPerPage,
+            ],
         ]);
     }
 
