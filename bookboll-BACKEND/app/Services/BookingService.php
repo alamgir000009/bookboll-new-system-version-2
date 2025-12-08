@@ -686,7 +686,11 @@ class BookingService
         // Check if we can fit the requested quantity
         $availableSlots = $maxBookings - $overlaps;
         if ($bookingQuantity > $availableSlots) {
-            $errors['capacity'] = "Requested {$bookingQuantity} booking(s) but only {$availableSlots} slot(s) available. Max {$maxBookings} bookings per slot ({$overlaps} already booked)";
+            if($bookingQuantity > 1) {
+                $errors['capacity'] = "Requested {$bookingQuantity} booking(s) but only {$availableSlots} slot(s) available. Max {$maxBookings} bookings per slot ({$overlaps} already booked)";
+            } else {
+                $errors['capacity'] = "No available slots. Max {$maxBookings} bookings per slot ({$overlaps} already booked)";
+            }
         }
 
         return $errors;
