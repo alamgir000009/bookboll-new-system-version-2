@@ -1,6 +1,7 @@
 <?php
 namespace App\Services;
 
+use App\Mail\CustomerForgotPasswordOtpEmail;
 use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserWelcomeEmail;
 use App\Models\LoyaltyPoint;
@@ -282,15 +283,35 @@ class UserService
     public function customerLogin($request)
     {
         try {
-
             $user = $this->userModel->whereRelation('roles', 'name', 'customer')->whereEmail($request->email)->first();
+
+            if ($user && ! $user->password) {
+                // Generate 6-digit OTP
+                $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+
+                // Store hashed OTP in password_reset_tokens table
+                DB::table('password_reset_tokens')->updateOrInsert(
+                    ['email' => $request->email],
+                    ['token' => Hash::make($otp), 'created_at' => Carbon::now()]
+                );
+
+                // Send OTP email
+                try {
+                    Mail::to($user->email)->send(new CustomerForgotPasswordOtpEmail($otp, $user));
+                } catch (Exception $e) {
+                    Log::error("Failed to send OTP email for customer login: " . $e->getMessage(), ["Exception" => $e]);
+                    return sendError('Failed to send OTP email. Please try again later.');
+                }
+
+                return sendSuccess('Your pasword was reset please change your password', ['reset_password' => true]);
+            }
 
             if (! $user || ! password_verify($request->password, $user->password)) {
                 return sendError('Invalid credentials');
             }
 
-            if ($user && $user->status == User::BLOCKED) {
-                return sendError('Your account is block by admin please contact for further details');
+            if ($user->status == User::BLOCKED) {
+                return sendError('Your account is blocked by admin. Please contact for further details.');
             }
 
             $token = $user->createToken('bookboll-customer-login-api-token')->plainTextToken;
@@ -640,6 +661,101 @@ class UserService
         $user->save();
 
         return sendSuccess('Password reset successfully');
+    }
+
+    public function customerForgotPassword($request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        try {
+            $user = $this->userModel->whereRelation('roles', 'name', 'customer')
+                ->where('email', $request->email)
+                ->first();
+
+            if (! $user) {
+                return sendError('No customer account found with this email address');
+            }
+
+            // Generate 6-digit OTP
+            $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+
+            // Store hashed OTP in password_reset_tokens table
+            DB::table('password_reset_tokens')->updateOrInsert(
+                ['email' => $request->email],
+                ['token' => Hash::make($otp), 'created_at' => Carbon::now()]
+            );
+
+            // Send OTP email
+            try {
+                Mail::to($user->email)->send(new CustomerForgotPasswordOtpEmail($otp, $user));
+            } catch (Exception $e) {
+                Log::error("Failed to send OTP email: " . $e->getMessage(), ["Exception" => $e]);
+                return sendError('Failed to send OTP email. Please try again later.');
+            }
+
+            return sendSuccess('OTP has been sent to your email address. Please check your inbox.');
+
+        } catch (Exception $e) {
+            Log::error("Customer forgot password error: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError('Something went wrong. Please try again later.');
+        }
+    }
+
+    public function customerResetPassword($request)
+    {
+        $request->validate([
+            'email'    => 'required|email',
+            'otp'      => 'required|string|size:6',
+            'password' => 'required|min:8|confirmed',
+        ]);
+
+        try {
+            $user = $this->userModel->whereRelation('roles', 'name', 'customer')
+                ->where('email', $request->email)
+                ->first();
+
+            if (! $user) {
+                return sendError('No customer account found with this email address');
+            }
+
+            // Get OTP record from password_reset_tokens table
+            $otpRecord = DB::table('password_reset_tokens')
+                ->where('email', $request->email)
+                ->first();
+
+            if (! $otpRecord) {
+                return sendError('Invalid or expired OTP. Please request a new one.');
+            }
+
+            // Check if OTP is expired (10 minutes)
+            if (Carbon::parse($otpRecord->created_at)->addMinutes(10)->isPast()) {
+                DB::table('password_reset_tokens')->where('email', $request->email)->delete();
+                return sendError('OTP has expired. Please request a new one.');
+            }
+
+            // Verify OTP
+            if (! Hash::check($request->otp, $otpRecord->token)) {
+                return sendError('Invalid OTP. Please check and try again.');
+            }
+
+            // Reset password
+            DB::beginTransaction();
+
+            $user->password = $request->password;
+            $user->save();
+
+            // Delete OTP record after successful password reset
+            DB::table('password_reset_tokens')->where('email', $request->email)->delete();
+
+            DB::commit();
+
+            return sendSuccess('Password has been reset successfully. You can now login with your new password.');
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Customer reset password error: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError('Something went wrong. Please try again later.');
+        }
     }
 
     public function changePassword($request, $id)

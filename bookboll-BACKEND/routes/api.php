@@ -158,6 +158,8 @@ Route::prefix('customer')->group(function () {
     Route::get('reviews/my', [ReviewController::class, 'myReviews'])->name('customer.reviews.my');
     Route::post('login', [UserController::class, 'customerLogin'])->name('customer.login');
     Route::post('google-login', [UserController::class, 'googleLogin'])->name('customer.google-login');
+    Route::post('forgot-password', [UserController::class, 'customerForgotPassword'])->name('customer.forgot-password');
+    Route::post('reset-password', [UserController::class, 'customerResetPassword'])->name('customer.reset-password');
 
     Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('preferences', [UserController::class, 'customerPreferences'])->name('customer.preferences');

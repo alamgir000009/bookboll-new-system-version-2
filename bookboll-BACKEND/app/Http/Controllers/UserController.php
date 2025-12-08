@@ -108,4 +108,14 @@ class UserController extends Controller
     {
         return $this->userService->updateProfileImage($request);
     }
+
+    public function customerForgotPassword(Request $request)
+    {
+        return $this->userService->customerForgotPassword($request);
+    }
+
+    public function customerResetPassword(Request $request)
+    {
+        return $this->userService->customerResetPassword($request);
+    }
 }
