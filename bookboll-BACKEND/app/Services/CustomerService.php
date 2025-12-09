@@ -2,6 +2,7 @@
 namespace App\Services;
 
 use App\Mail\UserWelcomeEmail;
+use App\Models\Preference;
 use App\Models\User;
 use Exception;
 use Illuminate\Support\Facades\DB;
@@ -115,6 +116,14 @@ class CustomerService
             'gender'        => 'nullable|string|in:male,female,other',
             'nationality'   => 'nullable|string|max:100',
             'address'       => 'nullable|string|max:255',
+            'language'      => 'nullable|string|max:50',
+            'currency'      => 'nullable|string|max:10',
+            'notifications' => 'nullable|array',
+            'notifications.email_bookings' => 'nullable|boolean',
+            'notifications.sms_reminders'  => 'nullable|boolean',
+            'notifications.marketing'     => 'nullable|boolean',
+            'favorite_sports'             => 'nullable|array',
+            'favorite_sports.*'           => 'required|string',
         ]);
 
         try {
@@ -148,6 +157,30 @@ class CustomerService
                 $user->assignRole('customer');
             }
 
+            // Create or update preferences if language or currency is provided
+            if (isset($formData['language']) || isset($formData['currency']) || isset($formData['notifications']) || isset($formData['favorite_sports'])) {
+                $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
+
+                if (isset($formData['language'])) {
+                    $preferences->language = $formData['language'];
+                }
+
+                if (isset($formData['currency'])) {
+                    $preferences->currency = $formData['currency'];
+                }
+
+                if (isset($formData['notifications'])) {
+                    $currentNotifications = $preferences->notifications ?? [];
+                    $preferences->notifications = array_merge($currentNotifications, $formData['notifications']);
+                }
+
+                if (isset($formData['favorite_sports'])) {
+                    $preferences->favorite_sports = $formData['favorite_sports'];
+                }
+
+                $preferences->save();
+            }
+
             DB::commit();
 
             try {
@@ -156,7 +189,7 @@ class CustomerService
                 Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
             }
 
-            $user->load(['roles']);
+            $user->load(['roles', 'preferences']);
             $user->makeHidden('roles');
             $roles = $user->getRoleNames();
 
