@@ -860,6 +860,109 @@ class ListingService
         return sendSuccess('Addons fetched successfully', compact('addons'));
     }
 
+    public function mobileListingsList($request)
+    {
+        $data = $request->validate([
+            'search'           => 'nullable|string|max:255',
+            'page'             => 'nullable|integer|min:1',
+            'records_per_page' => 'nullable|integer|min:1|max:100',
+            'venue_id'         => 'nullable|exists:venues,id',
+            'sports_category_id' => 'nullable|exists:sports_categories,id',
+        ]);
+
+        $recordsPerPage = $data['records_per_page'] ?? 10;
+        $search         = $data['search'] ?? null;
+        $venueId        = $data['venue_id'] ?? null;
+        $sportsCategoryId = $data['sports_category_id'] ?? null;
+
+        $query = $this->listingModel::with([
+            'venue:id,name,maps_url,description',
+            'addOns' => function ($query) {
+                $query->active()->orderBy('sort_order', 'ASC');
+            },
+            'sportsCategory:id,name',
+            'assets',
+        ])
+            ->active()
+            ->whereRelation('venue', 'status', 'active')
+            ->whereHas('schedules', function ($q) {
+                $q->where('is_open', 1);
+            })
+            ->orderBy('sort_order', 'ASC')
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'LIKE', "%{$search}%")
+                        ->orWhere('description', 'LIKE', "%{$search}%")
+                        ->orWhereHas('venue', function ($v) use ($search) {
+                            $v->where('name', 'LIKE', "%{$search}%");
+                        })
+                        ->orWhereHas('sportsCategory', function ($sc) use ($search) {
+                            $sc->where('name', 'LIKE', "%{$search}%");
+                        });
+                });
+            })
+            ->when($venueId, function ($query, $venueId) {
+                $query->where('venue_id', $venueId);
+            })
+            ->when($sportsCategoryId, function ($query, $sportsCategoryId) {
+                $query->where('sports_category_id', $sportsCategoryId);
+            });
+
+        $listings = $query->paginate($recordsPerPage);
+
+        $listings->getCollection()->transform(function ($listing) {
+            return [
+                'id'                      => $listing->id,
+                'name'                    => $listing->name,
+                'description'             => $listing->description,
+                'base_price'              => $listing->base_price,
+                'slot_duration'           => $listing->slot_duration,
+                'duration'                => getFormattedDuration($listing->slot_duration * 60),
+                'capacity'                => $listing->capacity,
+                'loyalty_points'          => $listing->loyalty_points,
+                'payment_options'         => $listing->payment_options,
+                'images'                  => $listing->images_urls ?? [],
+                'amenities'               => $listing->amenities ?? [],
+                'max_multiple_bookings'   => $listing->max_multiple_bookings,
+                'allow_multiple_bookings' => $listing->allow_multiple_bookings,
+                'rating'                  => round($listing->average_rating, 1),
+                'total_reviews'           => $listing->total_reviews,
+                'venue'                   => [
+                    'id'          => $listing->venue?->id,
+                    'name'       => $listing->venue?->name,
+                    'maps_url'   => $listing->venue?->maps_url,
+                    'description' => $listing->venue?->description,
+                ],
+                'addons'                  => $listing->addOns->map(function ($addon) {
+                    return [
+                        'id'              => $addon->id,
+                        'name'            => $addon->name,
+                        'image'           => $addon->image,
+                        'price'           => $addon->price ?? 0,
+                        'description'     => $addon->description,
+                        'hours_extension' => $addon->hours_extension,
+                    ];
+                }),
+                'sports_category'         => [
+                    'id'   => $listing->sportsCategory?->id,
+                    'name' => $listing->sportsCategory?->name,
+                ],
+            ];
+        });
+
+        return sendSuccess('Listings fetched successfully', [
+            'data'       => $listings->items(),
+            'pagination' => [
+                'current_page'   => $listings->currentPage(),
+                'last_page'      => $listings->lastPage(),
+                'per_page'       => $listings->perPage(),
+                'total'          => $listings->total(),
+                'from'           => $listings->firstItem(),
+                'to'             => $listings->lastItem(),
+            ],
+        ]);
+    }
+
     public function listing($id)
     {
         $date = request('date', now()->toDateString());

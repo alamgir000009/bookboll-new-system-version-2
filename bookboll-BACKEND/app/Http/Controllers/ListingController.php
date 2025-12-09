@@ -104,4 +104,9 @@ class ListingController extends Controller
     {
         return $this->listingService->checkSlotAvailability($request);
     }
+
+    public function mobileListingsList(Request $request)
+    {
+        return $this->listingService->mobileListingsList($request);
+    }
 }

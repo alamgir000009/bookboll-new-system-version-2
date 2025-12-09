@@ -667,7 +667,6 @@ class BookingService
         // Use date column for filtering, then check time overlaps
         $overlaps = $this->bookingModel::where('date', $data['date'])
             ->where('listing_id', $data['listing_id'])
-            ->where('status', '!=', 'cancelled')
             ->where('id', '!=', $editingId)
             ->where(function ($q) use ($data) {
                 // Check for time overlaps: bookings overlap if start_time < new_end_time AND end_time > new_start_time
@@ -677,6 +676,7 @@ class BookingService
                         ->whereRaw('TIME(end_time) > ?', [$data['start_time']]);
                 });
             })
+            ->where('status', '!=', BookingStatus::CANCELLED)
             ->count();
 
         // Get booking quantity from data if provided (for validation)
@@ -817,7 +817,8 @@ class BookingService
 
     public function createBooking($request)
     {
-        $user = auth()->user();
+
+        $user = $request->user_id ? User::find($request->user_id) : auth()->user();
 
         $formData = $request->validate([
             'venue_id'                        => 'required|exists:venues,id',
@@ -830,7 +831,7 @@ class BookingService
             'notes'                           => 'nullable|string|max:500',
             'add_ons'                         => 'nullable|array',
             'add_ons.*'                       => 'exists:add_ons,id',
-            'phone'                           => 'required|string|min:5',
+            'phone'                           => 'nullable|string|min:5',
             'payment_method_id'               => 'nullable|string',
             'payment_intent_id'               => 'nullable|required_if:payment_method,online_payment,deposit_remaining_on_arrival',
             'save_payment_details'            => 'nullable|boolean',
