@@ -827,7 +827,6 @@ class BookingService
             'start_time'                      => 'required|date_format:H:i',
             'end_time'                        => 'required|date_format:H:i',
             'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival',
-            'agree_to_terms'                  => 'required|accepted',
             'notes'                           => 'nullable|string|max:500',
             'add_ons'                         => 'nullable|array',
             'add_ons.*'                       => 'exists:add_ons,id',
@@ -949,7 +948,7 @@ class BookingService
             // Step 1: Validate promocode against the entire combined amount (base + all recurring bookings)
             $totalDiscount = 0;
             $promocode     = null;
-            if ($formData['promocode']) {
+            if (!empty($formData['promocode'])) {
                 $promocode = Promocode::where('code', $formData['promocode'])->active()->first();
 
                 if (! $promocode) {
