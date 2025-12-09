@@ -87,7 +87,9 @@ if (! class_exists('BookingPaymentMethod')) {
     class BookingPaymentMethod
     {
         public const FREE                         = 'free';
+        public const PAID_CASH                    = 'paid_cash';
         public const PAID_CHEQUE                  = 'paid_cheque';
+        public const PAID_CREDIT_CARD             = 'paid_credit_card';
         public const ONLINE_PAYMENT               = 'online_payment';
         public const CASH_ON_ARRIVAL              = 'cash_on_arrival';
         public const PAID_WIRE_TRANSFER           = 'paid_wire_transfer';
@@ -97,9 +99,11 @@ if (! class_exists('BookingPaymentMethod')) {
         {
             return [
                 self::FREE,
+                self::PAID_CASH,
                 self::PAID_CHEQUE,
                 self::ONLINE_PAYMENT,
                 self::CASH_ON_ARRIVAL,
+                self::PAID_CREDIT_CARD,
                 self::PAID_WIRE_TRANSFER,
                 self::DEPOSIT_REMAINING_ON_ARRIVAL,
             ];
@@ -114,6 +118,7 @@ if (! class_exists('PaymentMethod')) {
         public const CASH          = 'cash';
         public const ONLINE        = 'online';
         public const CHEQUE        = 'cheque';
+        public const CREDIT_CARD   = 'credit_card';
         public const WIRE_TRANSFER = 'wire_transfer';
 
         public static function list()
@@ -122,6 +127,7 @@ if (! class_exists('PaymentMethod')) {
                 self::CASH,
                 self::ONLINE,
                 self::CHEQUE,
+                self::CREDIT_CARD,
                 self::WIRE_TRANSFER,
             ];
         }
@@ -242,128 +248,128 @@ if (! function_exists('getResourceFromRoute')) {
 
         $resourceMap = [
             // Blog Posts
-            'posts.store'               => 'Blog Post',
-            'posts.update'              => 'Blog Post',
-            'posts.destroy'             => 'Blog Post',
-            'posts.change-status'       => 'Blog Post',
+            'posts.store'                  => 'Blog Post',
+            'posts.update'                 => 'Blog Post',
+            'posts.destroy'                => 'Blog Post',
+            'posts.change-status'          => 'Blog Post',
 
             // Post Categories
-            'post-categories.store'     => 'Post Category',
-            'post-categories.update'    => 'Post Category',
-            'post-categories.destroy'   => 'Post Category',
+            'post-categories.store'        => 'Post Category',
+            'post-categories.update'       => 'Post Category',
+            'post-categories.destroy'      => 'Post Category',
 
             // Bookings
-            'bookings.store'            => 'Booking',
-            'bookings.update'           => 'Booking',
-            'bookings.destroy'          => 'Booking',
-            'bookings.cancel'           => 'Booking',
-            'bookings.completed'        => 'Booking',
-            'bookings.confirm'          => 'Booking',
-            'bookings.generate-invoice' => 'Booking',
-            'bookings.confirmBooking'   => 'Booking',
-            'bookings.pay'              => 'Booking',
+            'bookings.store'               => 'Booking',
+            'bookings.update'              => 'Booking',
+            'bookings.destroy'             => 'Booking',
+            'bookings.cancel'              => 'Booking',
+            'bookings.completed'           => 'Booking',
+            'bookings.confirm'             => 'Booking',
+            'bookings.generate-invoice'    => 'Booking',
+            'bookings.confirmBooking'      => 'Booking',
+            'bookings.pay'                 => 'Booking',
 
             // Users
-            'users.store'               => 'User',
-            'users.update'              => 'User',
-            'users.destroy'             => 'User',
-            'users.update-profile'      => 'User',
-            'users.updateProfile'       => 'User',
-            'users.updateCustomerProfile' => 'User',
-            'users.updateProfileImage'  => 'User',
-            'users.updatePreferences'   => 'User',
-            'users.changePassword'      => 'User',
+            'users.store'                  => 'User',
+            'users.update'                 => 'User',
+            'users.destroy'                => 'User',
+            'users.update-profile'         => 'User',
+            'users.updateProfile'          => 'User',
+            'users.updateCustomerProfile'  => 'User',
+            'users.updateProfileImage'     => 'User',
+            'users.updatePreferences'      => 'User',
+            'users.changePassword'         => 'User',
 
             // Venues
-            'venues.store'              => 'Venue',
-            'venues.update'             => 'Venue',
-            'venues.destroy'            => 'Venue',
-            'venues.sort'               => 'Venue',
+            'venues.store'                 => 'Venue',
+            'venues.update'                => 'Venue',
+            'venues.destroy'               => 'Venue',
+            'venues.sort'                  => 'Venue',
 
             // Resources
-            'resources.store'           => 'Resource',
-            'resources.update'          => 'Resource',
-            'resources.destroy'         => 'Resource',
+            'resources.store'              => 'Resource',
+            'resources.update'             => 'Resource',
+            'resources.destroy'            => 'Resource',
 
             // Gift Cards
-            'gift-cards.store'          => 'Gift Card',
-            'gift-cards.update'         => 'Gift Card',
-            'gift-cards.destroy'        => 'Gift Card',
-            'gift-cards.redeem'         => 'Gift Card',
-            'gift-cards.redeemGiftCard' => 'Gift Card',
+            'gift-cards.store'             => 'Gift Card',
+            'gift-cards.update'            => 'Gift Card',
+            'gift-cards.destroy'           => 'Gift Card',
+            'gift-cards.redeem'            => 'Gift Card',
+            'gift-cards.redeemGiftCard'    => 'Gift Card',
 
             // Sports Categories
-            'sports-categories.store'   => 'Sports Category',
-            'sports-categories.update'  => 'Sports Category',
-            'sports-categories.destroy' => 'Sports Category',
-            'sports-categories.sort'    => 'Sports Category',
+            'sports-categories.store'      => 'Sports Category',
+            'sports-categories.update'     => 'Sports Category',
+            'sports-categories.destroy'    => 'Sports Category',
+            'sports-categories.sort'       => 'Sports Category',
 
             // Sports Types
-            'sports-types.store'        => 'Sports Type',
-            'sports-types.update'       => 'Sports Type',
-            'sports-types.destroy'      => 'Sports Type',
-            'sports-types.sort'         => 'Sports Type',
+            'sports-types.store'           => 'Sports Type',
+            'sports-types.update'          => 'Sports Type',
+            'sports-types.destroy'         => 'Sports Type',
+            'sports-types.sort'            => 'Sports Type',
 
             // Add-Ons
-            'add-ons.store'             => 'Add-On',
-            'add-ons.update'            => 'Add-On',
-            'add-ons.destroy'           => 'Add-On',
-            'add-ons.sort'              => 'Add-On',
+            'add-ons.store'                => 'Add-On',
+            'add-ons.update'               => 'Add-On',
+            'add-ons.destroy'              => 'Add-On',
+            'add-ons.sort'                 => 'Add-On',
 
             // Listings
-            'listings.store'            => 'Listing',
-            'listings.update'           => 'Listing',
-            'listings.destroy'          => 'Listing',
-            'listings.sort'              => 'Listing',
-            'listings.uploadImage'      => 'Listing',
-            'listings.deleteImage'      => 'Listing',
+            'listings.store'               => 'Listing',
+            'listings.update'              => 'Listing',
+            'listings.destroy'             => 'Listing',
+            'listings.sort'                => 'Listing',
+            'listings.uploadImage'         => 'Listing',
+            'listings.deleteImage'         => 'Listing',
 
             // Promocode
-            'promocodes.store'          => 'Promocode',
-            'promocodes.update'         => 'Promocode',
-            'promocodes.destroy'        => 'Promocode',
-            'promocodes.apply'          => 'Promocode',
-            'promocodes.remove'         => 'Promocode',
-            'promocodes.applyPromocode' => 'Promocode',
+            'promocodes.store'             => 'Promocode',
+            'promocodes.update'            => 'Promocode',
+            'promocodes.destroy'           => 'Promocode',
+            'promocodes.apply'             => 'Promocode',
+            'promocodes.remove'            => 'Promocode',
+            'promocodes.applyPromocode'    => 'Promocode',
 
             // Special Days
-            'special-days.store'        => 'Special Day',
-            'special-days.update'       => 'Special Day',
-            'special-days.destroy'     => 'Special Day',
-            'special-days.bulk'        => 'Special Day',
-            'special-days.bulkCreate'   => 'Special Day',
+            'special-days.store'           => 'Special Day',
+            'special-days.update'          => 'Special Day',
+            'special-days.destroy'         => 'Special Day',
+            'special-days.bulk'            => 'Special Day',
+            'special-days.bulkCreate'      => 'Special Day',
 
             // Settings
-            'settings.update'           => 'Setting',
-            'settings.updateSingle'     => 'Setting',
+            'settings.update'              => 'Setting',
+            'settings.updateSingle'        => 'Setting',
 
             // Customers
-            'customers.store'           => 'Customer',
-            'customers.update'          => 'Customer',
-            'customers.destroy'         => 'Customer',
-            'customers.register'        => 'Customer',
-            'customers.createCustomer' => 'Customer',
-            'customers.updateTags'     => 'Customer',
-            'customers.updateStatus'   => 'Customer',
+            'customers.store'              => 'Customer',
+            'customers.update'             => 'Customer',
+            'customers.destroy'            => 'Customer',
+            'customers.register'           => 'Customer',
+            'customers.createCustomer'     => 'Customer',
+            'customers.updateTags'         => 'Customer',
+            'customers.updateStatus'       => 'Customer',
 
             // Reviews
-            'reviews.store'             => 'Review',
-            'reviews.update'            => 'Review',
-            'reviews.destroy'           => 'Review',
-            'reviews.helpful'           => 'Review',
+            'reviews.store'                => 'Review',
+            'reviews.update'               => 'Review',
+            'reviews.destroy'              => 'Review',
+            'reviews.helpful'              => 'Review',
 
             // Payments
-            'payments.store'            => 'Payment',
-            'payments.update'           => 'Payment',
-            'payments.destroy'          => 'Payment',
-            'payments.confirm'          => 'Payment',
-            'payments.confirmPayment'   => 'Payment',
-            'payments.generate-link'     => 'Payment',
+            'payments.store'               => 'Payment',
+            'payments.update'              => 'Payment',
+            'payments.destroy'             => 'Payment',
+            'payments.confirm'             => 'Payment',
+            'payments.confirmPayment'      => 'Payment',
+            'payments.generate-link'       => 'Payment',
             'payments.generatePaymentLink' => 'Payment',
             'payments.createPaymentIntent' => 'Payment',
 
             // Newsletter
-            'newsletter.subscribe'      => 'Newsletter',
+            'newsletter.subscribe'         => 'Newsletter',
         ];
 
         foreach ($resourceMap as $routePattern => $resource) {
