@@ -8,6 +8,6 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Schedule::command('slot-locks:clear')->everyMinute();
+Schedule::command('slot-locks:clear')->everyFiveMinutes();
 
-Schedule::command('send-booking-reminders')->everyMinute();
+Schedule::command('send-booking-reminders')->daily();

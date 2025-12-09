@@ -686,7 +686,7 @@ class BookingService
         // Check if we can fit the requested quantity
         $availableSlots = $maxBookings - $overlaps;
         if ($bookingQuantity > $availableSlots) {
-            if($bookingQuantity > 1) {
+            if ($bookingQuantity > 1) {
                 $errors['capacity'] = "Requested {$bookingQuantity} booking(s) but only {$availableSlots} slot(s) available. Max {$maxBookings} bookings per slot ({$overlaps} already booked)";
             } else {
                 $errors['capacity'] = "No available slots. Max {$maxBookings} bookings per slot ({$overlaps} already booked)";
@@ -701,8 +701,8 @@ class BookingService
         $query = $this->bookingModel::with([
             'user.tags',
             'user:id,name',
+            'listing:id,name,calendar_color',
             'venue:id,name',
-            'listing:id,name',
         ]);
 
         $query->when($request->date, fn($q) =>
@@ -1857,14 +1857,13 @@ class BookingService
             'records_per_page' => 'nullable|integer|min:1|max:100',
             'sort_by'          => 'nullable|in:date,created_at,start_time',
             'sort_order'       => 'nullable|in:asc,desc',
-            'group_by_date'    => 'nullable|boolean',
+            'date'             => 'nullable|date',
         ]);
 
         $today          = Carbon::today();
         $sortBy         = $data['sort_by'] ?? 'date';
         $sortOrder      = $data['sort_order'] ?? 'desc';
         $recordsPerPage = $data['records_per_page'] ?? 10;
-        $groupByDate    = $data['group_by_date'] ?? false;
 
         $query = $this->bookingModel::with([
             'history',
@@ -1875,8 +1874,8 @@ class BookingService
             'history.user:id,name',
             'addOns:id,name,price',
             'venue:id,name,maps_url',
-            'listing:id,name,venue_id',
             'user:id,name,email,phone,image',
+            'listing:id,name,venue_id,calendar_color',
         ]);
 
         if (isset($data['type'])) {
@@ -1911,6 +1910,10 @@ class BookingService
             $query->whereDate('date', '<=', $data['date_to']);
         }
 
+        if (isset($data['date'])) {
+            $query->where('date', $data['date']);
+        }
+
         if (isset($data['search']) && ! empty($data['search'])) {
             $search = $data['search'];
             $query->where(function ($q) use ($search) {
@@ -1938,49 +1941,19 @@ class BookingService
             $query->orderBy('created_at', $sortOrder);
         }
 
-        if ($groupByDate) {
-            $bookings = $query->get()->groupBy(function ($booking) {
-                return Carbon::parse($booking->date)->format('Y-m-d');
-            });
+        $bookings = $query->paginate($recordsPerPage);
 
-            $groupedData = [];
-            foreach ($bookings as $date => $dateBookings) {
-                $groupedData[] = [
-                    'date'           => $date,
-                    'count'          => $dateBookings->count(),
-                    'bookings'       => $dateBookings->values(),
-                    'date_formatted' => Carbon::parse($date)->format('d F Y'),
-                ];
-            }
-
-            usort($groupedData, function ($a, $b) use ($sortOrder) {
-                return $sortOrder === 'desc'
-                    ? strcmp($b['date'], $a['date'])
-                    : strcmp($a['date'], $b['date']);
-            });
-
-            return sendSuccess('Bookings fetched successfully', [
-                'grouped'  => true,
-                'bookings' => $groupedData,
-                'total'    => $query->count(),
-            ]);
-        } else {
-
-            $bookings = $query->paginate($recordsPerPage);
-
-            return sendSuccess('Bookings fetched successfully', [
-                'bookings'   => $bookings->items(),
-                'pagination' => [
-                    'current_page'     => $bookings->currentPage(),
-                    'last_page'        => $bookings->lastPage(),
-                    'records_per_page' => $bookings->perPage(),
-                    'total'            => $bookings->total(),
-                    'from'             => $bookings->firstItem(),
-                    'to'               => $bookings->lastItem(),
-                ],
-                'grouped'    => false,
-            ]);
-        }
+        return sendSuccess('Bookings fetched successfully', [
+            'bookings'   => $bookings->items(),
+            'pagination' => [
+                'current_page'     => $bookings->currentPage(),
+                'last_page'        => $bookings->lastPage(),
+                'records_per_page' => $bookings->perPage(),
+                'total'            => $bookings->total(),
+                'from'             => $bookings->firstItem(),
+                'to'               => $bookings->lastItem(),
+            ],
+        ]);
     }
 
     protected function createSingleBooking(
