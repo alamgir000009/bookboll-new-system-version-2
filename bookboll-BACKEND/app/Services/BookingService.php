@@ -827,7 +827,7 @@ class BookingService
             'date'                            => 'required|date|after_or_equal:today',
             'start_time'                      => 'required|date_format:H:i',
             'end_time'                        => 'required|date_format:H:i',
-            'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival',
+            'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival,paid_cash,paid_cheque,paid_credit_card,paid_wire,paid_wire_transfer',
             'notes'                           => 'nullable|string|max:500',
             'add_ons'                         => 'nullable|array',
             'add_ons.*'                       => 'exists:add_ons,id',
@@ -949,7 +949,7 @@ class BookingService
             // Step 1: Validate promocode against the entire combined amount (base + all recurring bookings)
             $totalDiscount = 0;
             $promocode     = null;
-            if (!empty($formData['promocode'])) {
+            if (! empty($formData['promocode'])) {
                 $promocode = Promocode::where('code', $formData['promocode'])->active()->first();
 
                 if (! $promocode) {
@@ -1979,7 +1979,13 @@ class BookingService
             $paymentStatus = match (trim($formData['payment_method'])) {
                 'cash_on_arrival'              => BookingPaymentStatus::PENDING,
                 'online_payment'               => BookingPaymentStatus::FULLY_PAID,
+                'paid_cash'                    => BookingPaymentStatus::FULLY_PAID,
+                'paid_cheque'                  => BookingPaymentStatus::FULLY_PAID,
+                'paid_credit_card'             => BookingPaymentStatus::FULLY_PAID,
+                'paid_wire'                    => BookingPaymentStatus::FULLY_PAID,
+                'paid_wire_transfer'           => BookingPaymentStatus::FULLY_PAID,
                 'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
+                default                        => BookingPaymentStatus::PENDING,
             };
 
             $depositAmount = 0;
@@ -2072,6 +2078,18 @@ class BookingService
                     'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
                 ]);
             } else {
+                // Map booking payment method to PaymentMethod constant
+                $paymentMethod = match (trim($formData['payment_method'])) {
+                    'paid_cash'          => PaymentMethod::CASH,
+                    'paid_cheque'        => PaymentMethod::CHEQUE,
+                    'online_payment'     => PaymentMethod::ONLINE,
+                    'paid_credit_card'   => PaymentMethod::CREDIT_CARD,
+                    'paid_wire'          => PaymentMethod::WIRE_TRANSFER,
+                    'paid_wire_transfer' => PaymentMethod::WIRE_TRANSFER,
+                    'cash_on_arrival'    => PaymentMethod::CASH,
+                    default              => PaymentMethod::CASH,
+                };
+
                 $booking->payments()->create([
                     'charge_id'         => $chargeId,
                     'user_id'           => $user->id,
@@ -2080,7 +2098,7 @@ class BookingService
                     'type'              => PaymentType::FULL,
                     'payment_id'        => generatePaymentId($booking->id, PaymentType::FULL),
                     'date'              => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
-                    'method'            => $formData['payment_method'] == 'online_payment' ? PaymentMethod::ONLINE : PaymentMethod::CASH,
+                    'method'            => $paymentMethod,
                     'status'            => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
                     'notes'             => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
                 ]);
@@ -2097,6 +2115,20 @@ class BookingService
                     'user_id'     => $user->id,
                     'description' => 'Deposit payment processed.',
                     'action'      => BookingPaymentStatus::DEPOSIT_PAID,
+                ]);
+            } elseif ($paymentStatus == BookingPaymentStatus::FULLY_PAID && in_array($formData['payment_method'], ['paid_cash', 'paid_cheque', 'paid_credit_card', 'paid_wire', 'paid_wire_transfer'])) {
+                $paymentMethodName = match (trim($formData['payment_method'])) {
+                    'paid_cash'          => 'Cash',
+                    'paid_cheque'        => 'Cheque',
+                    'paid_credit_card'   => 'Credit Card',
+                    'paid_wire'          => 'Wire Transfer',
+                    'paid_wire_transfer' => 'Wire Transfer',
+                    default              => 'Payment',
+                };
+                $booking->history()->create([
+                    'user_id'     => $user->id,
+                    'description' => "Full payment received via {$paymentMethodName}.",
+                    'action' => 'payment_received',
                 ]);
             }
 
