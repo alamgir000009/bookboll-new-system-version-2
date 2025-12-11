@@ -749,7 +749,7 @@ class BookingService
             'date'                            => 'required|date|after_or_equal:today',
             'start_time'                      => 'required|date_format:H:i',
             'end_time'                        => 'required|date_format:H:i',
-            'phone'                           => 'required|string|min:5',
+            'phone'                           => 'nullable|string|min:5',
             'add_ons'                         => 'nullable|array',
             'add_ons.*'                       => 'exists:add_ons,id',
             'quantity'                        => 'required|numeric|min:1',
@@ -820,6 +820,8 @@ class BookingService
 
         $user = $request->user_id ? User::find($request->user_id) : auth()->user();
 
+        logger($request->all());
+
         $formData = $request->validate([
             'venue_id'                        => 'required|exists:venues,id',
             'listing_id'                      => 'required|exists:listings,id',
@@ -845,6 +847,13 @@ class BookingService
             'recurring_bookings.*.add_ons'    => 'nullable|array',
             'recurring_bookings.*.add_ons.*'  => 'exists:add_ons,id',
         ]);
+
+        if(isset($formData['notes'])) {
+            $formData['notes'] = strip_tags($formData['notes']);
+        }
+        else  {
+            $formData['notes'] = null;
+        }
 
         try {
 
