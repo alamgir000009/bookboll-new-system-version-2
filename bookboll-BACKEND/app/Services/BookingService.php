@@ -849,10 +849,9 @@ class BookingService
             'recurring_bookings.*.add_ons.*'  => 'exists:add_ons,id',
         ]);
 
-        if(isset($formData['notes'])) {
+        if (isset($formData['notes'])) {
             $formData['notes'] = strip_tags($formData['notes']);
-        }
-        else  {
+        } else {
             $formData['notes'] = null;
         }
 
@@ -1875,6 +1874,8 @@ class BookingService
         $sortOrder      = $data['sort_order'] ?? 'desc';
         $recordsPerPage = $data['records_per_page'] ?? 10;
 
+        logger("Mobile bookings list request: " . json_encode($data));
+
         $query = $this->bookingModel::with([
             'history',
             'payments',
@@ -1888,7 +1889,10 @@ class BookingService
             'listing:id,name,venue_id,calendar_color',
         ]);
 
-        if (isset($data['type'])) {
+        // ------------------------------
+        // TYPE FILTER
+        // ------------------------------
+        if ($request->filled('type')) {
             if ($data['type'] === 'upcoming') {
                 $query->where('date', '>=', $today);
             } elseif ($data['type'] === 'recent') {
@@ -1896,38 +1900,50 @@ class BookingService
             }
         }
 
-        if (isset($data['listing_ids']) && is_array($data['listing_ids']) && count($data['listing_ids']) > 0) {
+        // ------------------------------
+        // ARRAY FILTERS (fixed)
+        // ------------------------------
+        if (! empty($data['listing_ids'])) {
             $query->whereIn('listing_id', $data['listing_ids']);
         }
 
-        if (isset($data['venue_ids']) && is_array($data['venue_ids']) && count($data['venue_ids']) > 0) {
+        if (! empty($data['venue_ids'])) {
             $query->whereIn('venue_id', $data['venue_ids']);
         }
 
-        if (isset($data['user_ids']) && is_array($data['user_ids']) && count($data['user_ids']) > 0) {
+        if (! empty($data['user_ids'])) {
             $query->whereIn('user_id', $data['user_ids']);
         }
 
-        if (isset($data['statuses'])) {
+        if (! empty($data['statuses'])) {
             $query->whereIn('status', $data['statuses']);
         }
 
-        if (isset($data['date_from'])) {
+        // ------------------------------
+        // DATE FILTERS
+        // ------------------------------
+        if ($request->filled('date_from')) {
             $query->whereDate('date', '>=', $data['date_from']);
         }
 
-        if (isset($data['date_to'])) {
+        if ($request->filled('date_to')) {
             $query->whereDate('date', '<=', $data['date_to']);
         }
 
-        if (isset($data['date'])) {
+        if ($request->filled('date')) {
             $query->where('date', $data['date']);
         }
 
-        if (isset($data['search']) && ! empty($data['search'])) {
+        // ------------------------------
+        // SEARCH FIXED
+        // booking_id → id
+        // ------------------------------
+        if ($request->filled('search')) {
             $search = $data['search'];
+
             $query->where(function ($q) use ($search) {
-                $q->where('booking_id', 'LIKE', "%{$search}%")
+                $q->where('id', 'LIKE', "%{$search}%")
+                    ->orWhere('notes', 'LIKE', "%{$search}%")
                     ->orWhereHas('listing', function ($l) use ($search) {
                         $l->where('name', 'LIKE', "%{$search}%");
                     })
@@ -1938,19 +1954,26 @@ class BookingService
                         $u->where('name', 'LIKE', "%{$search}%")
                             ->orWhere('email', 'LIKE', "%{$search}%")
                             ->orWhere('phone', 'LIKE', "%{$search}%");
-                    })
-                    ->orWhere('notes', 'LIKE', "%{$search}%");
+                    });
             });
         }
 
+        // ------------------------------
+        // SORT FIXED
+        // ------------------------------
         if ($sortBy === 'date') {
-            $query->orderBy('date', $sortOrder)->orderBy('start_time', $sortOrder === 'desc' ? 'asc' : 'desc');
+            $query->orderBy('date', $sortOrder)
+                ->orderBy('start_time', $sortOrder);
         } elseif ($sortBy === 'start_time') {
-            $query->orderBy('date', $sortOrder)->orderBy('start_time', $sortOrder);
+            $query->orderBy('date', $sortOrder)
+                ->orderBy('start_time', $sortOrder);
         } else {
             $query->orderBy('created_at', $sortOrder);
         }
 
+        // ------------------------------
+        // PAGINATION
+        // ------------------------------
         $bookings = $query->paginate($recordsPerPage);
 
         return sendSuccess('Bookings fetched successfully', [
