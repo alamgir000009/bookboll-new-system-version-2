@@ -394,9 +394,9 @@ class PaymentService
             $paymentMethodMap = [
                 'paid_cash'          => PaymentMethod::CASH,
                 'paid_cheque'        => PaymentMethod::CHEQUE,
-                'paid_credit_card'   => PaymentMethod::CREDIT_CARD,
                 'paid_wire'          => PaymentMethod::WIRE_TRANSFER,
                 'paid_wire_transfer' => PaymentMethod::WIRE_TRANSFER,
+                'paid_credit_card'   => PaymentMethod::CREDIT_CARD,
             ];
 
             $paymentMethod = $paymentMethodMap[$validated['payment_status']];
