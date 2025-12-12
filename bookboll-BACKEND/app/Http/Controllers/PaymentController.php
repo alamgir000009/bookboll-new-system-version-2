@@ -310,4 +310,9 @@ class PaymentController extends Controller
     {
         return $this->paymentService->customerPaymentMethods();
     }
+
+    public function markBookingAsPaid(Request $request)
+    {
+        return $this->paymentService->markBookingAsPaid($request);
+    }
 }

@@ -12,8 +12,6 @@ use Illuminate\Support\Facades\Log;
 use PaymentMethod;
 use PaymentStatus;
 use PaymentType;
-use Stripe\Checkout\Session;
-use Stripe\PaymentIntent;
 use Stripe\PaymentLink;
 use Stripe\Stripe;
 
@@ -175,10 +173,10 @@ class PaymentService
                     ],
                     'quantity' => 1,
                 ]],
-                'metadata' => $metadata,
+                'metadata'         => $metadata,
                 'after_completion' => [
-                    'type'        => 'redirect',
-                    'redirect'    => [
+                    'type'     => 'redirect',
+                    'redirect' => [
                         'url' => url('/payment/success/{CHECKOUT_SESSION_ID}'),
                     ],
                 ],
@@ -376,6 +374,109 @@ class PaymentService
         } catch (Exception $e) {
             Log::error('Get Payment Methods Error: ' . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong");
+        }
+    }
+
+    public function markBookingAsPaid($request)
+    {
+        $validated = $request->validate([
+            'booking_id'     => 'required|exists:bookings,id',
+            'payment_status' => 'required|in:paid_cash,paid_wire,paid_wire_transfer,paid_cheque,paid_credit_card',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $booking = $this->bookingModel::lockForUpdate()->findOrFail($validated['booking_id']);
+            $user    = auth()->user();
+
+            // Map booking payment status to PaymentMethod constant
+            $paymentMethodMap = [
+                'paid_cash'          => PaymentMethod::CASH,
+                'paid_cheque'        => PaymentMethod::CHEQUE,
+                'paid_credit_card'   => PaymentMethod::CREDIT_CARD,
+                'paid_wire'          => PaymentMethod::WIRE_TRANSFER,
+                'paid_wire_transfer' => PaymentMethod::WIRE_TRANSFER,
+            ];
+
+            $paymentMethod = $paymentMethodMap[$validated['payment_status']];
+
+            // Get all pending payments for this booking
+            $pendingPayments = $booking->payments()
+                ->where('status', PaymentStatus::PENDING)
+                ->get();
+
+            if ($pendingPayments->isEmpty()) {
+                DB::rollBack();
+                return sendError('No pending payments found for this booking.');
+            }
+
+            // Update all pending payments to paid
+            foreach ($pendingPayments as $payment) {
+                $notes = $payment->notes ?? "Payment for booking #{$booking->id}";
+                $notes = str_replace('pending', 'paid via ' . str_replace('paid_', '', $validated['payment_status']), $notes);
+
+                $payment->update([
+                    'notes'  => $notes,
+                    'method' => $paymentMethod,
+                    'status' => PaymentStatus::PAID,
+                    'date'   => now()->format('Y-m-d'),
+                ]);
+            }
+
+            // Update booking payment status and method
+            $bookingUpdates = [
+                'full_payment_received' => true,
+                'payment_method'        => $validated['payment_status'],
+                'payment_status'        => BookingPaymentStatus::FULLY_PAID,
+            ];
+
+            // If booking has deposit_remaining_on_arrival, update payment breakdown
+            if ($booking->payment_method === 'deposit_remaining_on_arrival') {
+                $paymentBreakdown                     = $booking->payment_breakdown ?? [];
+                $paymentBreakdown['remaining_method'] = str_replace('paid_', '', $validated['payment_status']);
+                $bookingUpdates['payment_breakdown']  = $paymentBreakdown;
+            }
+
+            $booking->update($bookingUpdates);
+
+            // Create booking history entry
+            $booking->history()->create([
+                'user_id'     => $user->id,
+                'action'      => 'payment_completed',
+                'description' => 'All pending payments marked as paid via ' . str_replace('paid_', '', str_replace('_', ' ', $validated['payment_status'])),
+            ]);
+
+            // Auto-confirm booking if fully paid
+            if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
+                autoConfirmBookingIfPaid($booking);
+            }
+
+            DB::commit();
+
+            $booking = $booking->load([
+                'addOns',
+                'history',
+                'payments',
+                'invoices',
+                'promocode',
+                'venue:id,name',
+                'listing:id,name',
+                'resourcesAllocated',
+                'history.user:id,name',
+                'user:id,name,email,phone',
+            ]);
+
+            return sendSuccess('Booking payments updated successfully.', compact('booking'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Mark booking as paid failed: ' . $e->getMessage(), [
+                'booking_id'     => $validated['booking_id'] ?? null,
+                'payment_status' => $validated['payment_status'] ?? null,
+                'trace'          => $e,
+            ]);
+            return sendError('Failed to update booking payments. Please try again.');
         }
     }
 }

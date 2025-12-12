@@ -115,6 +115,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::post('payments/confirm', [PaymentController::class, 'confirmPayment'])->name('payments.confirm');
         Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink'])->name('payments.generate-link');
+        Route::post('payments/mark-booking-paid', [PaymentController::class, 'markBookingAsPaid'])->name('payments.mark-booking-paid');
         Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice'])->name('payments.invoice');
         Route::apiResource('payments', PaymentController::class);
 
