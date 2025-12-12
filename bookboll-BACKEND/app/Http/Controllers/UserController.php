@@ -118,4 +118,9 @@ class UserController extends Controller
     {
         return $this->userService->customerResetPassword($request);
     }
+
+    public function subscribeOneSignal(Request $request)
+    {
+        return $this->userService->subscribeOneSignal($request);
+    }
 }

@@ -231,6 +231,16 @@ class User extends Authenticatable
         return $this->hasOne(Preference::class);
     }
 
+    public function onesignalSubscriptions()
+    {
+        return $this->hasMany(UserOneSignalSubscription::class);
+    }
+
+    public function activeOnesignalSubscriptions()
+    {
+        return $this->hasMany(UserOneSignalSubscription::class)->where('is_active', true);
+    }
+
     public function tags()
     {
         return $this->morphToMany(Tag::class, 'taggable')->withTimestamps()->orderBy('name');

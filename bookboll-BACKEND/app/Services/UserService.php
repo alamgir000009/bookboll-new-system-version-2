@@ -7,6 +7,7 @@ use App\Mail\UserWelcomeEmail;
 use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
+use App\Models\UserOneSignalSubscription;
 use App\Models\Venue;
 use Carbon\Carbon;
 use Exception;
@@ -833,5 +834,71 @@ class UserService
 
         $image = $user->image;
         return sendSuccess("Profile image updated successfully", compact('image'));
+    }
+
+    public function subscribeOneSignal($request)
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return sendError('User not authenticated', [], 401);
+        }
+
+        $formData = $request->validate([
+            'onesignal_id' => 'required|string|max:255',
+            'device_type'  => 'nullable|string|in:ios,android,web',
+            'device_info'  => 'nullable|string|max:255',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            // Check if this OneSignal ID already exists for this user
+            $existingSubscription = UserOneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
+                ->where('user_id', $user->id)
+                ->first();
+
+            if ($existingSubscription) {
+                // Update existing subscription to active
+                $existingSubscription->update([
+                    'is_active'   => true,
+                    'device_type' => $formData['device_type'] ?? $existingSubscription->device_type,
+                    'device_info' => $formData['device_info'] ?? $existingSubscription->device_info,
+                ]);
+                $subscription = $existingSubscription;
+            } else {
+                // Check if this OneSignal ID exists for another user
+                $otherUserSubscription = UserOneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
+                    ->where('user_id', '!=', $user->id)
+                    ->first();
+
+                if ($otherUserSubscription) {
+                    // Remove from other user and assign to current user
+                    $otherUserSubscription->update(['user_id' => $user->id, 'is_active' => true]);
+                    $subscription = $otherUserSubscription;
+                } else {
+                    // Create new subscription
+                    $subscription = UserOneSignalSubscription::create([
+                        'user_id'     => $user->id,
+                        'onesignal_id' => $formData['onesignal_id'],
+                        'device_type' => $formData['device_type'] ?? null,
+                        'device_info' => $formData['device_info'] ?? null,
+                        'is_active'   => true,
+                    ]);
+                }
+            }
+
+            DB::commit();
+
+            return sendSuccess('Successfully subscribed to push notifications', [
+                'subscription' => $subscription,
+                'total_devices' => $user->activeOnesignalSubscriptions()->count(),
+            ]);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("OneSignal subscription error: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError('Something went wrong while subscribing to push notifications');
+        }
     }
 }
