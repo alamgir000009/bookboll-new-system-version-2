@@ -1,8 +1,10 @@
 <?php
 namespace App\Http\Controllers;
 
+use App\Exports\CustomersExport;
 use App\Services\CustomerService;
 use Illuminate\Http\Request;
+use Maatwebsite\Excel\Facades\Excel;
 
 class CustomerController extends Controller
 {
@@ -29,4 +31,11 @@ class CustomerController extends Controller
         return $this->customerService->createCustomer($request);
     }
 
+    public function export(Request $request)
+    {
+        $customers = $this->customerService->getCustomersForExport($request);
+        $filename = 'customers-' . now()->format('Y-m-d') . '.xlsx';
+
+        return Excel::download(new CustomersExport($customers), $filename);
+    }
 }

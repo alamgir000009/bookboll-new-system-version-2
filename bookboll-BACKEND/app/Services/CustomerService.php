@@ -202,4 +202,64 @@ class CustomerService
         }
     }
 
+    public function getCustomersForExport($request)
+    {
+        $search = $request->search ?? null;
+        $status = $request->status ?? null;
+        $tags   = $request->tag ?? null;
+        $exportAll = $request->export_all == 1 || $request->export_all === '1';
+
+        $query = $this->customerModel::whereHas('roles', function ($query) {
+            $query->where('Name', 'customer');
+        })
+            ->withCount(['bookings'])
+            ->with(['tags'])
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'LIKE', "%{$search}%")
+                        ->orWhere('email', 'LIKE', "%{$search}%")
+                        ->orWhere('phone', 'LIKE', "%{$search}%");
+                });
+            })
+            ->addSelect([
+                'loyalty_balance'  => function ($q) {
+                    $q->selectRaw('
+                COALESCE(SUM(CASE WHEN type = "credit" THEN points ELSE 0 END), 0) -
+                COALESCE(SUM(CASE WHEN type = "debit" THEN points ELSE 0 END), 0)
+            ')
+                        ->from('loyalty_points')
+                        ->whereColumn('loyalty_points.user_id', 'users.id');
+                },
+                'total_due_amount' => function ($q) {
+                    $q->selectRaw('COALESCE(SUM(amount), 0)')
+                        ->from('payments')
+                        ->whereColumn('payments.user_id', 'users.id')
+                        ->where('payments.status', '!=', PaymentStatus::PAID);
+                },
+                'total_spent'      => function ($q) {
+                    $q->selectRaw('COALESCE(SUM(amount), 0)')
+                        ->from('payments')
+                        ->whereColumn('payments.user_id', 'users.id')
+                        ->where('payments.status', PaymentStatus::PAID);
+                },
+            ])
+            ->when($status, function ($query, $status) {
+                $query->where('status', 'LIKE', "%{$status}%");
+            })
+            ->when($tags, function ($query, $tags) {
+                $query->whereHas('tags', function ($q) use ($tags) {
+                    $q->where('name', $tags);
+                });
+            });
+
+        // If not exporting all, apply pagination
+        if (!$exportAll) {
+            $records_per_page = $request->records_per_page ?? 10;
+            $page = $request->page ?? 1;
+            $query->skip(($page - 1) * $records_per_page)->take($records_per_page);
+        }
+
+        return $query->get();
+    }
+
 }

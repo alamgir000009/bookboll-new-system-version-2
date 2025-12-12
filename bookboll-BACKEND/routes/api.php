@@ -123,9 +123,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar'])->name('special-days.calendar');
         Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate'])->name('special-days.bulk');
 
-        Route::apiResource('customers', CustomerController::class);
+        Route::get('customers/export', [CustomerController::class, 'export'])->name('customers.export');
         Route::put('customers/{id}/tags', [CustomerController::class, 'updateTags'])->name('customers.updateTags');
         Route::put('customers/{id}/status', [CustomerController::class, 'updateStatus'])->name('customers.updateStatus');
+        Route::apiResource('customers', CustomerController::class);
 
     });
 
