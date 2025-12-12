@@ -14,6 +14,7 @@ use PaymentStatus;
 use PaymentType;
 use Stripe\Checkout\Session;
 use Stripe\PaymentIntent;
+use Stripe\PaymentLink;
 use Stripe\Stripe;
 
 class PaymentService
@@ -161,34 +162,32 @@ class PaymentService
 
             Stripe::setApiKey(config('services.stripe.secret'));
 
-            $paymentIntent = PaymentIntent::create([
-                'currency'             => 'qar',
-                'payment_method_types' => ['card'],
-                'metadata'             => $metadata,
-                'amount'               => $totalAmount * 100,
-                'description'          => "Payment for Booking #{$booking->id} + due amounts",
-            ]);
-
-            $session = Session::create([
-                'payment_method_types' => ['card'],
-                'line_items'           => [[
-                    'quantity'   => 1,
+            // Use Stripe Payment Links API - No PaymentIntent or Checkout Session created until customer clicks link
+            // This prevents multiple entries in Stripe dashboard until payment is actually initiated
+            $paymentLink = PaymentLink::create([
+                'line_items' => [[
                     'price_data' => [
                         'currency'     => 'qar',
                         'unit_amount'  => $totalAmount * 100,
-                        'product_data' => ['name' => "Payment for Booking #{$booking->id}"],
+                        'product_data' => [
+                            'name' => "Payment for Booking #{$booking->id}",
+                        ],
                     ],
+                    'quantity' => 1,
                 ]],
-                'mode'        => 'payment',
-                'metadata'    => $metadata,
-                'cancel_url'  => url('/payment/cancel'),
-                'success_url' => url('/payment/success/{CHECKOUT_SESSION_ID}'),
+                'metadata' => $metadata,
+                'after_completion' => [
+                    'type'        => 'redirect',
+                    'redirect'    => [
+                        'url' => url('/payment/success/{CHECKOUT_SESSION_ID}'),
+                    ],
+                ],
             ]);
 
-            return sendSuccess('Linkg generated successfully', [
-                'link'               => $session->url,
+            return sendSuccess('Link generated successfully', [
+                'link'               => $paymentLink->url,
                 'total_amount'       => $totalAmount,
-                'payment_intent_id'  => $paymentIntent->id,
+                'payment_link_id'    => $paymentLink->id,
                 'due_bookings_count' => count($dueBookings),
             ]);
 

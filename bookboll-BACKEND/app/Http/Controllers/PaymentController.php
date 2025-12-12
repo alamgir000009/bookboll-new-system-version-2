@@ -215,8 +215,15 @@ class PaymentController extends Controller
             }
 
             $mainBookingId   = $session->metadata['booking_id'] ?? null;
+            $userId          = $session->metadata['user_id'] ?? null;
             $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
             $dueIds          = json_decode($dueBookingsJson, true) ?? [];
+
+            if (! $userId) {
+                DB::rollBack();
+                Log::error('No user ID found in session metadata', ['session_id' => $session_id]);
+                return response('Payment verification failed: No user found.', 400);
+            }
 
             $bookingIds = [];
             if ($mainBookingId) {
@@ -259,7 +266,7 @@ class PaymentController extends Controller
                             'date'              => now()->format('Y-m-d'),
                         ]);
                         $booking->history()->create([
-                            'user_id'     => auth()->id(),
+                            'user_id'     => $userId,
                             'action'      => 'payment_received',
                             'description' => "Payment #{$payment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
                         ]);
