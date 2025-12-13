@@ -116,4 +116,9 @@ class BookingController extends Controller
     {
         return $this->bookingService->mobileBookingsFilterOptions($request);
     }
+
+    public function mobileUpdateBooking(Request $request, $booking_id)
+    {
+        return $this->bookingService->mobileUpdateBooking($request, $booking_id);
+    }
 }

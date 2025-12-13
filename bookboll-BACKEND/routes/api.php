@@ -146,6 +146,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('bookings/recent', [BookingController::class, 'recent'])->name('bookings.recent');
         Route::post('bookings/{id}/pay', [BookingController::class, 'pay'])->name('bookings.pay');
         Route::post('bookings/{id}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
+        Route::put('bookings/{id}/update', [BookingController::class, 'mobileUpdateBooking'])->name('bookings.mobileUpdate');
         Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent'])->name('payments.createPaymentIntent');
 
         Route::get('promocodes', [PromocodeController::class, 'customerIndex'])->name('promocodes.customer.index');

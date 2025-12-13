@@ -821,8 +821,6 @@ class BookingService
 
         $user = $request->user_id ? User::find($request->user_id) : auth()->user();
 
-        logger($request->all());
-
         $formData = $request->validate([
             'venue_id'                        => 'required|exists:venues,id',
             'listing_id'                      => 'required|exists:listings,id',
@@ -1154,7 +1152,7 @@ class BookingService
             'listing_id'         => 'sometimes|exists:listings,id',
             'date'               => 'sometimes|date',
             'start_time'         => 'sometimes|date_format:H:i',
-            'end_time'           => 'sometimes|date_format:H:i|after:start_time',
+            'end_time'           => 'sometimes|date_format:H:i',
             'total_price'        => 'sometimes|numeric|min:0',
             'subtotal'           => 'sometimes|numeric|min:0',
             'discount_amount'    => 'sometimes|numeric|min:0',
@@ -1220,33 +1218,11 @@ class BookingService
                 if (isset($formData['end_time'])) {
                     $updateData['end_time'] = $formData['end_time'];
                 }
-
-                // Recalculate duration
-                if (isset($updateData['start_time']) || isset($updateData['end_time'])) {
-                    $startTime              = Carbon::parse($updateData['start_time'] ?? $booking->start_time);
-                    $endTime                = Carbon::parse($updateData['end_time'] ?? $booking->end_time);
-                    $updateData['duration'] = abs($endTime->diffInHours($startTime));
-                }
             }
 
             // Handle notes
             if (isset($formData['notes'])) {
                 $updateData['notes'] = $formData['notes'];
-            }
-
-            // Handle promocode removal
-            if (($formData['remove_promocode'] ?? false) && $booking->promocode) {
-                $originalDiscount = $booking->discount_amount ?? 0;
-                $booking->promocode->decrementUsage($booking->user_id);
-                $updateData['promocode_id']    = null;
-                $updateData['discount_amount'] = 0;
-
-                // Adjust total price if promocode was removed
-                if (isset($formData['total_price'])) {
-                    $updateData['total_price'] = $formData['total_price'];
-                } else {
-                    $updateData['total_price'] = ($booking->subtotal ?? $booking->total_price) + $originalDiscount;
-                }
             }
 
             // Handle price changes
@@ -1304,16 +1280,23 @@ class BookingService
                         if ($excessPaid > 0) {
                             // Add to user's wallet (Transaction)
                             $booking->user->transactions()->create([
-                                'type'   => 'credit',
-                                'amount' => $excessPaid,
-                                'reason' => "Refund for booking #{$booking->booking_id} price adjustment (QAR {$oldPrice} -> QAR {$newPrice})",
+                                'type'       => 'credit',
+                                'amount'     => $excessPaid,
                                 'booking_id' => $booking->id,
+                                'reason'     => "Refund for booking #{$booking->booking_id} price adjustment (QAR {$oldPrice} -> QAR {$newPrice})",
                             ]);
 
                             // If booking was fully paid and now has excess, update payment status
                             if ($booking->payment_status == BookingPaymentStatus::FULLY_PAID && $totalPaid > $newPrice) {
-                                // Still fully paid, but we refunded excess
-                                // Payment status remains FULLY_PAID
+                                $excessAmount = $totalPaid - $newPrice;
+
+                                Log::info('Excess payment detected for booking', [
+                                    'booking_id'    => $booking->id,
+                                    'total_paid'    => $totalPaid,
+                                    'new_price'     => $newPrice,
+                                    'excess_amount' => $excessAmount,
+                                ]);
+
                             }
 
                             $booking->history()->create([
@@ -1364,12 +1347,12 @@ class BookingService
                             $pendingPayment->update(['amount' => $newPrice]);
                         } else {
                             $booking->payments()->create([
-                                'user_id' => $booking->user_id,
+                                'date'    => null,
                                 'amount'  => $newPrice,
+                                'user_id' => $booking->user_id,
                                 'type'    => PaymentType::FULL,
                                 'method'  => PaymentMethod::CASH,
                                 'status'  => PaymentStatus::PENDING,
-                                'date'    => null,
                                 'notes'   => "Payment for booking #{$booking->booking_id} (updated)",
                                 'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
                             ]);
@@ -1380,12 +1363,12 @@ class BookingService
                             $additionalAmount = $newPrice - $totalPaid;
 
                             $booking->payments()->create([
+                                'date'    => null,
                                 'user_id' => $booking->user_id,
                                 'amount'  => $additionalAmount,
                                 'type'    => PaymentType::FULL,
                                 'method'  => PaymentMethod::CASH,
                                 'status'  => PaymentStatus::PENDING,
-                                'date'    => null,
                                 'notes'   => "Additional payment required for booking #{$booking->booking_id} (price increased)",
                                 'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
                             ]);
@@ -1461,10 +1444,10 @@ class BookingService
                 'payments',
                 'invoices',
                 'promocode',
-                'venue:id,name,maps_url',
                 'listing:id,name',
                 'resourcesAllocated',
                 'history.user:id,name',
+                'venue:id,name,maps_url',
             ]);
 
             return sendSuccess('Booking updated successfully', compact('booking'));
@@ -1474,6 +1457,300 @@ class BookingService
             Log::error("Failed to update booking #{$bookingId}: " . $e->getMessage(), [
                 'request'    => $request->all(),
                 'booking_id' => $booking->id ?? $bookingId,
+                'exception'  => $e,
+            ]);
+
+            return sendError('Failed to update booking: ' . $e->getMessage());
+        }
+    }
+
+    public function mobileUpdateBooking($request, $bookingId)
+    {
+        $user = auth()->user();
+
+        if (! $user) {
+            return sendError('User not authenticated', [], 401);
+        }
+
+        $booking = $this->bookingModel::with(['user', 'venue', 'listing', 'addOns', 'promocode'])->findOrFail($bookingId);
+
+        // Only allow updates for pending or confirmed bookings
+        if (! in_array($booking->status, [BookingStatus::PENDING, BookingStatus::CONFIRMED])) {
+            return sendError('Cannot update ' . $booking->status . ' bookings. Only pending or confirmed bookings can be updated.');
+        }
+
+        $formData = $request->validate([
+            'venue_id'       => 'sometimes|exists:venues,id',
+            'start_time'     => 'sometimes|date_format:H:i',
+            'end_time'       => 'sometimes|date_format:H:i',
+            'listing_id'     => 'sometimes|exists:listings,id',
+            'date'           => 'sometimes|date|after_or_equal:today',
+            'payment_method' => 'sometimes|in:free,cash_on_arrival,online_payment,paid_cash,paid_cheque,paid_credit_card,paid_wire_transfer,deposit_remaining_on_arrival',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $oldListingId     = $booking->listing_id;
+            $oldVenueId       = $booking->venue_id;
+            $oldDate          = $booking->date;
+            $oldStartTime     = $booking->start_time;
+            $oldEndTime       = $booking->end_time;
+            $oldPrice         = $booking->total_price;
+            $oldPaymentMethod = $booking->payment_method;
+
+            // Prepare update data
+            $updateData = [];
+
+            // Handle venue/listing change
+            if (isset($formData['venue_id'])) {
+                $updateData['venue_id'] = $formData['venue_id'];
+            }
+            if (isset($formData['listing_id'])) {
+                $updateData['listing_id'] = $formData['listing_id'];
+            }
+
+            // Handle date/time changes - validate if changed
+            if (isset($formData['date']) || isset($formData['start_time']) || isset($formData['end_time'])) {
+                $validationData = [
+                    'date'       => $formData['date'] ?? $booking->date,
+                    'start_time' => $formData['start_time'] ?? $booking->start_time,
+                    'end_time'   => $formData['end_time'] ?? $booking->end_time,
+                    'venue_id'   => $formData['venue_id'] ?? $booking->venue_id,
+                    'listing_id' => $formData['listing_id'] ?? $booking->listing_id,
+                ];
+
+                // Validate new time slot
+                $validationErrors = $this->validateBooking($validationData, $bookingId);
+                if (! empty($validationErrors)) {
+                    DB::rollBack();
+                    return sendError('Validation failed', $validationErrors, 422);
+                }
+
+                if (isset($formData['date'])) {
+                    $updateData['date'] = $formData['date'];
+                }
+                if (isset($formData['start_time'])) {
+                    $updateData['start_time'] = $formData['start_time'];
+                }
+                if (isset($formData['end_time'])) {
+                    $updateData['end_time'] = $formData['end_time'];
+                }
+
+                // Recalculate duration
+                if (isset($updateData['start_time']) || isset($updateData['end_time'])) {
+                    $startTime              = Carbon::parse($updateData['start_time'] ?? $booking->start_time);
+                    $endTime                = Carbon::parse($updateData['end_time'] ?? $booking->end_time);
+                }
+            }
+
+            // Recalculate price if listing, venue, or time slot changed
+            $listingChanged = isset($formData['listing_id']) && $formData['listing_id'] != $oldListingId;
+            $venueChanged   = isset($formData['venue_id']) && $formData['venue_id'] != $oldVenueId;
+            $timeChanged    = isset($formData['date']) || isset($formData['start_time']) || isset($formData['end_time']);
+
+            if ($listingChanged || $venueChanged || $timeChanged) {
+                // Get the listing (new or existing)
+                $listingId = $formData['listing_id'] ?? $booking->listing_id;
+                $venueId   = $formData['venue_id'] ?? $booking->venue_id;
+                $listing   = Listing::findOrFail($listingId);
+
+                // Ensure venue matches listing's venue if venue wasn't explicitly changed
+                if (! $venueChanged && $listing->venue_id != $venueId) {
+                    $updateData['venue_id'] = $listing->venue_id;
+                    $venueId                = $listing->venue_id;
+                }
+
+                // Get date and times for price calculation
+                $date      = $formData['date'] ?? $booking->date;
+                $startTime = $formData['start_time'] ?? $booking->start_time;
+                $endTime   = $formData['end_time'] ?? $booking->end_time;
+
+                // Calculate new price
+                $weekday = strtolower(Carbon::parse($date)->format('l'));
+
+                $specialDay = SpecialDay::with('timeBlocks')
+                    ->where('venue_id', $venueId)
+                    ->where(function ($q) use ($listing) {
+                        $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+                    })
+                    ->whereDate('date', $date)->active()->first();
+
+                $basePrice = determineSlotPrice(
+                    $listing,
+                    $weekday,
+                    $startTime,
+                    $endTime,
+                    $specialDay
+                );
+
+                // Calculate add-ons cost (preserve existing add-ons)
+                $addOnCost = $booking->addOns()->sum('price');
+
+                // Calculate new subtotal
+                $newSubtotal = round($basePrice + $addOnCost, 2);
+
+                // Apply existing promocode discount if exists
+                $newDiscount = 0;
+                if ($booking->promocode) {
+                    $promocode = $booking->promocode;
+                    // Validate promocode is still valid for new listing/venue
+                    $isValid = $promocode->isValidForOrder(
+                        $newSubtotal,
+                        $user->id,
+                        $booking->payment_method,
+                        $venueId,
+                        $listingId
+                    );
+
+                    if ($isValid) {
+                        $newDiscount = $promocode->applyDiscount($newSubtotal);
+                    } else {
+                        // Promocode no longer valid, remove it
+                        $promocode->decrementUsage($user->id);
+                        $updateData['promocode_id']    = null;
+                        $updateData['discount_amount'] = 0;
+                    }
+                }
+
+                // Calculate new total price
+                $newTotalPrice = round($newSubtotal - $newDiscount, 2);
+
+                $updateData['subtotal']        = $newSubtotal;
+                $updateData['discount_amount'] = $newDiscount;
+                $updateData['total_price']     = $newTotalPrice;
+
+                // Handle resources update if listing changed
+                if ($listingChanged) {
+                    $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
+                    $booking->resourcesAllocated()->detach();
+                    foreach ($resources as $resource) {
+                        $booking->resourcesAllocated()->attach($resource->id, ['quantity' => $resource->pivot->quantity]);
+                    }
+                }
+            }
+
+            // Handle payment method change
+            $paymentMethodChanged = false;
+            if (isset($formData['payment_method']) && $formData['payment_method'] != $oldPaymentMethod) {
+                $paymentMethodChanged = true;
+
+                // Only allow payment method change if booking hasn't been fully paid
+                if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
+                    DB::rollBack();
+                    return sendError('Cannot change payment method for a fully paid booking');
+                }
+
+                $newPaymentMethod             = $formData['payment_method'];
+                $updateData['payment_method'] = $newPaymentMethod;
+
+                // Determine new payment status based on payment method
+                $newPaymentStatus = match (trim($newPaymentMethod)) {
+                    'cash_on_arrival'              => BookingPaymentStatus::PENDING,
+                    'online_payment'               => BookingPaymentStatus::FULLY_PAID,
+                    'paid_cash'                    => BookingPaymentStatus::FULLY_PAID,
+                    'paid_cheque'                  => BookingPaymentStatus::FULLY_PAID,
+                    'paid_credit_card'             => BookingPaymentStatus::FULLY_PAID,
+                    'paid_wire_transfer'           => BookingPaymentStatus::FULLY_PAID,
+                    'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
+                    'free'                         => BookingPaymentStatus::PENDING,
+                    default                        => BookingPaymentStatus::PENDING,
+                };
+
+                $updateData['payment_status'] = $newPaymentStatus;
+
+                // Handle payment breakdown for deposit payments
+                if ($newPaymentStatus === BookingPaymentStatus::DEPOSIT_PAID) {
+                    $listing       = Listing::find($booking->listing_id);
+                    $totalPrice    = $updateData['total_price'] ?? $booking->total_price;
+                    $depositAmount = 0;
+
+                    if ($listing && ! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
+                        $deposit = $listing->payment_options['deposit'];
+                        if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
+                            $depositAmount = $deposit['amount'];
+                        } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                            $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
+                        }
+                    }
+
+                    $updateData['payment_breakdown'] = [
+                        'deposit_amount'   => $depositAmount,
+                        'deposit_method'   => PaymentMethod::ONLINE,
+                        'remaining_amount' => $totalPrice - $depositAmount,
+                        'remaining_method' => PaymentMethod::CASH,
+                    ];
+                } elseif ($newPaymentStatus === BookingPaymentStatus::FULLY_PAID) {
+                    // If changing to fully paid method, clear payment breakdown
+                    $updateData['payment_breakdown']     = null;
+                    $updateData['full_payment_received'] = true;
+                } else {
+                    // For pending payments, clear breakdown
+                    $updateData['payment_breakdown']     = null;
+                    $updateData['full_payment_received'] = false;
+                }
+            }
+
+            // Update booking
+            if (! empty($updateData)) {
+                $booking->update($updateData);
+            }
+
+            // Create history entry for changes
+            $changes = [];
+            if ($timeChanged) {
+                $newDate      = $updateData['date'] ?? $booking->date;
+                $newStartTime = $updateData['start_time'] ?? $booking->start_time;
+                $newEndTime   = $updateData['end_time'] ?? $booking->end_time;
+                $changes[]    = "Time slot changed from {$oldDate} {$oldStartTime}-{$oldEndTime} to {$newDate} {$newStartTime}-{$newEndTime}";
+            }
+            if ($venueChanged) {
+                $changes[] = "Venue changed";
+            }
+            if ($listingChanged) {
+                $changes[] = "Listing changed";
+            }
+            if ($paymentMethodChanged) {
+                $newPaymentMethod = $formData['payment_method'];
+                $changes[]        = "Payment method changed from {$oldPaymentMethod} to {$newPaymentMethod}";
+            }
+            if ($listingChanged || $venueChanged || $timeChanged) {
+                $newPrice = $updateData['total_price'] ?? $booking->total_price;
+                if ($oldPrice != $newPrice) {
+                    $changes[] = "Price updated from QAR {$oldPrice} to QAR {$newPrice}";
+                }
+            }
+
+            if (! empty($changes)) {
+                $booking->history()->create([
+                    'user_id'     => $user->id,
+                    'action'      => 'booking_updated',
+                    'description' => 'Booking updated via mobile app: ' . implode(', ', $changes),
+                ]);
+            }
+
+            DB::commit();
+
+            // Reload booking with all relationships
+            $booking->load([
+                'user',
+                'addOns',
+                'history',
+                'payments',
+                'promocode',
+                'venue:id,name,maps_url',
+                'listing:id,name',
+                'resourcesAllocated',
+            ]);
+
+            return sendSuccess('Booking updated successfully', compact('booking'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Failed to update booking #{$bookingId} via mobile: " . $e->getMessage(), [
+                'request'    => $request->all(),
+                'booking_id' => $booking->id ?? $bookingId,
+                'user_id'    => $user->id,
                 'exception'  => $e,
             ]);
 
