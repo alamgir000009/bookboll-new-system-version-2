@@ -1318,6 +1318,27 @@ class ListingService
                 });
             }
 
+            // Filter out past time slots if the date is today
+            $isPastSlot = false;
+            if ($date) {
+                $dateCarbon = $date instanceof Carbon ? $date : Carbon::parse($date);
+                if ($dateCarbon->isToday()) {
+                    $currentTime = Carbon::now();
+                    $slotStartTime = Carbon::parse($dateCarbon->format('Y-m-d') . ' ' . $slotStart);
+
+                    // If slot start time is in the past, exclude it
+                    if ($slotStartTime->lt($currentTime)) {
+                        $isPastSlot = true;
+                    }
+                }
+            }
+
+            // Skip past slots entirely - don't include them in the response
+            if ($isPastSlot) {
+                $start->addMinutes($slotMinutes);
+                continue;
+            }
+
             $isAvailable = ! $isHoliday && $availableCount > 0 && $allResourcesAvailable && ! $isLocked;
 
             if ($isAvailable || $isLocked) {
