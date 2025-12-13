@@ -1537,11 +1537,7 @@ class BookingService
                     $updateData['end_time'] = $formData['end_time'];
                 }
 
-                // Recalculate duration
-                if (isset($updateData['start_time']) || isset($updateData['end_time'])) {
-                    $startTime              = Carbon::parse($updateData['start_time'] ?? $booking->start_time);
-                    $endTime                = Carbon::parse($updateData['end_time'] ?? $booking->end_time);
-                }
+                // Duration will be recalculated in the price calculation section below
             }
 
             // Recalculate price if listing, venue, or time slot changed
@@ -1549,11 +1545,13 @@ class BookingService
             $venueChanged   = isset($formData['venue_id']) && $formData['venue_id'] != $oldVenueId;
             $timeChanged    = isset($formData['date']) || isset($formData['start_time']) || isset($formData['end_time']);
 
+            // Load listing with pricing groups (needed for price calculation and payment breakdown)
+            $listingId = $formData['listing_id'] ?? $booking->listing_id;
+            $listing   = Listing::with('pricingGroups')->findOrFail($listingId);
+
             if ($listingChanged || $venueChanged || $timeChanged) {
-                // Get the listing (new or existing)
-                $listingId = $formData['listing_id'] ?? $booking->listing_id;
-                $venueId   = $formData['venue_id'] ?? $booking->venue_id;
-                $listing   = Listing::findOrFail($listingId);
+                // Get the venue
+                $venueId = $formData['venue_id'] ?? $booking->venue_id;
 
                 // Ensure venue matches listing's venue if venue wasn't explicitly changed
                 if (! $venueChanged && $listing->venue_id != $venueId) {
@@ -1566,7 +1564,16 @@ class BookingService
                 $startTime = $formData['start_time'] ?? $booking->start_time;
                 $endTime   = $formData['end_time'] ?? $booking->end_time;
 
-                // Calculate new price
+                // Calculate duration
+                $startTimeCarbon = Carbon::parse($date . ' ' . $startTime);
+                $endTimeCarbon   = Carbon::parse($date . ' ' . $endTime);
+                if ($endTimeCarbon->lt($startTimeCarbon)) {
+                    $endTimeCarbon->addDay();
+                }
+                $duration = abs($endTimeCarbon->diffInHours($startTimeCarbon));
+                $updateData['duration'] = $duration;
+
+                // Calculate new price - ensure pricing groups are loaded
                 $weekday = strtolower(Carbon::parse($date)->format('l'));
 
                 $specialDay = SpecialDay::with('timeBlocks')
@@ -1576,13 +1583,21 @@ class BookingService
                     })
                     ->whereDate('date', $date)->active()->first();
 
-                $basePrice = determineSlotPrice(
+                // Ensure pricing groups are loaded for price calculation
+                if (! $listing->relationLoaded('pricingGroups')) {
+                    $listing->load('pricingGroups');
+                }
+
+                $pricePerHour = determineSlotPrice(
                     $listing,
                     $weekday,
                     $startTime,
                     $endTime,
                     $specialDay
                 );
+
+                // Calculate total base price by multiplying price per hour by duration
+                $basePrice = round($pricePerHour * $duration, 2);
 
                 // Calculate add-ons cost (preserve existing add-ons)
                 $addOnCost = $booking->addOns()->sum('price');
@@ -1632,6 +1647,10 @@ class BookingService
 
             // Handle payment method change
             $paymentMethodChanged = false;
+            $newPaymentStatus     = null;
+            $shouldAutoConfirm    = false;
+            $newPaymentMethod     = null;
+
             if (isset($formData['payment_method']) && $formData['payment_method'] != $oldPaymentMethod) {
                 $paymentMethodChanged = true;
 
@@ -1661,7 +1680,6 @@ class BookingService
 
                 // Handle payment breakdown for deposit payments
                 if ($newPaymentStatus === BookingPaymentStatus::DEPOSIT_PAID) {
-                    $listing       = Listing::find($booking->listing_id);
                     $totalPrice    = $updateData['total_price'] ?? $booking->total_price;
                     $depositAmount = 0;
 
@@ -1684,6 +1702,53 @@ class BookingService
                     // If changing to fully paid method, clear payment breakdown
                     $updateData['payment_breakdown']     = null;
                     $updateData['full_payment_received'] = true;
+
+                    // Map payment method to PaymentMethod constant
+                    $paymentMethod = match (trim($newPaymentMethod)) {
+                        'paid_cash'          => PaymentMethod::CASH,
+                        'paid_cheque'        => PaymentMethod::CHEQUE,
+                        'online_payment'     => PaymentMethod::ONLINE,
+                        'paid_credit_card'   => PaymentMethod::CREDIT_CARD,
+                        'paid_wire_transfer' => PaymentMethod::WIRE_TRANSFER,
+                        default              => PaymentMethod::CASH,
+                    };
+
+                    // Get total price (use updated price if available)
+                    $totalPrice = $updateData['total_price'] ?? $booking->total_price;
+
+                    // Get all pending payments for this booking
+                    $pendingPayments = $booking->payments()
+                        ->where('status', PaymentStatus::PENDING)
+                        ->get();
+
+                    if ($pendingPayments->isNotEmpty()) {
+                        // Update all pending payments to paid
+                        foreach ($pendingPayments as $payment) {
+                            $payment->update([
+                                'method' => $paymentMethod,
+                                'status' => PaymentStatus::PAID,
+                                'date'   => now()->format('Y-m-d'),
+                                'notes'  => str_replace('pending', 'paid via ' . str_replace('paid_', '', $newPaymentMethod), $payment->notes ?? "Payment for booking #{$booking->booking_id}"),
+                            ]);
+                        }
+                    } else {
+                        // No pending payments exist, create a new payment record
+                        $booking->payments()->create([
+                            'user_id'    => $booking->user_id,
+                            'booking_id' => $booking->id,
+                            'amount'     => $totalPrice,
+                            'type'       => PaymentType::FULL,
+                            'method'     => $paymentMethod,
+                            'status'     => PaymentStatus::PAID,
+                            'date'       => now()->format('Y-m-d'),
+                            'notes'      => "Full payment for booking #{$booking->booking_id} via " . str_replace('paid_', '', $newPaymentMethod),
+                            'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                        ]);
+                    }
+
+                    // Mark booking for auto-confirmation after update
+                    // We'll handle this after the booking is updated
+                    $shouldAutoConfirm = ($booking->status === BookingStatus::PENDING);
                 } else {
                     // For pending payments, clear breakdown
                     $updateData['payment_breakdown']     = null;
@@ -1694,6 +1759,19 @@ class BookingService
             // Update booking
             if (! empty($updateData)) {
                 $booking->update($updateData);
+            }
+
+            // Auto-confirm booking if payment method changed to fully paid and booking was pending
+            if ($shouldAutoConfirm && $newPaymentStatus === BookingPaymentStatus::FULLY_PAID) {
+                $booking->refresh();
+                if ($booking->status === BookingStatus::PENDING) {
+                    $booking->update(['status' => BookingStatus::CONFIRMED]);
+                    $booking->history()->create([
+                        'user_id'     => $user->id,
+                        'action'      => 'booking_confirmed',
+                        'description' => 'Booking automatically confirmed after payment method update to fully paid',
+                    ]);
+                }
             }
 
             // Create history entry for changes
