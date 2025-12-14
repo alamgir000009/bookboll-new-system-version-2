@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Models\Venue;
 use App\Notifications\BookingCancelledUserNotification;
 use App\Notifications\BookingConfirmedUserNotification;
+use App\Notifications\BookingUpdatedUserNotification;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
 use BookingStatus;
@@ -1450,6 +1451,22 @@ class BookingService
                 'venue:id,name,maps_url',
             ]);
 
+            // Send email notification to customer if there were changes
+            if (! empty($changes)) {
+                try {
+                    // Get the booking owner (may have changed)
+                    $bookingOwner = $booking->user;
+                    if ($bookingOwner && $bookingOwner->email) {
+                        $bookingOwner->notify(new BookingUpdatedUserNotification($booking, $changes));
+                    }
+                } catch (Exception $e) {
+                    Log::error("Booking update notification failed: " . $e->getMessage(), [
+                        'booking_id' => $booking->id,
+                        'exception' => $e,
+                    ]);
+                }
+            }
+
             return sendSuccess('Booking updated successfully', compact('booking'));
 
         } catch (Exception $e) {
@@ -1924,7 +1941,7 @@ class BookingService
 
             DB::commit();
 
-            // Reload booking with all relationships
+            // Reload booking with all relationships before sending notification
             $booking->load([
                 'user',
                 'addOns',
@@ -1935,6 +1952,22 @@ class BookingService
                 'listing:id,name',
                 'resourcesAllocated',
             ]);
+
+            // Send email notification to customer if there were changes
+            if (! empty($changes)) {
+                try {
+                    // Get the booking owner (may have changed)
+                    $bookingOwner = $booking->user;
+                    if ($bookingOwner && $bookingOwner->email) {
+                        $bookingOwner->notify(new BookingUpdatedUserNotification($booking, $changes));
+                    }
+                } catch (Exception $e) {
+                    Log::error("Booking update notification failed: " . $e->getMessage(), [
+                        'booking_id' => $booking->id,
+                        'exception' => $e,
+                    ]);
+                }
+            }
 
             return sendSuccess('Booking updated successfully', compact('booking'));
 
