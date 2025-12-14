@@ -1486,6 +1486,9 @@ class BookingService
             'listing_id'     => 'sometimes|exists:listings,id',
             'date'           => 'sometimes|date|after_or_equal:today',
             'payment_method' => 'sometimes|in:free,cash_on_arrival,online_payment,paid_cash,paid_cheque,paid_credit_card,paid_wire_transfer,deposit_remaining_on_arrival',
+            'add_ons'        => 'nullable|array',
+            'add_ons.*'      => 'exists:add_ons,id',
+            'user_id'        => 'sometimes|exists:users,id',
         ]);
 
         try {
@@ -1498,9 +1501,19 @@ class BookingService
             $oldEndTime       = $booking->end_time;
             $oldPrice         = $booking->total_price;
             $oldPaymentMethod = $booking->payment_method;
+            $oldUserId        = $booking->user_id;
+            $oldAddOns        = $booking->addOns->pluck('id')->toArray();
 
             // Prepare update data
             $updateData = [];
+
+            // Handle user change
+            $userChanged = false;
+            if (isset($formData['user_id']) && $formData['user_id'] != $oldUserId) {
+                $newUser = User::findOrFail($formData['user_id']);
+                $updateData['user_id'] = $newUser->id;
+                $userChanged = true;
+            }
 
             // Handle venue/listing change
             if (isset($formData['venue_id'])) {
@@ -1599,8 +1612,13 @@ class BookingService
                 // Calculate total base price by multiplying price per hour by duration
                 $basePrice = round($pricePerHour * $duration, 2);
 
-                // Calculate add-ons cost (preserve existing add-ons)
-                $addOnCost = $booking->addOns()->sum('price');
+                // Calculate add-ons cost
+                // If new add-ons are provided, use them; otherwise use existing add-ons
+                if (isset($formData['add_ons'])) {
+                    $addOnCost = AddOn::whereIn('id', $formData['add_ons'])->sum('price');
+                } else {
+                    $addOnCost = $booking->addOns()->sum('price');
+                }
 
                 // Calculate new subtotal
                 $newSubtotal = round($basePrice + $addOnCost, 2);
@@ -1644,6 +1662,78 @@ class BookingService
                     }
                 }
             }
+
+            // Handle add-ons update
+            $addOnsChanged = false;
+            if (isset($formData['add_ons'])) {
+                $newAddOns = $formData['add_ons'];
+                
+                // Validate that add-ons belong to the listing (current or new listing)
+                $currentListingId = $formData['listing_id'] ?? $booking->listing_id;
+                $listingForAddOns = Listing::with('addOns')->findOrFail($currentListingId);
+                $availableAddOnIds = $listingForAddOns->addOns->pluck('id')->toArray();
+                
+                // Check if all requested add-ons are available for this listing
+                $invalidAddOns = array_diff($newAddOns, $availableAddOnIds);
+                if (!empty($invalidAddOns)) {
+                    DB::rollBack();
+                    return sendError('Some add-ons are not available for this listing', [
+                        'invalid_add_ons' => $invalidAddOns,
+                        'available_add_ons' => $availableAddOnIds
+                    ], 422);
+                }
+                
+                // Check if add-ons actually changed
+                sort($newAddOns);
+                sort($oldAddOns);
+                if ($newAddOns != $oldAddOns) {
+                    $addOnsChanged = true;
+                    
+                    // Sync add-ons
+                    $booking->addOns()->sync($newAddOns);
+                    
+                    // Recalculate price if listing/venue/time didn't change (only add-ons changed)
+                    if (!$listingChanged && !$venueChanged && !$timeChanged) {
+                        // Get base price (subtotal minus old add-ons cost)
+                        $oldAddOnCost = AddOn::whereIn('id', $oldAddOns)->sum('price');
+                        $basePrice = $booking->subtotal - $oldAddOnCost;
+                        
+                        // Calculate new add-ons cost
+                        $newAddOnCost = AddOn::whereIn('id', $newAddOns)->sum('price');
+                        $newSubtotal = round($basePrice + $newAddOnCost, 2);
+                        
+                        // Apply existing promocode discount if exists
+                        $newDiscount = $booking->discount_amount;
+                        if ($booking->promocode) {
+                            $promocode = $booking->promocode;
+                            $isValid = $promocode->isValidForOrder(
+                                $newSubtotal,
+                                $user->id,
+                                $booking->payment_method,
+                                $booking->venue_id,
+                                $booking->listing_id
+                            );
+                            
+                            if ($isValid) {
+                                $newDiscount = $promocode->applyDiscount($newSubtotal);
+                            } else {
+                                // Promocode no longer valid, remove it
+                                $promocode->decrementUsage($user->id);
+                                $updateData['promocode_id'] = null;
+                                $newDiscount = 0;
+                            }
+                        }
+                        
+                        $newTotalPrice = round($newSubtotal - $newDiscount, 2);
+                        
+                        $updateData['subtotal'] = $newSubtotal;
+                        $updateData['discount_amount'] = $newDiscount;
+                        $updateData['total_price'] = $newTotalPrice;
+                    }
+                    // If listing/venue/time changed, add-ons cost is already calculated in that section
+                }
+            }
+            
 
             // Handle payment method change
             $paymentMethodChanged = false;
@@ -1761,6 +1851,21 @@ class BookingService
                 $booking->update($updateData);
             }
 
+            // Handle user change - transfer payments and history
+            if ($userChanged) {
+                // Update all payments to new user
+                $booking->payments()->update(['user_id' => $updateData['user_id']]);
+                
+                // Update invoices to new user
+                $booking->invoices()->update(['user_id' => $updateData['user_id']]);
+                
+                $booking->history()->create([
+                    'user_id'     => $user->id,
+                    'action'      => 'user_changed',
+                    'description' => "Booking transferred from user #{$oldUserId} to user #{$updateData['user_id']}",
+                ]);
+            }
+
             // Auto-confirm booking if payment method changed to fully paid and booking was pending
             if ($shouldAutoConfirm && $newPaymentStatus === BookingPaymentStatus::FULLY_PAID) {
                 $booking->refresh();
@@ -1792,7 +1897,17 @@ class BookingService
                 $newPaymentMethod = $formData['payment_method'];
                 $changes[]        = "Payment method changed from {$oldPaymentMethod} to {$newPaymentMethod}";
             }
-            if ($listingChanged || $venueChanged || $timeChanged) {
+            if ($addOnsChanged) {
+                $oldAddOnsNames = AddOn::whereIn('id', $oldAddOns)->pluck('name')->implode(', ');
+                $newAddOnsNames = AddOn::whereIn('id', $formData['add_ons'] ?? [])->pluck('name')->implode(', ');
+                $changes[] = "Add-ons changed from [{$oldAddOnsNames}] to [{$newAddOnsNames}]";
+            }
+            if ($userChanged) {
+                $oldUserName = User::find($oldUserId)->name ?? "User #{$oldUserId}";
+                $newUserName = User::find($updateData['user_id'])->name ?? "User #{$updateData['user_id']}";
+                $changes[] = "Customer changed from {$oldUserName} to {$newUserName}";
+            }
+            if ($listingChanged || $venueChanged || $timeChanged || $addOnsChanged) {
                 $newPrice = $updateData['total_price'] ?? $booking->total_price;
                 if ($oldPrice != $newPrice) {
                     $changes[] = "Price updated from QAR {$oldPrice} to QAR {$newPrice}";
