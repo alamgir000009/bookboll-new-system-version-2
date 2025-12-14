@@ -199,7 +199,7 @@ class ListingService
     public function show($id)
     {
         $listing = $this->listingModel->with(['schedules', 'addOns', 'resources', 'pricingGroups', 'assets'])->findOrFail($id);
-        return sendSuccess('Listing deleted successfully', compact('listing'));
+        return sendSuccess('Listing fetched successfully', compact('listing'));
     }
 
     public function delete($id)
@@ -260,6 +260,8 @@ class ListingService
             'pricing_groups.*.days.*'            => 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
             'images.*'                           => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
             'add_ons.*'                          => 'nullable|exists:add_ons,id',
+            'tags'                               => 'nullable|array',
+            'tags.*'                             => 'string|max:255',
             'resources'                          => 'nullable|array',
             'resources.*.id'                     => 'required|exists:resources,id',
             'resources.*.quantity'               => 'nullable|integer|min:1',
@@ -405,6 +407,17 @@ class ListingService
 
     protected function extractListingData(array $data): array
     {
+        // Process tags - ensure they're an array of strings
+        $tags = [];
+        if (isset($data['tags']) && is_array($data['tags'])) {
+            $tags = collect($data['tags'])
+                ->map(fn($tag) => is_string($tag) ? trim($tag) : $tag)
+                ->filter()
+                ->unique()
+                ->values()
+                ->toArray();
+        }
+
         return [
             'name'                    => $data['name'],
             'status'                  => $data['status'],
@@ -414,6 +427,7 @@ class ListingService
             'slot_duration'           => $data['slot_duration'],
             'online_payment'          => $data['online_payment'],
             'amenities'               => $data['amenities'] ?? [],
+            'tags'                    => $tags,
             'images_urls'             => $data['images_urls'] ?? [],
             'sports_category_id'      => $data['sports_category_id'],
             'loyalty_points'          => $data['loyalty_points'] ?? 0,
@@ -1005,6 +1019,7 @@ class ListingService
             'max_multiple_bookings'   => $listing->max_multiple_bookings,
             'allow_multiple_bookings' => $listing->allow_multiple_bookings,
             'rating'                  => round($listing->average_rating, 1),
+            'tags'                    => $listing->tags ?? [],
         ];
 
         return sendSuccess('Listing fetched successfully', compact('listing'));

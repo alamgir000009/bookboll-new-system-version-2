@@ -29,6 +29,7 @@ return new class extends Migration
             $table->json('payment_options');
             $table->json('images_urls')->nullable();
             $table->json('amenities')->nullable();
+            $table->json('tags')->nullable();
             $table->boolean('online_payment')->default(false);
             $table->integer('sort_order')->default(0);
             $table->timestamps();

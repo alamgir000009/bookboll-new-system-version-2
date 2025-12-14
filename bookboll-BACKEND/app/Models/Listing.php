@@ -15,6 +15,7 @@ class Listing extends Model
         'venue_id',
         'capacity',
         'amenities',
+        'tags',
         'sort_order',
         'base_price',
         'images_urls',
@@ -34,6 +35,7 @@ class Listing extends Model
         'payment_options'        => 'array',
         'images_urls'            => 'array',
         'amenities'              => 'array',
+        'tags'                   => 'array',
         'base_price'             => 'decimal:2',
         'allow_multiple_bookings' => 'boolean',
     ];
