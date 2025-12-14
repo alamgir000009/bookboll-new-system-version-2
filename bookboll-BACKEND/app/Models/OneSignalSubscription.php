@@ -5,7 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class UserOneSignalSubscription extends Model
+class OneSignalSubscription extends Model
 {
     protected $fillable = [
         'user_id',

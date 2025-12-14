@@ -38,4 +38,9 @@ class CustomerController extends Controller
 
         return Excel::download(new CustomersExport($customers), $filename);
     }
+
+    public function destroy($id)
+    {
+        return $this->customerService->delete($id);
+    }
 }

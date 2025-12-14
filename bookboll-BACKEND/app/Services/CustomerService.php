@@ -4,6 +4,7 @@ namespace App\Services;
 use App\Mail\UserWelcomeEmail;
 use App\Models\Preference;
 use App\Models\User;
+use BookingStatus;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -61,6 +62,7 @@ class CustomerService
             ->when($status, function ($query, $status) {
                 $query->where('status', 'LIKE', "%{$status}%");
             })
+            ->latest('id')
             ->paginate($records_per_page);
 
         return sendSuccess('Customers fetched successfully', compact('customers'));
@@ -260,6 +262,79 @@ class CustomerService
         }
 
         return $query->get();
+    }
+
+    public function delete($id)
+    {
+        try {
+            DB::beginTransaction();
+
+            $customer = $this->customerModel::whereHas('roles', function ($query) {
+                $query->where('name', 'customer');
+            })->findOrFail($id);
+
+            // Get all user roles
+            $userRoles = $customer->getRoleNames();
+            $hasMultipleRoles = $userRoles->count() > 1;
+
+            // Check for active bookings
+            $activeBookings = $customer->bookings()
+                ->whereIn('status', [BookingStatus::PENDING, BookingStatus::CONFIRMED])
+                ->count();
+
+            if ($activeBookings > 0) {
+                DB::rollBack();
+                return sendError("Cannot delete customer with {$activeBookings} active booking(s). Please cancel or complete the bookings first.", [], 422);
+            }
+
+            if ($hasMultipleRoles) {
+                // User has multiple roles - only remove customer role
+                $customer->removeRole('customer');
+
+                // Clean up customer-specific data
+                // Note: We keep the user record and other roles intact
+                // Only remove customer-specific subscriptions and tags
+                $customer->onesignalSubscriptions()->delete();
+                $customer->tags()->detach();
+
+                DB::commit();
+
+                Log::info("Customer role removed from user", [
+                    'user_id' => $id,
+                    'remaining_roles' => $customer->getRoleNames()->toArray(),
+                    'deleted_by' => auth()->id(),
+                ]);
+
+                return sendSuccess('Customer access removed successfully. User still has other roles: ' . $customer->getRoleNames()->implode(', '));
+
+            } else {
+                // User has only customer role - delete the entire user
+                // Delete related records
+                $customer->tokens()->delete();
+                $customer->onesignalSubscriptions()->delete();
+                $customer->tags()->detach();
+
+                // Delete the customer
+                $customer->delete();
+
+                DB::commit();
+
+                Log::info("Customer deleted successfully", [
+                    'customer_id' => $id,
+                    'deleted_by' => auth()->id(),
+                ]);
+
+                return sendSuccess('Customer deleted successfully');
+            }
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Customer deletion error: " . $e->getMessage(), [
+                'customer_id' => $id,
+                'exception'   => $e,
+            ]);
+            return sendError('Failed to delete customer: ' . $e->getMessage());
+        }
     }
 
 }

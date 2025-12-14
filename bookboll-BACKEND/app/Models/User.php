@@ -36,15 +36,12 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
-        // Stripe/Cashier related fields
         'stripe_id',
         'pm_type',
         'pm_last_four',
         'trial_ends_at',
-        // OAuth provider fields
         'provider',
         'provider_id',
-        // Internal admin fields
         'blocking_reason',
     ];
 
@@ -233,12 +230,12 @@ class User extends Authenticatable
 
     public function onesignalSubscriptions()
     {
-        return $this->hasMany(UserOneSignalSubscription::class);
+        return $this->hasMany(OneSignalSubscription::class);
     }
 
     public function activeOnesignalSubscriptions()
     {
-        return $this->hasMany(UserOneSignalSubscription::class)->where('is_active', true);
+        return $this->hasMany(OneSignalSubscription::class)->where('is_active', true);
     }
 
     public function tags()

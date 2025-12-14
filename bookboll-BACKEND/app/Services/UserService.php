@@ -7,7 +7,7 @@ use App\Mail\UserWelcomeEmail;
 use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
-use App\Models\UserOneSignalSubscription;
+use App\Models\OneSignalSubscription;
 use App\Models\Venue;
 use Carbon\Carbon;
 use Exception;
@@ -854,7 +854,7 @@ class UserService
             DB::beginTransaction();
 
             // Check if this OneSignal ID already exists for this user
-            $existingSubscription = UserOneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
+            $existingSubscription = OneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
                 ->where('user_id', $user->id)
                 ->first();
 
@@ -868,7 +868,7 @@ class UserService
                 $subscription = $existingSubscription;
             } else {
                 // Check if this OneSignal ID exists for another user
-                $otherUserSubscription = UserOneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
+                $otherUserSubscription = OneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
                     ->where('user_id', '!=', $user->id)
                     ->first();
 
@@ -878,7 +878,7 @@ class UserService
                     $subscription = $otherUserSubscription;
                 } else {
                     // Create new subscription
-                    $subscription = UserOneSignalSubscription::create([
+                    $subscription = OneSignalSubscription::create([
                         'user_id'     => $user->id,
                         'onesignal_id' => $formData['onesignal_id'],
                         'device_type' => $formData['device_type'] ?? null,
