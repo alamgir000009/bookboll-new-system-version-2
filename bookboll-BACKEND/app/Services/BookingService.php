@@ -699,7 +699,7 @@ class BookingService
 
             $query->whereBetween('date', [
                 $weekStart->format('Y-m-d'),
-                $weekEnd->format('Y-m-d')
+                $weekEnd->format('Y-m-d'),
             ]);
         } else {
             $query->when($request->date, fn($q) =>
@@ -1398,7 +1398,7 @@ class BookingService
                 } catch (Exception $e) {
                     Log::error("Booking update notification failed: " . $e->getMessage(), [
                         'booking_id' => $booking->id,
-                        'exception' => $e,
+                        'exception'  => $e,
                     ]);
                 }
             }
@@ -1431,6 +1431,27 @@ class BookingService
             return sendError('Cannot update ' . $booking->status . ' bookings. Only pending or confirmed bookings can be updated.');
         }
 
+        // Normalize start_time and end_time: strip seconds if present and ensure HH:MM format with leading zero on hour
+        if ($request->has('start_time')) {
+            $time  = $request->input('start_time');
+            $parts = explode(':', $time);
+            if (count($parts) >= 2) {
+                $hour   = str_pad($parts[0], 2, '0', STR_PAD_LEFT);
+                $minute = str_pad($parts[1], 2, '0', STR_PAD_LEFT);
+                $request->merge(['start_time' => $hour . ':' . $minute]);
+            }
+        }
+
+        if ($request->has('end_time')) {
+            $time  = $request->input('end_time');
+            $parts = explode(':', $time);
+            if (count($parts) >= 2) {
+                $hour   = str_pad($parts[0], 2, '0', STR_PAD_LEFT);
+                $minute = str_pad($parts[1], 2, '0', STR_PAD_LEFT);
+                $request->merge(['end_time' => $hour . ':' . $minute]);
+            }
+        }
+
         $formData = $request->validate([
             'venue_id'       => 'sometimes|exists:venues,id',
             'start_time'     => 'sometimes|date_format:H:i',
@@ -1460,9 +1481,9 @@ class BookingService
 
             $userChanged = false;
             if (isset($formData['user_id']) && $formData['user_id'] != $oldUserId) {
-                $newUser = User::findOrFail($formData['user_id']);
+                $newUser               = User::findOrFail($formData['user_id']);
                 $updateData['user_id'] = $newUser->id;
-                $userChanged = true;
+                $userChanged           = true;
             }
 
             if (isset($formData['venue_id'])) {
@@ -1523,7 +1544,7 @@ class BookingService
                 if ($endTimeCarbon->lt($startTimeCarbon)) {
                     $endTimeCarbon->addDay();
                 }
-                $duration = abs($endTimeCarbon->diffInHours($startTimeCarbon));
+                $duration               = abs($endTimeCarbon->diffInHours($startTimeCarbon));
                 $updateData['duration'] = $duration;
 
                 $weekday = strtolower(Carbon::parse($date)->format('l'));
@@ -1560,7 +1581,7 @@ class BookingService
                 $newDiscount = 0;
                 if ($booking->promocode) {
                     $promocode = $booking->promocode;
-                    $isValid = $promocode->isValidForOrder(
+                    $isValid   = $promocode->isValidForOrder(
                         $newSubtotal,
                         $user->id,
                         $booking->payment_method,
@@ -1596,16 +1617,16 @@ class BookingService
             if (isset($formData['add_ons'])) {
                 $newAddOns = $formData['add_ons'];
 
-                $currentListingId = $formData['listing_id'] ?? $booking->listing_id;
-                $listingForAddOns = Listing::with('addOns')->findOrFail($currentListingId);
+                $currentListingId  = $formData['listing_id'] ?? $booking->listing_id;
+                $listingForAddOns  = Listing::with('addOns')->findOrFail($currentListingId);
                 $availableAddOnIds = $listingForAddOns->addOns->pluck('id')->toArray();
 
                 $invalidAddOns = array_diff($newAddOns, $availableAddOnIds);
-                if (!empty($invalidAddOns)) {
+                if (! empty($invalidAddOns)) {
                     DB::rollBack();
                     return sendError('Some add-ons are not available for this listing', [
-                        'invalid_add_ons' => $invalidAddOns,
-                        'available_add_ons' => $availableAddOnIds
+                        'invalid_add_ons'   => $invalidAddOns,
+                        'available_add_ons' => $availableAddOnIds,
                     ], 422);
                 }
 
@@ -1616,17 +1637,17 @@ class BookingService
 
                     $booking->addOns()->sync($newAddOns);
 
-                    if (!$listingChanged && !$venueChanged && !$timeChanged) {
+                    if (! $listingChanged && ! $venueChanged && ! $timeChanged) {
                         $oldAddOnCost = AddOn::whereIn('id', $oldAddOns)->sum('price');
-                        $basePrice = $booking->subtotal - $oldAddOnCost;
+                        $basePrice    = $booking->subtotal - $oldAddOnCost;
 
                         $newAddOnCost = AddOn::whereIn('id', $newAddOns)->sum('price');
-                        $newSubtotal = round($basePrice + $newAddOnCost, 2);
+                        $newSubtotal  = round($basePrice + $newAddOnCost, 2);
 
                         $newDiscount = $booking->discount_amount;
                         if ($booking->promocode) {
                             $promocode = $booking->promocode;
-                            $isValid = $promocode->isValidForOrder(
+                            $isValid   = $promocode->isValidForOrder(
                                 $newSubtotal,
                                 $user->id,
                                 $booking->payment_method,
@@ -1639,19 +1660,18 @@ class BookingService
                             } else {
                                 $promocode->decrementUsage($user->id);
                                 $updateData['promocode_id'] = null;
-                                $newDiscount = 0;
+                                $newDiscount                = 0;
                             }
                         }
 
                         $newTotalPrice = round($newSubtotal - $newDiscount, 2);
 
-                        $updateData['subtotal'] = $newSubtotal;
+                        $updateData['subtotal']        = $newSubtotal;
                         $updateData['discount_amount'] = $newDiscount;
-                        $updateData['total_price'] = $newTotalPrice;
+                        $updateData['total_price']     = $newTotalPrice;
                     }
                 }
             }
-
 
             $paymentMethodChanged = false;
             $newPaymentStatus     = null;
@@ -1799,12 +1819,12 @@ class BookingService
             if ($addOnsChanged) {
                 $oldAddOnsNames = AddOn::whereIn('id', $oldAddOns)->pluck('name')->implode(', ');
                 $newAddOnsNames = AddOn::whereIn('id', $formData['add_ons'] ?? [])->pluck('name')->implode(', ');
-                $changes[] = "Add-ons changed from [{$oldAddOnsNames}] to [{$newAddOnsNames}]";
+                $changes[]      = "Add-ons changed from [{$oldAddOnsNames}] to [{$newAddOnsNames}]";
             }
             if ($userChanged) {
                 $oldUserName = User::find($oldUserId)->name ?? "User #{$oldUserId}";
                 $newUserName = User::find($updateData['user_id'])->name ?? "User #{$updateData['user_id']}";
-                $changes[] = "Customer changed from {$oldUserName} to {$newUserName}";
+                $changes[]   = "Customer changed from {$oldUserName} to {$newUserName}";
             }
             if ($listingChanged || $venueChanged || $timeChanged || $addOnsChanged) {
                 $newPrice = $updateData['total_price'] ?? $booking->total_price;
@@ -1843,7 +1863,7 @@ class BookingService
                 } catch (Exception $e) {
                     Log::error("Booking update notification failed: " . $e->getMessage(), [
                         'booking_id' => $booking->id,
-                        'exception' => $e,
+                        'exception'  => $e,
                     ]);
                 }
             }
