@@ -7,6 +7,7 @@ use App\Models\Listing;
 use App\Models\Promocode;
 use App\Models\User;
 use App\Models\Venue;
+use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Seeder;
 
@@ -49,7 +50,7 @@ class BookingTableSeeder extends Seeder
             $discount   = $promocode ? $promocode->applyDiscount($subtotal) : 0;
             $totalPrice = $subtotal - $discount;
 
-            $statusOptions = ['pending', 'confirmed', 'completed'];
+            $statusOptions = BookingStatus::list();
             $status        = collect($statusOptions)->random();
 
             $paymentStatus = collect(['pending', 'deposit_paid', 'fully_paid'])->random();

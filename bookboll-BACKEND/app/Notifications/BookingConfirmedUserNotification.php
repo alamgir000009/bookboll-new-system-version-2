@@ -2,6 +2,7 @@
 namespace App\Notifications;
 
 use App\Models\Booking;
+use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -49,7 +50,7 @@ class BookingConfirmedUserNotification extends Notification implements ShouldQue
     {
         return [
             'booking_id' => $this->booking->id,
-            'status'     => 'confirmed',
+            'status'     => BookingStatus::CONFIRMED,
         ];
     }
 }
