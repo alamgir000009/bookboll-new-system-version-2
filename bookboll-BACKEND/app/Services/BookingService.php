@@ -131,7 +131,6 @@ class BookingService
         $total_redeemed = LoyaltyPoint::where('type', 'debit')->sum('points');
         $total_earned   = LoyaltyPoint::where('type', 'credit')->sum('points');
 
-        // Calculate payment totals
         $totalCollected = $this->paymentModel->where('status', PaymentStatus::PAID)->sum('amount');
         $totalPending   = $this->paymentModel->where('status', PaymentStatus::PENDING)->sum('amount');
 
@@ -203,12 +202,9 @@ class BookingService
             'selectedListings' => 'array|nullable',
         ]);
 
-        // Get payments - include payments with dates in range OR null dates (pending payments)
         $query = $this->paymentModel::join('bookings', 'payments.booking_id', '=', 'bookings.id')
             ->where(function ($q) use ($filters) {
-                // Include payments with dates in range
                 $q->whereBetween('payments.date', [$filters['dateFrom'], $filters['dateTo']])
-                // OR pending payments (null date) created within the date range
                     ->orWhere(function ($subQ) use ($filters) {
                         $subQ->whereNull('payments.date')
                             ->whereBetween('payments.created_at', [
@@ -360,7 +356,7 @@ class BookingService
     {
         $venues      = Venue::with(['schedules', 'listings' => fn($q) => $q->active()])->active()->get();
         $listings    = Listing::with(['schedules', 'addOns' => fn($q) => $q->active()])->active()->get();
-        $customers   = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))->active()->get(['id', 'name', 'email']); // Adjust for your User model
+        $customers   = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))->active()->get(['id', 'name', 'email']);
         $resources   = Resource::active()->get();
         $addOns      = AddOn::active()->get();
         $specialDays = SpecialDay::with(['timeBlocks'])->get();
@@ -584,11 +580,9 @@ class BookingService
         $listing   = Listing::find($data['listing_id']);
         $dayOfWeek = strtolower(Carbon::parse($data['date'])->format('l'));
 
-        // Parse data times for consistent comparison
         $dataStartCarbon = Carbon::createFromFormat('H:i', $data['start_time']);
         $dataEndCarbon   = Carbon::createFromFormat('H:i', $data['end_time']);
 
-        // Venue schedule validation
         $venueSchedule = $venue->schedules()->where('day', $dayOfWeek)->first();
         if (! $venueSchedule) {
             $errors['date'] = "No venue schedule for {$dayOfWeek}s";
@@ -602,7 +596,6 @@ class BookingService
             }
         }
 
-        // Listing schedule validation
         $listingSchedule = $listing->schedules()->where('day', $dayOfWeek)->first();
         if (! $listingSchedule) {
             $errors['date'] = "No listing schedule for {$dayOfWeek}s";
@@ -616,7 +609,6 @@ class BookingService
             }
         }
 
-        // Special day validation
         $specialDay = SpecialDay::where('date', $data['date'])
             ->where('venue_id', $data['venue_id'])
             ->whereNull('listing_id')
@@ -634,19 +626,15 @@ class BookingService
             }
         }
 
-        // Resource conflicts (using raw DB query to avoid withSum pivot issues)
         $resourceConflicts = [];
         foreach ($listing->resourceRequirements ?? [] as $resource) {
-            // Direct sum from pivot table 'booking_resources' for this resource on date
-            // Check resource usage for overlapping time slots only
             $currentUsage = DB::table('booking_resource')
                 ->join('bookings', 'booking_resource.booking_id', '=', 'bookings.id')
                 ->where('bookings.date', $data['date'])
-                ->where('bookings.status', '!=', 'cancelled')
+                ->where('bookings.status', '!=', BookingStatus::CANCELLED)
                 ->where('bookings.id', '!=', $editingId)
                 ->where('booking_resource.resource_id', $resource->id)
                 ->where(function ($q) use ($data) {
-                    // Only count bookings that overlap with the requested time slot
                     $q->whereRaw('TIME(bookings.start_time) < ?', [$data['end_time']])
                         ->whereRaw('TIME(bookings.end_time) > ?', [$data['start_time']]);
                 })
@@ -665,15 +653,11 @@ class BookingService
             $errors['resources'] = implode(', ', $resourceConflicts);
         }
 
-        // Overlaps (time conflicts on the listing for the date)
-        // Use date column for filtering, then check time overlaps
         $overlaps = $this->bookingModel::where('date', $data['date'])
             ->where('listing_id', $data['listing_id'])
             ->where('id', '!=', $editingId)
             ->where(function ($q) use ($data) {
-                // Check for time overlaps: bookings overlap if start_time < new_end_time AND end_time > new_start_time
                 $q->where(function ($query) use ($data) {
-                    // Case 1: Existing booking starts before new booking ends AND existing booking ends after new booking starts
                     $query->whereRaw('TIME(start_time) < ?', [$data['end_time']])
                         ->whereRaw('TIME(end_time) > ?', [$data['start_time']]);
                 });
@@ -681,11 +665,9 @@ class BookingService
             ->where('status', '!=', BookingStatus::CANCELLED)
             ->count();
 
-        // Get booking quantity from data if provided (for validation)
         $bookingQuantity = $data['quantity'] ?? 1;
         $maxBookings     = $listing->max_bookings_per_slot ?? 1;
 
-        // Check if we can fit the requested quantity
         $availableSlots = $maxBookings - $overlaps;
         if ($bookingQuantity > $availableSlots) {
             if ($bookingQuantity > 1) {
@@ -703,13 +685,26 @@ class BookingService
         $query = $this->bookingModel::with([
             'user.tags',
             'user:id,name',
-            'listing:id,name,calendar_color',
             'venue:id,name',
+            'listing:id,name,calendar_color',
         ]);
 
-        $query->when($request->date, fn($q) =>
-            $q->whereDate('date', $request->date)
-        );
+        if ($request->boolean('week_view')) {
+            $referenceDate = $request->date ? Carbon::parse($request->date) : Carbon::now();
+
+            $weekStart = $referenceDate->copy()->startOfWeek(Carbon::SUNDAY);
+
+            $weekEnd = $referenceDate->copy()->endOfWeek(Carbon::SATURDAY);
+
+            $query->whereBetween('date', [
+                $weekStart->format('Y-m-d'),
+                $weekEnd->format('Y-m-d')
+            ]);
+        } else {
+            $query->when($request->date, fn($q) =>
+                $q->whereDate('date', $request->date)
+            );
+        }
 
         $query->when($request->venue_id, fn($q) =>
             $q->where('venue_id', $request->venue_id)
@@ -819,7 +814,6 @@ class BookingService
 
     public function createBooking($request)
     {
-
         $user = $request->user_id ? User::find($request->user_id) : auth()->user();
 
         $formData = $request->validate([
@@ -930,7 +924,6 @@ class BookingService
 
             $singleSubtotal = round($basePrice + $addOnCost, 2);
 
-            // Calculate total bookings (base + recurring with their own quantities)
             $recurringBookings      = $formData['recurring_bookings'] ?? [];
             $totalRecurringBookings = 0;
             foreach ($recurringBookings as $recurring) {
@@ -938,23 +931,19 @@ class BookingService
             }
             $totalBookings = $formData['quantity'] + $totalRecurringBookings;
 
-            // Calculate combined subtotal including recurring bookings with their own add-ons
             $baseSubtotal      = round($singleSubtotal * $formData['quantity'], 2);
             $recurringSubtotal = 0;
             foreach ($recurringBookings as $recurring) {
-                // Calculate add-ons cost for this recurring booking
                 $recurringAddOnCost = ! empty($recurring['add_ons'])
                     ? AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
                     : 0;
 
-                // Calculate subtotal for this recurring booking (price + its own add-ons)
                 $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
                 $recurringQuantity       = $recurring['quantity'] ?? 1;
                 $recurringSubtotal += $recurringSingleSubtotal * $recurringQuantity;
             }
             $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
 
-            // Step 1: Validate promocode against the entire combined amount (base + all recurring bookings)
             $totalDiscount = 0;
             $promocode     = null;
             if (! empty($formData['promocode'])) {
@@ -963,8 +952,6 @@ class BookingService
                 if (! $promocode) {
                     return sendError('Invalid or inactive promocode');
                 }
-
-                // Validate promocode against the entire combined subtotal
 
                 $isValidPromocode = $promocode->isValidForOrder(
                     $combinedSubtotal,
@@ -978,56 +965,42 @@ class BookingService
                     return sendError('Promocode is not applicable');
                 }
 
-                // Step 2: Calculate total discount from the entire combined amount
                 $totalDiscount = $promocode->applyDiscount($combinedSubtotal);
                 $promocode->incrementUsage($user->id);
             }
 
-            // Step 3: Split discount manually across all bookings (base + recurring)
-            // Distribute discount proportionally to avoid rounding issues
             $discounts = [];
 
-            // Initialize discounts array for all bookings
             if ($totalBookings > 0) {
                 if ($totalDiscount > 0) {
-                    // Calculate base discount per booking
                     $baseDiscountPerBooking = round($totalDiscount / $totalBookings, 2);
 
-                    // Calculate total discount if all bookings get base discount
                     $calculatedTotal = $baseDiscountPerBooking * $totalBookings;
 
-                    // Handle rounding difference
                     $roundingDifference = round($totalDiscount - $calculatedTotal, 2);
 
-                    // Distribute discount: base discount for all, add rounding difference to first booking
                     for ($i = 0; $i < $totalBookings; $i++) {
                         if ($i === 0) {
-                            // First booking gets the rounding difference to ensure exact total
                             $discounts[] = round($baseDiscountPerBooking + $roundingDifference, 2);
                         } else {
                             $discounts[] = $baseDiscountPerBooking;
                         }
                     }
 
-                    // Verify total matches (for safety)
                     $verifyTotal = round(array_sum($discounts), 2);
                     if (abs($verifyTotal - $totalDiscount) > 0.01) {
-                        // Adjust if there's still a difference
                         $adjustment   = round($totalDiscount - $verifyTotal, 2);
                         $discounts[0] = round($discounts[0] + $adjustment, 2);
                     }
                 } else {
-                    // No discount, fill array with zeros
                     for ($i = 0; $i < $totalBookings; $i++) {
                         $discounts[] = 0;
                     }
                 }
             }
 
-            // Track discount index for manual distribution
             $discountIndex = 0;
 
-            // Create base bookings with manually split discount
             for ($i = 0; $i < $formData['quantity']; $i++) {
                 $bookingDiscount = $discounts[$discountIndex] ?? 0;
                 $discountIndex++;
@@ -1055,15 +1028,12 @@ class BookingService
                 $createdBookings->push($booking);
             }
 
-            // Create recurring bookings
             foreach ($recurringBookings as $recurring) {
-                // Validate recurring booking times match base booking times
                 if ($recurring['start_time'] !== $formData['start_time'] || $recurring['end_time'] !== $formData['end_time']) {
                     DB::rollBack();
                     return sendError('Recurring booking times must match base booking times');
                 }
 
-                // Validate recurring booking date
                 $recurringDate = Carbon::parse($recurring['date']);
                 $baseDate      = Carbon::parse($formData['date']);
                 // if ($recurringDate->lte($baseDate)) {
@@ -1071,7 +1041,6 @@ class BookingService
                 //     return sendError('Recurring booking dates must be after the base booking date');
                 // }
 
-                // Validate recurring booking
                 $recurringValidationData = array_merge($formData, [
                     'date' => $recurring['date'],
                 ]);
@@ -1082,22 +1051,17 @@ class BookingService
                     return sendError('Validation failed for recurring booking on ' . $recurring['date'], $validationErrors, 422);
                 }
 
-                // Calculate add-ons cost for this recurring booking
                 $recurringAddOnCost = ! empty($recurring['add_ons'])
                     ? AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
                     : 0;
 
-                // Calculate price for recurring booking (use provided price + its own add-ons)
                 $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
 
-                // Get quantity for this recurring booking
                 $recurringQuantity = $recurring['quantity'] ?? 1;
 
-                // Prepare form data for this recurring booking with its own add_ons
                 $recurringFormData            = $formData;
                 $recurringFormData['add_ons'] = $recurring['add_ons'] ?? [];
 
-                // Create bookings for this recurring date using its own quantity with manually split discount
                 for ($i = 0; $i < $recurringQuantity; $i++) {
                     $bookingDiscount = $discounts[$discountIndex] ?? 0;
                     $discountIndex++;
@@ -1173,16 +1137,12 @@ class BookingService
             $oldStartTime = $booking->start_time;
             $oldEndTime   = $booking->end_time;
 
-            // Prepare update data
             $updateData = [];
 
-            // Handle user change
             if (isset($formData['user_id']) && $formData['user_id'] != $booking->user_id) {
                 $newUser               = User::findOrFail($formData['user_id']);
                 $updateData['user_id'] = $newUser->id;
             }
-
-            // Handle venue/listing change
             if (isset($formData['venue_id'])) {
                 $updateData['venue_id'] = $formData['venue_id'];
             }
@@ -1190,7 +1150,6 @@ class BookingService
                 $updateData['listing_id'] = $formData['listing_id'];
             }
 
-            // Handle date/time changes - validate if changed
             $timeSlotChanged = false;
             if (isset($formData['date']) || isset($formData['start_time']) || isset($formData['end_time'])) {
                 $timeSlotChanged = true;
@@ -1203,7 +1162,6 @@ class BookingService
                     'listing_id' => $formData['listing_id'] ?? $booking->listing_id,
                 ];
 
-                // Validate new time slot
                 $validationErrors = $this->validateBooking($validationData, $bookingId);
                 if (! empty($validationErrors)) {
                     DB::rollBack();
@@ -1221,12 +1179,10 @@ class BookingService
                 }
             }
 
-            // Handle notes
             if (isset($formData['notes'])) {
                 $updateData['notes'] = $formData['notes'];
             }
 
-            // Handle price changes
             $priceChanged = false;
             $newPrice     = $oldPrice;
 
@@ -1244,17 +1200,14 @@ class BookingService
                 $updateData['discount_amount'] = $formData['discount_amount'];
             }
 
-            // Update booking
             if (! empty($updateData)) {
                 $booking->update($updateData);
             }
 
-            // Handle add-ons update
             if (isset($formData['selected_add_ons'])) {
                 $booking->addOns()->sync($formData['selected_add_ons']);
             }
 
-            // Handle resources update if listing changed
             if (isset($formData['listing_id'])) {
                 $listing   = Listing::findOrFail($formData['listing_id']);
                 $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
@@ -1265,21 +1218,17 @@ class BookingService
                 }
             }
 
-            // Handle payment reconciliation if price changed
             if ($priceChanged) {
                 $totalPaid       = $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
                 $priceDifference = $newPrice - $oldPrice;
 
                 if ($priceDifference < 0) {
-                    // Price decreased - refund excess to wallet
                     $refundAmount = abs($priceDifference);
 
                     if ($totalPaid > 0 && $totalPaid > $newPrice) {
-                        // Only refund if they actually paid more than the new price
                         $excessPaid = $totalPaid - $newPrice;
 
                         if ($excessPaid > 0) {
-                            // Add to user's wallet (Transaction)
                             $booking->user->transactions()->create([
                                 'type'       => 'credit',
                                 'amount'     => $excessPaid,
@@ -1287,7 +1236,6 @@ class BookingService
                                 'reason'     => "Refund for booking #{$booking->booking_id} price adjustment (QAR {$oldPrice} -> QAR {$newPrice})",
                             ]);
 
-                            // If booking was fully paid and now has excess, update payment status
                             if ($booking->payment_status == BookingPaymentStatus::FULLY_PAID && $totalPaid > $newPrice) {
                                 $excessAmount = $totalPaid - $newPrice;
 
@@ -1308,9 +1256,7 @@ class BookingService
                         }
                     }
                 } else {
-                    // Price increased - update payment records
                     if ($booking->payment_status == BookingPaymentStatus::DEPOSIT_PAID) {
-                        // Update remaining payment amount
                         $paymentBreakdown = $booking->payment_breakdown ?? [];
                         $currentRemaining = $paymentBreakdown['remaining_amount'] ?? 0;
                         $newRemaining     = $currentRemaining + $priceDifference;
@@ -1318,7 +1264,6 @@ class BookingService
                         $paymentBreakdown['remaining_amount'] = max(0, $newRemaining);
                         $booking->payment_breakdown           = $paymentBreakdown;
 
-                        // Update or create remaining payment record
                         $remainingPayment = $booking->payments()
                             ->where('type', PaymentType::REMAINING)
                             ->where('status', PaymentStatus::PENDING)
@@ -1339,7 +1284,6 @@ class BookingService
                             ]);
                         }
                     } elseif ($booking->payment_status == BookingPaymentStatus::PENDING) {
-                        // Update pending payment amount
                         $pendingPayment = $booking->payments()
                             ->where('status', PaymentStatus::PENDING)
                             ->first();
@@ -1359,7 +1303,6 @@ class BookingService
                             ]);
                         }
                     } elseif ($booking->payment_status == BookingPaymentStatus::FULLY_PAID) {
-                        // If fully paid and price increased, create a new pending payment for the difference
                         if ($totalPaid < $newPrice) {
                             $additionalAmount = $newPrice - $totalPaid;
 
@@ -1374,7 +1317,6 @@ class BookingService
                                 'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
                             ]);
 
-                            // Update payment status to deposit_paid if there was a deposit, otherwise keep as pending
                             if ($totalPaid > 0) {
                                 $booking->payment_status              = BookingPaymentStatus::DEPOSIT_PAID;
                                 $paymentBreakdown                     = $booking->payment_breakdown ?? [];
@@ -1394,12 +1336,9 @@ class BookingService
                 $booking->save();
             }
 
-            // Handle user change - transfer payments and history
             if (isset($updateData['user_id']) && $updateData['user_id'] != $oldUserId) {
-                // Update all payments to new user
                 $booking->payments()->update(['user_id' => $updateData['user_id']]);
 
-                // Update invoices to new user
                 $booking->invoices()->update(['user_id' => $updateData['user_id']]);
 
                 $booking->history()->create([
@@ -1409,7 +1348,6 @@ class BookingService
                 ]);
             }
 
-            // Create history entry for changes
             $changes = [];
             if ($timeSlotChanged) {
                 $newDate      = $updateData['date'] ?? $booking->date;
@@ -1437,7 +1375,6 @@ class BookingService
 
             DB::commit();
 
-            // Reload booking with all relationships
             $booking->load([
                 'user',
                 'addOns',
@@ -1451,10 +1388,8 @@ class BookingService
                 'venue:id,name,maps_url',
             ]);
 
-            // Send email notification to customer if there were changes
             if (! empty($changes)) {
                 try {
-                    // Get the booking owner (may have changed)
                     $bookingOwner = $booking->user;
                     if ($bookingOwner && $bookingOwner->email) {
                         $bookingOwner->notify(new BookingUpdatedUserNotification($booking, $changes));
@@ -1491,7 +1426,6 @@ class BookingService
 
         $booking = $this->bookingModel::with(['user', 'venue', 'listing', 'addOns', 'promocode'])->findOrFail($bookingId);
 
-        // Only allow updates for pending or confirmed bookings
         if (! in_array($booking->status, [BookingStatus::PENDING, BookingStatus::CONFIRMED])) {
             return sendError('Cannot update ' . $booking->status . ' bookings. Only pending or confirmed bookings can be updated.');
         }
@@ -1521,10 +1455,8 @@ class BookingService
             $oldUserId        = $booking->user_id;
             $oldAddOns        = $booking->addOns->pluck('id')->toArray();
 
-            // Prepare update data
             $updateData = [];
 
-            // Handle user change
             $userChanged = false;
             if (isset($formData['user_id']) && $formData['user_id'] != $oldUserId) {
                 $newUser = User::findOrFail($formData['user_id']);
@@ -1532,7 +1464,6 @@ class BookingService
                 $userChanged = true;
             }
 
-            // Handle venue/listing change
             if (isset($formData['venue_id'])) {
                 $updateData['venue_id'] = $formData['venue_id'];
             }
@@ -1540,7 +1471,6 @@ class BookingService
                 $updateData['listing_id'] = $formData['listing_id'];
             }
 
-            // Handle date/time changes - validate if changed
             if (isset($formData['date']) || isset($formData['start_time']) || isset($formData['end_time'])) {
                 $validationData = [
                     'date'       => $formData['date'] ?? $booking->date,
@@ -1550,7 +1480,6 @@ class BookingService
                     'listing_id' => $formData['listing_id'] ?? $booking->listing_id,
                 ];
 
-                // Validate new time slot
                 $validationErrors = $this->validateBooking($validationData, $bookingId);
                 if (! empty($validationErrors)) {
                     DB::rollBack();
@@ -1567,34 +1496,27 @@ class BookingService
                     $updateData['end_time'] = $formData['end_time'];
                 }
 
-                // Duration will be recalculated in the price calculation section below
             }
 
-            // Recalculate price if listing, venue, or time slot changed
             $listingChanged = isset($formData['listing_id']) && $formData['listing_id'] != $oldListingId;
             $venueChanged   = isset($formData['venue_id']) && $formData['venue_id'] != $oldVenueId;
             $timeChanged    = isset($formData['date']) || isset($formData['start_time']) || isset($formData['end_time']);
 
-            // Load listing with pricing groups (needed for price calculation and payment breakdown)
             $listingId = $formData['listing_id'] ?? $booking->listing_id;
             $listing   = Listing::with('pricingGroups')->findOrFail($listingId);
 
             if ($listingChanged || $venueChanged || $timeChanged) {
-                // Get the venue
                 $venueId = $formData['venue_id'] ?? $booking->venue_id;
 
-                // Ensure venue matches listing's venue if venue wasn't explicitly changed
                 if (! $venueChanged && $listing->venue_id != $venueId) {
                     $updateData['venue_id'] = $listing->venue_id;
                     $venueId                = $listing->venue_id;
                 }
 
-                // Get date and times for price calculation
                 $date      = $formData['date'] ?? $booking->date;
                 $startTime = $formData['start_time'] ?? $booking->start_time;
                 $endTime   = $formData['end_time'] ?? $booking->end_time;
 
-                // Calculate duration
                 $startTimeCarbon = Carbon::parse($date . ' ' . $startTime);
                 $endTimeCarbon   = Carbon::parse($date . ' ' . $endTime);
                 if ($endTimeCarbon->lt($startTimeCarbon)) {
@@ -1603,7 +1525,6 @@ class BookingService
                 $duration = abs($endTimeCarbon->diffInHours($startTimeCarbon));
                 $updateData['duration'] = $duration;
 
-                // Calculate new price - ensure pricing groups are loaded
                 $weekday = strtolower(Carbon::parse($date)->format('l'));
 
                 $specialDay = SpecialDay::with('timeBlocks')
@@ -1613,7 +1534,6 @@ class BookingService
                     })
                     ->whereDate('date', $date)->active()->first();
 
-                // Ensure pricing groups are loaded for price calculation
                 if (! $listing->relationLoaded('pricingGroups')) {
                     $listing->load('pricingGroups');
                 }
@@ -1626,25 +1546,19 @@ class BookingService
                     $specialDay
                 );
 
-                // Calculate total base price by multiplying price per hour by duration
                 $basePrice = round($pricePerHour * $duration, 2);
 
-                // Calculate add-ons cost
-                // If new add-ons are provided, use them; otherwise use existing add-ons
                 if (isset($formData['add_ons'])) {
                     $addOnCost = AddOn::whereIn('id', $formData['add_ons'])->sum('price');
                 } else {
                     $addOnCost = $booking->addOns()->sum('price');
                 }
 
-                // Calculate new subtotal
                 $newSubtotal = round($basePrice + $addOnCost, 2);
 
-                // Apply existing promocode discount if exists
                 $newDiscount = 0;
                 if ($booking->promocode) {
                     $promocode = $booking->promocode;
-                    // Validate promocode is still valid for new listing/venue
                     $isValid = $promocode->isValidForOrder(
                         $newSubtotal,
                         $user->id,
@@ -1656,21 +1570,18 @@ class BookingService
                     if ($isValid) {
                         $newDiscount = $promocode->applyDiscount($newSubtotal);
                     } else {
-                        // Promocode no longer valid, remove it
                         $promocode->decrementUsage($user->id);
                         $updateData['promocode_id']    = null;
                         $updateData['discount_amount'] = 0;
                     }
                 }
 
-                // Calculate new total price
                 $newTotalPrice = round($newSubtotal - $newDiscount, 2);
 
                 $updateData['subtotal']        = $newSubtotal;
                 $updateData['discount_amount'] = $newDiscount;
                 $updateData['total_price']     = $newTotalPrice;
 
-                // Handle resources update if listing changed
                 if ($listingChanged) {
                     $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
                     $booking->resourcesAllocated()->detach();
@@ -1680,17 +1591,14 @@ class BookingService
                 }
             }
 
-            // Handle add-ons update
             $addOnsChanged = false;
             if (isset($formData['add_ons'])) {
                 $newAddOns = $formData['add_ons'];
-                
-                // Validate that add-ons belong to the listing (current or new listing)
+
                 $currentListingId = $formData['listing_id'] ?? $booking->listing_id;
                 $listingForAddOns = Listing::with('addOns')->findOrFail($currentListingId);
                 $availableAddOnIds = $listingForAddOns->addOns->pluck('id')->toArray();
-                
-                // Check if all requested add-ons are available for this listing
+
                 $invalidAddOns = array_diff($newAddOns, $availableAddOnIds);
                 if (!empty($invalidAddOns)) {
                     DB::rollBack();
@@ -1699,27 +1607,21 @@ class BookingService
                         'available_add_ons' => $availableAddOnIds
                     ], 422);
                 }
-                
-                // Check if add-ons actually changed
+
                 sort($newAddOns);
                 sort($oldAddOns);
                 if ($newAddOns != $oldAddOns) {
                     $addOnsChanged = true;
-                    
-                    // Sync add-ons
+
                     $booking->addOns()->sync($newAddOns);
-                    
-                    // Recalculate price if listing/venue/time didn't change (only add-ons changed)
+
                     if (!$listingChanged && !$venueChanged && !$timeChanged) {
-                        // Get base price (subtotal minus old add-ons cost)
                         $oldAddOnCost = AddOn::whereIn('id', $oldAddOns)->sum('price');
                         $basePrice = $booking->subtotal - $oldAddOnCost;
-                        
-                        // Calculate new add-ons cost
+
                         $newAddOnCost = AddOn::whereIn('id', $newAddOns)->sum('price');
                         $newSubtotal = round($basePrice + $newAddOnCost, 2);
-                        
-                        // Apply existing promocode discount if exists
+
                         $newDiscount = $booking->discount_amount;
                         if ($booking->promocode) {
                             $promocode = $booking->promocode;
@@ -1730,29 +1632,26 @@ class BookingService
                                 $booking->venue_id,
                                 $booking->listing_id
                             );
-                            
+
                             if ($isValid) {
                                 $newDiscount = $promocode->applyDiscount($newSubtotal);
                             } else {
-                                // Promocode no longer valid, remove it
                                 $promocode->decrementUsage($user->id);
                                 $updateData['promocode_id'] = null;
                                 $newDiscount = 0;
                             }
                         }
-                        
+
                         $newTotalPrice = round($newSubtotal - $newDiscount, 2);
-                        
+
                         $updateData['subtotal'] = $newSubtotal;
                         $updateData['discount_amount'] = $newDiscount;
                         $updateData['total_price'] = $newTotalPrice;
                     }
-                    // If listing/venue/time changed, add-ons cost is already calculated in that section
                 }
             }
-            
 
-            // Handle payment method change
+
             $paymentMethodChanged = false;
             $newPaymentStatus     = null;
             $shouldAutoConfirm    = false;
@@ -1761,7 +1660,6 @@ class BookingService
             if (isset($formData['payment_method']) && $formData['payment_method'] != $oldPaymentMethod) {
                 $paymentMethodChanged = true;
 
-                // Only allow payment method change if booking hasn't been fully paid
                 if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
                     DB::rollBack();
                     return sendError('Cannot change payment method for a fully paid booking');
@@ -1770,7 +1668,6 @@ class BookingService
                 $newPaymentMethod             = $formData['payment_method'];
                 $updateData['payment_method'] = $newPaymentMethod;
 
-                // Determine new payment status based on payment method
                 $newPaymentStatus = match (trim($newPaymentMethod)) {
                     'cash_on_arrival'              => BookingPaymentStatus::PENDING,
                     'online_payment'               => BookingPaymentStatus::FULLY_PAID,
@@ -1785,7 +1682,6 @@ class BookingService
 
                 $updateData['payment_status'] = $newPaymentStatus;
 
-                // Handle payment breakdown for deposit payments
                 if ($newPaymentStatus === BookingPaymentStatus::DEPOSIT_PAID) {
                     $totalPrice    = $updateData['total_price'] ?? $booking->total_price;
                     $depositAmount = 0;
@@ -1806,11 +1702,9 @@ class BookingService
                         'remaining_method' => PaymentMethod::CASH,
                     ];
                 } elseif ($newPaymentStatus === BookingPaymentStatus::FULLY_PAID) {
-                    // If changing to fully paid method, clear payment breakdown
                     $updateData['payment_breakdown']     = null;
                     $updateData['full_payment_received'] = true;
 
-                    // Map payment method to PaymentMethod constant
                     $paymentMethod = match (trim($newPaymentMethod)) {
                         'paid_cash'          => PaymentMethod::CASH,
                         'paid_cheque'        => PaymentMethod::CHEQUE,
@@ -1820,16 +1714,13 @@ class BookingService
                         default              => PaymentMethod::CASH,
                     };
 
-                    // Get total price (use updated price if available)
                     $totalPrice = $updateData['total_price'] ?? $booking->total_price;
 
-                    // Get all pending payments for this booking
                     $pendingPayments = $booking->payments()
                         ->where('status', PaymentStatus::PENDING)
                         ->get();
 
                     if ($pendingPayments->isNotEmpty()) {
-                        // Update all pending payments to paid
                         foreach ($pendingPayments as $payment) {
                             $payment->update([
                                 'method' => $paymentMethod,
@@ -1839,7 +1730,6 @@ class BookingService
                             ]);
                         }
                     } else {
-                        // No pending payments exist, create a new payment record
                         $booking->payments()->create([
                             'user_id'    => $booking->user_id,
                             'booking_id' => $booking->id,
@@ -1853,29 +1743,22 @@ class BookingService
                         ]);
                     }
 
-                    // Mark booking for auto-confirmation after update
-                    // We'll handle this after the booking is updated
                     $shouldAutoConfirm = ($booking->status === BookingStatus::PENDING);
                 } else {
-                    // For pending payments, clear breakdown
                     $updateData['payment_breakdown']     = null;
                     $updateData['full_payment_received'] = false;
                 }
             }
 
-            // Update booking
             if (! empty($updateData)) {
                 $booking->update($updateData);
             }
 
-            // Handle user change - transfer payments and history
             if ($userChanged) {
-                // Update all payments to new user
                 $booking->payments()->update(['user_id' => $updateData['user_id']]);
-                
-                // Update invoices to new user
+
                 $booking->invoices()->update(['user_id' => $updateData['user_id']]);
-                
+
                 $booking->history()->create([
                     'user_id'     => $user->id,
                     'action'      => 'user_changed',
@@ -1883,7 +1766,6 @@ class BookingService
                 ]);
             }
 
-            // Auto-confirm booking if payment method changed to fully paid and booking was pending
             if ($shouldAutoConfirm && $newPaymentStatus === BookingPaymentStatus::FULLY_PAID) {
                 $booking->refresh();
                 if ($booking->status === BookingStatus::PENDING) {
@@ -1896,7 +1778,6 @@ class BookingService
                 }
             }
 
-            // Create history entry for changes
             $changes = [];
             if ($timeChanged) {
                 $newDate      = $updateData['date'] ?? $booking->date;
@@ -1941,7 +1822,6 @@ class BookingService
 
             DB::commit();
 
-            // Reload booking with all relationships before sending notification
             $booking->load([
                 'user',
                 'addOns',
@@ -1953,10 +1833,8 @@ class BookingService
                 'resourcesAllocated',
             ]);
 
-            // Send email notification to customer if there were changes
             if (! empty($changes)) {
                 try {
-                    // Get the booking owner (may have changed)
                     $bookingOwner = $booking->user;
                     if ($bookingOwner && $bookingOwner->email) {
                         $bookingOwner->notify(new BookingUpdatedUserNotification($booking, $changes));
@@ -2004,9 +1882,7 @@ class BookingService
                 'description' => 'Booking confirmed by ' . auth()->user()->name,
             ]);
 
-            // Add loyalty points when booking is confirmed
             if ($booking->loyalty_points_earned > 0) {
-                // Check if points were already added to avoid duplicates
                 $pointsAlreadyAdded = LoyaltyPoint::where('booking_id', $booking->id)
                     ->where('type', 'credit')
                     ->exists();
@@ -2210,7 +2086,6 @@ class BookingService
 
         $recordsPerPage = $request->input('records_per_page', 10);
 
-        // Determine pagination mode
         $isPaginated = true;
         if ($recordsPerPage === "all") {
             $isPaginated = false;
@@ -2218,9 +2093,6 @@ class BookingService
             $recordsPerPage = 10;
         }
 
-        /**
-         * Helper: Wrap consistent response for each list
-         */
         $formatResponse = function ($result, $isPaginated) {
             if ($isPaginated) {
                 return [
@@ -2242,7 +2114,6 @@ class BookingService
             ];
         };
 
-        /** ---------------- Listings ---------------- **/
         $listings = ['data' => [], 'pagination' => null];
         if (! empty($data['listings'])) {
 
@@ -2266,7 +2137,6 @@ class BookingService
             $listings = $formatResponse($result, $isPaginated);
         }
 
-        /** ---------------- Venues ---------------- **/
         $venues = ['data' => [], 'pagination' => null];
         if (! empty($data['venues'])) {
 
@@ -2287,7 +2157,6 @@ class BookingService
             $venues = $formatResponse($result, $isPaginated);
         }
 
-        /** ---------------- Sports Categories ---------------- **/
         $sportsCategories = ['data' => [], 'pagination' => null];
         if (! empty($data['sportsCategories'])) {
 
@@ -2311,7 +2180,6 @@ class BookingService
             $sportsCategories = $formatResponse($result, $isPaginated);
         }
 
-        /** ---------------- Users (Customers Only) ---------------- **/
         $users = ['data' => [], 'pagination' => null];
         if (! empty($data['users'])) {
 
@@ -2377,8 +2245,6 @@ class BookingService
         $sortOrder      = $data['sort_order'] ?? 'desc';
         $recordsPerPage = $data['records_per_page'] ?? 10;
 
-        logger("Mobile bookings list request: " . json_encode($data));
-
         $query = $this->bookingModel::with([
             'history',
             'payments',
@@ -2392,9 +2258,6 @@ class BookingService
             'listing:id,name,venue_id,calendar_color',
         ]);
 
-        // ------------------------------
-        // TYPE FILTER
-        // ------------------------------
         if ($request->filled('type')) {
             if ($data['type'] === 'upcoming') {
                 $query->where('date', '>=', $today);
@@ -2403,9 +2266,6 @@ class BookingService
             }
         }
 
-        // ------------------------------
-        // ARRAY FILTERS (fixed)
-        // ------------------------------
         if (! empty($data['listing_ids'])) {
             $query->whereIn('listing_id', $data['listing_ids']);
         }
@@ -2422,9 +2282,6 @@ class BookingService
             $query->whereIn('status', $data['statuses']);
         }
 
-        // ------------------------------
-        // DATE FILTERS
-        // ------------------------------
         if ($request->filled('date_from')) {
             $query->whereDate('date', '>=', $data['date_from']);
         }
@@ -2437,10 +2294,6 @@ class BookingService
             $query->where('date', $data['date']);
         }
 
-        // ------------------------------
-        // SEARCH FIXED
-        // booking_id → id
-        // ------------------------------
         if ($request->filled('search')) {
             $search = $data['search'];
 
@@ -2461,9 +2314,6 @@ class BookingService
             });
         }
 
-        // ------------------------------
-        // SORT FIXED
-        // ------------------------------
         if ($sortBy === 'date') {
             $query->orderBy('date', $sortOrder)
                 ->orderBy('start_time', $sortOrder);
@@ -2474,9 +2324,6 @@ class BookingService
             $query->orderBy('created_at', $sortOrder);
         }
 
-        // ------------------------------
-        // PAGINATION
-        // ------------------------------
         $bookings = $query->paginate($recordsPerPage);
 
         return sendSuccess('Bookings fetched successfully', [
@@ -2614,7 +2461,6 @@ class BookingService
                     'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
                 ]);
             } else {
-                // Map booking payment method to PaymentMethod constant
                 $paymentMethod = match (trim($formData['payment_method'])) {
                     'paid_cash'          => PaymentMethod::CASH,
                     'paid_cheque'        => PaymentMethod::CHEQUE,

@@ -49,7 +49,6 @@ class BookingTableSeeder extends Seeder
             $discount   = $promocode ? $promocode->applyDiscount($subtotal) : 0;
             $totalPrice = $subtotal - $discount;
 
-            // Random payment and booking status
             $statusOptions = ['pending', 'confirmed', 'completed'];
             $status        = collect($statusOptions)->random();
 

@@ -1,8 +1,4 @@
 <?php
-
-// app/Mail/NewsletterMail.php
-// Run: php artisan make:mail NewsletterMail
-
 namespace App\Mail;
 
 use Illuminate\Bus\Queueable;

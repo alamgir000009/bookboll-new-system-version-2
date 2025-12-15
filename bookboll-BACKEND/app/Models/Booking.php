@@ -151,7 +151,7 @@ class Booking extends Model
     {
         $overlapping = self::where('listing_id', $this->listing_id)
             ->where('id', '!=', $this->id)
-            ->where('status', '!=', 'cancelled')
+            ->where('status', '!=', BookingStatus::CANCELLED)
             ->where(function ($q) {
                 $q->whereBetween('start_time', [$this->start_time, $this->end_time])
                     ->orWhereBetween('end_time', [$this->start_time, $this->end_time])

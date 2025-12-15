@@ -103,7 +103,7 @@ class User extends Authenticatable
 
     public function helpfulReviews()
     {
-        return $this->belongsToMany(Review::class, 'helpful_review', 'user_id', 'review_id')->withTimestamps(); // If you create a pivot model
+        return $this->belongsToMany(Review::class, 'helpful_review', 'user_id', 'review_id')->withTimestamps();
     }
 
     public function loyaltyPoints()

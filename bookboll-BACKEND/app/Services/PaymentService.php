@@ -5,6 +5,7 @@ use App\Models\Booking;
 use App\Models\Payment;
 use Barryvdh\DomPDF\Facade\Pdf;
 use BookingPaymentStatus;
+use BookingStatus;
 use CompnayInfo;
 use Exception;
 use Illuminate\Support\Facades\DB;
@@ -159,9 +160,7 @@ class PaymentService
             ];
 
             Stripe::setApiKey(config('services.stripe.secret'));
-
-            // Use Stripe Payment Links API - No PaymentIntent or Checkout Session created until customer clicks link
-            // This prevents multiple entries in Stripe dashboard until payment is actually initiated
+            
             $paymentLink = PaymentLink::create([
                 'line_items' => [[
                     'price_data' => [
@@ -217,7 +216,7 @@ class PaymentService
             ->where('user_id', $booking->user_id)
             ->where('venue_id', $booking->venue_id)
             ->whereIn('payment_status', ['pending', 'deposit_paid'])
-            ->where('status', '!=', 'cancelled')
+            ->where('status', '!=', BookingStatus::CANCELLED)
             ->where('id', '!=', $booking->id)
             ->get();
 
@@ -390,7 +389,6 @@ class PaymentService
             $booking = $this->bookingModel::lockForUpdate()->findOrFail($validated['booking_id']);
             $user    = auth()->user();
 
-            // Map booking payment status to PaymentMethod constant
             $paymentMethodMap = [
                 'paid_cash'          => PaymentMethod::CASH,
                 'paid_cheque'        => PaymentMethod::CHEQUE,
@@ -401,7 +399,6 @@ class PaymentService
 
             $paymentMethod = $paymentMethodMap[$validated['payment_status']];
 
-            // Get all pending payments for this booking
             $pendingPayments = $booking->payments()
                 ->where('status', PaymentStatus::PENDING)
                 ->get();
@@ -411,7 +408,6 @@ class PaymentService
                 return sendError('No pending payments found for this booking.');
             }
 
-            // Update all pending payments to paid
             foreach ($pendingPayments as $payment) {
                 $notes = $payment->notes ?? "Payment for booking #{$booking->id}";
                 $notes = str_replace('pending', 'paid via ' . str_replace('paid_', '', $validated['payment_status']), $notes);
@@ -424,14 +420,12 @@ class PaymentService
                 ]);
             }
 
-            // Update booking payment status and method
             $bookingUpdates = [
                 'full_payment_received' => true,
                 'payment_method'        => $validated['payment_status'],
                 'payment_status'        => BookingPaymentStatus::FULLY_PAID,
             ];
 
-            // If booking has deposit_remaining_on_arrival, update payment breakdown
             if ($booking->payment_method === 'deposit_remaining_on_arrival') {
                 $paymentBreakdown                     = $booking->payment_breakdown ?? [];
                 $paymentBreakdown['remaining_method'] = str_replace('paid_', '', $validated['payment_status']);
@@ -440,14 +434,12 @@ class PaymentService
 
             $booking->update($bookingUpdates);
 
-            // Create booking history entry
             $booking->history()->create([
                 'user_id'     => $user->id,
                 'action'      => 'payment_completed',
                 'description' => 'All pending payments marked as paid via ' . str_replace('paid_', '', str_replace('_', ' ', $validated['payment_status'])),
             ]);
 
-            // Auto-confirm booking if fully paid
             if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
                 autoConfirmBookingIfPaid($booking);
             }

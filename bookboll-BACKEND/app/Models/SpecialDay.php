@@ -3,7 +3,6 @@ namespace App\Models;
 
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SpecialDay extends Model
 {
@@ -78,7 +77,7 @@ class SpecialDay extends Model
         return [
             'month'      => $start->format('F Y'),
             'days'       => $calendar,
-            'start_day'  => $start->dayOfWeek, // 0=Sun, 1=Mon, etc.
+            'start_day'  => $start->dayOfWeek,
             'total_days' => $end->daysInMonth,
         ];
     }

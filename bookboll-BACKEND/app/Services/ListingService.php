@@ -138,13 +138,10 @@ class ListingService
             $listingUpdateData = $this->extractListingData($formData);
 
             if ($request->hasFile('images')) {
-                // Delete old assets
                 $this->deleteListingAssets($listing);
-                // Upload new images as assets
                 $this->uploadImagesAsAssets($listing, $request->file('images'));
             }
 
-            // Remove images_urls from update data as we're using Asset model now
             unset($listingUpdateData['images_urls']);
 
             $listing->update($listingUpdateData);
@@ -407,7 +404,6 @@ class ListingService
 
     protected function extractListingData(array $data): array
     {
-        // Process tags - ensure they're an array of strings
         $tags = [];
         if (isset($data['tags']) && is_array($data['tags'])) {
             $tags = collect($data['tags'])
@@ -460,10 +456,8 @@ class ListingService
 
     protected function syncSchedules(Listing $listing, array $scheduleData): void
     {
-        // Load existing schedules
         $existingSchedules = $listing->schedules()->get();
 
-        // Normalize new schedules for comparison (only open schedules)
         $normalizedNewSchedules = collect($scheduleData)
             ->filter(function ($schedule) {
                 return $schedule['is_open'] ?? false;
@@ -477,9 +471,7 @@ class ListingService
                 ];
             });
 
-        // Normalize existing schedules for comparison
         $normalizedExistingSchedules = $existingSchedules->map(function ($schedule) {
-            // Convert datetime to string format for comparison
             $startTime = $schedule->start_time ?
             (is_string($schedule->start_time) ? $schedule->start_time : $schedule->start_time->format('H:i'))
                 : null;
@@ -496,27 +488,23 @@ class ListingService
             ];
         });
 
-        // Find schedules to delete (exist in DB but not in new data)
         $schedulesToDelete = $normalizedExistingSchedules->filter(function ($existing) use ($normalizedNewSchedules) {
             return ! $normalizedNewSchedules->contains(function ($new) use ($existing) {
                 return $this->schedulesMatch($existing, $new);
             });
         });
 
-        // Find schedules to create (exist in new data but not in DB)
         $schedulesToCreate = $normalizedNewSchedules->filter(function ($new) use ($normalizedExistingSchedules) {
             return ! $normalizedExistingSchedules->contains(function ($existing) use ($new) {
                 return $this->schedulesMatch($existing, $new);
             });
         });
 
-        // Delete schedules that no longer exist
         if ($schedulesToDelete->isNotEmpty()) {
             $idsToDelete = $schedulesToDelete->pluck('id')->toArray();
             $listing->schedules()->whereIn('id', $idsToDelete)->delete();
         }
 
-        // Create new schedules
         foreach ($schedulesToCreate as $schedule) {
             Schedule::create([
                 'is_open'    => true,
@@ -529,13 +517,6 @@ class ListingService
         }
     }
 
-    /**
-     * Check if two schedule entries match
-     *
-     * @param array $schedule1
-     * @param array $schedule2
-     * @return bool
-     */
     protected function schedulesMatch($schedule1, $schedule2)
     {
         return $schedule1['day'] === $schedule2['day'] &&
@@ -590,11 +571,9 @@ class ListingService
         $assets = Asset::where('listing_id', $listing->id)->get();
 
         foreach ($assets as $asset) {
-            // Delete file from storage
             if (Storage::disk('public')->exists($asset->path)) {
                 Storage::disk('public')->delete($asset->path);
             }
-            // Delete asset record
             $asset->delete();
         }
     }
@@ -602,20 +581,17 @@ class ListingService
     public function uploadImage($request, $listingId)
     {
         $request->validate([
-            'image' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:5120', // 5MB max
+            'image' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:5120',
         ]);
 
         try {
             $listing = $this->listingModel->findOrFail($listingId);
 
-            // Upload the new image
             if ($request->hasFile('image')) {
                 $uploadedPath = $request->file('image')->store('listings', 'public');
 
-                // Get the current max sort_order to append at the end
                 $maxSortOrder = Asset::where('listing_id', $listingId)->max('sort_order') ?? 0;
 
-                // Create asset record
                 $asset = Asset::create([
                     'listing_id' => $listingId,
                     'path'       => $uploadedPath,
@@ -623,10 +599,8 @@ class ListingService
                     'sort_order' => $maxSortOrder + 1,
                 ]);
 
-                // Get the full URL for the uploaded image
                 $uploadedUrl = $asset->url;
 
-                // Get total images count
                 $totalImages = Asset::where('listing_id', $listingId)->count();
 
                 return sendSuccess('Image uploaded successfully', [
@@ -656,31 +630,23 @@ class ListingService
         try {
             $listing = $this->listingModel->findOrFail($listingId);
 
-            // Extract the file path from the URL (passed as query parameter)
             $imageUrl = $request->query('url');
 
-            // Handle both full URL and relative path
             if (strpos($imageUrl, '/storage/') !== false) {
-                // Extract path from URL: /storage/listings/filename.jpg -> listings/filename.jpg
                 $urlPath = parse_url($imageUrl, PHP_URL_PATH);
                 $path    = str_replace('/storage/', '', $urlPath);
             } elseif (strpos($imageUrl, 'storage/') === 0) {
-                // Handle storage/listings/filename.jpg
                 $path = str_replace('storage/', '', $imageUrl);
             } else {
-                // If it's already a relative path like "listings/filename.jpg"
                 $path = $imageUrl;
             }
 
-            // Remove leading slash if present
             $path = ltrim($path, '/');
 
-            // Find asset by path
             $asset = Asset::where('listing_id', $listingId)
                 ->where('path', $path)
                 ->first();
 
-            // If not found by exact path, try to find by filename
             if (! $asset) {
                 $filename = basename($path);
                 $asset    = Asset::where('listing_id', $listingId)
@@ -692,16 +658,12 @@ class ListingService
                 return sendError('Image not found in listing assets', [], 404);
             }
 
-            // Check if file exists before deleting
             if (Storage::disk('public')->exists($asset->path)) {
-                // Delete the file from storage
                 Storage::disk('public')->delete($asset->path);
             }
 
-            // Delete the asset record
             $asset->delete();
 
-            // Get remaining images count
             $remainingImages = Asset::where('listing_id', $listingId)->count();
 
             return sendSuccess('Image deleted successfully', [
@@ -1055,9 +1017,6 @@ class ListingService
         $weekday     = strtolower($date->format('l'));
         $slotMinutes = ($listing->slot_duration ?? 1) * 60;
 
-        // Note: We no longer lock the entire date, only specific slots
-
-        // ---- Get ALL schedules for the day ----
         $venueSchedules = $listing->venue?->schedules
             ->where('day', $weekday)
             ->where('is_open', true)
@@ -1074,12 +1033,10 @@ class ListingService
             ->sortBy('start_time')
             ->values();
 
-        // Venue and listing must have schedules for the day (venue must be open)
         if ($venueSchedules->isEmpty() || $listingSchedules->isEmpty()) {
             return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
         }
 
-        // ---- Get Special Day ----
         $specialDay = SpecialDay::with('timeBlocks')
             ->where('venue_id', $listing->venue_id)
             ->where(function ($q) use ($listing) {
@@ -1091,12 +1048,10 @@ class ListingService
 
         $isHoliday = $specialDay?->type === 'holiday';
 
-        // If it's a holiday, return early with no slots
         if ($isHoliday) {
             return sendSuccess('No available schedule for this day (Holiday)', ['timeSlots' => []]);
         }
 
-        // If special day exists and has time blocks, use those instead of normal schedule
         if ($specialDay && $specialDay->timeBlocks->isNotEmpty()) {
             $availableBlocks = $specialDay->timeBlocks
                 ->sortBy('start_time')
@@ -1108,7 +1063,6 @@ class ListingService
                 })
                 ->values();
         } else {
-            // Find overlapping periods between venue and listing schedules
             $availableBlocks = $this->findOverlappingScheduleBlocks(
                 $listingSchedules,
                 $venueSchedules
@@ -1119,20 +1073,17 @@ class ListingService
             return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
         }
 
-        // ---- Get Bookings ----
         $bookings = Booking::where('listing_id', $listing->id)
             ->where('date', $date)
             ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
             ->with('resourcesAllocated')
             ->get(['id', 'start_time', 'end_time', 'status']);
 
-        // ---- Get active slot locks for this listing and date ----
         $activeLocks = SlotLock::where('listing_id', $listing->id)
             ->where('date', $date->toDateString())
             ->active()
             ->get();
 
-        // ---- Generate time slots for all available blocks ----
         $timeSlots = collect();
         foreach ($availableBlocks as $block) {
             $slots = $this->generateTimeSlots(
@@ -1151,7 +1102,6 @@ class ListingService
             $timeSlots = $timeSlots->merge($slots);
         }
 
-        // Sort time slots by start time
         $timeSlots = $timeSlots->sortBy('start_time')->values();
 
         return sendSuccess('Listing slots fetched successfully', compact('timeSlots'));
@@ -1161,13 +1111,10 @@ class ListingService
     {
         $overlappingBlocks = collect();
 
-        // Venue schedules should already be checked before calling this method
-        // Find overlapping periods between listing and venue schedules
         foreach ($listingSchedules as $listingSchedule) {
             $listingStart = Carbon::parse($listingSchedule->start_time);
             $listingEnd   = Carbon::parse($listingSchedule->end_time);
 
-            // Handle wrap-around: if end is 00:00, treat it as next day (24:00)
             if ($listingEnd->format('H:i') === '00:00') {
                 $listingEnd->addDay();
             }
@@ -1176,23 +1123,17 @@ class ListingService
                 $venueStart = Carbon::parse($venueSchedule->start_time);
                 $venueEnd   = Carbon::parse($venueSchedule->end_time);
 
-                // Handle wrap-around: if end is 00:00, treat it as next day (24:00)
                 if ($venueEnd->format('H:i') === '00:00') {
                     $venueEnd->addDay();
                 }
 
-                // Check if schedules overlap
                 if ($listingStart->lt($venueEnd) && $listingEnd->gt($venueStart)) {
-                    // Calculate overlap
                     $overlapStart = $listingStart->gt($venueStart) ? $listingStart : $venueStart;
                     $overlapEnd   = $listingEnd->lt($venueEnd) ? $listingEnd : $venueEnd;
 
-                    // Only add if there's a valid overlap (start < end)
                     if ($overlapStart->lt($overlapEnd)) {
-                        // Format the end time - if it's next day's 00:00, format as '00:00'
                         $overlapEndFormatted = $overlapEnd->format('H:i');
 
-                        // If the original end time was 00:00 and we added a day, format as 00:00
                         if (($listingSchedule->end_time === '00:00' || $venueSchedule->end_time === '00:00') && $overlapEnd->day > $overlapStart->day) {
                             $overlapEndFormatted = '00:00';
                         }
@@ -1206,7 +1147,6 @@ class ListingService
             }
         }
 
-        // Merge overlapping blocks if they are adjacent or overlap
         return $this->mergeAdjacentBlocks($overlappingBlocks->sortBy('start_time')->values());
     }
 
@@ -1316,13 +1256,11 @@ class ListingService
                 }
             }
 
-            // Check if slot is locked by another user
             $isLocked = false;
             if ($activeLocks && $sessionId) {
                 $isLocked = $activeLocks->contains(function ($lock) use ($slotStart, $slotEnd, $sessionId) {
-                    // Check if slot overlaps with lock time and is from different session
                     if ($lock->session_id === $sessionId) {
-                        return false; // User's own lock doesn't block them
+                        return false;
                     }
                     return $this->slotsOverlap(
                         $slotStart,
@@ -1333,7 +1271,6 @@ class ListingService
                 });
             }
 
-            // Filter out past time slots if the date is today
             $isPastSlot = false;
             if ($date) {
                 $dateCarbon = $date instanceof Carbon ? $date : Carbon::parse($date);
@@ -1341,14 +1278,12 @@ class ListingService
                     $currentTime = Carbon::now();
                     $slotStartTime = Carbon::parse($dateCarbon->format('Y-m-d') . ' ' . $slotStart);
 
-                    // If slot start time is in the past, exclude it
                     if ($slotStartTime->lt($currentTime)) {
                         $isPastSlot = true;
                     }
                 }
             }
 
-            // Skip past slots entirely - don't include them in the response
             if ($isPastSlot) {
                 $start->addMinutes($slotMinutes);
                 continue;
@@ -1411,7 +1346,6 @@ class ListingService
                 'venue.schedules',
             ])->findOrFail($listingId);
 
-            // Check if venue is active
             if (! $listing->venue || $listing->venue->status !== 'active') {
                 return sendSuccess('Recurring booked slots fetched successfully', [
                     'listing_id'            => $listingId,
@@ -1428,11 +1362,9 @@ class ListingService
 
             $maxBookingsPerSlot = $listing->max_bookings_per_slot ?? 1;
 
-            // Ensure that the search range starts from the base date, not earlier
             $startDate = $startDate->lt($date) ? $date : $startDate;
             $endDate   = $endDate->lt($date) ? $date : $endDate;
 
-            // Query bookings between the (adjusted) start and end dates
             $bookings = Booking::where('listing_id', $listingId)
                 ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
@@ -1467,17 +1399,15 @@ class ListingService
             $currentDate   = $startDate->copy();
 
             while ($currentDate->lte($endDate)) {
-                // Ensure that the current date is after the base date
                 if ($currentDate->lt($date)) {
                     $currentDate->addDay();
-                    continue; // Skip dates before the base date
+                    continue;
                 }
 
                 $dateStr     = $currentDate->format('Y-m-d');
                 $bookedCount = $bookedDates[$dateStr] ?? 0;
                 $weekday     = strtolower($currentDate->format('l'));
 
-                // Check if venue and listing have schedules for this weekday
                 $venueSchedules = $listing->venue?->schedules
                     ->where('day', $weekday)
                     ->where('is_open', true)
@@ -1492,26 +1422,20 @@ class ListingService
                     ->whereNotNull('end_time')
                     ->values();
 
-                // Check if venue and listing are open on this day
                 $isOpenOnDay = ! $venueSchedules->isEmpty() && ! $listingSchedules->isEmpty();
 
-                // Check special day for this date
                 $specialDay  = $specialDays->get($dateStr);
                 $isHoliday   = $specialDay && $specialDay->type === 'holiday';
 
-                // Check if the requested time slot overlaps with available schedule blocks
                 $isTimeSlotAvailable = false;
                 if ($isOpenOnDay && ! $isHoliday) {
-                    // If special day has time blocks, check if requested time overlaps
                     if ($specialDay && $specialDay->timeBlocks->isNotEmpty()) {
                         $isTimeSlotAvailable = $specialDay->timeBlocks->contains(function ($block) use ($startTime, $endTime) {
-                            // Time blocks store times as strings in H:i format
                             $blockStart = $block->start_time;
                             $blockEnd   = $block->end_time;
                             return $this->slotsOverlap($startTime, $endTime, $blockStart, $blockEnd);
                         });
                     } else {
-                        // Check if requested time overlaps with venue and listing schedule overlap
                         $overlappingBlocks = $this->findOverlappingScheduleBlocks($listingSchedules, $venueSchedules);
                         $isTimeSlotAvailable = $overlappingBlocks->contains(function ($block) use ($startTime, $endTime) {
                             return $this->slotsOverlap($startTime, $endTime, $block['start_time'], $block['end_time']);
@@ -1607,13 +1531,6 @@ class ListingService
         }
     }
 
-    /**
-     * Validate schedule times - handles 24-hour operation and wrap-around times
-     *
-     * @param array $schedules
-     * @return void
-     * @throws ValidationException
-     */
     protected function validateScheduleTimes(array $schedules): void
     {
         foreach ($schedules as $index => $schedule) {
@@ -1621,31 +1538,21 @@ class ListingService
                 $startTimeStr = $schedule['start_time'];
                 $endTimeStr   = $schedule['end_time'];
 
-                // Handle 24-hour operation (00:00 to 00:00)
                 if ($startTimeStr === '00:00' && $endTimeStr === '00:00') {
-                    // 24-hour operation is valid
                     continue;
                 }
 
-                // Convert to minutes for easier comparison
                 $startMinutes = $this->timeToMinutes($startTimeStr);
                 $endMinutes   = $this->timeToMinutes($endTimeStr);
 
-                // Handle wrap-around times (e.g., 23:30 to 00:00 means until midnight)
                 if ($endMinutes === 0 && $endTimeStr === '00:00') {
-                    // End time is midnight (00:00), which is valid for any start time
-                    // This represents "until end of day"
                     continue;
                 }
 
-                // Normal case: end must be after start
-                // But if end is 00:00 and start is not 00:00, it's a wrap-around (valid)
                 if ($endMinutes === 0 && $startMinutes > 0) {
-                    // Wrap-around case: 23:xx to 00:00 is valid
                     continue;
                 }
 
-                // For same-day times, end must be after start
                 if ($endMinutes <= $startMinutes && $endMinutes !== 0) {
                     throw ValidationException::withMessages([
                         "schedule.{$index}.end_time" => ["The schedule.{$index}.end_time field must be a date after schedule.{$index}.start_time."],
@@ -1655,28 +1562,16 @@ class ListingService
         }
     }
 
-    /**
-     * Convert time string (HH:MM) to minutes since midnight
-     *
-     * @param string $time Time in HH:MM format
-     * @return int Minutes since midnight
-     */
     protected function timeToMinutes($time)
     {
         if ($time === '00:00' || $time === '24:00') {
-            return 0; // Treat both 00:00 and 24:00 as midnight
+            return 0;
         }
 
         list($hours, $minutes) = explode(':', $time);
         return (int) $hours * 60 + (int) $minutes;
     }
 
-    /**
-     * Lock a specific time slot for a user
-     *
-     * @param \Illuminate\Http\Request $request
-     * @return \Illuminate\Http\JsonResponse
-     */
     public function lockSlot($request)
     {
         $request->validate([
@@ -1962,21 +1857,18 @@ class ListingService
             return false;
         }
 
-        // Handle wrap-around times (e.g., 23:30 to 00:00)
         $start1Minutes = $this->timeToMinutes($start1);
         $end1Minutes   = $this->timeToMinutes($end1);
         $start2Minutes = $this->timeToMinutes($start2);
         $end2Minutes   = $this->timeToMinutes($end2);
 
-        // Handle midnight wrap-around
         if ($end1 === '00:00') {
-            $end1Minutes = 24 * 60; // 1440 minutes (end of day)
+            $end1Minutes = 24 * 60;
         }
         if ($end2 === '00:00') {
             $end2Minutes = 24 * 60;
         }
 
-        // Check for overlap: slots overlap if start1 < end2 AND start2 < end1
         return $start1Minutes < $end2Minutes && $start2Minutes < $end1Minutes;
     }
 }

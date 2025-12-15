@@ -23,17 +23,14 @@ Route::get('backup-000009', function (\Illuminate\Http\Request $request) {
     try {
         $email = $request->input('email');
 
-        // Use Spatie Backup package - run backup via artisan command
         Artisan::call('backup:run', ['--only-db' => true]);
 
-        // Get backup destination from config (default is local disk)
         $backupDisk = config('backup.backup.destination.disks.0', 'local');
         $backupName = config('backup.backup.name', config('app.name'));
 
         $disk = \Illuminate\Support\Facades\Storage::disk($backupDisk);
         $backupPath = $backupName;
 
-        // Get all backup files and find the latest one
         $backupFiles = $disk->files($backupPath);
 
         if (empty($backupFiles)) {
@@ -45,7 +42,6 @@ Route::get('backup-000009', function (\Illuminate\Http\Request $request) {
             ], 500);
         }
 
-        // Sort by modification time and get the latest
         usort($backupFiles, function($a, $b) use ($disk) {
             return $disk->lastModified($b) - $disk->lastModified($a);
         });
@@ -65,7 +61,6 @@ Route::get('backup-000009', function (\Illuminate\Http\Request $request) {
             ], 500);
         }
 
-        // If email is provided, send backup via email
         if ($email && filter_var($email, FILTER_VALIDATE_EMAIL)) {
             \Illuminate\Support\Facades\Mail::to($email)->send(
                 new \App\Mail\DatabaseBackupEmail($fullBackupPath, $backupFileName)
@@ -104,11 +99,3 @@ Route::get('logs-000009', [LogViewerController::class, 'index']);
 
 Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentSuccess'])->name('payment.success');
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
-
-Route::get('test', function() {
-    $booking = \App\Models\Booking::find(220);
-    $invoiceNumber = "TEsttttttt";
-    // return view('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
-
-    return view('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
-});

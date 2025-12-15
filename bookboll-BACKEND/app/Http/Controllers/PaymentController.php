@@ -280,7 +280,6 @@ class PaymentController extends Controller
                 'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
             ]);
 
-            // Auto-confirm bookings and send confirmation emails
             foreach ($bookingIds as $bookingId) {
                 $booking = Booking::find($bookingId);
                 if ($booking) {

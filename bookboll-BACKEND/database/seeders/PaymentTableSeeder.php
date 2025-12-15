@@ -27,7 +27,6 @@ class PaymentTableSeeder extends Seeder
         $paymentDateBase    = Carbon::parse($booking->date . ' ' . $booking->start_time);
         $bookingTotalAmount = $booking->total_price;
 
-        // If booking is cancelled, mark it as unpaid
         if ($isCancelled) {
             $this->createSinglePayment(
                 $booking,

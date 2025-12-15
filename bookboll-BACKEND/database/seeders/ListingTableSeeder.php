@@ -20,14 +20,13 @@ class ListingTableSeeder extends Seeder
         $paymentOptionsJson = str_replace("'", '"', "{'cash_on_arrival':true,'deposit':{'amount':50.00,'percentage':50}}");
         $paymentOptions     = json_decode($paymentOptionsJson, true) ?: [];
 
-        // Generate 30-minute schedule slots from 06:00 to 22:00 for each day
         $days              = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
         $schedule          = [];
         $startHour         = 6;
         $startMinute       = 0;
-        $totalStartMinutes = $startHour * 60 + $startMinute;               // 360 minutes (06:00)
-        $totalEndMinutes   = 22 * 60;                                      // 1320 minutes (22:00)
-        $numSlots          = ($totalEndMinutes - $totalStartMinutes) / 30; // 32 slots
+        $totalStartMinutes = $startHour * 60 + $startMinute;
+        $totalEndMinutes   = 22 * 60;
+        $numSlots          = ($totalEndMinutes - $totalStartMinutes) / 30;
 
         foreach ($days as $day) {
             for ($slot = 0; $slot < $numSlots; $slot++) {

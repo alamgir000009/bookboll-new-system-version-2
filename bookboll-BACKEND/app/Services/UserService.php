@@ -287,16 +287,13 @@ class UserService
             $user = $this->userModel->whereRelation('roles', 'name', 'customer')->whereEmail($request->email)->first();
 
             if ($user && ! $user->password) {
-                // Generate 6-digit OTP
                 $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
-                // Store hashed OTP in password_reset_tokens table
                 DB::table('password_reset_tokens')->updateOrInsert(
                     ['email' => $request->email],
                     ['token' => Hash::make($otp), 'created_at' => Carbon::now()]
                 );
 
-                // Send OTP email
                 try {
                     Mail::to($user->email)->send(new CustomerForgotPasswordOtpEmail($otp, $user));
                 } catch (Exception $e) {
@@ -677,16 +674,13 @@ class UserService
                 return sendError('No customer account found with this email address');
             }
 
-            // Generate 6-digit OTP
             $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
-            // Store hashed OTP in password_reset_tokens table
             DB::table('password_reset_tokens')->updateOrInsert(
                 ['email' => $request->email],
                 ['token' => Hash::make($otp), 'created_at' => Carbon::now()]
             );
 
-            // Send OTP email
             try {
                 Mail::to($user->email)->send(new CustomerForgotPasswordOtpEmail($otp, $user));
             } catch (Exception $e) {
@@ -719,7 +713,6 @@ class UserService
                 return sendError('No customer account found with this email address');
             }
 
-            // Get OTP record from password_reset_tokens table
             $otpRecord = DB::table('password_reset_tokens')
                 ->where('email', $request->email)
                 ->first();
@@ -728,24 +721,20 @@ class UserService
                 return sendError('Invalid or expired OTP. Please request a new one.');
             }
 
-            // Check if OTP is expired (10 minutes)
             if (Carbon::parse($otpRecord->created_at)->addMinutes(10)->isPast()) {
                 DB::table('password_reset_tokens')->where('email', $request->email)->delete();
                 return sendError('OTP has expired. Please request a new one.');
             }
 
-            // Verify OTP
             if (! Hash::check($request->otp, $otpRecord->token)) {
                 return sendError('Invalid OTP. Please check and try again.');
             }
 
-            // Reset password
             DB::beginTransaction();
 
             $user->password = $request->password;
             $user->save();
 
-            // Delete OTP record after successful password reset
             DB::table('password_reset_tokens')->where('email', $request->email)->delete();
 
             DB::commit();
@@ -853,13 +842,11 @@ class UserService
         try {
             DB::beginTransaction();
 
-            // Check if this OneSignal ID already exists for this user
             $existingSubscription = OneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
                 ->where('user_id', $user->id)
                 ->first();
 
             if ($existingSubscription) {
-                // Update existing subscription to active
                 $existingSubscription->update([
                     'is_active'   => true,
                     'device_type' => $formData['device_type'] ?? $existingSubscription->device_type,
@@ -867,17 +854,14 @@ class UserService
                 ]);
                 $subscription = $existingSubscription;
             } else {
-                // Check if this OneSignal ID exists for another user
                 $otherUserSubscription = OneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
                     ->where('user_id', '!=', $user->id)
                     ->first();
 
                 if ($otherUserSubscription) {
-                    // Remove from other user and assign to current user
                     $otherUserSubscription->update(['user_id' => $user->id, 'is_active' => true]);
                     $subscription = $otherUserSubscription;
                 } else {
-                    // Create new subscription
                     $subscription = OneSignalSubscription::create([
                         'user_id'     => $user->id,
                         'onesignal_id' => $formData['onesignal_id'],

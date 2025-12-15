@@ -159,7 +159,6 @@ class CustomerService
                 $user->assignRole('customer');
             }
 
-            // Create or update preferences if language or currency is provided
             if (isset($formData['language']) || isset($formData['currency']) || isset($formData['notifications']) || isset($formData['favorite_sports'])) {
                 $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
 
@@ -254,7 +253,6 @@ class CustomerService
                 });
             });
 
-        // If not exporting all, apply pagination
         if (!$exportAll) {
             $records_per_page = $request->records_per_page ?? 10;
             $page = $request->page ?? 1;
@@ -273,11 +271,9 @@ class CustomerService
                 $query->where('name', 'customer');
             })->findOrFail($id);
 
-            // Get all user roles
             $userRoles = $customer->getRoleNames();
             $hasMultipleRoles = $userRoles->count() > 1;
 
-            // Check for active bookings
             $activeBookings = $customer->bookings()
                 ->whereIn('status', [BookingStatus::PENDING, BookingStatus::CONFIRMED])
                 ->count();
@@ -288,12 +284,8 @@ class CustomerService
             }
 
             if ($hasMultipleRoles) {
-                // User has multiple roles - only remove customer role
                 $customer->removeRole('customer');
 
-                // Clean up customer-specific data
-                // Note: We keep the user record and other roles intact
-                // Only remove customer-specific subscriptions and tags
                 $customer->onesignalSubscriptions()->delete();
                 $customer->tags()->detach();
 
@@ -308,13 +300,10 @@ class CustomerService
                 return sendSuccess('Customer access removed successfully. User still has other roles: ' . $customer->getRoleNames()->implode(', '));
 
             } else {
-                // User has only customer role - delete the entire user
-                // Delete related records
                 $customer->tokens()->delete();
                 $customer->onesignalSubscriptions()->delete();
                 $customer->tags()->detach();
 
-                // Delete the customer
                 $customer->delete();
 
                 DB::commit();

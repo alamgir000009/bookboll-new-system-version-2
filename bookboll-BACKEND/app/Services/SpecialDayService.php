@@ -96,7 +96,6 @@ class SpecialDayService
 
             foreach ($validated['dates'] as $dateString) {
 
-                // Find existing special day - handle null listing_id properly
                 $query = SpecialDay::where('venue_id', $validated['venue_id'])
                     ->where('date', $dateString);
 
@@ -109,16 +108,12 @@ class SpecialDayService
                 $existingSpecialDay = $query->first();
 
                 if ($existingSpecialDay) {
-                    // Special day already exists - update it based on the new type and time blocks
-                    // Handle conversion scenarios
                     if ($existingSpecialDay->type === 'holiday' && $validated['type'] === 'special') {
-                        // Convert holiday to special day and add time blocks
                         $existingSpecialDay->update([
                             'type'        => 'special',
                             'description' => $validated['description'] ?? $existingSpecialDay->description,
                         ]);
 
-                        // Add new time blocks (don't delete existing ones if any)
                         if (!empty($validated['time_blocks'])) {
                             foreach ($validated['time_blocks'] as $block) {
                                 $existingSpecialDay->timeBlocks()->create([
@@ -130,19 +125,16 @@ class SpecialDayService
                             }
                         }
                     } elseif ($existingSpecialDay->type === 'special' && $validated['type'] === 'holiday') {
-                        // Convert special day to holiday (remove all time blocks)
                         $existingSpecialDay->update([
                             'type'        => 'holiday',
                             'description' => $validated['description'] ?? $existingSpecialDay->description,
                         ]);
                         $existingSpecialDay->timeBlocks()->delete();
                     } elseif ($existingSpecialDay->type === 'special' && $validated['type'] === 'special') {
-                        // Add more time blocks to existing special day
                         $existingSpecialDay->update([
                             'description' => $validated['description'] ?? $existingSpecialDay->description,
                         ]);
 
-                        // Add new time blocks (append to existing ones)
                         if (!empty($validated['time_blocks'])) {
                             foreach ($validated['time_blocks'] as $block) {
                                 $existingSpecialDay->timeBlocks()->create([
@@ -154,7 +146,6 @@ class SpecialDayService
                             }
                         }
                     } elseif ($existingSpecialDay->type === 'holiday' && $validated['type'] === 'holiday') {
-                        // Update holiday description if provided
                         $existingSpecialDay->update([
                             'description' => $validated['description'] ?? $existingSpecialDay->description,
                         ]);
@@ -162,7 +153,6 @@ class SpecialDayService
 
                     $updatedSpecialDays[] = $existingSpecialDay->load(['venue', 'listing', 'timeBlocks']);
                 } else {
-                    // Create new special day
                     $specialDay = SpecialDay::create([
                         'venue_id'    => $validated['venue_id'],
                         'listing_id'  => $validated['listing_id'],

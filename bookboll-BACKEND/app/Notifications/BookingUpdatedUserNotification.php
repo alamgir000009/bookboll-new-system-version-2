@@ -29,7 +29,6 @@ class BookingUpdatedUserNotification extends Notification
             ->greeting('Hello ' . $notifiable->name . '!')
             ->line('Your booking #' . $booking->booking_id . ' has been updated.');
 
-        // Add details about what changed
         if (!empty($this->changes)) {
             $mail->line('**Changes made:**');
             foreach ($this->changes as $change) {
@@ -45,13 +44,11 @@ class BookingUpdatedUserNotification extends Notification
             ->line('Total: QAR ' . number_format($booking->total_price, 2))
             ->line('Status: ' . ucfirst($booking->status));
 
-        // Show add-ons if any
         if ($booking->addOns->isNotEmpty()) {
             $addOnsList = $booking->addOns->pluck('name')->implode(', ');
             $mail->line('Add-ons: ' . $addOnsList);
         }
 
-        // Show payment method and status
         if ($booking->payment_method) {
             $paymentMethod = str_replace('_', ' ', $booking->payment_method);
             $mail->line('Payment Method: ' . ucwords($paymentMethod));
