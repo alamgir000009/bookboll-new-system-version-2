@@ -2283,7 +2283,7 @@ class BookingService
             if ($data['type'] === 'upcoming') {
                 $query->where('date', '>=', $today);
             } elseif ($data['type'] === 'recent') {
-                $query->where('date', '<', $today);
+                $query->latest('id');
             }
         }
 
