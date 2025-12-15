@@ -78,6 +78,7 @@ class BookingService
             'payments',
             'invoices',
             'promocode',
+            'latestInvoice',
             'venue:id,name',
             'listing:id,name',
             'resourcesAllocated',

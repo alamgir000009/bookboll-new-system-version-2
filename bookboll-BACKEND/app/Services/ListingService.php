@@ -148,8 +148,7 @@ class ListingService
 
             if (isset($formData['add_ons'])) {
                 $listing->addOns()->sync($formData['add_ons']);
-            }
-            elseif (empty($formData['add_ons'])) {
+            } elseif (empty($formData['add_ons'])) {
                 $listing->addOns()->delete();
             }
 
@@ -754,6 +753,7 @@ class ListingService
                 'name'                    => $listing->name,
                 'add_ons'                 => $listing->addOns,
                 'price'                   => $listing->base_price,
+                'tags'                    => $listing->tags ?? [],
                 'description'             => $listing->description,
                 'venue'                   => $listing->venue?->name,
                 'slot_duration'           => $listing->slot_duration,
@@ -793,6 +793,7 @@ class ListingService
                     'id'                      => $listing->id,
                     'name'                    => $listing->name,
                     'price'                   => $listing->base_price,
+                    'tags'                    => $listing->tags ?? [],
                     'description'             => $listing->description,
                     'venue'                   => $listing->venue?->name,
                     'loyaltyPoints'           => $listing->loyalty_points,
@@ -839,16 +840,16 @@ class ListingService
     public function mobileListingsList($request)
     {
         $data = $request->validate([
-            'search'           => 'nullable|string|max:255',
-            'page'             => 'nullable|integer|min:1',
-            'records_per_page' => 'nullable|integer|min:1|max:100',
-            'venue_id'         => 'nullable|exists:venues,id',
+            'search'             => 'nullable|string|max:255',
+            'page'               => 'nullable|integer|min:1',
+            'records_per_page'   => 'nullable|integer|min:1|max:100',
+            'venue_id'           => 'nullable|exists:venues,id',
             'sports_category_id' => 'nullable|exists:sports_categories,id',
         ]);
 
-        $recordsPerPage = $data['records_per_page'] ?? 10;
-        $search         = $data['search'] ?? null;
-        $venueId        = $data['venue_id'] ?? null;
+        $recordsPerPage   = $data['records_per_page'] ?? 10;
+        $search           = $data['search'] ?? null;
+        $venueId          = $data['venue_id'] ?? null;
         $sportsCategoryId = $data['sports_category_id'] ?? null;
 
         $query = $this->listingModel::with([
@@ -899,14 +900,15 @@ class ListingService
                 'payment_options'         => $listing->payment_options,
                 'images'                  => $listing->images_urls ?? [],
                 'amenities'               => $listing->amenities ?? [],
+                'tags'                    => $listing->tags ?? [],
                 'max_multiple_bookings'   => $listing->max_multiple_bookings,
                 'allow_multiple_bookings' => $listing->allow_multiple_bookings,
                 'rating'                  => round($listing->average_rating, 1),
                 'total_reviews'           => $listing->total_reviews,
                 'venue'                   => [
                     'id'          => $listing->venue?->id,
-                    'name'       => $listing->venue?->name,
-                    'maps_url'   => $listing->venue?->maps_url,
+                    'name'        => $listing->venue?->name,
+                    'maps_url'    => $listing->venue?->maps_url,
                     'description' => $listing->venue?->description,
                 ],
                 'addons'                  => $listing->addOns->map(function ($addon) {
@@ -929,12 +931,12 @@ class ListingService
         return sendSuccess('Listings fetched successfully', [
             'data'       => $listings->items(),
             'pagination' => [
-                'current_page'   => $listings->currentPage(),
-                'last_page'      => $listings->lastPage(),
-                'per_page'       => $listings->perPage(),
-                'total'          => $listings->total(),
-                'from'           => $listings->firstItem(),
-                'to'             => $listings->lastItem(),
+                'current_page' => $listings->currentPage(),
+                'last_page'    => $listings->lastPage(),
+                'per_page'     => $listings->perPage(),
+                'total'        => $listings->total(),
+                'from'         => $listings->firstItem(),
+                'to'           => $listings->lastItem(),
             ],
         ]);
     }
@@ -1275,7 +1277,7 @@ class ListingService
             if ($date) {
                 $dateCarbon = $date instanceof Carbon ? $date : Carbon::parse($date);
                 if ($dateCarbon->isToday()) {
-                    $currentTime = Carbon::now();
+                    $currentTime   = Carbon::now();
                     $slotStartTime = Carbon::parse($dateCarbon->format('Y-m-d') . ' ' . $slotStart);
 
                     if ($slotStartTime->lt($currentTime)) {
@@ -1395,8 +1397,8 @@ class ListingService
                     return Carbon::parse($day->date)->format('Y-m-d');
                 });
 
-            $datesInfo     = [];
-            $currentDate   = $startDate->copy();
+            $datesInfo   = [];
+            $currentDate = $startDate->copy();
 
             while ($currentDate->lte($endDate)) {
                 if ($currentDate->lt($date)) {
@@ -1424,8 +1426,8 @@ class ListingService
 
                 $isOpenOnDay = ! $venueSchedules->isEmpty() && ! $listingSchedules->isEmpty();
 
-                $specialDay  = $specialDays->get($dateStr);
-                $isHoliday   = $specialDay && $specialDay->type === 'holiday';
+                $specialDay = $specialDays->get($dateStr);
+                $isHoliday  = $specialDay && $specialDay->type === 'holiday';
 
                 $isTimeSlotAvailable = false;
                 if ($isOpenOnDay && ! $isHoliday) {
@@ -1436,7 +1438,7 @@ class ListingService
                             return $this->slotsOverlap($startTime, $endTime, $blockStart, $blockEnd);
                         });
                     } else {
-                        $overlappingBlocks = $this->findOverlappingScheduleBlocks($listingSchedules, $venueSchedules);
+                        $overlappingBlocks   = $this->findOverlappingScheduleBlocks($listingSchedules, $venueSchedules);
                         $isTimeSlotAvailable = $overlappingBlocks->contains(function ($block) use ($startTime, $endTime) {
                             return $this->slotsOverlap($startTime, $endTime, $block['start_time'], $block['end_time']);
                         });
