@@ -2161,7 +2161,7 @@ class BookingService
         $venues = ['data' => [], 'pagination' => null];
         if (! empty($data['venues'])) {
 
-            $query = Venue::select('id', 'name')
+            $query = Venue::with('schedules')->select('id', 'name')
                 ->active()
                 ->orderBy('name');
 
@@ -2169,10 +2169,20 @@ class BookingService
                 ? $query->paginate($recordsPerPage)->through(fn($venue) => [
                 'id'   => $venue->id,
                 'name' => $venue->name,
+                'schedules' => $venue->schedules->map(fn($schedule) => [
+                    'day'        => $schedule->day,
+                    'open_time'  => $schedule->open_time,
+                    'close_time' => $schedule->close_time,
+                ]),
             ])
                 : $query->get()->map(fn($venue) => [
                 'id'   => $venue->id,
                 'name' => $venue->name,
+                'schedules' => $venue->schedules->map(fn($schedule) => [
+                    'day'        => $schedule->day,
+                    'open_time'  => $schedule->open_time,
+                    'close_time' => $schedule->close_time,
+                ]),
             ]);
 
             $venues = $formatResponse($result, $isPaginated);
