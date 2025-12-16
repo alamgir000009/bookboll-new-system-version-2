@@ -99,3 +99,9 @@ Route::get('logs-000009', [LogViewerController::class, 'index']);
 
 Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentSuccess'])->name('payment.success');
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
+
+Route::get('import-users-000009', function() {
+    $filename = request()->get('filename', 'bookboll-users.xlsx');
+    $userService = app(\App\Services\UserService::class);
+    return $userService->importUsersFromExcel($filename);
+});

@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Maatwebsite\Excel\Facades\Excel;
 use MobileApps;
 use Spatie\Permission\Models\Role;
 
@@ -883,6 +884,221 @@ class UserService
             DB::rollBack();
             Log::error("OneSignal subscription error: " . $e->getMessage(), ["Exception" => $e]);
             return sendError('Something went wrong while subscribing to push notifications');
+        }
+    }
+
+    public function importUsersFromExcel($filename = 'bookboll-users.xlsx')
+    {
+        try {
+            DB::beginTransaction();
+
+            $filePath = public_path($filename);
+
+            if (!file_exists($filePath)) {
+                return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
+            }
+
+            $data = Excel::toArray(new \stdClass(), $filePath);
+
+            if (empty($data) || empty($data[0])) {
+                return sendError("Excel file is empty or invalid.");
+            }
+
+            $rows = $data[0];
+            $headerRow = array_shift($rows); // Remove header row
+
+            $imported = 0;
+            $updated = 0;
+            $skipped = 0;
+            $errors = [];
+
+            foreach ($rows as $index => $row) {
+                $rowNumber = $index + 2; // +2 because we removed header and arrays are 0-indexed
+
+                // Skip empty rows
+                if (empty(array_filter($row))) {
+                    continue;
+                }
+
+                // Map columns: A=Name, B=Email, C=Phone, D=Nationality, E=Date of Birth, F=Gender, G=Loyalty points, H=Address
+                $name = trim($row[0] ?? '');
+                $email = trim($row[1] ?? '');
+                $phone = trim($row[2] ?? '');
+                $nationality = trim($row[3] ?? '');
+                $dateOfBirth = trim($row[4] ?? '');
+                $gender = trim($row[5] ?? '');
+                $loyaltyPoints = trim($row[6] ?? '0');
+                $address = trim($row[7] ?? '');
+
+                // Skip if email is empty (required field)
+                if (empty($email)) {
+                    $skipped++;
+                    $errors[] = "Row {$rowNumber}: Skipped - Email is required";
+                    continue;
+                }
+
+                // Validate email format
+                if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    $skipped++;
+                    $errors[] = "Row {$rowNumber}: Skipped - Invalid email format: {$email}";
+                    continue;
+                }
+
+                // Format phone number (handle +974 prefix and scientific notation)
+                if (!empty($phone)) {
+                    // Convert scientific notation to string (e.g., 9.74255E+16)
+                    if (is_numeric($phone) && (stripos($phone, 'E') !== false || stripos($phone, 'e') !== false)) {
+                        $phone = number_format((float)$phone, 0, '', '');
+                    }
+
+                    // Remove any non-numeric characters except +
+                    $phone = preg_replace('/[^0-9+]/', '', $phone);
+
+                    // Add +974 if phone doesn't start with +
+                    if (!empty($phone) && !str_starts_with($phone, '+')) {
+                        // If it starts with 974, add +
+                        if (str_starts_with($phone, '974')) {
+                            $phone = '+' . $phone;
+                        } elseif (strlen($phone) >= 8) {
+                            // If it's a local number (8+ digits), add +974
+                            $phone = '+974' . $phone;
+                        }
+                    }
+                }
+
+                // Parse date of birth (format: DD-MM-YYYY)
+                $parsedDateOfBirth = null;
+                if (!empty($dateOfBirth)) {
+                    try {
+                        // Try to parse DD-MM-YYYY format first
+                        $dateParts = explode('-', $dateOfBirth);
+                        if (count($dateParts) === 3 && strlen($dateParts[0]) <= 2 && strlen($dateParts[1]) <= 2) {
+                            $parsedDateOfBirth = Carbon::createFromFormat('d-m-Y', $dateOfBirth)->format('Y-m-d');
+                        } else {
+                            // Try other common formats
+                            $parsedDateOfBirth = Carbon::parse($dateOfBirth)->format('Y-m-d');
+                        }
+                    } catch (Exception $e) {
+                        Log::warning("Could not parse date of birth for row {$rowNumber}: {$dateOfBirth} - " . $e->getMessage());
+                    }
+                }
+
+                // Normalize gender
+                $normalizedGender = null;
+                if (!empty($gender)) {
+                    $genderLower = strtolower($gender);
+                    if (in_array($genderLower, ['male', 'm', 'man'])) {
+                        $normalizedGender = 'male';
+                    } elseif (in_array($genderLower, ['female', 'f', 'woman'])) {
+                        $normalizedGender = 'female';
+                    } else {
+                        $normalizedGender = $gender;
+                    }
+                }
+
+                // Convert loyalty points to integer
+                $loyaltyPointsInt = 0;
+                if (!empty($loyaltyPoints)) {
+                    $loyaltyPointsInt = (int) filter_var($loyaltyPoints, FILTER_SANITIZE_NUMBER_INT);
+                }
+
+                // Check if user exists
+                $user = $this->userModel->where('email', $email)->first();
+
+                if ($user) {
+                    // Update existing user
+                    $updateData = [];
+
+                    if (!empty($name)) {
+                        $updateData['name'] = $name;
+                    }
+                    if (!empty($phone)) {
+                        $updateData['phone'] = $phone;
+                    }
+                    if (!empty($nationality)) {
+                        $updateData['nationality'] = $nationality;
+                    }
+                    if ($parsedDateOfBirth) {
+                        $updateData['date_of_birth'] = $parsedDateOfBirth;
+                    }
+                    if ($normalizedGender) {
+                        $updateData['gender'] = $normalizedGender;
+                    }
+                    if (!empty($address)) {
+                        $updateData['address'] = $address;
+                    }
+
+                    // Ensure user has customer role
+                    if (!$user->hasRole('customer')) {
+                        $user->assignRole('customer');
+                    }
+
+                    // Set status to active if not set
+                    if (empty($user->status)) {
+                        $updateData['status'] = $this->userModel::ACTIVE;
+                    }
+
+                    if (!empty($updateData)) {
+                        $user->update($updateData);
+                    }
+
+                    // Add loyalty points if provided
+                    if ($loyaltyPointsInt > 0) {
+                        $currentBalance = LoyaltyPoint::balance($user->id) ?? 0;
+                        if ($currentBalance < $loyaltyPointsInt) {
+                            $pointsToAdd = $loyaltyPointsInt - $currentBalance;
+                            $user->addLoyaltyPoints($pointsToAdd, null, "Imported from Excel - Row {$rowNumber}");
+                        }
+                    }
+
+                    $updated++;
+                } else {
+                    // Create new user
+                    $user = $this->userModel->create([
+                        'name' => $name ?: 'User',
+                        'email' => $email,
+                        'phone' => $phone,
+                        'nationality' => $nationality,
+                        'date_of_birth' => $parsedDateOfBirth,
+                        'gender' => $normalizedGender,
+                        'address' => $address,
+                        'password' => bcrypt('12345678'), // Default password
+                        'status' => $this->userModel::ACTIVE,
+                    ]);
+
+                    $user->assignRole('customer');
+
+                    // Add loyalty points if provided
+                    if ($loyaltyPointsInt > 0) {
+                        $user->addLoyaltyPoints($loyaltyPointsInt, null, "Imported from Excel - Row {$rowNumber}");
+                    }
+
+                    $imported++;
+                }
+            }
+
+            DB::commit();
+
+            $summary = [
+                'imported' => $imported,
+                'updated' => $updated,
+                'skipped' => $skipped,
+                'total_processed' => $imported + $updated + $skipped,
+            ];
+
+            if (!empty($errors)) {
+                $summary['errors'] = $errors;
+            }
+
+            return sendSuccess("Users imported successfully", $summary);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("User import error: " . $e->getMessage(), [
+                'file' => $filename,
+                'exception' => $e,
+            ]);
+            return sendError("Failed to import users: " . $e->getMessage());
         }
     }
 }
