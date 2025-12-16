@@ -442,6 +442,7 @@ class PaymentService
 
             if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
                 autoConfirmBookingIfPaid($booking);
+                regenerateBookingInvoice($booking);
             }
 
             DB::commit();
@@ -451,6 +452,7 @@ class PaymentService
                 'history',
                 'payments',
                 'invoices',
+                'latestInvoice',
                 'promocode',
                 'venue:id,name',
                 'listing:id,name',

@@ -711,6 +711,42 @@ if (! function_exists('getFormattedDuration')) {
     }
 }
 
+if (! function_exists('regenerateBookingInvoice')) {
+    function regenerateBookingInvoice($booking)
+    {
+        try {
+            $booking->loadMissing('user');
+            $user = $booking->user;
+
+            if (! $user) {
+                return;
+            }
+
+            $existingInvoices = $user->invoices()->where('booking_id', $booking->id)->get();
+            foreach ($existingInvoices as $invoice) {
+                $invoice->status = 're_generated';
+                $invoice->save();
+            }
+
+            $invoiceNumber = generateInvoiceId();
+            $invoicePath   = generateAndStoreInvoicePdf($booking, $invoiceNumber);
+
+            $user->invoices()->create([
+                'user_id'        => $user->id,
+                'status'         => 'generated',
+                'path'           => $invoicePath,
+                'booking_id'     => $booking->id,
+                'invoice_number' => $invoiceNumber,
+            ]);
+        } catch (Exception $e) {
+            Log::error("Failed to regenerate invoice for booking #{$booking->id}: " . $e->getMessage(), [
+                'booking_id' => $booking->id,
+                'exception'  => $e,
+            ]);
+        }
+    }
+}
+
 if (! function_exists('autoConfirmBookingIfPaid')) {
     function autoConfirmBookingIfPaid($booking)
     {
