@@ -2169,20 +2169,12 @@ class BookingService
                 ? $query->paginate($recordsPerPage)->through(fn($venue) => [
                 'id'   => $venue->id,
                 'name' => $venue->name,
-                'schedules' => $venue->schedules->map(fn($schedule) => [
-                    'day'        => $schedule->day,
-                    'open_time'  => $schedule->open_time,
-                    'close_time' => $schedule->close_time,
-                ]),
+                'schedules' => $venue->schedules,
             ])
                 : $query->get()->map(fn($venue) => [
                 'id'   => $venue->id,
                 'name' => $venue->name,
-                'schedules' => $venue->schedules->map(fn($schedule) => [
-                    'day'        => $schedule->day,
-                    'open_time'  => $schedule->open_time,
-                    'close_time' => $schedule->close_time,
-                ]),
+                'schedules' => $venue->schedules,
             ]);
 
             $venues = $formatResponse($result, $isPaginated);
