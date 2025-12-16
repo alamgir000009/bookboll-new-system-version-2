@@ -191,7 +191,17 @@ class PaymentController extends Controller
 
             $existingSession = StripeSession::where('session_id', $session_id)->first();
             if ($existingSession && $existingSession->processed) {
-                return response('This payment session has already been processed.', 200);
+                // Load bookings for already processed session
+                $mainBookingId   = $session->metadata['booking_id'] ?? null;
+                $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
+                $dueIds          = json_decode($dueBookingsJson, true) ?? [];
+                $bookingIds      = array_unique(array_filter(array_merge([$mainBookingId], $dueIds)));
+
+                $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
+                    ->whereIn('id', $bookingIds)
+                    ->get();
+
+                return view('payment-success', compact('bookings'));
             }
 
             $stripeSession = $existingSession ?? StripeSession::create([
@@ -201,7 +211,7 @@ class PaymentController extends Controller
 
             if ($session->payment_status !== 'paid') {
                 DB::rollBack();
-                return response('Payment not completed.', 400);
+                return view('payment-success', ['error' => 'Payment not completed. Please try again.']);
             }
 
             $paymentIntentId = $session->payment_intent;
@@ -211,7 +221,7 @@ class PaymentController extends Controller
             if (! $chargeId) {
                 DB::rollBack();
                 Log::error('No charge ID found for payment intent', ['payment_intent_id' => $paymentIntentId]);
-                return response('Payment verification failed: No charge found.', 400);
+                return view('payment-success', ['error' => 'Payment verification failed: No charge found.']);
             }
 
             $mainBookingId   = $session->metadata['booking_id'] ?? null;
@@ -222,7 +232,7 @@ class PaymentController extends Controller
             if (! $userId) {
                 DB::rollBack();
                 Log::error('No user ID found in session metadata', ['session_id' => $session_id]);
-                return response('Payment verification failed: No user found.', 400);
+                return view('payment-success', ['error' => 'Payment verification failed: No user found.']);
             }
 
             $bookingIds = [];
@@ -237,7 +247,7 @@ class PaymentController extends Controller
             if (empty($bookingIds)) {
                 DB::rollBack();
                 Log::error('No booking IDs found in session metadata', ['session_id' => $session_id]);
-                return response('Payment verification failed: No bookings found.', 400);
+                return view('payment-success', ['error' => 'Payment verification failed: No bookings found.']);
             }
 
             foreach ($bookingIds as $bookingId) {
@@ -284,6 +294,7 @@ class PaymentController extends Controller
                 $booking = Booking::find($bookingId);
                 if ($booking) {
                     autoConfirmBookingIfPaid($booking);
+                    regenerateBookingInvoice($booking);
                 }
             }
 
@@ -291,12 +302,17 @@ class PaymentController extends Controller
 
             DB::commit();
 
-            return response('Payment successful! Booking updated.', 200);
+            // Load bookings with relationships for the success page
+            $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
+                ->whereIn('id', $bookingIds)
+                ->get();
+
+            return view('payment-success', compact('bookings'));
 
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Stripe success route error: ' . $e->getMessage(), ['session_id' => $session_id]);
-            return response('Payment verification failed');
+            return view('payment-success', ['error' => 'Payment verification failed. Please contact support if this issue persists.']);
         }
     }
 
