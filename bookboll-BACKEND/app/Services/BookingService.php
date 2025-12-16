@@ -2141,6 +2141,7 @@ class BookingService
             $query = Listing::select('id', 'name', 'venue_id')
                 ->with(['venue:id,name'])
                 ->active()
+                ->orderBy('sort_order', 'ASC')
                 ->orderBy('name');
 
             $result = $isPaginated
@@ -2163,6 +2164,7 @@ class BookingService
 
             $query = Venue::with('schedules')->select('id', 'name')
                 ->active()
+                ->orderBy('sort_order', 'ASC')
                 ->orderBy('name');
 
             $result = $isPaginated
