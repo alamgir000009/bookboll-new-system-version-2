@@ -900,7 +900,7 @@ class BookingService
             }
 
             $createdBookings = collect();
-            $listing         = Listing::findOrFail($formData['listing_id']);
+            $listing         = Listing::with(['pricingGroups'])->findOrFail($formData['listing_id']);
 
             $weekday = strtolower(Carbon::parse($request->date)->format('l'));
 
