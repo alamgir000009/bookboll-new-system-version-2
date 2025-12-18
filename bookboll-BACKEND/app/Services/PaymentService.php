@@ -160,7 +160,7 @@ class PaymentService
             ];
 
             Stripe::setApiKey(config('services.stripe.secret'));
-            
+
             $paymentLink = PaymentLink::create([
                 'line_items' => [[
                     'price_data' => [
@@ -379,15 +379,30 @@ class PaymentService
     public function markBookingAsPaid($request)
     {
         $validated = $request->validate([
-            'booking_id'     => 'required|exists:bookings,id',
-            'payment_status' => 'required|in:paid_cash,paid_wire,paid_wire_transfer,paid_cheque,paid_credit_card',
+            'booking_id'                     => 'required|exists:bookings,id',
+            'payment_status'                 => 'required|in:paid_cash,paid_wire,paid_wire_transfer,paid_cheque,paid_credit_card',
+            'selected_due_bookings'          => 'nullable|array',
+            'selected_due_bookings.*.id'     => 'exists:bookings,id',
+            'selected_due_bookings.*.amount' => 'numeric|min:0',
         ]);
 
         try {
             DB::beginTransaction();
 
-            $booking = $this->bookingModel::lockForUpdate()->findOrFail($validated['booking_id']);
-            $user    = auth()->user();
+            $mainBookingId   = $validated['booking_id'];
+            $dueBookingsData = collect($validated['selected_due_bookings'] ?? []);
+            $user            = auth()->user();
+
+            $mainBookingForValidation = $this->bookingModel::findOrFail($mainBookingId);
+
+            // Validate due bookings belong to the same user
+            foreach ($dueBookingsData as $due) {
+                $dueBooking = $this->bookingModel::findOrFail($due['id']);
+                if ($dueBooking->user_id !== $mainBookingForValidation->user_id) {
+                    DB::rollBack();
+                    return sendError("Due booking ({$dueBooking->booking_id}) belongs to different user.");
+                }
+            }
 
             $paymentMethodMap = [
                 'paid_cash'          => PaymentMethod::CASH,
@@ -398,62 +413,88 @@ class PaymentService
             ];
 
             $paymentMethod = $paymentMethodMap[$validated['payment_status']];
+            $paymentMethodName = str_replace('paid_', '', str_replace('_', ' ', $validated['payment_status']));
 
-            $pendingPayments = $booking->payments()
-                ->where('status', PaymentStatus::PENDING)
-                ->get();
+            // Collect all booking IDs to process (main + due bookings)
+            $allBookingIds = collect([$mainBookingId])->merge($dueBookingsData->pluck('id'))->unique();
 
-            if ($pendingPayments->isEmpty()) {
+            $mainBooking = null;
+            $hasAnyPendingPayments = false;
+
+            foreach ($allBookingIds as $bookingId) {
+                $booking = $this->bookingModel::lockForUpdate()->findOrFail($bookingId);
+                $isMain  = ($bookingId == $mainBookingId);
+
+                if ($isMain) {
+                    $mainBooking = $booking;
+                }
+
+                $pendingPayments = $booking->payments()
+                    ->where('status', PaymentStatus::PENDING)
+                    ->get();
+
+                if ($pendingPayments->isEmpty()) {
+                    continue;
+                }
+
+                $hasAnyPendingPayments = true;
+
+                foreach ($pendingPayments as $payment) {
+                    $notes = $payment->notes ?? "Payment for booking #{$booking->id}";
+                    $notes = str_replace('pending', 'paid via ' . $paymentMethodName, $notes);
+
+                    $payment->update([
+                        'notes'  => $notes,
+                        'method' => $paymentMethod,
+                        'status' => PaymentStatus::PAID,
+                        'date'   => now()->format('Y-m-d'),
+                    ]);
+                }
+
+                $bookingUpdates = [
+                    'full_payment_received' => true,
+                    'payment_method'        => $validated['payment_status'],
+                    'payment_status'        => BookingPaymentStatus::FULLY_PAID,
+                ];
+
+                if ($isMain && $booking->payment_method === 'deposit_remaining_on_arrival') {
+                    $paymentBreakdown                     = $booking->payment_breakdown ?? [];
+                    $paymentBreakdown['remaining_method'] = str_replace('paid_', '', $validated['payment_status']);
+                    $bookingUpdates['payment_breakdown']  = $paymentBreakdown;
+                }
+
+                $booking->update($bookingUpdates);
+
+                if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
+                    autoConfirmBookingIfPaid($booking);
+                    if ($isMain) {
+                        regenerateBookingInvoice($booking);
+                    }
+                }
+            }
+
+            if (!$hasAnyPendingPayments) {
                 DB::rollBack();
-                return sendError('No pending payments found for this booking.');
+                return sendError('No pending payments found for the selected bookings.');
             }
 
-            foreach ($pendingPayments as $payment) {
-                $notes = $payment->notes ?? "Payment for booking #{$booking->id}";
-                $notes = str_replace('pending', 'paid via ' . str_replace('paid_', '', $validated['payment_status']), $notes);
-
-                $payment->update([
-                    'notes'  => $notes,
-                    'method' => $paymentMethod,
-                    'status' => PaymentStatus::PAID,
-                    'date'   => now()->format('Y-m-d'),
+            if ($mainBooking) {
+                $mainBooking->history()->create([
+                    'user_id'     => $user->id,
+                    'action'      => 'payment_completed',
+                    'description' => 'All pending payments marked as paid via ' . $paymentMethodName . ($dueBookingsData->isNotEmpty() ? ' (including due bookings)' : ''),
                 ]);
-            }
-
-            $bookingUpdates = [
-                'full_payment_received' => true,
-                'payment_method'        => $validated['payment_status'],
-                'payment_status'        => BookingPaymentStatus::FULLY_PAID,
-            ];
-
-            if ($booking->payment_method === 'deposit_remaining_on_arrival') {
-                $paymentBreakdown                     = $booking->payment_breakdown ?? [];
-                $paymentBreakdown['remaining_method'] = str_replace('paid_', '', $validated['payment_status']);
-                $bookingUpdates['payment_breakdown']  = $paymentBreakdown;
-            }
-
-            $booking->update($bookingUpdates);
-
-            $booking->history()->create([
-                'user_id'     => $user->id,
-                'action'      => 'payment_completed',
-                'description' => 'All pending payments marked as paid via ' . str_replace('paid_', '', str_replace('_', ' ', $validated['payment_status'])),
-            ]);
-
-            if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
-                autoConfirmBookingIfPaid($booking);
-                regenerateBookingInvoice($booking);
             }
 
             DB::commit();
 
-            $booking = $booking->load([
+            $booking = $mainBooking->load([
                 'addOns',
                 'history',
                 'payments',
                 'invoices',
-                'latestInvoice',
                 'promocode',
+                'latestInvoice',
                 'venue:id,name',
                 'listing:id,name',
                 'resourcesAllocated',
