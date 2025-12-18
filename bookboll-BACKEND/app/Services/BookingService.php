@@ -397,9 +397,7 @@ class BookingService
                 ];
             });
 
-        return sendSuccess('Due bookings fetched successfully', [
-            'dueBookings' => $dueBookings,
-        ]);
+        return sendSuccess('Due bookings fetched successfully', compact('dueBookings'));
     }
 
     public function store($request)
