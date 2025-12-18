@@ -123,16 +123,16 @@ class RolePermissionTableSeeder extends Seeder
         $user->assignRole('super_admin');
         $user = User::find(2);
         $user->assignRole('admin');
-        $user = User::find(3);
-        $user->assignRole('senior_employee');
-        $user = User::find(4);
-        $user->assignRole('junior_employee');
-        $user = User::find(5);
-        $user->assignRole('guard');
+        // $user = User::find(3);
+        // $user->assignRole('senior_employee');
+        // $user = User::find(4);
+        // $user->assignRole('junior_employee');
+        // $user = User::find(5);
+        // $user->assignRole('guard');
 
-        $customers = User::whereIn('id', [6, 7, 8, 9])->get();
-        foreach ($customers as $customer) {
-            $customer->assignRole('customer');
-        }
+        // $customers = User::whereIn('id', [6, 7, 8, 9])->get();
+        // foreach ($customers as $customer) {
+        //     $customer->assignRole('customer');
+        // }
     }
 }
