@@ -11,6 +11,7 @@ use App\Models\SlotLock;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\SportsType;
+use App\Models\Venue;
 use BookingStatus;
 use Carbon\Carbon;
 use Exception;
@@ -29,6 +30,8 @@ class ListingService
     {
         $records_per_page = $request->records_per_page ?? 10;
         $search           = $request->search ?? null;
+
+        $venues = Venue::active()->orderBy('sort_order', 'ASC')->get(['id', 'name']);
 
         $query = $this->listingModel::with([
             'addOns',
@@ -57,15 +60,13 @@ class ListingService
                         });
                 });
             })
-            ->when($request->venue ?? null, function ($query, $venue) {
-                $query->whereHas('venue', function ($q) use ($venue) {
-                    $q->where('name', 'LIKE', "%{$venue}%");
-                });
+            ->when($request->venue_id, function ($query, $venue_id) {
+                $query->whereRelation('venue', 'id', $venue_id);
             });
 
         $listings = $query->paginate($records_per_page);
 
-        return sendSuccess('Listings fetched successfully', compact('listings'));
+        return sendSuccess('Listings fetched successfully', compact('listings', 'venues'));
     }
 
     public function create($request)
@@ -261,7 +262,7 @@ class ListingService
             'tags.left_tag.text'                 => 'nullable|string|max:30',
             'tags.left_tag.color'                => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
             'tags.right_tag'                     => 'nullable|array',
-            'tags.right_tag.text'                 => 'nullable|string|max:30',
+            'tags.right_tag.text'                => 'nullable|string|max:30',
             'tags.right_tag.color'               => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
             'resources'                          => 'nullable|array',
             'resources.*.id'                     => 'required|exists:resources,id',
@@ -273,8 +274,8 @@ class ListingService
             $rules = $this->makeRulesOptional($rules);
         }
 
-        $request->validate($rules,[
-            'tags.left_tag.text.max' => 'The left tag text must be less than 30 characters.',
+        $request->validate($rules, [
+            'tags.left_tag.text.max'  => 'The left tag text must be less than 30 characters.',
             'tags.right_tag.text.max' => 'The right tag text must be less than 30 characters.',
         ]);
 
