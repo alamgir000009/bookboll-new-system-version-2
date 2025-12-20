@@ -257,7 +257,12 @@ class ListingService
             'images.*'                           => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
             'add_ons.*'                          => 'nullable|exists:add_ons,id',
             'tags'                               => 'nullable|array',
-            'tags.*'                             => 'string|max:255',
+            'tags.left_tag'                      => 'nullable|array',
+            'tags.left_tag.text'                 => 'nullable|string|max:30',
+            'tags.left_tag.color'                => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
+            'tags.right_tag'                     => 'nullable|array',
+            'tags.right_tag.text'                 => 'nullable|string|max:30',
+            'tags.right_tag.color'               => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
             'resources'                          => 'nullable|array',
             'resources.*.id'                     => 'required|exists:resources,id',
             'resources.*.quantity'               => 'nullable|integer|min:1',
@@ -268,7 +273,10 @@ class ListingService
             $rules = $this->makeRulesOptional($rules);
         }
 
-        $request->validate($rules);
+        $request->validate($rules,[
+            'tags.left_tag.text.max' => 'The left tag text must be less than 30 characters.',
+            'tags.right_tag.text.max' => 'The right tag text must be less than 30 characters.',
+        ]);
 
         $parsedData = $request->all();
 
@@ -318,6 +326,17 @@ class ListingService
             }
         }
 
+        if (isset($data['tags']) && is_string($data['tags'])) {
+            $decoded = json_decode($data['tags'], true);
+            if (json_last_error() == JSON_ERROR_NONE) {
+                $data['tags'] = is_array($decoded) ? $decoded : [];
+            } else {
+                throw ValidationException::withMessages([
+                    'tags' => ['Invalid JSON format for tags'],
+                ]);
+            }
+        }
+
         if (isset($data['add_ons']) && ! is_array($data['add_ons'])) {
             $data['add_ons'] = $data['add_ons'] ? [$data['add_ons']] : [];
         }
@@ -363,6 +382,13 @@ class ListingService
             'resources'                          => 'nullable|array',
             'resources.*.id'                     => 'required|exists:resources,id',
             'resources.*.quantity'               => 'nullable|integer|min:1',
+            'tags'                               => 'nullable|array',
+            'tags.left_tag'                      => 'nullable|array',
+            'tags.left_tag.text'                 => 'nullable|string|max:255',
+            'tags.left_tag.color'                => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
+            'tags.right_tag'                     => 'nullable|array',
+            'tags.right_tag.text'                => 'nullable|string|max:255',
+            'tags.right_tag.color'               => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
         ];
 
         $validator = \Validator::make($data, $rules);
@@ -403,14 +429,39 @@ class ListingService
 
     protected function extractListingData(array $data): array
     {
-        $tags = [];
+        $tags = [
+            'left_tag'  => null,
+            'right_tag' => null,
+        ];
+
         if (isset($data['tags']) && is_array($data['tags'])) {
-            $tags = collect($data['tags'])
-                ->map(fn($tag) => is_string($tag) ? trim($tag) : $tag)
-                ->filter()
-                ->unique()
-                ->values()
-                ->toArray();
+            // Handle new structured format with left_tag and right_tag
+            if (isset($data['tags']['left_tag']) && is_array($data['tags']['left_tag'])) {
+                $tags['left_tag'] = [
+                    'text'  => isset($data['tags']['left_tag']['text']) ? trim($data['tags']['left_tag']['text']) : null,
+                    'color' => isset($data['tags']['left_tag']['color']) ? trim($data['tags']['left_tag']['color']) : null,
+                ];
+                // Remove if both are empty
+                if (empty($tags['left_tag']['text']) && empty($tags['left_tag']['color'])) {
+                    $tags['left_tag'] = null;
+                }
+            }
+
+            if (isset($data['tags']['right_tag']) && is_array($data['tags']['right_tag'])) {
+                $tags['right_tag'] = [
+                    'text'  => isset($data['tags']['right_tag']['text']) ? trim($data['tags']['right_tag']['text']) : null,
+                    'color' => isset($data['tags']['right_tag']['color']) ? trim($data['tags']['right_tag']['color']) : null,
+                ];
+                // Remove if both are empty
+                if (empty($tags['right_tag']['text']) && empty($tags['right_tag']['color'])) {
+                    $tags['right_tag'] = null;
+                }
+            }
+
+            // If both tags are null, set tags to null
+            if ($tags['left_tag'] === null && $tags['right_tag'] === null) {
+                $tags = null;
+            }
         }
 
         return [
