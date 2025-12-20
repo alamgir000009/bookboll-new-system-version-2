@@ -7,6 +7,7 @@ class SportsCategory extends Model
 {
     protected $fillable = [
         'name',
+        'slug',
         'icon',
         'image',
         'status',

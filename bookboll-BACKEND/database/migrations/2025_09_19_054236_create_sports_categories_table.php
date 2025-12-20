@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('sports_categories', function (Blueprint $table) {
             $table->id();
             $table->string('name')->unique()->index();
+            $table->string('slug')->nullable();
             $table->foreignId('sports_type_id')->constrained('sports_types')->cascadeOnDelete();
             $table->text('description')->nullable();
             $table->string('icon')->nullable();
