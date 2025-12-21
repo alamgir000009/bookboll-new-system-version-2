@@ -46,14 +46,15 @@ class BookingService
                         ->orWhere('total_price', 'LIKE', "%{$search}%")
                         ->orWhere('payment_method', 'LIKE', "%{$search}%")
                         ->orWhere('notes', 'LIKE', "%{$search}%")
+                        ->orWhere('date', 'LIKE', "%{$search}%")
                         ->orWhere('created_at', 'LIKE', "%{$search}%")
                         ->orWhere('booking_id', 'LIKE', "%{$search}%")
                         ->orWhere('subtotal', 'LIKE', "%{$search}%");
                 });
             })
             ->when($request->status, fn($q, $status) => $q->where('status', $status))
-            ->when($request->from_date, fn($q, $from) => $q->whereDate('created_at', '>=', $from))
-            ->when($request->to_date, fn($q, $to) => $q->whereDate('created_at', '<=', $to))
+            ->when($request->from_date, fn($q, $from) => $q->whereDate('date', '>=', $from))
+            ->when($request->to_date, fn($q, $to) => $q->whereDate('date', '<=', $to))
             ->when($request->venue, function ($q, $venue) {
                 $q->where('venue_id', 'LIKE', "%{$venue}%");
             })

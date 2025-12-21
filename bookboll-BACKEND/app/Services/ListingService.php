@@ -422,6 +422,7 @@ class ListingService
     {
         foreach ($rules as $field => $rule) {
             if (str_contains($rule, 'required') && ! str_contains($rule, 'sometimes')) {
+                }
                 $rules[$field] = str_replace('required', 'sometimes|required', $rule);
             }
         }
