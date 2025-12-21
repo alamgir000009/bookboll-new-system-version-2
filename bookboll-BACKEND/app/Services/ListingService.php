@@ -19,6 +19,7 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rules\File;
 use Illuminate\Validation\ValidationException;
 
 class ListingService
@@ -255,7 +256,17 @@ class ListingService
             'pricing_groups.*.price_per_hour'    => 'required|numeric|min:0',
             'pricing_groups.*.days'              => 'required|array',
             'pricing_groups.*.days.*'            => 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
-            'images.*'                           => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'images.*'                           => [
+                'nullable',
+                File::types([
+                    'image/jpeg',
+                    'image/png',
+                    'image/gif',
+                    'image/bmp',
+                    'image/webp',
+                    'image/avif',
+                ])->max(5120 * 1024),
+            ],
             'add_ons.*'                          => 'nullable|exists:add_ons,id',
             'tags'                               => 'nullable|array',
             'tags.left_tag'                      => 'nullable|array',
@@ -421,8 +432,22 @@ class ListingService
     protected function makeRulesOptional(array $rules): array
     {
         foreach ($rules as $field => $rule) {
-            if (str_contains($rule, 'required') && ! str_contains($rule, 'sometimes')) {
+            if (is_array($rule)) {
+                // Handle array rules (e.g., File validation rules)
+                $modified = false;
+                $newRule = [];
+                foreach ($rule as $index => $ruleItem) {
+                    if (is_string($ruleItem) && str_contains($ruleItem, 'required') && ! str_contains($ruleItem, 'sometimes')) {
+                        $newRule[] = str_replace('required', 'sometimes|required', $ruleItem);
+                        $modified = true;
+                    } else {
+                        $newRule[] = $ruleItem;
+                    }
                 }
+                if ($modified) {
+                    $rules[$field] = $newRule;
+                }
+            } elseif (is_string($rule) && str_contains($rule, 'required') && ! str_contains($rule, 'sometimes')) {
                 $rules[$field] = str_replace('required', 'sometimes|required', $rule);
             }
         }
