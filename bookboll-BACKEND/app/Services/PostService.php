@@ -6,6 +6,7 @@ use App\Models\PostCategory;
 use App\Models\Tag;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rules\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -149,7 +150,17 @@ class PostService
             'read_time'        => 'required|string',
             'status'           => 'required|in:draft,published',
             'post_category_id' => 'nullable|exists:post_categories,id',
-            'featured_image'   => 'nullable|image|max:5120',
+            'featured_image'   => [
+                'nullable',
+                File::types([
+                    'image/jpeg',
+                    'image/png',
+                    'image/gif',
+                    'image/bmp',
+                    'image/webp',
+                    'image/avif',
+                ])->max(5120 * 1024),
+            ],
             'image_url'        => 'nullable|url',
             'tags'             => 'nullable|array',
             'tags.*'           => 'string|max:100',
@@ -278,7 +289,7 @@ class PostService
             ->with(['author', 'category', 'tags'])
             ->first();
 
-        if (!$post) {
+        if (! $post) {
             return sendError('Post not found', [], 404);
         }
 
