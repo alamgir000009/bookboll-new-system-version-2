@@ -286,20 +286,67 @@ class PaymentService
 
     private function validateDueBookings($booking, $selectedDueBookings)
     {
-        $dueIds      = collect($selectedDueBookings ?? [])->pluck('id');
-        $dueBookings = $this->bookingModel::whereIn('id', $dueIds)
-            ->where('user_id', $booking->user_id)
-            ->where('venue_id', $booking->venue_id)
-            ->whereIn('payment_status', ['pending', 'deposit_paid'])
-            ->where('status', '!=', BookingStatus::CANCELLED)
-            ->where('id', '!=', $booking->id)
-            ->get();
-
-        if ($dueBookings->count() !== $dueIds->count()) {
-            throw new Exception('Invalid selected due bookings');
+        $dueIds = collect($selectedDueBookings ?? [])->pluck('id');
+        
+        if ($dueIds->isEmpty()) {
+            return collect();
         }
 
-        return $dueBookings;
+        // Get all bookings first
+        $allDueBookings = $this->bookingModel::whereIn('id', $dueIds)->get();
+        
+        // Check if all booking IDs exist
+        $foundIds = $allDueBookings->pluck('id');
+        $missingIds = $dueIds->diff($foundIds);
+        
+        if ($missingIds->isNotEmpty()) {
+            throw new Exception("Bookings not found: " . $missingIds->implode(', '));
+        }
+
+        $errors = [];
+        $validBookings = collect();
+
+        foreach ($allDueBookings as $dueBooking) {
+            $bookingErrors = [];
+
+            // Check if booking is the same as main booking
+            if ($dueBooking->id == $booking->id) {
+                $bookingErrors[] = "Booking #{$dueBooking->id} is the same as the main booking";
+            }
+
+            // Check user_id
+            if ($dueBooking->user_id !== $booking->user_id) {
+                $bookingErrors[] = "Booking #{$dueBooking->id} belongs to a different user (User ID: {$dueBooking->user_id}, Expected: {$booking->user_id})";
+            }
+
+            // Check venue_id
+            if ($dueBooking->venue_id !== $booking->venue_id) {
+                $bookingErrors[] = "Booking #{$dueBooking->id} belongs to a different venue (Venue ID: {$dueBooking->venue_id}, Expected: {$booking->venue_id})";
+            }
+
+            // Check payment_status
+            if (!in_array($dueBooking->payment_status, ['pending', 'deposit_paid'])) {
+                $currentStatus = $dueBooking->payment_status ?? 'null';
+                $bookingErrors[] = "Booking #{$dueBooking->id} has invalid payment status: '{$currentStatus}' (Expected: 'pending' or 'deposit_paid')";
+            }
+
+            // Check status (not cancelled)
+            if ($dueBooking->status === BookingStatus::CANCELLED) {
+                $bookingErrors[] = "Booking #{$dueBooking->id} is cancelled";
+            }
+
+            if (!empty($bookingErrors)) {
+                $errors[] = "Booking #{$dueBooking->id}: " . implode('; ', $bookingErrors);
+            } else {
+                $validBookings->push($dueBooking);
+            }
+        }
+
+        if (!empty($errors)) {
+            throw new Exception('Invalid selected due bookings. ' . implode(' | ', $errors));
+        }
+
+        return $validBookings;
     }
 
     public function confirmPayment($request)

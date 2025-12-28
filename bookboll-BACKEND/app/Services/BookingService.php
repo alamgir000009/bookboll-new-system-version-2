@@ -429,6 +429,7 @@ class BookingService
             ->where('venue_id', $validated['venue_id'])
             ->whereRaw("STR_TO_DATE(CONCAT(date, ' ', end_time), '%Y-%m-%d %H:%i:%s') < ?", [$now])
             ->whereIn('payment_status', [BookingPaymentStatus::PENDING, BookingPaymentStatus::DEPOSIT_PAID])
+            ->where('status', '!=', BookingStatus::CANCELLED)
             ->when(! empty($validated['editing_booking_id']), function ($q) use ($validated) {
                 $q->where('id', '!=', $validated['editing_booking_id']);
             })
