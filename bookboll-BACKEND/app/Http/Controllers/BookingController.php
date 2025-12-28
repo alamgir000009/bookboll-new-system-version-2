@@ -1,10 +1,12 @@
 <?php
 namespace App\Http\Controllers;
 
+use App\Exports\BookingsExport;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Services\BookingService;
 use Illuminate\Http\Request;
+use Maatwebsite\Excel\Facades\Excel;
 
 class BookingController extends Controller
 {
@@ -120,5 +122,13 @@ class BookingController extends Controller
     public function mobileUpdateBooking(Request $request, $booking_id)
     {
         return $this->bookingService->mobileUpdateBooking($request, $booking_id);
+    }
+
+    public function export(Request $request)
+    {
+        $bookings = $this->bookingService->getBookingsForExport($request);
+        $filename = 'bookings-' . now()->format('Y-m-d') . '.xlsx';
+
+        return Excel::download(new BookingsExport($bookings), $filename);
     }
 }

@@ -71,6 +71,54 @@ class BookingService
         return sendSuccess('Bookings fetched successfully', compact('bookings'));
     }
 
+    public function getBookingsForExport($request)
+    {
+        $search     = $request->search ?? null;
+        $status     = $request->status ?? null;
+        $venue      = $request->venue ?? null;
+        $user       = $request->user ?? null;
+        $user_id    = $request->user_id ?? null;
+        $from_date  = $request->from_date ?? null;
+        $to_date    = $request->to_date ?? null;
+        $exportAll  = $request->export_all == 1 || $request->export_all === '1';
+
+        $query = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns'])
+            ->when($search, function ($q) use ($search) {
+                $q->where(function ($q) use ($search) {
+                    $q->whereHas('listing', fn($l) => $l->where('name', 'LIKE', "%{$search}%"))
+                        ->orWhere('duration', 'LIKE', "%{$search}%")
+                        ->orWhere('total_price', 'LIKE', "%{$search}%")
+                        ->orWhere('payment_method', 'LIKE', "%{$search}%")
+                        ->orWhere('notes', 'LIKE', "%{$search}%")
+                        ->orWhere('date', 'LIKE', "%{$search}%")
+                        ->orWhere('created_at', 'LIKE', "%{$search}%")
+                        ->orWhere('booking_id', 'LIKE', "%{$search}%")
+                        ->orWhere('subtotal', 'LIKE', "%{$search}%");
+                });
+            })
+            ->when($status, fn($q, $status) => $q->where('status', $status))
+            ->when($from_date, fn($q, $from) => $q->whereDate('date', '>=', $from))
+            ->when($to_date, fn($q, $to) => $q->whereDate('date', '<=', $to))
+            ->when($venue, function ($q, $venue) {
+                $q->where('venue_id', 'LIKE', "%{$venue}%");
+            })
+            ->when($user, function ($q, $user) {
+                $q->whereHas('user', fn($u) => $u->where('name', 'LIKE', "%{$user}%"));
+            })
+            ->when($user_id, function ($q, $user_id) {
+                $q->whereRelation('user', 'id', $user_id);
+            })
+            ->latest('id');
+
+        if (!$exportAll) {
+            $records_per_page = $request->records_per_page ?? 10;
+            $page             = $request->page ?? 1;
+            $query->skip(($page - 1) * $records_per_page)->take($records_per_page);
+        }
+
+        return $query->get();
+    }
+
     public function getBooking($booking_id)
     {
         $booking = $this->bookingModel::with([

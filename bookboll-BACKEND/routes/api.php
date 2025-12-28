@@ -111,6 +111,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar'])->name('bookings.calendar');
         Route::post('bookings/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
         Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings'])->name('bookings.due');
+        Route::get('bookings/export', [BookingController::class, 'export'])->name('bookings.export');
         Route::apiResource('bookings', BookingController::class);
 
         Route::post('payments/confirm', [PaymentController::class, 'confirmPayment'])->name('payments.confirm');
