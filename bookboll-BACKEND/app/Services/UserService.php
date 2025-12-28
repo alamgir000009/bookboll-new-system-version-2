@@ -542,7 +542,7 @@ class UserService
             'email'    => 'sometimes|email|unique:users,email,' . $user->id,
             'role'     => 'sometimes|exists:roles,name',
             'status'   => 'sometimes|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
-            'password' => 'sometimes|min:5',
+            'password' => 'sometimes|min:3',
             'venues'   => 'sometimes|nullable|array',
             'venues.*' => 'numeric|exists:venues,id',
         ];
