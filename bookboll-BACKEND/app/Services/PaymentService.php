@@ -75,6 +75,81 @@ class PaymentService
         return sendSuccess('Payments fetched successfully', compact('payments', 'stats'));
     }
 
+    public function getPaymentsForExport($request)
+    {
+        $search     = $request->search ?? null;
+        $method     = $request->method ?? null;
+        $status     = $request->status ?? null;
+        $from_date  = $request->from_date ?? null;
+        $to_date    = $request->to_date ?? null;
+        $exportAll  = $request->export_all == 1 || $request->export_all === '1';
+
+        $query = $this->paymentModel::with([
+            'booking',
+            'user:id,name,email',
+            'booking.venue:id,name',
+            'booking.listing:id,name',
+        ])
+            ->latest()
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('type', 'LIKE', "%{$search}%")
+                        ->orWhere('method', 'LIKE', "%{$search}%")
+                        ->orWhere('amount', 'LIKE', "%{$search}%")
+                        ->orWhere('booking_id', 'LIKE', "%{$search}%")
+                        ->orWhere('payment_id', 'LIKE', "%{$search}%")
+                        ->orWhereHas('booking.user', function ($sub) use ($search) {
+                            $sub->where('name', 'LIKE', "%{$search}%")
+                                ->orWhere('email', 'LIKE', "%{$search}%");
+                        })
+                        ->orWhereHas('booking.venue', function ($sub) use ($search) {
+                            $sub->where('name', 'LIKE', "%{$search}%");
+                        });
+                });
+            })
+            ->when($method, function ($query, $method) {
+                $query->where('method', $method);
+            })
+            ->when($status, function ($query, $status) {
+                $query->where('status', $status);
+            })
+            ->when($from_date && $to_date, function ($query) use ($from_date, $to_date) {
+                $query->where(function ($q) use ($from_date, $to_date) {
+                    $q->whereBetween('date', [$from_date, $to_date])
+                        ->orWhere(function ($subQ) use ($from_date, $to_date) {
+                            $subQ->whereNull('date')
+                                ->whereBetween('created_at', [$from_date, $to_date]);
+                        });
+                });
+            })
+            ->when($from_date && !$to_date, function ($query) use ($from_date) {
+                $query->where(function ($q) use ($from_date) {
+                    $q->where('date', '>=', $from_date)
+                        ->orWhere(function ($subQ) use ($from_date) {
+                            $subQ->whereNull('date')
+                                ->whereDate('created_at', '>=', $from_date);
+                        });
+                });
+            })
+            ->when($to_date && !$from_date, function ($query) use ($to_date) {
+                $query->where(function ($q) use ($to_date) {
+                    $q->where('date', '<=', $to_date)
+                        ->orWhere(function ($subQ) use ($to_date) {
+                            $subQ->whereNull('date')
+                                ->whereDate('created_at', '<=', $to_date);
+                        });
+                });
+            });
+
+        if (!$exportAll) {
+            $records_per_page = $request->records_per_page ?? 10;
+            $page             = $request->page ?? 1;
+            $query->skip(($page - 1) * $records_per_page)->take($records_per_page);
+        }
+
+        return $query->get();
+    }
+
     public function getDashboardTotals(): array
     {
         $total   = $this->paymentModel::sum('amount');

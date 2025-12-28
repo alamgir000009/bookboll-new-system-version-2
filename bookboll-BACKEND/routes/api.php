@@ -118,6 +118,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink'])->name('payments.generate-link');
         Route::post('payments/mark-booking-paid', [PaymentController::class, 'markBookingAsPaid'])->name('payments.mark-booking-paid');
         Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice'])->name('payments.invoice');
+        Route::get('payments/export', [PaymentController::class, 'export'])->name('payments.export');
         Route::apiResource('payments', PaymentController::class);
 
         Route::apiResource('special-days', SpecialDayController::class);

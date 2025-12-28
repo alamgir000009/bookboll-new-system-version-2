@@ -1,12 +1,14 @@
 <?php
 namespace App\Http\Controllers;
 
+use App\Exports\PaymentsExport;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\PaymentMethod as PaymentMethodModel;
 use App\Models\StripeSession;
 use App\Services\PaymentService;
 use BookingPaymentMethod;
+use Maatwebsite\Excel\Facades\Excel;
 use BookingPaymentStatus;
 use Exception;
 use Illuminate\Http\Request;
@@ -35,11 +37,10 @@ class PaymentController extends Controller
 
     public function export(Request $request)
     {
-        $filters = $request->query();
-        $data    = $this->paymentService->exportPaymentsCsv($filters);
+        $payments = $this->paymentService->getPaymentsForExport($request);
+        $filename = 'payments-' . now()->format('Y-m-d') . '.xlsx';
 
-        $csv = collect($data)->prepend(array_keys($data[0] ?? []))->map(fn($row) => collect($row)->implode(','))->implode("\n");
-        return response($csv, 200, ['Content-Type' => 'text/csv', 'Content-Disposition' => 'attachment; filename="payments.csv"']);
+        return Excel::download(new PaymentsExport($payments), $filename);
     }
 
     public function downloadInvoice($id)
