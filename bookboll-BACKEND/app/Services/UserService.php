@@ -56,7 +56,7 @@ class UserService
                     'name'     => $formData['name'],
                     'email'    => $formData['email'],
                     'phone'    => $formData['phone'],
-                    'password' => bcrypt($formData['password']),
+                    'password' => $formData['password'],
                     'status'   => $this->userModel::ACTIVE,
                 ]);
 
@@ -485,6 +485,8 @@ class UserService
                 $formData['password'] = '12345678';
             }
 
+            $plainPassword = $formData['password'];
+
             $user = $this->userModel->create([
                 'name'     => $formData['name'],
                 'email'    => $formData['email'],
@@ -505,7 +507,7 @@ class UserService
             DB::commit();
 
             try {
-                Mail::to($user->email)->queue(new UserWelcomeEmail($user, $formData['password']));
+                Mail::to($user->email)->queue(new UserWelcomeEmail($user, $plainPassword));
             } catch (Exception $e) {
                 Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
             }
@@ -905,7 +907,7 @@ class UserService
             }
 
             $rows = $data[0];
-            $headerRow = array_shift($rows); // Remove header row
+            $headerRow = array_shift($rows);
 
             $imported = 0;
             $updated = 0;
@@ -913,14 +915,12 @@ class UserService
             $errors = [];
 
             foreach ($rows as $index => $row) {
-                $rowNumber = $index + 2; // +2 because we removed header and arrays are 0-indexed
+                $rowNumber = $index + 2;
 
-                // Skip empty rows
                 if (empty(array_filter($row))) {
                     continue;
                 }
 
-                // Map columns: A=Name, B=Email, C=Phone, D=Nationality, E=Date of Birth, F=Gender, G=Loyalty points, H=Address
                 $name = trim($row[0] ?? '');
                 $email = trim($row[1] ?? '');
                 $phone = trim($row[2] ?? '');
@@ -930,52 +930,42 @@ class UserService
                 $loyaltyPoints = trim($row[6] ?? '0');
                 $address = trim($row[7] ?? '');
 
-                // Skip if email is empty (required field)
                 if (empty($email)) {
                     $skipped++;
                     $errors[] = "Row {$rowNumber}: Skipped - Email is required";
                     continue;
                 }
 
-                // Validate email format
                 if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $skipped++;
                     $errors[] = "Row {$rowNumber}: Skipped - Invalid email format: {$email}";
                     continue;
                 }
 
-                // Format phone number (handle +974 prefix and scientific notation)
                 if (!empty($phone)) {
-                    // Convert scientific notation to string (e.g., 9.74255E+16)
+
                     if (is_numeric($phone) && (stripos($phone, 'E') !== false || stripos($phone, 'e') !== false)) {
                         $phone = number_format((float)$phone, 0, '', '');
                     }
 
-                    // Remove any non-numeric characters except +
                     $phone = preg_replace('/[^0-9+]/', '', $phone);
 
-                    // Add +974 if phone doesn't start with +
                     if (!empty($phone) && !str_starts_with($phone, '+')) {
-                        // If it starts with 974, add +
                         if (str_starts_with($phone, '974')) {
                             $phone = '+' . $phone;
                         } elseif (strlen($phone) >= 8) {
-                            // If it's a local number (8+ digits), add +974
                             $phone = '+974' . $phone;
                         }
                     }
                 }
 
-                // Parse date of birth (format: DD-MM-YYYY)
                 $parsedDateOfBirth = null;
                 if (!empty($dateOfBirth)) {
                     try {
-                        // Try to parse DD-MM-YYYY format first
                         $dateParts = explode('-', $dateOfBirth);
                         if (count($dateParts) === 3 && strlen($dateParts[0]) <= 2 && strlen($dateParts[1]) <= 2) {
                             $parsedDateOfBirth = Carbon::createFromFormat('d-m-Y', $dateOfBirth)->format('Y-m-d');
                         } else {
-                            // Try other common formats
                             $parsedDateOfBirth = Carbon::parse($dateOfBirth)->format('Y-m-d');
                         }
                     } catch (Exception $e) {
@@ -983,7 +973,6 @@ class UserService
                     }
                 }
 
-                // Normalize gender
                 $normalizedGender = null;
                 if (!empty($gender)) {
                     $genderLower = strtolower($gender);
@@ -996,17 +985,14 @@ class UserService
                     }
                 }
 
-                // Convert loyalty points to integer
                 $loyaltyPointsInt = 0;
                 if (!empty($loyaltyPoints)) {
                     $loyaltyPointsInt = (int) filter_var($loyaltyPoints, FILTER_SANITIZE_NUMBER_INT);
                 }
 
-                // Check if user exists
                 $user = $this->userModel->where('email', $email)->first();
 
                 if ($user) {
-                    // Update existing user
                     $updateData = [];
 
                     if (!empty($name)) {
@@ -1028,12 +1014,10 @@ class UserService
                         $updateData['address'] = $address;
                     }
 
-                    // Ensure user has customer role
                     if (!$user->hasRole('customer')) {
                         $user->assignRole('customer');
                     }
 
-                    // Set status to active if not set
                     if (empty($user->status)) {
                         $updateData['status'] = $this->userModel::ACTIVE;
                     }
@@ -1042,7 +1026,6 @@ class UserService
                         $user->update($updateData);
                     }
 
-                    // Add loyalty points if provided
                     if ($loyaltyPointsInt > 0) {
                         $currentBalance = LoyaltyPoint::balance($user->id) ?? 0;
                         if ($currentBalance < $loyaltyPointsInt) {
@@ -1053,7 +1036,6 @@ class UserService
 
                     $updated++;
                 } else {
-                    // Create new user
                     $user = $this->userModel->create([
                         'name' => $name ?: 'User',
                         'email' => $email,
@@ -1062,13 +1044,11 @@ class UserService
                         'date_of_birth' => $parsedDateOfBirth,
                         'gender' => $normalizedGender,
                         'address' => $address,
-                        'password' => bcrypt('12345678'), // Default password
                         'status' => $this->userModel::ACTIVE,
                     ]);
 
                     $user->assignRole('customer');
 
-                    // Add loyalty points if provided
                     if ($loyaltyPointsInt > 0) {
                         $user->addLoyaltyPoints($loyaltyPointsInt, null, "Imported from Excel - Row {$rowNumber}");
                     }
