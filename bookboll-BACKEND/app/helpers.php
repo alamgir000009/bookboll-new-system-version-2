@@ -629,7 +629,8 @@ if (! function_exists('timeSlotFallsInRange')) {
         $rangeEndMinutes = ($rangeEnd === '24:00') ? 24 * 60 : timeToMinutes($rangeEnd);
 
         // Handle slot that spans midnight (00:00 means next day)
-        if ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00')) {
+        $slotSpansMidnight = ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00'));
+        if ($slotSpansMidnight) {
             $slotEndMinutes = 24 * 60;
         }
 
@@ -643,8 +644,15 @@ if (! function_exists('timeSlotFallsInRange')) {
             return true;
         }
 
-        // Check if slot is completely within the range
-        return $slotStartMinutes >= $rangeStartMinutes && $slotEndMinutes <= $rangeEndMinutes;
+        // Check if slot overlaps with the pricing group range
+        // Two ranges overlap if: slotStart < rangeEnd AND slotEnd > rangeStart
+        // This handles all cases:
+        // - Slot completely within range
+        // - Range completely within slot
+        // - Slot starts before range but ends within/after range
+        // - Slot starts within range but ends after range
+        // - Slot spans midnight and overlaps with range
+        return $slotStartMinutes < $rangeEndMinutes && $slotEndMinutes > $rangeStartMinutes;
     }
 }
 

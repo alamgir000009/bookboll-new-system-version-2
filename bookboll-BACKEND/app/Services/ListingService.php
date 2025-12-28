@@ -2038,8 +2038,14 @@ class ListingService
         $groupEndMinutes = $this->normalizeTimeForComparison($groupEnd);
 
         // Handle slot that spans midnight
-        if ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00')) {
+        $slotSpansMidnight = ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00'));
+        if ($slotSpansMidnight) {
             $slotEndMinutes = 24 * 60;
+        }
+
+        // Handle range that spans midnight (e.g., 23:00 to 00:00)
+        if ($groupEnd === '00:00') {
+            $groupEndMinutes = 24 * 60; // Treat as 24:00 (1440 minutes)
         }
 
         // Full day pricing (00:00 to 24:00)
@@ -2047,7 +2053,14 @@ class ListingService
             return true;
         }
 
-        // Check if slot is completely within the group range
-        return $slotStartMinutes >= $groupStartMinutes && $slotEndMinutes <= $groupEndMinutes;
+        // Check if slot overlaps with the pricing group range
+        // Two ranges overlap if: slotStart < groupEnd AND slotEnd > groupStart
+        // This handles all cases:
+        // - Slot completely within group range
+        // - Group range completely within slot
+        // - Slot starts before group but ends within/after group
+        // - Slot starts within group but ends after group
+        // - Slot spans midnight and overlaps with group
+        return $slotStartMinutes < $groupEndMinutes && $slotEndMinutes > $groupStartMinutes;
     }
 }
