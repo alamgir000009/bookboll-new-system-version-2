@@ -37,6 +37,12 @@ class PaymentController extends Controller
 
     public function export(Request $request)
     {
+        $user = auth()->user();
+        
+        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
+            return sendError('Unauthorized. Only super admin or admin can export payments.', [], 403);
+        }
+
         $payments = $this->paymentService->getPaymentsForExport($request);
         $filename = 'payments-' . now()->format('Y-m-d') . '.xlsx';
 
@@ -45,6 +51,12 @@ class PaymentController extends Controller
 
     public function downloadInvoice($id)
     {
+        $user = auth()->user();
+        
+        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
+            return sendError('Unauthorized. Only super admin or admin can download payment invoices.', [], 403);
+        }
+
         return $this->paymentService->downloadInvoice($id);
     }
 
@@ -172,11 +184,23 @@ class PaymentController extends Controller
 
     public function generatePaymentLink(Request $request)
     {
+        $user = auth()->user();
+        
+        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
+            return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
+        }
+
         return $this->paymentService->generatePaymentLink($request);
     }
 
     public function confirmPayment(Request $request)
     {
+        $user = auth()->user();
+        
+        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
+            return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
+        }
+
         return $this->paymentService->confirmPayment($request);
     }
 
@@ -329,6 +353,12 @@ class PaymentController extends Controller
 
     public function markBookingAsPaid(Request $request)
     {
+        $user = auth()->user();
+        
+        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
+            return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
+        }
+
         return $this->paymentService->markBookingAsPaid($request);
     }
 }

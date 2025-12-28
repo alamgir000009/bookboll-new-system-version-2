@@ -148,7 +148,7 @@ class SportsCategoryService
             ->orderBy('sort_order', 'ASC')
             ->get(['id', 'icon', 'image', 'color', 'title', 'slug', 'sub_title']);
 
-        $sportsCategories = $this->sportCategoryModel::with('sportsType:id,title,sub_title')->active()
+        $sportsCategories = $this->sportCategoryModel::with('sportsType:id,title,slug,sub_title')->active()
             ->when($sports_type, function ($query, $sports_type) {
                 $query->whereRelation('sportsType', 'slug', $sports_type);
             })
