@@ -842,7 +842,7 @@ class ListingService
             })
             ->when($sports_type, function ($query, $sports_type) {
                 $query->whereHas('sportsCategory.sportsType', function ($q) use ($sports_type) {
-                    $q->where('title', $sports_type);
+                    $q->where('slug', $sports_type);
                 });
             })
             ->when($categories, function ($query, $categories) {
@@ -909,7 +909,7 @@ class ListingService
         $categoryType = $request->category ?? null;
         $limit        = $request->limit ?? 3;
 
-        $sportsType = SportsType::withCount('listings')->where("title", $categoryType)->first();
+        $sportsType = SportsType::withCount('listings')->where("slug", $categoryType)->first();
 
         $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
 
