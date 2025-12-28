@@ -73,14 +73,14 @@ class BookingService
 
     public function getBookingsForExport($request)
     {
-        $search     = $request->search ?? null;
-        $status     = $request->status ?? null;
-        $venue      = $request->venue ?? null;
-        $user       = $request->user ?? null;
-        $user_id    = $request->user_id ?? null;
-        $from_date  = $request->from_date ?? null;
-        $to_date    = $request->to_date ?? null;
-        $exportAll  = $request->export_all == 1 || $request->export_all === '1';
+        $search    = $request->search ?? null;
+        $status    = $request->status ?? null;
+        $venue     = $request->venue ?? null;
+        $user      = $request->user ?? null;
+        $user_id   = $request->user_id ?? null;
+        $from_date = $request->from_date ?? null;
+        $to_date   = $request->to_date ?? null;
+        $exportAll = $request->export_all == 1 || $request->export_all === '1';
 
         $query = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns'])
             ->when($search, function ($q) use ($search) {
@@ -110,7 +110,7 @@ class BookingService
             })
             ->latest('id');
 
-        if (!$exportAll) {
+        if (! $exportAll) {
             $records_per_page = $request->records_per_page ?? 10;
             $page             = $request->page ?? 1;
             $query->skip(($page - 1) * $records_per_page)->take($records_per_page);
@@ -1084,14 +1084,12 @@ class BookingService
 
                 $recurringDate = Carbon::parse($recurring['date']);
                 $baseDate      = Carbon::parse($formData['date']);
-                // if ($recurringDate->lte($baseDate)) {
-                //     DB::rollBack();
-                //     return sendError('Recurring booking dates must be after the base booking date');
-                // }
+                if ($recurringDate->lte($baseDate)) {
+                    DB::rollBack();
+                    return sendError('Recurring booking dates must be after the base booking date');
+                }
 
-                $recurringValidationData = array_merge($formData, [
-                    'date' => $recurring['date'],
-                ]);
+                $recurringValidationData = array_merge($formData, ['date' => $recurring['date']]);
 
                 $validationErrors = $this->validateBooking($recurringValidationData);
                 if (! empty($validationErrors)) {
@@ -1139,6 +1137,10 @@ class BookingService
             }
 
             DB::commit();
+            $bookingIds      = $createdBookings->pluck('id');
+            $createdBookings = Booking::with(['user', 'venue', 'listing', 'payments', 'addOns'])
+                ->whereIn('id', $bookingIds)
+                ->get();
 
             return sendSuccess('Booking confirmed successfully', ['bookings' => $createdBookings]);
 
@@ -2216,13 +2218,13 @@ class BookingService
 
             $result = $isPaginated
                 ? $query->paginate($recordsPerPage)->through(fn($venue) => [
-                'id'   => $venue->id,
-                'name' => $venue->name,
+                'id'        => $venue->id,
+                'name'      => $venue->name,
                 'schedules' => $venue->schedules,
             ])
                 : $query->get()->map(fn($venue) => [
-                'id'   => $venue->id,
-                'name' => $venue->name,
+                'id'        => $venue->id,
+                'name'      => $venue->name,
                 'schedules' => $venue->schedules,
             ]);
 
