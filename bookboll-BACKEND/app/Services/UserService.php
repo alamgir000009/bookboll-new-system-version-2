@@ -463,7 +463,7 @@ class UserService
             'email'    => 'required|email|unique:users,email',
             'role'     => 'required|exists:roles,name',
             'status'   => 'required|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
-            'password' => 'nullable|min:8',
+            'password' => 'nullable|min:3',
             'venues'   => 'nullable|array',
             'venues.*' => 'numeric|exists:venues,id',
         ]);
