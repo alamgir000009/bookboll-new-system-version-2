@@ -29,7 +29,7 @@ class ListingService
 
     public function all($request)
     {
-        $records_per_page = $request->records_per_page ?? 10;
+        $records_per_page = $request->records_per_page ?? 20;
         $search           = $request->search ?? null;
 
         $venues = Venue::active()->orderBy('sort_order', 'ASC')->get(['id', 'name']);
@@ -442,7 +442,7 @@ class ListingService
                     // If end_time is 00:00, treat it as next day (24:00) for comparison
                     $normalizedStart = $this->normalizeTimeForComparison($startTime);
                     $normalizedEnd = $this->normalizeTimeForComparison($endTime);
-                    
+
                     // If end_time is 00:00, it means it spans to midnight (next day)
                     // Treat it as 24:00 (1440 minutes) for comparison
                     if ($endTime === '00:00') {
@@ -483,7 +483,7 @@ class ListingService
                 // Handle array rules (e.g., File validation rules or regex rules)
                 $hasRequired = false;
                 $hasSometimes = false;
-                
+
                 foreach ($rule as $ruleItem) {
                     if (is_string($ruleItem)) {
                         if ($ruleItem === 'required' || $ruleItem === 'sometimes') {
@@ -496,7 +496,7 @@ class ListingService
                         }
                     }
                 }
-                
+
                 // If it has 'required' but not 'sometimes', prepend 'sometimes'
                 if ($hasRequired && !$hasSometimes) {
                     array_unshift($rules[$field], 'sometimes');
@@ -1628,15 +1628,14 @@ class ListingService
         $updates    = $request->input('updates');
         $listingIds = collect($updates)->pluck('id')->toArray();
 
-        $listings = $this->listingModel::whereIn('id', $listingIds)->get(['id', 'venue_id']);
+        $listings = $this->listingModel::whereIn('id', $listingIds)->get(['id']);
 
         if ($listings->isEmpty()) {
             return sendError('No listings found.');
         }
 
-        $venueId = $listings->first()->venue_id;
-        if ($listings->pluck('venue_id')->unique()->count() > 1) {
-            return sendError('Listings must belong to the same venue.');
+        if ($listings->count() !== count($listingIds)) {
+            return sendError('Some listings not found.');
         }
 
         $sortOrders = collect($updates)->pluck('sort_order')->sort()->values()->toArray();
@@ -1649,7 +1648,6 @@ class ListingService
         try {
             foreach ($updates as $update) {
                 $this->listingModel::where('id', $update['id'])
-                    ->where('venue_id', $venueId)
                     ->update(['sort_order' => $update['sort_order']]);
             }
 
@@ -2008,7 +2006,7 @@ class ListingService
 
     /**
      * Normalize time string for comparison (handles 24:00 as full day)
-     * 
+     *
      * @param string $time Time string in H:i format (can be 24:00)
      * @return int Minutes since midnight
      */
@@ -2023,7 +2021,7 @@ class ListingService
     /**
      * Check if a time slot falls within a pricing group time range
      * Handles full day pricing (00:00 to 24:00) and midnight cases
-     * 
+     *
      * @param string $slotStart Slot start time
      * @param string $slotEnd Slot end time
      * @param string $groupStart Pricing group start time
