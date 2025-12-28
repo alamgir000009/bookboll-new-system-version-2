@@ -7,6 +7,7 @@ use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class SportsTypeController extends Controller
@@ -21,13 +22,35 @@ class SportsTypeController extends Controller
             'color'     => 'required|string',
             'sub_title' => 'required|max:255',
             'title'     => 'required|max:255|unique:sports_types',
+            'image'     => 'nullable|image',
         ]);
 
-        $formData['slug'] = Str::slug($formData['title']);
+        try {
+            $newIcon = $formData['icon'] ?? null;
 
-        $type = $this->sportsTypeModel::create($formData);
+            if ($request->hasFile('image')) {
+                $file  = $request->file('image');
+                $image = $file->store('sport-types/icons', 'public');
+                $icon  = null;
+            } else {
+                $icon  = $newIcon;
+                $image = null;
+            }
 
-        return sendSuccess('Sports type added successfully', compact('type'), 201);
+            $type = $this->sportsTypeModel::create([
+                'icon'      => $icon,
+                'image'     => $image,
+                'color'     => $formData['color'],
+                'sub_title' => $formData['sub_title'],
+                'title'     => $formData['title'],
+                'slug'      => Str::slug($formData['title']),
+            ]);
+
+            return sendSuccess('Sports type added successfully', compact('type'), 201);
+        } catch (Exception $e) {
+            Log::error('Failed to create sports type: ' . $e->getMessage(), ["Exception" => $e]);
+            return sendError('Failed to create sports type: ' . $e->getMessage());
+        }
     }
 
     public function update(Request $request, $id)
@@ -39,20 +62,66 @@ class SportsTypeController extends Controller
             'color'     => 'required|string',
             'sub_title' => 'required|max:255',
             'title'     => 'required|string|max:255|unique:sports_types,title,' . $id,
+            'image'     => 'nullable|image',
         ]);
 
-        $formData['slug'] = Str::slug($formData['title']);
+        try {
+            $newIcon = $formData['icon'] ?? null;
+            $image   = null;
 
-        $type->update($formData);
+            if ($request->hasFile('image')) {
+                if ($type->image && str_starts_with($type->image, 'sport-types/icons/')) {
+                    Storage::delete($type->image);
+                }
+                $file  = $request->file('image');
+                $image = $file->store('sport-types/icons', 'public');
+                $icon  = null;
+            } else if ($newIcon !== null && $newIcon !== $type->icon) {
+                if ($type->image && str_starts_with($type->image, 'sport-types/icons/')) {
+                    Storage::delete($type->image);
+                }
+                $image = null;
+                $icon  = $newIcon;
+            } else {
+                $icon = $type->icon;
+            }
 
-        return sendSuccess('Sports type updated successfully', compact('type'));
+            $data = [
+                'icon'      => $icon,
+                'color'     => $formData['color'],
+                'sub_title' => $formData['sub_title'],
+                'title'     => $formData['title'],
+                'slug'      => Str::slug($formData['title']),
+            ];
+
+            if ($image) {
+                $data['image'] = $image;
+            }
+
+            $type->update($data);
+
+            return sendSuccess('Sports type updated successfully', compact('type'));
+        } catch (Exception $e) {
+            Log::error('Failed to update sports type: ' . $e->getMessage(), ["Exception" => $e]);
+            return sendError('Failed to update sports type: ' . $e->getMessage());
+        }
     }
 
     public function destroy($id)
     {
-        $type = $this->sportsTypeModel::findOrFail($id);
-        $type->delete();
-        return sendSuccess('Sports type deleted successfully');
+        try {
+            $type = $this->sportsTypeModel::findOrFail($id);
+
+            if ($type->image && str_starts_with($type->image, 'sport-types/icons/')) {
+                Storage::delete($type->image);
+            }
+
+            $type->delete();
+            return sendSuccess('Sports type deleted successfully');
+        } catch (Exception $e) {
+            Log::error('Failed to delete sports type: ' . $e->getMessage(), ["Exception" => $e]);
+            return sendError('Failed to delete sports type: ' . $e->getMessage());
+        }
     }
 
     public function sort(Request $request)

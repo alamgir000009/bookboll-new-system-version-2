@@ -17,6 +17,7 @@ return new class extends Migration
             $table->string('sub_title')->unique();
             $table->string('slug')->unique();
             $table->string('icon')->nullable();
+            $table->string('image')->nullable();
             $table->string('color')->nullable();
             $table->enum('status', ['active', 'inactive'])->default('active')->index();
             $table->integer('sort_order')->default(0);
