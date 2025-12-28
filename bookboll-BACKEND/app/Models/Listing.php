@@ -211,11 +211,43 @@ class Listing extends Model
             return false;
         }
 
-        $start1 = Carbon::createFromTimeString($group1['start_time']);
-        $end1   = Carbon::createFromTimeString($group1['end_time']);
-        $start2 = Carbon::createFromTimeString($group2['start_time']);
-        $end2   = Carbon::createFromTimeString($group2['end_time']);
+        // Handle 24:00 as full day (convert to 00:00 next day for comparison)
+        $end1Time = $group1['end_time'] === '24:00' ? '23:59:59' : $group1['end_time'];
+        $end2Time = $group2['end_time'] === '24:00' ? '23:59:59' : $group2['end_time'];
 
-        return $start1->lt($end2) && $end1->gt($start2);
+        try {
+            $start1 = Carbon::createFromTimeString($group1['start_time']);
+            $end1   = Carbon::createFromTimeString($end1Time);
+            $start2 = Carbon::createFromTimeString($group2['start_time']);
+            $end2   = Carbon::createFromTimeString($end2Time);
+
+            // If either group is full day (00:00 to 24:00), it overlaps with any other group on same days
+            if (($group1['start_time'] === '00:00' && $group1['end_time'] === '24:00') ||
+                ($group2['start_time'] === '00:00' && $group2['end_time'] === '24:00')) {
+                return true;
+            }
+
+            return $start1->lt($end2) && $end1->gt($start2);
+        } catch (\Exception $e) {
+            // Fallback: use minute-based comparison
+            $start1Minutes = $this->timeToMinutesForPricing($group1['start_time']);
+            $end1Minutes = $this->timeToMinutesForPricing($group1['end_time']);
+            $start2Minutes = $this->timeToMinutesForPricing($group2['start_time']);
+            $end2Minutes = $this->timeToMinutesForPricing($group2['end_time']);
+
+            return $start1Minutes < $end2Minutes && $start2Minutes < $end1Minutes;
+        }
+    }
+
+    protected function timeToMinutesForPricing($time)
+    {
+        if ($time === '24:00') {
+            return 24 * 60; // 1440 minutes
+        }
+        if ($time === '00:00') {
+            return 0;
+        }
+        list($hours, $minutes) = explode(':', $time);
+        return (int) $hours * 60 + (int) $minutes;
     }
 }

@@ -251,8 +251,8 @@ class ListingService
             'schedule.*.end_time'                => 'required_if:schedule.*.is_open,true|date_format:H:i',
             'pricing_groups'                     => 'nullable|array',
             'pricing_groups.*.name'              => 'nullable|string|max:255',
-            'pricing_groups.*.start_time'        => 'required|date_format:H:i',
-            'pricing_groups.*.end_time'          => 'required|date_format:H:i|after:pricing_groups.*.start_time',
+            'pricing_groups.*.start_time'        => ['required', 'regex:/^([01]?[0-9]|2[0-4]):[0-5][0-9]$/'],
+            'pricing_groups.*.end_time'          => ['required', 'regex:/^([01]?[0-9]|2[0-4]):[0-5][0-9]$/'],
             'pricing_groups.*.price_per_hour'    => 'required|numeric|min:0',
             'pricing_groups.*.days'              => 'required|array',
             'pricing_groups.*.days.*'            => 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
@@ -384,8 +384,8 @@ class ListingService
 
             'pricing_groups'                     => 'nullable|array',
             'pricing_groups.*.name'              => 'nullable|string|max:255',
-            'pricing_groups.*.start_time'        => 'required|date_format:H:i',
-            'pricing_groups.*.end_time'          => 'required|date_format:H:i|after:pricing_groups.*.start_time',
+            'pricing_groups.*.start_time'        => ['required', 'regex:/^([01]?[0-9]|2[0-4]):[0-5][0-9]$/'],
+            'pricing_groups.*.end_time'          => ['required', 'regex:/^([01]?[0-9]|2[0-4]):[0-5][0-9]$/'],
             'pricing_groups.*.price_per_hour'    => 'required|numeric|min:0',
             'pricing_groups.*.days'              => 'required|array',
             'pricing_groups.*.days.*'            => 'in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
@@ -422,6 +422,53 @@ class ListingService
                     }
                 }
             }
+
+            // Validate pricing group times (handle 24:00 as full day and midnight spanning)
+            if (! empty($data['pricing_groups']) && is_array($data['pricing_groups'])) {
+                foreach ($data['pricing_groups'] as $index => $group) {
+                    if (! isset($group['start_time']) || ! isset($group['end_time'])) {
+                        continue;
+                    }
+
+                    $startTime = $group['start_time'];
+                    $endTime = $group['end_time'];
+
+                    // If end_time is 24:00, it's valid (full day pricing)
+                    if ($endTime === '24:00') {
+                        continue;
+                    }
+
+                    // Handle midnight spanning (e.g., 23:00 to 00:00)
+                    // If end_time is 00:00, treat it as next day (24:00) for comparison
+                    $normalizedStart = $this->normalizeTimeForComparison($startTime);
+                    $normalizedEnd = $this->normalizeTimeForComparison($endTime);
+                    
+                    // If end_time is 00:00, it means it spans to midnight (next day)
+                    // Treat it as 24:00 (1440 minutes) for comparison
+                    if ($endTime === '00:00') {
+                        $normalizedEnd = 24 * 60; // Treat as 24:00 (1440 minutes)
+                    }
+
+                    // Check if end_time is after start_time
+                    // Special cases:
+                    // 1. Both 00:00 means full day (already handled by 24:00 check above)
+                    // 2. end_time 00:00 with any start_time means spans midnight (valid)
+                    // 3. Normal case: end_time must be after start_time
+                    if ($endTime === '00:00') {
+                        // Valid: spans midnight (e.g., 23:00 to 00:00, 22:00 to 00:00, 10:00 to 00:00)
+                        // This means from start_time to midnight (next day)
+                        continue;
+                    }
+
+                    // For normal cases (not spanning midnight), ensure end_time is after start_time
+                    if ($normalizedEnd <= $normalizedStart) {
+                        $validator->errors()->add(
+                            "pricing_groups.$index.end_time",
+                            "The end time must be after the start time."
+                        );
+                    }
+                }
+            }
         });
 
         if ($validator->fails()) {
@@ -433,19 +480,26 @@ class ListingService
     {
         foreach ($rules as $field => $rule) {
             if (is_array($rule)) {
-                // Handle array rules (e.g., File validation rules)
-                $modified = false;
-                $newRule = [];
-                foreach ($rule as $index => $ruleItem) {
-                    if (is_string($ruleItem) && str_contains($ruleItem, 'required') && ! str_contains($ruleItem, 'sometimes')) {
-                        $newRule[] = str_replace('required', 'sometimes|required', $ruleItem);
-                        $modified = true;
-                    } else {
-                        $newRule[] = $ruleItem;
+                // Handle array rules (e.g., File validation rules or regex rules)
+                $hasRequired = false;
+                $hasSometimes = false;
+                
+                foreach ($rule as $ruleItem) {
+                    if (is_string($ruleItem)) {
+                        if ($ruleItem === 'required' || $ruleItem === 'sometimes') {
+                            if ($ruleItem === 'required') {
+                                $hasRequired = true;
+                            }
+                            if ($ruleItem === 'sometimes') {
+                                $hasSometimes = true;
+                            }
+                        }
                     }
                 }
-                if ($modified) {
-                    $rules[$field] = $newRule;
+                
+                // If it has 'required' but not 'sometimes', prepend 'sometimes'
+                if ($hasRequired && !$hasSometimes) {
+                    array_unshift($rules[$field], 'sometimes');
                 }
             } elseif (is_string($rule) && str_contains($rule, 'required') && ! str_contains($rule, 'sometimes')) {
                 $rules[$field] = str_replace('required', 'sometimes|required', $rule);
@@ -1950,5 +2004,50 @@ class ListingService
         }
 
         return $start1Minutes < $end2Minutes && $start2Minutes < $end1Minutes;
+    }
+
+    /**
+     * Normalize time string for comparison (handles 24:00 as full day)
+     * 
+     * @param string $time Time string in H:i format (can be 24:00)
+     * @return int Minutes since midnight
+     */
+    protected function normalizeTimeForComparison($time)
+    {
+        if ($time === '24:00') {
+            return 24 * 60; // 1440 minutes (full day)
+        }
+        return $this->timeToMinutes($time);
+    }
+
+    /**
+     * Check if a time slot falls within a pricing group time range
+     * Handles full day pricing (00:00 to 24:00) and midnight cases
+     * 
+     * @param string $slotStart Slot start time
+     * @param string $slotEnd Slot end time
+     * @param string $groupStart Pricing group start time
+     * @param string $groupEnd Pricing group end time
+     * @return bool
+     */
+    protected function slotFallsInPricingGroup($slotStart, $slotEnd, $groupStart, $groupEnd)
+    {
+        $slotStartMinutes = $this->timeToMinutes($slotStart);
+        $slotEndMinutes = $this->timeToMinutes($slotEnd);
+        $groupStartMinutes = $this->timeToMinutes($groupStart);
+        $groupEndMinutes = $this->normalizeTimeForComparison($groupEnd);
+
+        // Handle slot that spans midnight
+        if ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00')) {
+            $slotEndMinutes = 24 * 60;
+        }
+
+        // Full day pricing (00:00 to 24:00)
+        if ($groupStart === '00:00' && $groupEnd === '24:00') {
+            return true;
+        }
+
+        // Check if slot is completely within the group range
+        return $slotStartMinutes >= $groupStartMinutes && $slotEndMinutes <= $groupEndMinutes;
     }
 }

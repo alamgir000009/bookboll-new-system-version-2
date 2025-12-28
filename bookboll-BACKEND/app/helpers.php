@@ -589,8 +589,7 @@ if (! function_exists('determineSlotPrice')) {
     {
         if ($specialDay && $specialDay->timeBlocks && $specialDay->timeBlocks->count()) {
             foreach ($specialDay->timeBlocks as $block) {
-                if (strtotime($slotStart) >= strtotime($block->start_time) &&
-                    strtotime($slotEnd) <= strtotime($block->end_time)) {
+                if (timeSlotFallsInRange($slotStart, $slotEnd, $block->start_time, $block->end_time)) {
                     return $block->price_per_hour ?? $listing->base_price;
                 }
             }
@@ -599,8 +598,7 @@ if (! function_exists('determineSlotPrice')) {
         if ($listing->relationLoaded('pricingGroups')) {
             foreach ($listing->pricingGroups as $group) {
                 if (in_array($weekday, $group->days)) {
-                    if (strtotime($slotStart) >= strtotime($group->start_time) &&
-                        strtotime($slotEnd) <= strtotime($group->end_time)) {
+                    if (timeSlotFallsInRange($slotStart, $slotEnd, $group->start_time, $group->end_time)) {
                         return $group->price_per_hour;
                     }
                 }
@@ -609,37 +607,94 @@ if (! function_exists('determineSlotPrice')) {
 
         return $listing->base_price;
     }
+}
 
-    if (! function_exists('generateInvoiceId')) {
-        function generateInvoiceId()
-        {
-            $invoiceNumber = null;
-            DB::transaction(function () use (&$invoiceNumber) {
+if (! function_exists('timeSlotFallsInRange')) {
+    /**
+     * Check if a time slot falls within a time range
+     * Handles full day pricing (00:00 to 24:00) and midnight cases
+     * 
+     * @param string $slotStart Slot start time
+     * @param string $slotEnd Slot end time
+     * @param string $rangeStart Range start time
+     * @param string $rangeEnd Range end time
+     * @return bool
+     */
+    function timeSlotFallsInRange($slotStart, $slotEnd, $rangeStart, $rangeEnd)
+    {
+        // Convert times to minutes for comparison
+        $slotStartMinutes = timeToMinutes($slotStart);
+        $slotEndMinutes = timeToMinutes($slotEnd);
+        $rangeStartMinutes = timeToMinutes($rangeStart);
+        $rangeEndMinutes = ($rangeEnd === '24:00') ? 24 * 60 : timeToMinutes($rangeEnd);
 
-                $year              = now()->year;
-                $latestInvoice     = Invoice::lockForUpdate()->whereYear('created_at', $year)->latest('id')->first();
-                $nextInvoiceNumber = $latestInvoice ? (int) substr($latestInvoice->invoice_number, -5) + 1 : 1;
-                $invoiceNumber     = sprintf('INV_%s_%05d', $year, $nextInvoiceNumber);
-
-            });
-
-            return $invoiceNumber;
+        // Handle slot that spans midnight (00:00 means next day)
+        if ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00')) {
+            $slotEndMinutes = 24 * 60;
         }
+
+        // Handle range that spans midnight (e.g., 23:00 to 00:00)
+        if ($rangeEnd === '00:00') {
+            $rangeEndMinutes = 24 * 60; // Treat as 24:00 (1440 minutes)
+        }
+
+        // Full day pricing (00:00 to 24:00) - matches any slot
+        if ($rangeStart === '00:00' && $rangeEnd === '24:00') {
+            return true;
+        }
+
+        // Check if slot is completely within the range
+        return $slotStartMinutes >= $rangeStartMinutes && $slotEndMinutes <= $rangeEndMinutes;
     }
+}
 
-    if (! function_exists('generateAndStoreInvoicePdf')) {
-        function generateAndStoreInvoicePdf($booking, $invoiceNumber)
-        {
-            $pdf = Pdf::loadView('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
-
-            $fileName     = 'invoice_' . $invoiceNumber . '_' . $booking->id . '.pdf';
-            $relativePath = 'invoices/' . $fileName;
-
-            Storage::disk('public')->makeDirectory('invoices');
-            Storage::disk('public')->put($relativePath, $pdf->output());
-
-            return $relativePath;
+if (! function_exists('timeToMinutes')) {
+    /**
+     * Convert time string to minutes since midnight
+     * 
+     * @param string $time Time string in H:i format
+     * @return int Minutes since midnight
+     */
+    function timeToMinutes($time)
+    {
+        if ($time === '00:00' || $time === '24:00') {
+            return ($time === '24:00') ? 24 * 60 : 0;
         }
+
+        list($hours, $minutes) = explode(':', $time);
+        return (int) $hours * 60 + (int) $minutes;
+    }
+}
+
+if (! function_exists('generateInvoiceId')) {
+    function generateInvoiceId()
+    {
+        $invoiceNumber = null;
+        DB::transaction(function () use (&$invoiceNumber) {
+
+            $year              = now()->year;
+            $latestInvoice     = Invoice::lockForUpdate()->whereYear('created_at', $year)->latest('id')->first();
+            $nextInvoiceNumber = $latestInvoice ? (int) substr($latestInvoice->invoice_number, -5) + 1 : 1;
+            $invoiceNumber     = sprintf('INV_%s_%05d', $year, $nextInvoiceNumber);
+
+        });
+
+        return $invoiceNumber;
+    }
+}
+
+if (! function_exists('generateAndStoreInvoicePdf')) {
+    function generateAndStoreInvoicePdf($booking, $invoiceNumber)
+    {
+        $pdf = Pdf::loadView('pdfs.booking-invoice', compact('booking', 'invoiceNumber'));
+
+        $fileName     = 'invoice_' . $invoiceNumber . '_' . $booking->id . '.pdf';
+        $relativePath = 'invoices/' . $fileName;
+
+        Storage::disk('public')->makeDirectory('invoices');
+        Storage::disk('public')->put($relativePath, $pdf->output());
+
+        return $relativePath;
     }
 }
 
