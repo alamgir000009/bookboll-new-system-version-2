@@ -27,7 +27,7 @@ class SendBookingReminders extends Command
         }
 
         $users = User::whereHas('bookings', fn($q) => $q->where('status', BookingStatus::COMPLETED))
-            ->with(['bookings' => fn($q) => $q->completed()->orderByDesc('date')->select('user_id', 'date')])
+            ->with(['bookings' => fn($q) => $q->completed()->orderByDesc('date')->select('user_id', 'date'), 'preferences'])
             ->get();
 
         if ($users->isEmpty()) {
@@ -66,6 +66,14 @@ class SendBookingReminders extends Command
                             ->exists();
 
                         if (! $sentToday) {
+
+                            // Check if user has marketing_emails enabled in preferences
+                            $marketingEmailsEnabled = $user->preferences?->notifications['marketing_emails'] ?? false;
+                            
+                            if (! $marketingEmailsEnabled) {
+                                Log::info("Skipping reminder for {$user->name} ({$user->email}) — marketing emails disabled in preferences");
+                                continue;
+                            }
 
                             try {
                                 DB::beginTransaction();
