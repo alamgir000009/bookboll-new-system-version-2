@@ -22,7 +22,7 @@ class PreferenceTableSeeder extends Seeder
                 ['user_id' => $user->id],
                 [
                     'notifications'   => [
-                        'email_bookings'   => true,
+                        'booking_emails'   => true,
                         'sms_reminders'    => true,
                         'marketing_emails' => false,
                     ],

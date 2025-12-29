@@ -46,6 +46,21 @@ class UserService
             if ($user) {
                 if (! $user->hasRole('customer')) {
                     $user->assignRole('customer');
+                    
+                    // Create default preferences if user doesn't have them
+                    if (!$user->preferences) {
+                        Preference::create([
+                            'user_id' => $user->id,
+                            'notifications' => [
+                                'booking_emails' => true,
+                                'sms_reminders' => false,
+                                'marketing_emails' => true,
+                            ],
+                            'favorite_sports' => [],
+                            'language' => 'english',
+                            'currency' => 'QAR',
+                        ]);
+                    }
                 } else {
                     return sendError("Customer with this email already exists");
                 }
@@ -61,6 +76,21 @@ class UserService
                 ]);
 
                 $user->assignRole('customer');
+                
+                // Create default preferences for new customer
+                if (!$user->preferences) {
+                    Preference::create([
+                        'user_id' => $user->id,
+                        'notifications' => [
+                            'booking_emails' => true,
+                            'sms_reminders' => false,
+                            'marketing_emails' => true,
+                        ],
+                        'favorite_sports' => [],
+                        'language' => 'english',
+                        'currency' => 'QAR',
+                    ]);
+                }
             }
 
             DB::commit();
@@ -265,6 +295,21 @@ class UserService
 
             if (! $user->hasRole('customer')) {
                 $user->assignRole('customer');
+            }
+            
+            // Create default preferences for new customer
+            if (!$user->preferences) {
+                Preference::create([
+                    'user_id' => $user->id,
+                    'notifications' => [
+                        'booking_emails' => true,
+                        'sms_reminders' => false,
+                        'marketing_emails' => true,
+                    ],
+                    'favorite_sports' => [],
+                    'language' => 'english',
+                    'currency' => 'QAR',
+                ]);
             }
 
             $token = $user->createToken('auth-token')->plainTextToken;
@@ -499,6 +544,21 @@ class UserService
             }
 
             $user->assignRole($role['name']);
+
+            // Create default preferences if user is a customer
+            if ($role['name'] === 'customer' && !$user->preferences) {
+                Preference::create([
+                    'user_id' => $user->id,
+                    'notifications' => [
+                        'booking_emails' => true,
+                        'sms_reminders' => false,
+                        'marketing_emails' => true,
+                    ],
+                    'favorite_sports' => [],
+                    'language' => 'english',
+                    'currency' => 'QAR',
+                ]);
+            }
 
             if (! empty($formData['venues'])) {
                 $user->venues()->sync($formData['venues']);
@@ -790,30 +850,44 @@ class UserService
     {
         $user = auth()->user();
 
-        $formDate = $request->validate([
-            'notifications.email_bookings' => 'boolean',
-            'notifications.sms_reminders'  => 'boolean',
-            'notifications.marketing'      => 'boolean',
-            'favorite_sports'              => 'array',
-            'favorite_sports.*'            => 'required',
-            'language'                     => 'required',
-            'currency'                     => 'required',
+        $formData = $request->validate([
+            'notifications.booking_emails'   => 'nullable|boolean',
+            'notifications.sms_reminders'    => 'nullable|boolean',
+            'notifications.marketing_emails' => 'nullable|boolean',
+            'favorite_sports'                 => 'nullable|array',
+            'favorite_sports.*'               => 'required|string',
+            'language'                        => 'nullable|string',
+            'currency'                        => 'nullable|string',
         ]);
 
         $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
 
-        $currentNotifications       = $preferences->notifications ?? [];
-        $preferences->notifications = array_merge($currentNotifications, $formDate['notifications'] ?? []);
+        // Update notifications - merge with existing to preserve other notification settings
+        if (isset($formData['notifications'])) {
+            $currentNotifications = $preferences->notifications ?? [];
+            $preferences->notifications = array_merge($currentNotifications, $formData['notifications']);
+        }
 
-        $preferences->favorite_sports = $formDate['favorite_sports'] ?? [];
-        $preferences->language        = $formDate['language'] ?? $preferences->language;
-        $preferences->currency        = $formDate['currency'] ?? $preferences->currency;
+        // Update favorite_sports if provided
+        if (isset($formData['favorite_sports'])) {
+            $preferences->favorite_sports = $formData['favorite_sports'];
+        }
+
+        // Update language if provided
+        if (isset($formData['language'])) {
+            $preferences->language = $formData['language'];
+        }
+
+        // Update currency if provided
+        if (isset($formData['currency'])) {
+            $preferences->currency = $formData['currency'];
+        }
 
         $preferences->save();
 
         $user->load('preferences');
 
-        return sendSuccess('Preferences fetched successfully', compact('user', 'preferences'));
+        return sendSuccess('Preferences updated successfully', compact('user', 'preferences'));
     }
 
     public function updateProfileImage($request)

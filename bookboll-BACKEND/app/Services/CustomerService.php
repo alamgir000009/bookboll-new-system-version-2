@@ -121,7 +121,7 @@ class CustomerService
             'language'      => 'nullable|string|max:50',
             'currency'      => 'nullable|string|max:10',
             'notifications' => 'nullable|array',
-            'notifications.email_bookings' => 'nullable|boolean',
+            'notifications.booking_emails' => 'nullable|boolean',
             'notifications.sms_reminders'  => 'nullable|boolean',
             'notifications.marketing'     => 'nullable|boolean',
             'favorite_sports'             => 'nullable|array',
@@ -138,6 +138,21 @@ class CustomerService
                 } else {
                     $existingUser->assignRole('customer');
                     $user = $existingUser;
+                    
+                    // Create default preferences if user doesn't have them
+                    if (!$user->preferences) {
+                        Preference::create([
+                            'user_id' => $user->id,
+                            'notifications' => [
+                                'booking_emails' => true,
+                                'sms_reminders' => false,
+                                'marketing_emails' => true,
+                            ],
+                            'favorite_sports' => [],
+                            'language' => 'english',
+                            'currency' => 'QAR',
+                        ]);
+                    }
                 }
             } else {
                 if (empty($formData['password'])) {
@@ -157,6 +172,21 @@ class CustomerService
                 ]);
 
                 $user->assignRole('customer');
+                
+                // Create default preferences for new customer
+                if (!$user->preferences) {
+                    Preference::create([
+                        'user_id' => $user->id,
+                        'notifications' => [
+                            'booking_emails' => true,
+                            'sms_reminders' => false,
+                            'marketing_emails' => true,
+                        ],
+                        'favorite_sports' => [],
+                        'language' => 'english',
+                        'currency' => 'QAR',
+                    ]);
+                }
             }
 
             if (isset($formData['language']) || isset($formData['currency']) || isset($formData['notifications']) || isset($formData['favorite_sports'])) {
