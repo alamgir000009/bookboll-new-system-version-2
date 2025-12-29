@@ -22,6 +22,7 @@ class SportsTypeController extends Controller
             'color'     => 'required|string',
             'sub_title' => 'required|max:255',
             'title'     => 'required|max:255|unique:sports_types',
+            'slug'      => 'required|max:255|unique:sports_types',
             'image'     => 'nullable|image',
         ]);
 
@@ -43,7 +44,7 @@ class SportsTypeController extends Controller
                 'color'     => $formData['color'],
                 'sub_title' => $formData['sub_title'],
                 'title'     => $formData['title'],
-                'slug'      => Str::slug($formData['title']),
+                'slug'      => $formData['slug'],
             ]);
 
             return sendSuccess('Sports type added successfully', compact('type'), 201);
@@ -62,6 +63,7 @@ class SportsTypeController extends Controller
             'color'     => 'required|string',
             'sub_title' => 'required|max:255',
             'title'     => 'required|string|max:255|unique:sports_types,title,' . $id,
+            'slug'      => 'required|string|max:255|unique:sports_types,slug,' . $id,
             'image'     => 'nullable|image',
         ]);
 
@@ -91,7 +93,7 @@ class SportsTypeController extends Controller
                 'color'     => $formData['color'],
                 'sub_title' => $formData['sub_title'],
                 'title'     => $formData['title'],
-                'slug'      => Str::slug($formData['title']),
+                'slug'      => $formData['slug'],
             ];
 
             if ($image) {
