@@ -2,7 +2,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Venue;
-use App\VenueService;
+use App\Services\VenueService;
 use Illuminate\Http\Request;
 
 class VenueController extends Controller
