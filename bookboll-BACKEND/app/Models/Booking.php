@@ -1,6 +1,7 @@
 <?php
 namespace App\Models;
 
+use App\Models\Scopes\VenueAccessScope;
 use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
@@ -181,6 +182,9 @@ class Booking extends Model
 
     protected static function booted()
     {
+        // Apply global venue access scope
+        static::addGlobalScope(new VenueAccessScope);
+
         static::saving(function ($booking) {
             if ($booking->start_time && $booking->end_time) {
                 $start             = Carbon::parse($booking->start_time);

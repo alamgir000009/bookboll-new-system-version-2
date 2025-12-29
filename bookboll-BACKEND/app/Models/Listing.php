@@ -1,6 +1,7 @@
 <?php
 namespace App\Models;
 
+use App\Models\Scopes\VenueAccessScope;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -8,6 +9,12 @@ use Illuminate\Database\Eloquent\Model;
 class Listing extends Model
 {
     use HasFactory;
+
+    protected static function booted()
+    {
+        // Apply global venue access scope
+        static::addGlobalScope(new VenueAccessScope);
+    }
 
     protected $fillable = [
         'name',

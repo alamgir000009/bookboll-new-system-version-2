@@ -984,6 +984,27 @@ class ListingService
         $venueId          = $data['venue_id'] ?? null;
         $sportsCategoryId = $data['sports_category_id'] ?? null;
 
+        $user = auth()->user();
+        $accessibleVenueIds = null;
+
+        // Get accessible venue IDs if user is not super admin or admin
+        if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+            $accessibleVenueIds = $user->venues()->pluck('venues.id')->toArray();
+            if (empty($accessibleVenueIds)) {
+                return sendSuccess('Listings fetched successfully', [
+                    'data' => [],
+                    'pagination' => [
+                        'current_page' => 1,
+                        'last_page' => 1,
+                        'per_page' => $recordsPerPage,
+                        'total' => 0,
+                        'from' => null,
+                        'to' => null,
+                    ],
+                ]);
+            }
+        }
+
         $query = $this->listingModel::with([
             'venue:id,name,maps_url,description',
             'addOns' => function ($query) {
@@ -1010,8 +1031,19 @@ class ListingService
                         });
                 });
             })
-            ->when($venueId, function ($query, $venueId) {
-                $query->where('venue_id', $venueId);
+            ->when($accessibleVenueIds !== null, function ($query) use ($accessibleVenueIds, $venueId) {
+                // Apply venue filtering
+                $query->whereIn('venue_id', $accessibleVenueIds);
+                // If user also specified venueId, ensure it's in accessible venues
+                if ($venueId && !in_array($venueId, $accessibleVenueIds)) {
+                    $query->whereRaw('1 = 0'); // No results
+                }
+            })
+            ->when($venueId, function ($query, $venueId) use ($accessibleVenueIds) {
+                // Only apply if user has access to all venues (super admin/admin)
+                if ($accessibleVenueIds === null) {
+                    $query->where('venue_id', $venueId);
+                }
             })
             ->when($sportsCategoryId, function ($query, $sportsCategoryId) {
                 $query->where('sports_category_id', $sportsCategoryId);

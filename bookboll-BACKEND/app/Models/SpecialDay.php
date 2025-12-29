@@ -1,11 +1,18 @@
 <?php
 namespace App\Models;
 
+use App\Models\Scopes\VenueAccessScope;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 
 class SpecialDay extends Model
 {
+    protected static function booted()
+    {
+        // Apply global venue access scope
+        static::addGlobalScope(new VenueAccessScope);
+    }
+
     protected $fillable = [
         'date',
         'type',
