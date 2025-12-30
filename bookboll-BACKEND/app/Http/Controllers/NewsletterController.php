@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Jobs\SendNewsletter;
 use App\Mail\WelcomeNewsletterEmail;
+use App\Models\Preference;
 use App\Models\Subscriber;
+use App\Models\User;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -25,6 +27,24 @@ class NewsletterController extends Controller
         ]);
 
         $subscriber = $this->subscriberModel::create($formData);
+
+        // Check if user exists with this email and enable marketing emails preference
+        $user = User::where('email', $formData['email'])->first();
+        if ($user) {
+            $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
+            
+            // Get current notifications or initialize with defaults
+            $currentNotifications = $preferences->notifications ?? [
+                'booking_emails'   => true,
+                'sms_reminders'    => false,
+                'marketing_emails' => false,
+            ];
+            
+            // Enable marketing emails
+            $currentNotifications['marketing_emails'] = true;
+            $preferences->notifications = $currentNotifications;
+            $preferences->save();
+        }
 
         try {
             Mail::to($subscriber->email)->send(new WelcomeNewsletterEmail($subscriber));
