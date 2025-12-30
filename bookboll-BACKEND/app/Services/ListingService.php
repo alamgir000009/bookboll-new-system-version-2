@@ -1395,8 +1395,30 @@ class ListingService
                 strtotime($b->start_time) >= strtotime($slotEnd)
             ));
 
-            $bookedCount    = $slotBookings->count();
-            $availableCount = max($listing->max_bookings_per_slot - $bookedCount, 0);
+            $bookedCount = $slotBookings->count();
+
+            // Count locks for this slot (excluding current session)
+            $lockedCount = 0;
+            if ($activeLocks && $sessionId) {
+                $lockedCount = $activeLocks->filter(function ($lock) use ($slotStart, $slotEnd, $sessionId) {
+                    if ($lock->session_id === $sessionId) {
+                        return false;
+                    }
+                    return $this->slotsOverlap(
+                        $slotStart,
+                        $slotEnd,
+                        $lock->start_time ? Carbon::parse($lock->start_time)->format('H:i') : null,
+                        $lock->end_time ? Carbon::parse($lock->end_time)->format('H:i') : null
+                    );
+                })->count();
+            }
+
+            // Calculate occupied spots (bookings + locks)
+            $occupiedSpots = $bookedCount + $lockedCount;
+            $availableCount = max($listing->max_bookings_per_slot - $occupiedSpots, 0);
+
+            // For backward compatibility: if max_bookings_per_slot is 1, any lock means fully locked
+            $isLocked = ($listing->max_bookings_per_slot === 1 && $lockedCount > 0);
 
             $allResourcesAvailable = true;
             $availableQty          = null;
@@ -1411,21 +1433,6 @@ class ListingService
                     $allResourcesAvailable = false;
                     break;
                 }
-            }
-
-            $isLocked = false;
-            if ($activeLocks && $sessionId) {
-                $isLocked = $activeLocks->contains(function ($lock) use ($slotStart, $slotEnd, $sessionId) {
-                    if ($lock->session_id === $sessionId) {
-                        return false;
-                    }
-                    return $this->slotsOverlap(
-                        $slotStart,
-                        $slotEnd,
-                        $lock->start_time ? Carbon::parse($lock->start_time)->format('H:i') : null,
-                        $lock->end_time ? Carbon::parse($lock->end_time)->format('H:i') : null
-                    );
-                });
             }
 
             $isPastSlot = false;
@@ -1462,6 +1469,8 @@ class ListingService
                     'available'           => $isAvailable,
                     'is_locked'           => $isLocked,
                     'booked'              => $bookedCount,
+                    'locked'              => $lockedCount,
+                    'occupied_spots'      => $occupiedSpots,
                     'available_resources' => $availableQty,
                     'available_count'     => $availableCount,
                     'capacity'            => $listing->capacity,
@@ -1540,6 +1549,23 @@ class ListingService
                 $bookedDates[$dateStr]++;
             }
 
+            // Fetch and count locks for the date range
+            $locks = SlotLock::where('listing_id', $listingId)
+                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->where('start_time', $startTime)
+                ->where('end_time', $endTime)
+                ->active()
+                ->get(['id', 'date']);
+
+            $lockedDates = [];
+            foreach ($locks as $lock) {
+                $dateStr = Carbon::parse($lock->date)->format('Y-m-d');
+                if (! isset($lockedDates[$dateStr])) {
+                    $lockedDates[$dateStr] = 0;
+                }
+                $lockedDates[$dateStr]++;
+            }
+
             $specialDays = SpecialDay::with('timeBlocks')
                 ->where('venue_id', $listing->venue_id)
                 ->where(function ($q) use ($listing) {
@@ -1563,6 +1589,8 @@ class ListingService
 
                 $dateStr     = $currentDate->format('Y-m-d');
                 $bookedCount = $bookedDates[$dateStr] ?? 0;
+                $lockedCount = $lockedDates[$dateStr] ?? 0;
+                $occupiedSpots = $bookedCount + $lockedCount;
                 $weekday     = strtolower($currentDate->format('l'));
 
                 $venueSchedules = $listing->venue?->schedules
@@ -1605,16 +1633,18 @@ class ListingService
                 $dayPrice = determineSlotPrice($listing, $weekday, $startTime, $endTime, $specialDay);
 
                 if (! $isAvailable) {
-                    $bookedCount = $maxBookingsPerSlot;
+                    $occupiedSpots = $maxBookingsPerSlot;
                 }
 
                 $datesInfo[] = [
                     'date'            => $dateStr,
                     'booked_count'    => $bookedCount,
+                    'locked_count'    => $lockedCount,
+                    'occupied_spots'  => $occupiedSpots,
                     'max_bookings'    => $maxBookingsPerSlot,
                     'price'           => round($dayPrice, 2),
-                    'is_available'    => $isAvailable && ($bookedCount < $maxBookingsPerSlot),
-                    'available_slots' => max(0, $maxBookingsPerSlot - $bookedCount),
+                    'is_available'    => $isAvailable && ($occupiedSpots < $maxBookingsPerSlot),
+                    'available_slots' => max(0, $maxBookingsPerSlot - $occupiedSpots),
                 ];
 
                 $currentDate->addDay();
@@ -1755,7 +1785,10 @@ class ListingService
                 return sendError('Listing is not available for booking');
             }
 
-            $existingBooking = Booking::where('listing_id', $listingId)
+            $maxBookingsPerSlot = (int) $listing->max_bookings_per_slot;
+
+            // Count existing bookings for this slot
+            $existingBookingCount = Booking::where('listing_id', $listingId)
                 ->whereDate('date', $date)
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
                 ->where(function ($q) use ($startTime, $endTime) {
@@ -1764,20 +1797,33 @@ class ListingService
                 })
                 ->count();
 
-            if ($existingBooking >= (int) $listing->max_bookings_per_slot) {
-                return sendError('This slot is already booked2');
-            }
-
-            $existingLock = SlotLock::where('listing_id', $listingId)
+            // Count existing locks for this slot (excluding current session)
+            $existingLockCount = SlotLock::where('listing_id', $listingId)
                 ->where('date', $date->toDateString())
                 ->where('start_time', $startTime)
                 ->where('end_time', $endTime)
                 ->where('session_id', '!=', $sessionId)
                 ->active()
-                ->first();
+                ->count();
 
-            if ($existingLock) {
-                return sendError('This slot is currently locked by another user. Please try again in a moment.');
+            // Calculate total occupied spots (bookings + locks)
+            $occupiedSpots = $existingBookingCount + $existingLockCount;
+
+            // If max_bookings_per_slot is 1, any lock means fully locked (backward compatibility)
+            // Otherwise, check if there are available spots
+            if ($maxBookingsPerSlot === 1) {
+                // For single booking per slot, any existing lock means fully locked
+                if ($existingLockCount > 0) {
+                    return sendError('This slot is currently locked by another user. Please try again in a moment.');
+                }
+                if ($existingBookingCount >= $maxBookingsPerSlot) {
+                    return sendError('This slot is already fully booked.');
+                }
+            } else {
+                // For multiple bookings per slot, check if there are available spots
+                if ($occupiedSpots >= $maxBookingsPerSlot) {
+                    return sendError('This slot is already fully booked. All spots are taken.');
+                }
             }
 
             $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
@@ -1962,40 +2008,47 @@ class ListingService
                 ]);
             }
 
-            $existingBooking = Booking::where('listing_id', $listingId)
-                ->where('date', $date)
+            $maxBookingsPerSlot = (int) $listing->max_bookings_per_slot;
+
+            // Count existing bookings for this slot
+            $existingBookingCount = Booking::where('listing_id', $listingId)
+                ->whereDate('date', $date)
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
                 ->where(function ($q) use ($startTime, $endTime) {
                     $q->whereRaw('TIME(start_time) < ?', [$endTime])
                         ->whereRaw('TIME(end_time) > ?', [$startTime]);
                 })
-                ->exists();
+                ->count();
 
-            if ($existingBooking) {
-                return sendSuccess('Slot availability checked', [
-                    'available' => false,
-                    'reason'    => 'Slot is already booked',
-                ]);
-            }
-
-            $existingLock = SlotLock::where('listing_id', $listingId)
+            // Count existing locks for this slot (excluding current session)
+            $existingLockCount = SlotLock::where('listing_id', $listingId)
                 ->where('date', $date->toDateString())
                 ->where('start_time', $startTime)
                 ->where('end_time', $endTime)
                 ->where('session_id', '!=', $sessionId)
                 ->active()
-                ->first();
+                ->count();
 
-            if ($existingLock) {
+            // Calculate total occupied spots (bookings + locks)
+            $occupiedSpots = $existingBookingCount + $existingLockCount;
+            $availableSpots = max(0, $maxBookingsPerSlot - $occupiedSpots);
+
+            if ($availableSpots <= 0) {
                 return sendSuccess('Slot availability checked', [
-                    'available'    => false,
-                    'reason'       => 'Slot is currently locked by another user',
-                    'locked_until' => $existingLock->locked_until->toIso8601String(),
+                    'available'      => false,
+                    'reason'         => $existingBookingCount >= $maxBookingsPerSlot
+                        ? 'Slot is already fully booked'
+                        : 'All spots in this slot are currently locked',
+                    'occupied_spots' => $occupiedSpots,
+                    'max_bookings'    => $maxBookingsPerSlot,
                 ]);
             }
 
             return sendSuccess('Slot availability checked', [
-                'available' => true,
+                'available'      => true,
+                'available_spots' => $availableSpots,
+                'occupied_spots'  => $occupiedSpots,
+                'max_bookings'    => $maxBookingsPerSlot,
             ]);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
