@@ -567,7 +567,7 @@ class UserService
             DB::commit();
 
             try {
-                Mail::to($user->email)->queue(new UserWelcomeEmail($user, $plainPassword));
+                Mail::to($user->email)->send(new UserWelcomeEmail($user, $plainPassword));
             } catch (Exception $e) {
                 Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
             }
