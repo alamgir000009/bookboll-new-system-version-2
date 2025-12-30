@@ -59,7 +59,7 @@ class BookingService
                 $q->where('venue_id', 'LIKE', "%{$venue}%");
             })
             ->when($request->user, function ($q, $user) {
-                $q->whereHas('user', fn($u) => $u->where('name', 'LIKE', "%{$user}%"));
+                $q->whereHas('user', fn($u) => $u->where('name', 'LIKE', "%{$user}%")->orWhere('email', 'LIKE', "%{$user}%"));
             })
             ->when($user_id, function ($q, $user_id) {
                 $q->whereRelation('user', 'id', $user_id);
