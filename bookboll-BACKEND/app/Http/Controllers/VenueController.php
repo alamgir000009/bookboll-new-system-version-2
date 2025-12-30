@@ -36,7 +36,7 @@ class VenueController extends Controller
 
     public function fetchVenues(Request $request)
     {
-        return $this->venueService->all($request);
+        return $this->venueService->all($request, false);
     }
 
     public function sort(Request $request)

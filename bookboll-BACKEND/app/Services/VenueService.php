@@ -10,7 +10,7 @@ class VenueService
     public function __construct(protected Venue $venueModel)
     {}
 
-    public function all($request)
+    public function all($request, $applyVenueFilter = true)
     {
         $search = $request->search ?? null;
 
@@ -28,7 +28,9 @@ class VenueService
             ->orderBy('sort_order', 'ASC');
 
         // Apply venue filtering
-        $query = applyVenueFilter($query, 'id');
+        if ($applyVenueFilter) {
+            $query = applyVenueFilter($query, 'id');
+        }
         $venues = $query->get();
 
         return sendSuccess('Venues fetched successfully', compact('venues'));
