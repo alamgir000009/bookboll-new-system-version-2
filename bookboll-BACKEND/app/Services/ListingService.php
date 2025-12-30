@@ -32,7 +32,9 @@ class ListingService
         $records_per_page = $request->records_per_page ?? 20;
         $search           = $request->search ?? null;
 
-        $venues = Venue::active()->orderBy('sort_order', 'ASC')->get(['id', 'name']);
+        $venuesQuery = Venue::active()->orderBy('sort_order', 'ASC');
+        $venuesQuery = applyVenueFilter($venuesQuery, 'id');
+        $venues = $venuesQuery->get(['id', 'name']);
 
         $query = $this->listingModel::with([
             'addOns',
@@ -65,6 +67,8 @@ class ListingService
                 $query->whereRelation('venue', 'id', $venue_id);
             });
 
+        // Apply venue filtering
+        $query = applyVenueFilter($query, 'venue_id');
         $listings = $query->paginate($records_per_page);
 
         return sendSuccess('Listings fetched successfully', compact('listings', 'venues'));

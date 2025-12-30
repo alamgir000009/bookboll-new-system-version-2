@@ -91,41 +91,6 @@ class User extends Authenticatable
         return $this->belongsToMany(Venue::class);
     }
 
-    /**
-     * Check if user has full venue access (super_admin or admin)
-     * Optimized to use cached roles
-     *
-     * @return bool
-     */
-    public function hasFullVenueAccess(): bool
-    {
-        // Use cached role names to avoid N+1 queries
-        $roles = $this->getRoleNames();
-        return $roles->contains('super_admin') || $roles->contains('admin');
-    }
-
-    /**
-     * Get accessible venue IDs for the user
-     * Returns all venue IDs if user has full access, otherwise returns assigned venue IDs
-     * Note: This method is optimized but should be used sparingly.
-     * For global scope, use the cached version in VenueAccessScope
-     *
-     * @return array
-     */
-    public function getAccessibleVenueIds(): array
-    {
-        // If user has full access, return all venue IDs
-        if ($this->hasFullVenueAccess()) {
-            // Cache this expensive query
-            return Cache::remember("all_venue_ids", 3600, function() {
-                return Venue::pluck('id')->toArray();
-            });
-        }
-
-        // Otherwise, return only assigned venue IDs (with eager loading)
-        return $this->venues()->pluck('venues.id')->toArray();
-    }
-
     public function bookings()
     {
         return $this->hasMany(Booking::class);

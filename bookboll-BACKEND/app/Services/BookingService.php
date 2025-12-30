@@ -38,7 +38,7 @@ class BookingService
         $search           = $request->search ?? null;
         $user_id          = $request->user_id ?? null;
 
-        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user'])
+        $query = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user'])
             ->when($search, function ($q) use ($search) {
                 $q->where(function ($q) use ($search) {
                     $q->whereHas('listing', fn($l) => $l->where('name', 'LIKE', "%{$search}%"))
@@ -66,7 +66,10 @@ class BookingService
             })
             ->latest('id');
 
-        $bookings = $records_per_page == 'all' ? $bookings->get() : $bookings->paginate($records_per_page);
+        // Apply venue filtering
+        $query = applyVenueFilter($query, 'venue_id');
+
+        $bookings = $records_per_page == 'all' ? $query->get() : $query->paginate($records_per_page);
 
         return sendSuccess('Bookings fetched successfully', compact('bookings'));
     }
@@ -109,6 +112,9 @@ class BookingService
                 $q->whereRelation('user', 'id', $user_id);
             })
             ->latest('id');
+
+        // Apply venue filtering
+        $query = applyVenueFilter($query, 'venue_id');
 
         if (! $exportAll) {
             $records_per_page = $request->records_per_page ?? 10;
@@ -176,13 +182,20 @@ class BookingService
 
     public function dashboardData()
     {
-        $recentBookings = $this->bookingModel->whereNotIn('status', [BookingStatus::COMPLETED])->latest('id')->take(3)->get();
+        $recentBookingsQuery = $this->bookingModel->whereNotIn('status', [BookingStatus::COMPLETED])->latest('id');
+        $recentBookingsQuery = applyVenueFilter($recentBookingsQuery, 'venue_id');
+        $recentBookings = $recentBookingsQuery->take(3)->get();
 
         $total_redeemed = LoyaltyPoint::where('type', 'debit')->sum('points');
         $total_earned   = LoyaltyPoint::where('type', 'credit')->sum('points');
 
-        $totalCollected = $this->paymentModel->where('status', PaymentStatus::PAID)->sum('amount');
-        $totalPending   = $this->paymentModel->where('status', PaymentStatus::PENDING)->sum('amount');
+        $totalCollectedQuery = $this->paymentModel->query()->where('status', PaymentStatus::PAID);
+        $totalCollectedQuery = applyVenueFilterToPayments($totalCollectedQuery);
+        $totalCollected = $totalCollectedQuery->sum('amount');
+
+        $totalPendingQuery = $this->paymentModel->query()->where('status', PaymentStatus::PENDING);
+        $totalPendingQuery = applyVenueFilterToPayments($totalPendingQuery);
+        $totalPending   = $totalPendingQuery->sum('amount');
 
         $widgets = [
             [
@@ -201,14 +214,14 @@ class BookingService
             ],
             [
                 "name"       => "Total Bookings",
-                "value"      => $this->bookingModel->count(),
+                "value"      => applyVenueFilter($this->bookingModel->newQuery(), 'venue_id')->count(),
                 "change"     => "",
                 "changeType" => "increase",
                 "icon"       => "CalendarDaysIcon",
             ],
             [
                 "name"       => "Active Venues",
-                "value"      => Venue::active()->count(),
+                "value"      => applyVenueFilter(Venue::active(), 'id')->count(),
                 "change"     => "",
                 "changeType" => "increase",
                 "icon"       => "BuildingOfficeIcon",
@@ -229,8 +242,13 @@ class BookingService
             "activeMembers"  => User::active()->whereRelation('roles', 'name', 'customer')->count(),
         ];
 
-        $venues   = Venue::with(['listings:id,venue_id,name'])->get(['id', 'name']);
-        $listings = Listing::with(['venue'])->get(['id', 'name', 'venue_id']);
+        $venuesQuery = Venue::with(['listings:id,venue_id,name']);
+        $venuesQuery = applyVenueFilter($venuesQuery, 'id');
+        $venues = $venuesQuery->get(['id', 'name']);
+
+        $listingsQuery = Listing::with(['venue']);
+        $listingsQuery = applyVenueFilter($listingsQuery, 'venue_id');
+        $listings = $listingsQuery->get(['id', 'name', 'venue_id']);
 
         $stats = [
             "widgets"   => $widgets,
@@ -269,6 +287,29 @@ class BookingService
             ->when(! empty($filters['selectedListings']), function ($q) use ($filters) {
                 return $q->whereIn('bookings.listing_id', $filters['selectedListings']);
             });
+
+        // Apply venue filtering
+        $user = auth()->user();
+        if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+            $venueIds = DB::table('user_venue')
+                ->where('user_id', $user->id)
+                ->pluck('venue_id')
+                ->toArray();
+            if (!empty($venueIds)) {
+                $query->whereIn('bookings.venue_id', $venueIds);
+                // Intersect with selectedVenues if provided
+                if (!empty($filters['selectedVenues'])) {
+                    $intersected = array_intersect($filters['selectedVenues'], $venueIds);
+                    if (empty($intersected)) {
+                        $query->whereRaw('1 = 0');
+                    } else {
+                        $query->whereIn('bookings.venue_id', $intersected);
+                    }
+                }
+            } else {
+                $query->whereRaw('1 = 0');
+            }
+        }
 
         $payments = $query->select([
             'payments.id',
@@ -2187,12 +2228,14 @@ class BookingService
 
         $listings = ['data' => [], 'pagination' => null];
         if (! empty($data['listings'])) {
-
             $query = Listing::select('id', 'name', 'venue_id')
                 ->with(['venue:id,name'])
                 ->active()
                 ->orderBy('sort_order', 'ASC')
                 ->orderBy('name');
+
+            // Apply venue filtering
+            $query = applyVenueFilter($query, 'venue_id');
 
             $result = $isPaginated
                 ? $query->paginate($recordsPerPage)->through(fn($listing) => [
@@ -2211,11 +2254,13 @@ class BookingService
 
         $venues = ['data' => [], 'pagination' => null];
         if (! empty($data['venues'])) {
-
             $query = Venue::with('schedules')->select('id', 'name')
                 ->active()
                 ->orderBy('sort_order', 'ASC')
                 ->orderBy('name');
+
+            // Apply venue filtering
+            $query = applyVenueFilter($query, 'id');
 
             $result = $isPaginated
                 ? $query->paginate($recordsPerPage)->through(fn($venue) => [
@@ -2345,8 +2390,26 @@ class BookingService
             $query->whereIn('listing_id', $data['listing_ids']);
         }
 
+        // Apply venue filtering
+        $query = applyVenueFilter($query, 'venue_id');
+
+        // If user also specified venue_ids, intersect them
         if (! empty($data['venue_ids'])) {
-            $query->whereIn('venue_id', $data['venue_ids']);
+            $user = auth()->user();
+            if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+                $venueIds = DB::table('user_venue')
+                    ->where('user_id', $user->id)
+                    ->pluck('venue_id')
+                    ->toArray();
+                $intersected = array_intersect($data['venue_ids'], $venueIds);
+                if (empty($intersected)) {
+                    $query->whereRaw('1 = 0');
+                } else {
+                    $query->whereIn('venue_id', $intersected);
+                }
+            } else {
+                $query->whereIn('venue_id', $data['venue_ids']);
+            }
         }
 
         if (! empty($data['user_ids'])) {

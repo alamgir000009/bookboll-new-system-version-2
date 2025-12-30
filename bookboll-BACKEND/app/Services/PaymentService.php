@@ -62,6 +62,9 @@ class PaymentService
                 $query->whereBetween('created_at', [$from, $to]);
             });
 
+        // Apply venue filtering
+        $query = applyVenueFilterToPayments($query);
+
         $statsQuery = clone $query;
 
         $stats = [
@@ -141,6 +144,9 @@ class PaymentService
                 });
             });
 
+        // Apply venue filtering
+        $query = applyVenueFilterToPayments($query);
+
         if (!$exportAll) {
             $records_per_page = $request->records_per_page ?? 10;
             $page             = $request->page ?? 1;
@@ -152,8 +158,15 @@ class PaymentService
 
     public function getDashboardTotals(): array
     {
-        $total   = $this->paymentModel::sum('amount');
-        $paid    = $this->paymentModel::where('status', 'paid')->sum('amount');
+        $totalQuery = $this->paymentModel::newQuery();
+        $paidQuery = $this->paymentModel::where('status', 'paid');
+        
+        // Apply venue filtering
+        $totalQuery = applyVenueFilterToPayments($totalQuery);
+        $paidQuery = applyVenueFilterToPayments($paidQuery);
+        
+        $total   = $totalQuery->sum('amount');
+        $paid    = $paidQuery->sum('amount');
         $pending = $total - $paid;
 
         return [
@@ -170,6 +183,9 @@ class PaymentService
             ->byMethod($filters['method'] ?? null)
             ->byStatus($filters['status'] ?? null)
             ->byDateRange($filters['date_from'] ?? null, $filters['date_to'] ?? null);
+
+        // Apply venue filtering
+        $query = applyVenueFilterToPayments($query);
 
         $payments = $query->get()->map(fn($p) => [
             'Payment ID' => $p->payment_id,

@@ -9,6 +9,7 @@ use App\Notifications\BookingCreatedAdminNotification;
 use App\Notifications\BookingCreatedUserNotification;
 use App\Services\AuditLogService;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\DB;
 
 if (! class_exists('MobileApps')) {
     class MobileApps
@@ -613,7 +614,7 @@ if (! function_exists('timeSlotFallsInRange')) {
     /**
      * Check if a time slot falls within a time range
      * Handles full day pricing (00:00 to 24:00) and midnight cases
-     * 
+     *
      * @param string $slotStart Slot start time
      * @param string $slotEnd Slot end time
      * @param string $rangeStart Range start time
@@ -623,10 +624,10 @@ if (! function_exists('timeSlotFallsInRange')) {
     function timeSlotFallsInRange($slotStart, $slotEnd, $rangeStart, $rangeEnd)
     {
         // Convert times to minutes for comparison
-        $slotStartMinutes = timeToMinutes($slotStart);
-        $slotEndMinutes = timeToMinutes($slotEnd);
+        $slotStartMinutes  = timeToMinutes($slotStart);
+        $slotEndMinutes    = timeToMinutes($slotEnd);
         $rangeStartMinutes = timeToMinutes($rangeStart);
-        $rangeEndMinutes = ($rangeEnd === '24:00') ? 24 * 60 : timeToMinutes($rangeEnd);
+        $rangeEndMinutes   = ($rangeEnd === '24:00') ? 24 * 60 : timeToMinutes($rangeEnd);
 
         // Handle slot that spans midnight (00:00 means next day)
         $slotSpansMidnight = ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00'));
@@ -659,7 +660,7 @@ if (! function_exists('timeSlotFallsInRange')) {
 if (! function_exists('timeToMinutes')) {
     /**
      * Convert time string to minutes since midnight
-     * 
+     *
      * @param string $time Time string in H:i format
      * @return int Minutes since midnight
      */
@@ -866,5 +867,59 @@ if (! function_exists('autoConfirmBookingIfPaid')) {
                 'exception'  => $e,
             ]);
         }
+    }
+}
+
+if (! function_exists('applyVenueFilter')) {
+    function applyVenueFilter($query, string $venueColumn = 'venue_id')
+    {
+        $user = auth()->user();
+
+        if (! $user) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        if ($user->hasAnyRole(['super_admin', 'admin'])) {
+            return $query;
+        }
+
+        $venueIds = DB::table('user_venue')
+            ->where('user_id', $user->id)
+            ->pluck('venue_id')
+            ->toArray();
+
+        if (empty($venueIds)) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->whereIn($venueColumn, $venueIds);
+    }
+}
+
+if (! function_exists('applyVenueFilterToPayments')) {
+    function applyVenueFilterToPayments($query)
+    {
+        $user = auth()->user();
+
+        if (! $user) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        if ($user->hasAnyRole(['super_admin', 'admin'])) {
+            return $query;
+        }
+
+        $venueIds = DB::table('user_venue')
+            ->where('user_id', $user->id)
+            ->pluck('venue_id')
+            ->toArray();
+
+        if (empty($venueIds)) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->whereHas('booking', function ($q) use ($venueIds) {
+            $q->whereIn('venue_id', $venueIds);
+        });
     }
 }

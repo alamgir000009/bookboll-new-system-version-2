@@ -14,7 +14,7 @@ class VenueService
     {
         $search = $request->search ?? null;
 
-        $venues = $this->venueModel::with(['schedules'])
+        $query = $this->venueModel::with(['schedules'])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
@@ -25,8 +25,11 @@ class VenueService
                 });
             })
             ->active()
-            ->orderBy('sort_order', 'ASC')
-            ->get();
+            ->orderBy('sort_order', 'ASC');
+
+        // Apply venue filtering
+        $query = applyVenueFilter($query, 'id');
+        $venues = $query->get();
 
         return sendSuccess('Venues fetched successfully', compact('venues'));
     }
@@ -152,6 +155,19 @@ class VenueService
     public function getVenue($id)
     {
         $venue = $this->venueModel::with(['schedules', 'users', 'listings'])->findOrFail($id);
+
+        // Check venue access
+        $user = auth()->user();
+        if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+            $venueIds = DB::table('user_venue')
+                ->where('user_id', $user->id)
+                ->pluck('venue_id')
+                ->toArray();
+            if (!in_array($venue->id, $venueIds)) {
+                return sendError('You do not have access to this venue', [], 403);
+            }
+        }
+
         return sendSuccess('Venue fetched successfully', compact('venue'));
     }
 
