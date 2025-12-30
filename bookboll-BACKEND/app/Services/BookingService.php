@@ -796,9 +796,28 @@ class BookingService
             );
         }
 
-        $query->when($request->venue_id, fn($q) =>
-            $q->where('venue_id', $request->venue_id)
-        );
+        // Apply venue filtering
+        $query = applyVenueFilter($query, 'venue_id');
+
+        // If user also specified venue_id, ensure it's accessible
+        if ($request->venue_id) {
+            $user = auth()->user();
+            if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+                $venueIds = DB::table('user_venue')
+                    ->where('user_id', $user->id)
+                    ->pluck('venue_id')
+                    ->toArray();
+                if (!in_array($request->venue_id, $venueIds)) {
+                    $query->whereRaw('1 = 0'); // No results if venue not accessible
+                } else {
+                    $query->where('venue_id', $request->venue_id);
+                }
+            } else {
+                $query->when($request->venue_id, fn($q) =>
+                    $q->where('venue_id', $request->venue_id)
+                );
+            }
+        }
 
         $query->when($request->listing_id, fn($q) =>
             $q->where('listing_id', $request->listing_id)

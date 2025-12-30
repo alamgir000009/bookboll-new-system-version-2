@@ -43,6 +43,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('posts-tags', [PostController::class, 'postTagsList']);
 
         Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
+        Route::get('fetch-venues', [VenueController::class, 'adminFetchVenues'])->name('fetch-venues');
         Route::apiResource('venues', VenueController::class);
 
         Route::apiResource('users', UserController::class);
@@ -93,8 +94,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('extra-data-for-listing', [HelperController::class, 'extraDataForListing'])->name('extra-data-for-listing');
         Route::get('extra-loyalty-data', [LoyaltyPointController::class, 'extraDataForLoyalty'])->name('extra-loyalty-data');
         Route::get('extra-special-days', [HelperController::class, 'extraSpecialDays'])->name('extra-special-days');
-
-        Route::post('test-email', [SettingController::class, 'sendTestEmail'])->name('test-email');
 
         Route::get('dashboard-data', [BookingController::class, 'dashboardData'])->name('dashboard-data');
         Route::get('dashboard/chart', [BookingController::class, 'dashboardChart'])->name('dashboard.chart');
@@ -196,7 +195,7 @@ Route::post('extend-slot-lock', [ListingController::class, 'extendSlotLock'])->n
 Route::post('check-slot-availability', [ListingController::class, 'checkSlotAvailability'])->name('check-slot-availability');
 Route::get('fetch-addons/{id}', [ListingController::class, 'fetchAddons'])->name('fetch-addons');
 Route::get('fetch-recurring-booked-slots', [ListingController::class, 'fetchRecurringBookedSlots'])->name('fetch-recurring-booked-slots');
-Route::get('listings', [ListingController::class, 'mobileListingsList'])->name('mobile.listings');
+Route::get('listings', [ListingController::class, 'mobileListingsList'])->name('mobile.listings')->middleware('auth:sanctum');
 Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode'])->name('promocodes.applyPromocode');
 
 Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe'])->name('newsletter.subscribe');

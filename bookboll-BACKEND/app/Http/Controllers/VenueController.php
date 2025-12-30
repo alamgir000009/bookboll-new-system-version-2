@@ -38,6 +38,10 @@ class VenueController extends Controller
     {
         return $this->venueService->all($request, false);
     }
+    public function adminFetchVenues(Request $request)
+    {
+        return $this->venueService->all($request);
+    }
 
     public function sort(Request $request)
     {

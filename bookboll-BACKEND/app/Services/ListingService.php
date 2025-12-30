@@ -983,31 +983,10 @@ class ListingService
             'sports_category_id' => 'nullable|exists:sports_categories,id',
         ]);
 
-        $recordsPerPage   = $data['records_per_page'] ?? 10;
         $search           = $data['search'] ?? null;
         $venueId          = $data['venue_id'] ?? null;
+        $recordsPerPage   = $data['records_per_page'] ?? 10;
         $sportsCategoryId = $data['sports_category_id'] ?? null;
-
-        $user = auth()->user();
-        $accessibleVenueIds = null;
-
-        // Get accessible venue IDs if user is not super admin or admin
-        if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
-            $accessibleVenueIds = $user->venues()->pluck('venues.id')->toArray();
-            if (empty($accessibleVenueIds)) {
-                return sendSuccess('Listings fetched successfully', [
-                    'data' => [],
-                    'pagination' => [
-                        'current_page' => 1,
-                        'last_page' => 1,
-                        'per_page' => $recordsPerPage,
-                        'total' => 0,
-                        'from' => null,
-                        'to' => null,
-                    ],
-                ]);
-            }
-        }
 
         $query = $this->listingModel::with([
             'venue:id,name,maps_url,description',
@@ -1034,24 +1013,32 @@ class ListingService
                             $sc->where('name', 'LIKE', "%{$search}%");
                         });
                 });
-            })
-            ->when($accessibleVenueIds !== null, function ($query) use ($accessibleVenueIds, $venueId) {
-                // Apply venue filtering
-                $query->whereIn('venue_id', $accessibleVenueIds);
-                // If user also specified venueId, ensure it's in accessible venues
-                if ($venueId && !in_array($venueId, $accessibleVenueIds)) {
-                    $query->whereRaw('1 = 0'); // No results
-                }
-            })
-            ->when($venueId, function ($query, $venueId) use ($accessibleVenueIds) {
-                // Only apply if user has access to all venues (super admin/admin)
-                if ($accessibleVenueIds === null) {
+            });
+
+        // Apply venue filtering using helper function
+        $query = applyVenueFilter($query, 'venue_id');
+
+        // If user also specified venue_id, ensure it's accessible
+        if ($venueId) {
+            $user = auth()->user();
+            if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+                $venueIds = DB::table('user_venue')
+                    ->where('user_id', $user->id)
+                    ->pluck('venue_id')
+                    ->toArray();
+                if (!in_array($venueId, $venueIds)) {
+                    $query->whereRaw('1 = 0'); // No results if venue not accessible
+                } else {
                     $query->where('venue_id', $venueId);
                 }
-            })
-            ->when($sportsCategoryId, function ($query, $sportsCategoryId) {
-                $query->where('sports_category_id', $sportsCategoryId);
-            });
+            } else {
+                $query->where('venue_id', $venueId);
+            }
+        }
+
+        $query->when($sportsCategoryId, function ($query, $sportsCategoryId) {
+            $query->where('sports_category_id', $sportsCategoryId);
+        });
 
         $listings = $query->paginate($recordsPerPage);
 
