@@ -1246,11 +1246,6 @@ class UserService
         ]);
     }
 
-    /**
-     * Approve a registration request, assign role, and optionally assign venues
-     * If user already exists, only update roles and venues
-     * If user doesn't exist, create new user
-     */
     public function approveUser($request, $id)
     {
         $registrationRequest = RegistrationRequest::find($id);
@@ -1294,13 +1289,23 @@ class UserService
 
                 $user = $existingUser;
             } else {
+                // Create user without password first to avoid double hashing
+                // (password is already hashed in RegistrationRequest)
                 $user = $this->userModel->create([
-                    'status'   => $this->userModel::ACTIVE,
-                    'name'     => $registrationRequest->name,
-                    'email'    => $registrationRequest->email,
-                    'phone'    => $registrationRequest->phone,
-                    'password' => $registrationRequest->password,
+                    'status' => $this->userModel::ACTIVE,
+                    'name'   => $registrationRequest->name,
+                    'email'  => $registrationRequest->email,
+                    'phone'  => $registrationRequest->phone,
                 ]);
+
+                // Update password directly via DB to bypass the 'hashed' cast
+                // since password is already hashed in RegistrationRequest
+                DB::table('users')
+                    ->where('id', $user->id)
+                    ->update(['password' => $registrationRequest->password]);
+
+                // Refresh the user model to get the updated password
+                $user->refresh();
 
                 $user->assignRole($roleName);
 

@@ -24,7 +24,7 @@ return new class extends Migration
             $table->string('provider_id')->nullable();
             $table->string('status')->default(User::ACTIVE);
             $table->longText('blocking_reason')->nullable();
-            $table->string('password');
+            $table->string('password')->nullable();
             $table->unsignedInteger('loyalty_tier_id')->default(1);
             $table->rememberToken();
             $table->timestamps();
