@@ -123,4 +123,52 @@ class UserController extends Controller
     {
         return $this->userService->subscribeOneSignal($request);
     }
+
+    /**
+     * Register user from admin mobile app (creates pending user)
+     */
+    public function registerAdminAppUser(Request $request)
+    {
+        return $this->userService->registerAdminAppUser($request);
+    }
+
+    /**
+     * Login for admin mobile app (checks pending status)
+     */
+    public function loginAdminApp(Request $request)
+    {
+        return $this->userService->loginAdminApp($request);
+    }
+
+    /**
+     * List all pending users (Admin only)
+     */
+    public function listPendingUsers(Request $request)
+    {
+        return $this->userService->listPendingUsers($request);
+    }
+
+    /**
+     * Approve a pending user and assign role/venues (Admin only)
+     */
+    public function approveUser(Request $request, $id)
+    {
+        return $this->userService->approveUser($request, $id);
+    }
+
+    /**
+     * Assign venues to a user (Admin only)
+     */
+    public function assignVenues(Request $request, $id)
+    {
+        return $this->userService->assignVenues($request, $id);
+    }
+
+    /**
+     * Reject a pending user (Admin only)
+     */
+    public function rejectUser(Request $request, $id)
+    {
+        return $this->userService->rejectUser($request, $id);
+    }
 }

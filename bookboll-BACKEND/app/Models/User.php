@@ -15,6 +15,7 @@ class User extends Authenticatable
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
     public const BLOCKED  = 'blocked';
+    public const PENDING  = 'pending';
 
     protected $fillable = [
         'name',
@@ -84,6 +85,11 @@ class User extends Authenticatable
     public function scopeActive($query)
     {
         return $query->where('status', self::ACTIVE);
+    }
+
+    public function scopePending($query)
+    {
+        return $query->where('status', self::PENDING);
     }
 
     public function venues()

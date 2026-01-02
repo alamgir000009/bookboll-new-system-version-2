@@ -3,11 +3,13 @@ namespace App\Services;
 
 use App\Mail\CustomerForgotPasswordOtpEmail;
 use App\Mail\ForgetPasswordEmail;
+use App\Mail\UserRejectionEmail;
 use App\Mail\UserWelcomeEmail;
 use App\Models\LoyaltyPoint;
-use App\Models\Preference;
-use App\Models\User;
 use App\Models\OneSignalSubscription;
+use App\Models\Preference;
+use App\Models\RegistrationRequest;
+use App\Models\User;
 use App\Models\Venue;
 use Carbon\Carbon;
 use Exception;
@@ -46,19 +48,19 @@ class UserService
             if ($user) {
                 if (! $user->hasRole('customer')) {
                     $user->assignRole('customer');
-                    
+
                     // Create default preferences if user doesn't have them
-                    if (!$user->preferences) {
+                    if (! $user->preferences) {
                         Preference::create([
-                            'user_id' => $user->id,
-                            'notifications' => [
-                                'booking_emails' => true,
-                                'sms_reminders' => false,
+                            'user_id'         => $user->id,
+                            'notifications'   => [
+                                'booking_emails'   => true,
+                                'sms_reminders'    => false,
                                 'marketing_emails' => true,
                             ],
                             'favorite_sports' => [],
-                            'language' => 'english',
-                            'currency' => 'QAR',
+                            'language'        => 'english',
+                            'currency'        => 'QAR',
                         ]);
                     }
                 } else {
@@ -76,19 +78,19 @@ class UserService
                 ]);
 
                 $user->assignRole('customer');
-                
+
                 // Create default preferences for new customer
-                if (!$user->preferences) {
+                if (! $user->preferences) {
                     Preference::create([
-                        'user_id' => $user->id,
-                        'notifications' => [
-                            'booking_emails' => true,
-                            'sms_reminders' => false,
+                        'user_id'         => $user->id,
+                        'notifications'   => [
+                            'booking_emails'   => true,
+                            'sms_reminders'    => false,
                             'marketing_emails' => true,
                         ],
                         'favorite_sports' => [],
-                        'language' => 'english',
-                        'currency' => 'QAR',
+                        'language'        => 'english',
+                        'currency'        => 'QAR',
                     ]);
                 }
             }
@@ -223,6 +225,10 @@ class UserService
                 return sendError('Invalid credentials');
             }
 
+            if ($user->status === $this->userModel::PENDING) {
+                return sendError('Your account is pending admin approval. Please wait for approval before logging in.');
+            }
+
             if ($requestFrom == MobileApps::ADMIN) {
                 $token = $user->createToken('bookboll-admin-mobile-app-api-token')->plainTextToken;
             } else {
@@ -296,19 +302,19 @@ class UserService
             if (! $user->hasRole('customer')) {
                 $user->assignRole('customer');
             }
-            
+
             // Create default preferences for new customer
-            if (!$user->preferences) {
+            if (! $user->preferences) {
                 Preference::create([
-                    'user_id' => $user->id,
-                    'notifications' => [
-                        'booking_emails' => true,
-                        'sms_reminders' => false,
+                    'user_id'         => $user->id,
+                    'notifications'   => [
+                        'booking_emails'   => true,
+                        'sms_reminders'    => false,
                         'marketing_emails' => true,
                     ],
                     'favorite_sports' => [],
-                    'language' => 'english',
-                    'currency' => 'QAR',
+                    'language'        => 'english',
+                    'currency'        => 'QAR',
                 ]);
             }
 
@@ -546,17 +552,17 @@ class UserService
             $user->assignRole($role['name']);
 
             // Create default preferences if user is a customer
-            if ($role['name'] === 'customer' && !$user->preferences) {
+            if ($role['name'] === 'customer' && ! $user->preferences) {
                 Preference::create([
-                    'user_id' => $user->id,
-                    'notifications' => [
-                        'booking_emails' => true,
-                        'sms_reminders' => false,
+                    'user_id'         => $user->id,
+                    'notifications'   => [
+                        'booking_emails'   => true,
+                        'sms_reminders'    => false,
                         'marketing_emails' => true,
                     ],
                     'favorite_sports' => [],
-                    'language' => 'english',
-                    'currency' => 'QAR',
+                    'language'        => 'english',
+                    'currency'        => 'QAR',
                 ]);
             }
 
@@ -635,12 +641,16 @@ class UserService
                     throw new Exception("Role not found");
                 }
 
+                $roleName = $role->name;
+
                 $user->syncRoles([]);
-                $user->assignRole($role->name);
+                $user->assignRole($roleName);
             }
 
             if (isset($formData['venues'])) {
-                $isSuperAdminOrAdmin = in_array($formData['role'] ?? $user->roles->first()->id ?? 0, [1, 2]);
+                $currentRole         = $user->roles->first();
+                $roleName            = $currentRole ? $currentRole->name : null;
+                $isSuperAdminOrAdmin = in_array($roleName, ['super_admin', 'admin']);
 
                 if ($isSuperAdminOrAdmin) {
                     $allVenues          = Venue::pluck('id')->toArray();
@@ -854,17 +864,17 @@ class UserService
             'notifications.booking_emails'   => 'nullable|boolean',
             'notifications.sms_reminders'    => 'nullable|boolean',
             'notifications.marketing_emails' => 'nullable|boolean',
-            'favorite_sports'                 => 'nullable|array',
-            'favorite_sports.*'               => 'required|string',
-            'language'                        => 'nullable|string',
-            'currency'                        => 'nullable|string',
+            'favorite_sports'                => 'nullable|array',
+            'favorite_sports.*'              => 'required|string',
+            'language'                       => 'nullable|string',
+            'currency'                       => 'nullable|string',
         ]);
 
         $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
 
         // Update notifications - merge with existing to preserve other notification settings
         if (isset($formData['notifications'])) {
-            $currentNotifications = $preferences->notifications ?? [];
+            $currentNotifications       = $preferences->notifications ?? [];
             $preferences->notifications = array_merge($currentNotifications, $formData['notifications']);
         }
 
@@ -906,7 +916,7 @@ class UserService
     {
         $user = auth()->user();
 
-        if (!$user) {
+        if (! $user) {
             return sendError('User not authenticated', [], 401);
         }
 
@@ -940,11 +950,11 @@ class UserService
                     $subscription = $otherUserSubscription;
                 } else {
                     $subscription = OneSignalSubscription::create([
-                        'user_id'     => $user->id,
+                        'user_id'      => $user->id,
                         'onesignal_id' => $formData['onesignal_id'],
-                        'device_type' => $formData['device_type'] ?? null,
-                        'device_info' => $formData['device_info'] ?? null,
-                        'is_active'   => true,
+                        'device_type'  => $formData['device_type'] ?? null,
+                        'device_info'  => $formData['device_info'] ?? null,
+                        'is_active'    => true,
                     ]);
                 }
             }
@@ -952,7 +962,7 @@ class UserService
             DB::commit();
 
             return sendSuccess('Successfully subscribed to push notifications', [
-                'subscription' => $subscription,
+                'subscription'  => $subscription,
                 'total_devices' => $user->activeOnesignalSubscriptions()->count(),
             ]);
 
@@ -970,7 +980,7 @@ class UserService
 
             $filePath = public_path($filename);
 
-            if (!file_exists($filePath)) {
+            if (! file_exists($filePath)) {
                 return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
             }
 
@@ -980,13 +990,13 @@ class UserService
                 return sendError("Excel file is empty or invalid.");
             }
 
-            $rows = $data[0];
+            $rows      = $data[0];
             $headerRow = array_shift($rows);
 
             $imported = 0;
-            $updated = 0;
-            $skipped = 0;
-            $errors = [];
+            $updated  = 0;
+            $skipped  = 0;
+            $errors   = [];
 
             foreach ($rows as $index => $row) {
                 $rowNumber = $index + 2;
@@ -995,14 +1005,14 @@ class UserService
                     continue;
                 }
 
-                $name = trim($row[0] ?? '');
-                $email = trim($row[1] ?? '');
-                $phone = trim($row[2] ?? '');
-                $nationality = trim($row[3] ?? '');
-                $dateOfBirth = trim($row[4] ?? '');
-                $gender = trim($row[5] ?? '');
+                $name          = trim($row[0] ?? '');
+                $email         = trim($row[1] ?? '');
+                $phone         = trim($row[2] ?? '');
+                $nationality   = trim($row[3] ?? '');
+                $dateOfBirth   = trim($row[4] ?? '');
+                $gender        = trim($row[5] ?? '');
                 $loyaltyPoints = trim($row[6] ?? '0');
-                $address = trim($row[7] ?? '');
+                $address       = trim($row[7] ?? '');
 
                 if (empty($email)) {
                     $skipped++;
@@ -1010,21 +1020,21 @@ class UserService
                     continue;
                 }
 
-                if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $skipped++;
                     $errors[] = "Row {$rowNumber}: Skipped - Invalid email format: {$email}";
                     continue;
                 }
 
-                if (!empty($phone)) {
+                if (! empty($phone)) {
 
                     if (is_numeric($phone) && (stripos($phone, 'E') !== false || stripos($phone, 'e') !== false)) {
-                        $phone = number_format((float)$phone, 0, '', '');
+                        $phone = number_format((float) $phone, 0, '', '');
                     }
 
                     $phone = preg_replace('/[^0-9+]/', '', $phone);
 
-                    if (!empty($phone) && !str_starts_with($phone, '+')) {
+                    if (! empty($phone) && ! str_starts_with($phone, '+')) {
                         if (str_starts_with($phone, '974')) {
                             $phone = '+' . $phone;
                         } elseif (strlen($phone) >= 8) {
@@ -1034,7 +1044,7 @@ class UserService
                 }
 
                 $parsedDateOfBirth = null;
-                if (!empty($dateOfBirth)) {
+                if (! empty($dateOfBirth)) {
                     try {
                         $dateParts = explode('-', $dateOfBirth);
                         if (count($dateParts) === 3 && strlen($dateParts[0]) <= 2 && strlen($dateParts[1]) <= 2) {
@@ -1048,7 +1058,7 @@ class UserService
                 }
 
                 $normalizedGender = null;
-                if (!empty($gender)) {
+                if (! empty($gender)) {
                     $genderLower = strtolower($gender);
                     if (in_array($genderLower, ['male', 'm', 'man'])) {
                         $normalizedGender = 'male';
@@ -1060,7 +1070,7 @@ class UserService
                 }
 
                 $loyaltyPointsInt = 0;
-                if (!empty($loyaltyPoints)) {
+                if (! empty($loyaltyPoints)) {
                     $loyaltyPointsInt = (int) filter_var($loyaltyPoints, FILTER_SANITIZE_NUMBER_INT);
                 }
 
@@ -1069,13 +1079,13 @@ class UserService
                 if ($user) {
                     $updateData = [];
 
-                    if (!empty($name)) {
+                    if (! empty($name)) {
                         $updateData['name'] = $name;
                     }
-                    if (!empty($phone)) {
+                    if (! empty($phone)) {
                         $updateData['phone'] = $phone;
                     }
-                    if (!empty($nationality)) {
+                    if (! empty($nationality)) {
                         $updateData['nationality'] = $nationality;
                     }
                     if ($parsedDateOfBirth) {
@@ -1084,11 +1094,11 @@ class UserService
                     if ($normalizedGender) {
                         $updateData['gender'] = $normalizedGender;
                     }
-                    if (!empty($address)) {
+                    if (! empty($address)) {
                         $updateData['address'] = $address;
                     }
 
-                    if (!$user->hasRole('customer')) {
+                    if (! $user->hasRole('customer')) {
                         $user->assignRole('customer');
                     }
 
@@ -1096,7 +1106,7 @@ class UserService
                         $updateData['status'] = $this->userModel::ACTIVE;
                     }
 
-                    if (!empty($updateData)) {
+                    if (! empty($updateData)) {
                         $user->update($updateData);
                     }
 
@@ -1111,14 +1121,14 @@ class UserService
                     $updated++;
                 } else {
                     $user = $this->userModel->create([
-                        'name' => $name ?: 'User',
-                        'email' => $email,
-                        'phone' => $phone,
-                        'nationality' => $nationality,
+                        'name'          => $name ?: 'User',
+                        'email'         => $email,
+                        'phone'         => $phone,
+                        'nationality'   => $nationality,
                         'date_of_birth' => $parsedDateOfBirth,
-                        'gender' => $normalizedGender,
-                        'address' => $address,
-                        'status' => $this->userModel::ACTIVE,
+                        'gender'        => $normalizedGender,
+                        'address'       => $address,
+                        'status'        => $this->userModel::ACTIVE,
                     ]);
 
                     $user->assignRole('customer');
@@ -1134,13 +1144,13 @@ class UserService
             DB::commit();
 
             $summary = [
-                'imported' => $imported,
-                'updated' => $updated,
-                'skipped' => $skipped,
+                'imported'        => $imported,
+                'updated'         => $updated,
+                'skipped'         => $skipped,
                 'total_processed' => $imported + $updated + $skipped,
             ];
 
-            if (!empty($errors)) {
+            if (! empty($errors)) {
                 $summary['errors'] = $errors;
             }
 
@@ -1149,10 +1159,230 @@ class UserService
         } catch (Exception $e) {
             DB::rollBack();
             Log::error("User import error: " . $e->getMessage(), [
-                'file' => $filename,
+                'file'      => $filename,
                 'exception' => $e,
             ]);
             return sendError("Failed to import users: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Register user from admin mobile app (creates registration request)
+     */
+    public function registerAdminAppUser($request)
+    {
+        $formData = $request->validate([
+            'name'     => 'required|string|max:100',
+            'email'    => 'required|email|unique:registration_requests,email',
+            'phone'    => 'required|min:6|max:20',
+            'password' => 'required|min:8|confirmed',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            // Check if user already exists in users table
+            $existingUser = $this->userModel->where('email', $formData['email'])->first();
+            if ($existingUser) {
+                // Check if there's already a pending registration request
+                $existingRequest = RegistrationRequest::where('email', $formData['email'])
+                    ->where('status', RegistrationRequest::PENDING)
+                    ->first();
+
+                if ($existingRequest) {
+                    return sendError("A registration request with this email is already pending approval.");
+                }
+            }
+
+            $registrationRequest = RegistrationRequest::create([
+                'name'     => $formData['name'],
+                'email'    => $formData['email'],
+                'phone'    => $formData['phone'],
+                'password' => $formData['password'],
+                'status'   => RegistrationRequest::PENDING,
+            ]);
+
+            DB::commit();
+
+            return sendSuccess("Registration request submitted successfully. Your request is pending admin approval.", [
+                'registration_request' => [
+                    'id'         => $registrationRequest->id,
+                    'name'       => $registrationRequest->name,
+                    'email'      => $registrationRequest->email,
+                    'phone'      => $registrationRequest->phone,
+                    'status'     => $registrationRequest->status,
+                    'created_at' => $registrationRequest->created_at,
+                ],
+            ]);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Admin app user registration error: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError("Something went wrong please try again later");
+        }
+    }
+    public function listPendingUsers($request)
+    {
+        $search           = $request->search ?? null;
+        $records_per_page = $request->records_per_page ?? 10;
+
+        $registrationRequests = RegistrationRequest::where('status', RegistrationRequest::PENDING)
+            ->when($search, function ($query, $search) {
+                $query->where("name", "LIKE", "%{$search}%")
+                    ->orWhere("email", "LIKE", "%{$search}%")
+                    ->orWhere("phone", "LIKE", "%{$search}%");
+            })
+            ->latest()
+            ->paginate($records_per_page);
+
+        $roles  = Role::select(['id', 'name'])->get();
+        $venues = Venue::select(['id', 'name'])->active()->get();
+
+        return sendSuccess("Pending registration requests fetched successfully", [
+            'registration_requests' => $registrationRequests,
+            'roles'                 => $roles,
+            'venues'                => $venues,
+            'search'                => $search,
+        ]);
+    }
+
+    /**
+     * Approve a registration request, assign role, and optionally assign venues
+     * If user already exists, only update roles and venues
+     * If user doesn't exist, create new user
+     */
+    public function approveUser($request, $id)
+    {
+        $registrationRequest = RegistrationRequest::find($id);
+
+        if (! $registrationRequest) {
+            return sendError("Registration request not found");
+        }
+
+        if ($registrationRequest->status !== RegistrationRequest::PENDING) {
+            return sendError("Registration request is not in pending status");
+        }
+
+        $formData = $request->validate([
+            'role'     => 'required|exists:roles,name',
+            'venues'   => 'nullable|array',
+            'venues.*' => 'numeric|exists:venues,id',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $role     = Role::where('name', $formData['role'])->firstOrFail();
+            $roleName = $role->name;
+
+            $isSuperAdminOrAdmin = in_array($roleName, ['super_admin', 'admin']);
+
+            $existingUser = $this->userModel->where('email', $registrationRequest->email)->first();
+
+            if ($existingUser) {
+                $existingUser->syncRoles([]);
+                $existingUser->assignRole($roleName);
+
+                if (! empty($formData['venues'])) {
+                    $existingUser->venues()->sync($formData['venues']);
+                }
+
+                if ($existingUser->status !== $this->userModel::ACTIVE) {
+                    $existingUser->status = $this->userModel::ACTIVE;
+                    $existingUser->save();
+                }
+
+                $user = $existingUser;
+            } else {
+                $user = $this->userModel->create([
+                    'status'   => $this->userModel::ACTIVE,
+                    'name'     => $registrationRequest->name,
+                    'email'    => $registrationRequest->email,
+                    'phone'    => $registrationRequest->phone,
+                    'password' => $registrationRequest->password,
+                ]);
+
+                $user->assignRole($roleName);
+
+                if (! empty($formData['venues'])) {
+                    $user->venues()->sync($formData['venues']);
+                }
+
+                Preference::create([
+                    'user_id'         => $user->id,
+                    'notifications'   => [
+                        'booking_emails'   => true,
+                        'sms_reminders'    => false,
+                        'marketing_emails' => true,
+                    ],
+                    'favorite_sports' => [],
+                    'language'        => 'english',
+                    'currency'        => 'QAR',
+                ]);
+            }
+
+            $registrationRequest->delete();
+
+            DB::commit();
+
+            try {
+                Mail::to($user->email)->send(new UserWelcomeEmail($user, null));
+            } catch (Exception $e) {
+                Log::error("Failed to send welcome email after approval: " . $e->getMessage(), ["Exception" => $e]);
+            }
+
+            $user->load(['roles', 'venues']);
+            $user->makeHidden(['roles']);
+            $roles = $user->getRoleNames();
+
+            $message = $existingUser
+                ? "Registration request approved. User already existed - roles and venues have been updated."
+                : "Registration request approved. New user created successfully.";
+
+            return sendSuccess($message, compact('user', 'roles'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Registration request approval error: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError("Something went wrong: " . $e->getMessage());
+        }
+    }
+
+    public function rejectUser($request, $id)
+    {
+        $registrationRequest = RegistrationRequest::find($id);
+
+        if (! $registrationRequest) {
+            return sendError("Registration request not found");
+        }
+
+        if ($registrationRequest->status !== RegistrationRequest::PENDING) {
+            return sendError("Registration request is not in pending status");
+        }
+
+        $formData = $request->validate(['reason' => 'nullable|string|max:500']);
+
+        try {
+            $rejectionReason = $formData['reason'] ?? null;
+
+            try {
+                $userForEmail = new User([
+                    'name'  => $registrationRequest->name,
+                    'email' => $registrationRequest->email,
+                ]);
+
+                Mail::to($registrationRequest->email)->send(new UserRejectionEmail($userForEmail, $rejectionReason));
+            } catch (Exception $e) {
+                Log::error("Failed to send rejection email: " . $e->getMessage(), ["Exception" => $e]);
+            }
+
+            $registrationRequest->delete();
+
+            return sendSuccess("Registration request rejected and deleted successfully. Rejection email has been sent.");
+
+        } catch (Exception $e) {
+            Log::error("Registration request rejection error: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError("Something went wrong: " . $e->getMessage());
         }
     }
 }

@@ -30,6 +30,9 @@ Route::post('change-password', [UserController::class, 'changePassword'])->middl
 Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail'])->name('forgot-password');
 Route::post('reset-password', [UserController::class, 'reset'])->name('reset-password');
 
+// Admin Mobile App - Separate Registration and Login APIs
+Route::post('admin-app/register', [UserController::class, 'registerAdminAppUser'])->name('admin-app.register');
+
 Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('logout', [UserController::class, 'logout'])->name('logout');
@@ -45,6 +48,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
         Route::get('fetch-venues', [VenueController::class, 'adminFetchVenues'])->name('fetch-venues');
         Route::apiResource('venues', VenueController::class);
+
+        // Pending user management endpoints (Admin Mobile App)
+        Route::get('registrations/requests', [UserController::class, 'listPendingUsers'])->name('users.pending');
+        Route::post('registrations/{id}/approve', [UserController::class, 'approveUser'])->name('users.approve');
+        Route::post('registrations/{id}/reject', [UserController::class, 'rejectUser'])->name('users.reject');
 
         Route::apiResource('users', UserController::class);
         Route::get('users/required-data', [UserController::class, 'requiredDataForUser']);
