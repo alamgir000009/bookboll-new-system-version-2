@@ -16,6 +16,7 @@ use App\Models\Venue;
 use App\Notifications\BookingCancelledUserNotification;
 use App\Notifications\BookingConfirmedUserNotification;
 use App\Notifications\BookingUpdatedUserNotification;
+use App\Services\OneSignalService;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
 use BookingStatus;
@@ -30,8 +31,11 @@ use PaymentType;
 
 class BookingService
 {
-    public function __construct(protected Booking $bookingModel, protected Payment $paymentModel)
-    {}
+    public function __construct(
+        protected Booking $bookingModel,
+        protected Payment $paymentModel,
+        protected OneSignalService $oneSignalService
+    ) {}
 
     public function all($request)
     {
@@ -200,6 +204,9 @@ class BookingService
 
             $booking->load('venue:id,name,maps_url');
             $user->notify(new BookingCancelledUserNotification($booking));
+
+            // Send OneSignal push notification to admins and employees
+            $this->sendBookingNotification($booking, 'cancelled');
 
             return sendSuccess('Booking cancelled successfully.', compact('booking'));
 
@@ -1291,6 +1298,11 @@ class BookingService
                 ->whereIn('id', $bookingIds)
                 ->get();
 
+            // Send OneSignal notifications for each created booking
+            foreach ($createdBookings as $booking) {
+                $this->sendBookingNotification($booking, 'created');
+            }
+
             return sendSuccess('Booking confirmed successfully', ['bookings' => $createdBookings]);
 
         } catch (Exception $e) {
@@ -1600,6 +1612,9 @@ class BookingService
                     ]);
                 }
             }
+
+            // Send OneSignal push notification to admins and employees
+            $this->sendBookingNotification($booking, 'updated');
 
             return sendSuccess('Booking updated successfully', compact('booking'));
 
@@ -2801,6 +2816,104 @@ class BookingService
                 'exception'  => $e,
             ]);
             return null;
+        }
+    }
+
+    /**
+     * Get user IDs who should receive booking notifications
+     * Includes: admins, super_admins, and employees with access to the booking's venue
+     *
+     * @param int $venueId The venue ID from the booking
+     * @return array Array of user IDs
+     */
+    protected function getBookingNotificationRecipients(int $venueId): array
+    {
+        // Get all admins and super admins
+        $adminUserIds = User::whereHas('roles', function ($query) {
+            $query->whereIn('name', ['admin', 'super_admin']);
+        })
+        ->where('status', User::ACTIVE)
+        ->pluck('id')
+        ->toArray();
+
+        // Get employees (senior and junior) who have access to this venue
+        $employeeUserIds = User::whereHas('roles', function ($query) {
+            $query->whereIn('name', ['senior_employee', 'junior_employee']);
+        })
+        ->whereHas('venues', function ($query) use ($venueId) {
+            $query->where('venues.id', $venueId);
+        })
+        ->where('status', User::ACTIVE)
+        ->pluck('id')
+        ->toArray();
+
+        // Merge and remove duplicates
+        return array_unique(array_merge($adminUserIds, $employeeUserIds));
+    }
+
+    /**
+     * Send OneSignal push notification for booking events
+     *
+     * @param Booking $booking The booking instance
+     * @param string $eventType 'created', 'updated', or 'cancelled'
+     * @return void
+     */
+    protected function sendBookingNotification(Booking $booking, string $eventType): void
+    {
+        try {
+            if (!$booking->venue_id) {
+                return;
+            }
+
+            $recipientIds = $this->getBookingNotificationRecipients($booking->venue_id);
+
+            if (empty($recipientIds)) {
+                Log::info('No recipients found for booking notification', [
+                    'booking_id' => $booking->id,
+                    'venue_id' => $booking->venue_id,
+                    'event_type' => $eventType,
+                ]);
+                return;
+            }
+
+            $venueName = $booking->venue->name ?? 'Unknown Venue';
+            $customerName = $booking->user->name ?? 'Unknown Customer';
+            $bookingId = $booking->booking_id ?? 'N/A';
+
+            $title = '';
+            $message = '';
+
+            switch ($eventType) {
+                case 'created':
+                    $title = 'New Booking Created';
+                    $message = "New booking #{$bookingId} by {$customerName} at {$venueName}";
+                    break;
+                case 'updated':
+                    $title = 'Booking Updated';
+                    $message = "Booking #{$bookingId} by {$customerName} at {$venueName} has been updated";
+                    break;
+                case 'cancelled':
+                    $title = 'Booking Cancelled';
+                    $message = "Booking #{$bookingId} by {$customerName} at {$venueName} has been cancelled";
+                    break;
+                default:
+                    return;
+            }
+
+            $data = [
+                'type' => 'booking_' . $eventType,
+                'booking_id' => $booking->id,
+                'booking_number' => $bookingId,
+                'venue_id' => $booking->venue_id,
+            ];
+
+            $this->oneSignalService->sendToUsers($recipientIds, $title, $message, $data);
+        } catch (\Exception $e) {
+            Log::error('Failed to send booking notification', [
+                'booking_id' => $booking->id ?? null,
+                'event_type' => $eventType,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 }
