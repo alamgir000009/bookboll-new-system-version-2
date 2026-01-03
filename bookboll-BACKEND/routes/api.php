@@ -37,6 +37,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('logout', [UserController::class, 'logout'])->name('logout');
     Route::get('me', [UserController::class, 'me'])->name('me');
+    Route::post('subscribe-onesignal', [UserController::class, 'subscribeOneSignal'])->name('customer.subscribe-onesignal');
 
     Route::prefix('admin')->group(function () {
 
@@ -180,7 +181,6 @@ Route::prefix('customer')->group(function () {
         Route::post('update-profile', [UserController::class, 'updateCustomerProfile'])->name('customer.updateCustomerProfile');
         Route::post('update-profile-image', [UserController::class, 'updateProfileImage'])->name('customer.updateProfileImage');
         Route::get('payment-methods', [PaymentController::class, 'getPaymentMethods'])->name('customer.payment-methods');
-        Route::post('subscribe-onesignal', [UserController::class, 'subscribeOneSignal'])->name('customer.subscribe-onesignal');
     });
 
 });
