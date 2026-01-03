@@ -231,7 +231,7 @@
             </div>
 
             <h1>Payment Successful!</h1>
-            <p class="subtitle">Thank you for your payment. Your booking has been confirmed and you will receive a confirmation email shortly.</p>
+            {{-- <p class="subtitle">Thank you for your payment. Your booking has been confirmed and you will receive a confirmation email shortly.</p> --}}
 
             @if(isset($bookings) && count($bookings) > 0)
                 <div class="booking-info">
