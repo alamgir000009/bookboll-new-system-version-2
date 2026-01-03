@@ -109,13 +109,13 @@ class GiftCardService
         $customer->loyaltyPoints()->create([
             'type'   => 'debit',
             'points' => $giftCard->points_required,
-            'reason' => "Redeemed {$giftCard->name} gift card",
+            'reason' => "Redeemed '{$giftCard->title}' gift card",
         ]);
 
         $customer->transactions()->create([
             'gift_card_id' => $giftCard->id,
             'amount'       => $giftCard->value,
-            'reason'       => "Gift card redeemed: {$giftCard->name}",
+            'reason'       => "Gift card redeemed: {$giftCard->title}",
         ]);
 
         $availablePoints = LoyaltyPoint::balance($customer->id);
