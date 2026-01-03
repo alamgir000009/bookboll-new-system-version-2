@@ -10,6 +10,7 @@ use App\Models\Promocode;
 use App\Models\Resource;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
+use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Venue;
 use App\Notifications\BookingCancelledUserNotification;
@@ -161,41 +162,70 @@ class BookingService
             return sendError('Booking is already cancelled.');
         }
 
-        $booking->update([
-            'cancelled_at'  => now(),
-            'cancelled_by'  => auth()->id(),
-            'status'        => BookingStatus::CANCELLED,
-            'cancel_reason' => $request->cancel_reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
-        ]);
+        try {
+            DB::beginTransaction();
 
-        $booking->history()->create([
-            'user_id'     => auth()->id(),
-            'action'      => 'booking_cancelled',
-            'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
-        ]);
+            $giftCardAmount = $booking->gift_card_amount ?? 0;
+            $user = $booking->user;
+            if ($giftCardAmount > 0) {
+                $existingRefund = Transaction::where('booking_id', $booking->id)
+                    ->where('type', 'credit')
+                    ->where('reason', 'LIKE', '%Gift card balance refunded%')
+                    ->first();
 
-        $booking->load('venue:id,name,maps_url');
-        $booking->user->notify(new BookingCancelledUserNotification($booking));
+                if (! $existingRefund) {
+                    $user->transactions()->create([
+                        'type'       => 'credit',
+                        'booking_id' => $booking->id,
+                        'amount'     => $giftCardAmount,
+                        'reason'     => "Gift card balance refunded for cancelled booking #{$booking->booking_id}",
+                    ]);
+                }
+            }
 
-        return sendSuccess('Booking cancelled successfully.', compact('booking'));
+            $booking->update([
+                'cancelled_at'  => now(),
+                'cancelled_by'  => auth()->id(),
+                'status'        => BookingStatus::CANCELLED,
+                'cancel_reason' => $request->cancel_reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
+            ]);
+
+            $booking->history()->create([
+                'user_id'     => auth()->id(),
+                'action'      => 'booking_cancelled',
+                'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
+            ]);
+
+            DB::commit();
+
+            $booking->load('venue:id,name,maps_url');
+            $user->notify(new BookingCancelledUserNotification($booking));
+
+            return sendSuccess('Booking cancelled successfully.', compact('booking'));
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Booking cancellation error: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError("Something went wrong: " . $e->getMessage());
+        }
     }
 
     public function dashboardData()
     {
         $recentBookingsQuery = $this->bookingModel->whereNotIn('status', [BookingStatus::COMPLETED])->latest('id');
         $recentBookingsQuery = applyVenueFilter($recentBookingsQuery, 'venue_id');
-        $recentBookings = $recentBookingsQuery->take(3)->get();
+        $recentBookings      = $recentBookingsQuery->take(3)->get();
 
         $total_redeemed = LoyaltyPoint::where('type', 'debit')->sum('points');
         $total_earned   = LoyaltyPoint::where('type', 'credit')->sum('points');
 
         $totalCollectedQuery = $this->paymentModel->query()->where('status', PaymentStatus::PAID);
         $totalCollectedQuery = applyVenueFilterToPayments($totalCollectedQuery);
-        $totalCollected = $totalCollectedQuery->sum('amount');
+        $totalCollected      = $totalCollectedQuery->sum('amount');
 
         $totalPendingQuery = $this->paymentModel->query()->where('status', PaymentStatus::PENDING);
         $totalPendingQuery = applyVenueFilterToPayments($totalPendingQuery);
-        $totalPending   = $totalPendingQuery->sum('amount');
+        $totalPending      = $totalPendingQuery->sum('amount');
 
         $widgets = [
             [
@@ -244,11 +274,11 @@ class BookingService
 
         $venuesQuery = Venue::with(['listings:id,venue_id,name']);
         $venuesQuery = applyVenueFilter($venuesQuery, 'id');
-        $venues = $venuesQuery->get(['id', 'name']);
+        $venues      = $venuesQuery->get(['id', 'name']);
 
         $listingsQuery = Listing::with(['venue']);
         $listingsQuery = applyVenueFilter($listingsQuery, 'venue_id');
-        $listings = $listingsQuery->get(['id', 'name', 'venue_id']);
+        $listings      = $listingsQuery->get(['id', 'name', 'venue_id']);
 
         $stats = [
             "widgets"   => $widgets,
@@ -290,15 +320,15 @@ class BookingService
 
         // Apply venue filtering
         $user = auth()->user();
-        if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+        if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
             $venueIds = DB::table('user_venue')
                 ->where('user_id', $user->id)
                 ->pluck('venue_id')
                 ->toArray();
-            if (!empty($venueIds)) {
+            if (! empty($venueIds)) {
                 $query->whereIn('bookings.venue_id', $venueIds);
                 // Intersect with selectedVenues if provided
-                if (!empty($filters['selectedVenues'])) {
+                if (! empty($filters['selectedVenues'])) {
                     $intersected = array_intersect($filters['selectedVenues'], $venueIds);
                     if (empty($intersected)) {
                         $query->whereRaw('1 = 0');
@@ -802,12 +832,12 @@ class BookingService
         // If user also specified venue_id, ensure it's accessible
         if ($request->venue_id) {
             $user = auth()->user();
-            if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+            if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
                 $venueIds = DB::table('user_venue')
                     ->where('user_id', $user->id)
                     ->pluck('venue_id')
                     ->toArray();
-                if (!in_array($request->venue_id, $venueIds)) {
+                if (! in_array($request->venue_id, $venueIds)) {
                     $query->whereRaw('1 = 0'); // No results if venue not accessible
                 } else {
                     $query->where('venue_id', $request->venue_id);
@@ -923,6 +953,7 @@ class BookingService
 
     public function createBooking($request)
     {
+        logger("Booking creation request", ["Request" => $request->all()]);
         $user = $request->user_id ? User::find($request->user_id) : auth()->user();
 
         $formData = $request->validate([
@@ -949,6 +980,8 @@ class BookingService
             'recurring_bookings.*.quantity'   => 'required|numeric|min:1',
             'recurring_bookings.*.add_ons'    => 'nullable|array',
             'recurring_bookings.*.add_ons.*'  => 'exists:add_ons,id',
+            'use_gift_card_balance'           => 'nullable|boolean',
+            'gift_card_balance_used'          => 'nullable|numeric|min:0',
         ]);
 
         if (isset($formData['notes'])) {
@@ -1053,6 +1086,21 @@ class BookingService
             }
             $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
 
+            // Handle gift card balance usage
+            $giftCardBalanceUsed = 0;
+            if (! empty($formData['use_gift_card_balance']) && $formData['use_gift_card_balance']) {
+                $userGiftCardBalance = Transaction::balance($user->id) ?? 0;
+                $requestedAmount     = $formData['gift_card_balance_used'] ?? 0;
+
+                if ($requestedAmount > 0 && $userGiftCardBalance > 0) {
+                    // Use the minimum of requested amount and available balance
+                    $giftCardBalanceUsed = min($requestedAmount, $userGiftCardBalance);
+
+                    // Ensure gift card balance doesn't exceed the total price after discount
+                    // We'll calculate this after discount is calculated
+                }
+            }
+
             $totalDiscount = 0;
             $promocode     = null;
             if (! empty($formData['promocode'])) {
@@ -1078,9 +1126,17 @@ class BookingService
                 $promocode->incrementUsage($user->id);
             }
 
-            $discounts = [];
+            // Ensure gift card balance doesn't exceed the total price after discount
+            if ($giftCardBalanceUsed > 0) {
+                $totalAfterDiscount  = $combinedSubtotal - $totalDiscount;
+                $giftCardBalanceUsed = min($giftCardBalanceUsed, $totalAfterDiscount);
+            }
+
+            $discounts       = [];
+            $giftCardAmounts = [];
 
             if ($totalBookings > 0) {
+                // Distribute discounts
                 if ($totalDiscount > 0) {
                     $baseDiscountPerBooking = round($totalDiscount / $totalBookings, 2);
 
@@ -1106,13 +1162,41 @@ class BookingService
                         $discounts[] = 0;
                     }
                 }
+
+                // Distribute gift card balance equally across all bookings
+                if ($giftCardBalanceUsed > 0) {
+                    $baseGiftCardPerBooking = round($giftCardBalanceUsed / $totalBookings, 2);
+                    $calculatedTotal        = $baseGiftCardPerBooking * $totalBookings;
+                    $roundingDifference     = round($giftCardBalanceUsed - $calculatedTotal, 2);
+
+                    for ($i = 0; $i < $totalBookings; $i++) {
+                        if ($i === 0) {
+                            $giftCardAmounts[] = round($baseGiftCardPerBooking + $roundingDifference, 2);
+                        } else {
+                            $giftCardAmounts[] = $baseGiftCardPerBooking;
+                        }
+                    }
+
+                    $verifyTotal = round(array_sum($giftCardAmounts), 2);
+                    if (abs($verifyTotal - $giftCardBalanceUsed) > 0.01) {
+                        $adjustment         = round($giftCardBalanceUsed - $verifyTotal, 2);
+                        $giftCardAmounts[0] = round($giftCardAmounts[0] + $adjustment, 2);
+                    }
+                } else {
+                    for ($i = 0; $i < $totalBookings; $i++) {
+                        $giftCardAmounts[] = 0;
+                    }
+                }
             }
 
             $discountIndex = 0;
+            $giftCardIndex = 0;
 
             for ($i = 0; $i < $formData['quantity']; $i++) {
-                $bookingDiscount = $discounts[$discountIndex] ?? 0;
+                $bookingDiscount       = $discounts[$discountIndex] ?? 0;
+                $bookingGiftCardAmount = $giftCardAmounts[$giftCardIndex] ?? 0;
                 $discountIndex++;
+                $giftCardIndex++;
 
                 $booking = $this->createSingleBooking(
                     $user,
@@ -1122,6 +1206,7 @@ class BookingService
                     $formData['end_time'],
                     $singleSubtotal,
                     $bookingDiscount,
+                    $bookingGiftCardAmount,
                     $promocode,
                     $paymentIntentId,
                     $chargeId,
@@ -1170,8 +1255,10 @@ class BookingService
                 $recurringFormData['add_ons'] = $recurring['add_ons'] ?? [];
 
                 for ($i = 0; $i < $recurringQuantity; $i++) {
-                    $bookingDiscount = $discounts[$discountIndex] ?? 0;
+                    $bookingDiscount       = $discounts[$discountIndex] ?? 0;
+                    $bookingGiftCardAmount = $giftCardAmounts[$giftCardIndex] ?? 0;
                     $discountIndex++;
+                    $giftCardIndex++;
 
                     $booking = $this->createSingleBooking(
                         $user,
@@ -1181,6 +1268,7 @@ class BookingService
                         $recurring['end_time'],
                         $recurringSingleSubtotal,
                         $bookingDiscount,
+                        $bookingGiftCardAmount,
                         $promocode,
                         $paymentIntentId,
                         $chargeId,
@@ -2415,7 +2503,7 @@ class BookingService
         // If user also specified venue_ids, intersect them
         if (! empty($data['venue_ids'])) {
             $user = auth()->user();
-            if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+            if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
                 $venueIds = DB::table('user_venue')
                     ->where('user_id', $user->id)
                     ->pluck('venue_id')
@@ -2504,6 +2592,7 @@ class BookingService
         string $endTime,
         float $subtotal,
         float $discount,
+        float $giftCardAmount,
         $promocode,
         $paymentIntentId,
         $chargeId,
@@ -2514,7 +2603,13 @@ class BookingService
             $startTimeCarbon = Carbon::parse($startTime);
             $endTimeCarbon   = Carbon::parse($endTime);
 
-            $totalPrice = round($subtotal - $discount, 2);
+            // Apply discount and gift card amount
+            $totalPrice = round($subtotal - $discount - $giftCardAmount, 2);
+
+            // Ensure total price doesn't go negative
+            if ($totalPrice < 0) {
+                $totalPrice = 0;
+            }
 
             $paymentStatus = match (trim($formData['payment_method'])) {
                 'cash_on_arrival'              => BookingPaymentStatus::PENDING,
@@ -2556,6 +2651,7 @@ class BookingService
                 'listing_id'            => $formData['listing_id'],
                 'payment_method'        => $formData['payment_method'],
                 'loyalty_points_earned' => $listing->loyalty_points ?? 0,
+                'gift_card_amount'      => $giftCardAmount,
                 'full_payment_received' => $paymentStatus == BookingPaymentStatus::FULLY_PAID,
                 'payment_breakdown'     => [
                     'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
@@ -2590,6 +2686,11 @@ class BookingService
                     $depositAmount = round($totalPrice * ($deposit['percentage'] / 100), 2);
                 } else {
                     throw new Exception('Invalid deposit configuration: must specify amount or percentage.');
+                }
+
+                // Adjust deposit amount if it exceeds total price after gift card
+                if ($depositAmount > $totalPrice) {
+                    $depositAmount = $totalPrice;
                 }
 
                 $this->paymentModel::create([
@@ -2640,6 +2741,16 @@ class BookingService
                     'method'            => $paymentMethod,
                     'status'            => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
                     'notes'             => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
+                ]);
+            }
+
+            // Create debit transaction for gift card usage
+            if ($giftCardAmount > 0) {
+                $booking->user->transactions()->create([
+                    'type'       => 'debit',
+                    'booking_id' => $booking->id,
+                    'amount'     => $giftCardAmount,
+                    'reason'     => "Gift card balance used for booking #{$booking->booking_id}",
                 ]);
             }
 

@@ -24,6 +24,7 @@ return new class extends Migration
             $table->integer('duration')->nullable();
             $table->decimal('subtotal', 15, 2);
             $table->decimal('discount_amount')->default(0);
+            $table->decimal('gift_card_amount')->default(0);
             $table->decimal('total_price', 15, 2);
             $table->boolean('full_payment_received')->default(false);
             $table->longText('notes')->nullable();

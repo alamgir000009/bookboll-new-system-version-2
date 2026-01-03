@@ -149,6 +149,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards'])->name('gift-cards.index');
         Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard'])->name('gift-cards.redeem');
+        Route::get('gift-cards/balance', [GiftCardController::class, 'getBalance'])->name('gift-cards.balance');
 
         Route::post('bookings/validate', [BookingController::class, 'validateBooking'])->name('bookings.validate');
         Route::post('bookings/confirm', [BookingController::class, 'confirmBooking'])->name('bookings.confirmBooking');
@@ -160,7 +161,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent'])->name('payments.createPaymentIntent');
 
         Route::get('promocodes', [PromocodeController::class, 'customerIndex'])->name('promocodes.customer.index');
-
     });
 
 });

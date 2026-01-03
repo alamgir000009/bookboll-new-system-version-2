@@ -15,6 +15,7 @@ class TransactionTableSeeder extends Seeder
                 $user->transactions()->create([
                     'type'   => "credit",
                     'amount' => rand(5, 200),
+                    'reason' => "Initial balance top-up",
                 ]);
             }
         }

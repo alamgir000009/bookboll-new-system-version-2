@@ -115,6 +115,7 @@ class GiftCardService
         $customer->transactions()->create([
             'gift_card_id' => $giftCard->id,
             'amount'       => $giftCard->value,
+            'reason'       => "Gift card redeemed: {$giftCard->name}",
         ]);
 
         $availablePoints = LoyaltyPoint::balance($customer->id);
@@ -126,5 +127,11 @@ class GiftCardService
         $data['availablePoints'] = $availablePoints;
 
         return sendSuccess("Gift card redeemed successfully", $data);
+    }
+
+    public function getUserGiftCardBalance(int $userId)
+    {
+        $balance = LoyaltyPoint::balance($userId ?? auth()->id()) ?? 0;
+        return sendSuccess('Balance fetched successfully', compact('balance'));
     }
 }

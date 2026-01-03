@@ -31,6 +31,7 @@ class Booking extends Model
         'payment_method',
         'refunded_amount',
         'discount_amount',
+        'gift_card_amount',
         'payment_breakdown',
         'full_payment_received',
         'loyalty_points_earned',
