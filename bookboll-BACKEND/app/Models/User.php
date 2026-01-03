@@ -236,12 +236,12 @@ class User extends Authenticatable
 
     public function onesignalSubscriptions()
     {
-        return $this->hasMany(OneSignalSubscription::class);
+        return $this->hasMany(OnesignalSubscription::class);
     }
 
     public function activeOnesignalSubscriptions()
     {
-        return $this->hasMany(OneSignalSubscription::class)->where('is_active', true);
+        return $this->hasMany(OnesignalSubscription::class)->where('is_active', true);
     }
 
     public function tags()

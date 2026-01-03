@@ -6,7 +6,7 @@ use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserRejectionEmail;
 use App\Mail\UserWelcomeEmail;
 use App\Models\LoyaltyPoint;
-use App\Models\OneSignalSubscription;
+use App\Models\OnesignalSubscription;
 use App\Models\Preference;
 use App\Models\RegistrationRequest;
 use App\Models\User;
@@ -929,7 +929,7 @@ class UserService
         try {
             DB::beginTransaction();
 
-            $existingSubscription = OneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
+            $existingSubscription = OnesignalSubscription::where('onesignal_id', $formData['onesignal_id'])
                 ->where('user_id', $user->id)
                 ->first();
 
@@ -941,7 +941,7 @@ class UserService
                 ]);
                 $subscription = $existingSubscription;
             } else {
-                $otherUserSubscription = OneSignalSubscription::where('onesignal_id', $formData['onesignal_id'])
+                $otherUserSubscription = OnesignalSubscription::where('onesignal_id', $formData['onesignal_id'])
                     ->where('user_id', '!=', $user->id)
                     ->first();
 
@@ -949,7 +949,7 @@ class UserService
                     $otherUserSubscription->update(['user_id' => $user->id, 'is_active' => true]);
                     $subscription = $otherUserSubscription;
                 } else {
-                    $subscription = OneSignalSubscription::create([
+                    $subscription = OnesignalSubscription::create([
                         'user_id'      => $user->id,
                         'onesignal_id' => $formData['onesignal_id'],
                         'device_type'  => $formData['device_type'] ?? null,
