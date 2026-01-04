@@ -13,33 +13,19 @@ class OneSignalService
 
     public function __construct()
     {
-        $this->appId      = trim(env('ONESIGNAL_APP_ID', ''));
-        $this->restApiKey = trim(env('ONESIGNAL_REST_API_KEY', ''));
+        $this->appId      = trim(config('services.onesignal.app_id'));
+        $this->restApiKey = trim(config('services.onesignal.rest_api_key'));
     }
 
-    /**
-     * Send push notification to specific users
-     *
-     * @param array $userIds Array of user IDs to send notification to
-     * @param string $title Notification title
-     * @param string $message Notification message
-     * @param array $data Additional data to send with notification
-     * @return bool
-     */
     public function sendToUsers(array $userIds, string $title, string $message, array $data = []): bool
     {
         if (empty($userIds) || ! $this->appId || ! $this->restApiKey) {
-            Log::warning('OneSignal: Missing configuration or user IDs', [
-                'user_ids'    => $userIds,
-                'has_app_id'  => ! empty($this->appId),
-                'has_api_key' => ! empty($this->restApiKey),
-            ]);
+            Log::warning('OneSignal: Missing configuration or user IDs', ['user_ids' => $userIds]);
             return false;
         }
 
-        // Get all active OneSignal IDs for the users
         $onesignalIds = OnesignalSubscription::whereIn('user_id', $userIds)
-            ->where('is_active', true)
+            ->active()
             ->pluck('onesignal_id')
             ->toArray();
 
@@ -51,15 +37,6 @@ class OneSignalService
         return $this->sendToPlayerIds($onesignalIds, $title, $message, $data);
     }
 
-    /**
-     * Send push notification to specific OneSignal player IDs
-     *
-     * @param array $playerIds Array of OneSignal player IDs
-     * @param string $title Notification title
-     * @param string $message Notification message
-     * @param array $data Additional data to send with notification
-     * @return bool
-     */
     public function sendToPlayerIds(array $playerIds, string $title, string $message, array $data = []): bool
     {
         if (empty($playerIds) || ! $this->appId || ! $this->restApiKey) {
@@ -69,8 +46,8 @@ class OneSignalService
         try {
 
             $payload = [
-                'app_id'          => env('ONESIGNAL_APP_ID'),
-                'headings'        => ['en' => env('APP_NAME', 'Bookboll')],
+                'app_id'          => $this->appId,
+                'headings'        => ['en' => config('app.name', 'Bookboll')],
                 'subtitle'        => ['en' => $title],
                 'contents'        => ['en' => $message],
 
@@ -82,13 +59,12 @@ class OneSignalService
                 'data'            => $data,
             ];
 
-            logger("Debug OneSignal Payload: ", $payload);
-            logger("ddd".env('ONESIGNAL_REST_API_KEY'));
-
             $response = Http::withHeaders([
-                'Authorization' => 'Basic ' . env('ONESIGNAL_REST_API_KEY'),
+                'Authorization' => 'Basic ' . $this->restApiKey,
                 'Content-Type'  => 'application/json',
             ])->post('https://api.onesignal.com/notifications', $payload);
+
+            dd($response->json());
 
             if ($response->successful() && isset($response['id'])) {
                 Log::info('OneSignal notification sent successfully', [
@@ -116,24 +92,13 @@ class OneSignalService
         }
     }
 
-    /**
-     * Send push notification to all users with a specific role
-     *
-     * @param string|array $roles Role name(s) to send to
-     * @param string $title Notification title
-     * @param string $message Notification message
-     * @param array $data Additional data to send with notification
-     * @return bool
-     */
     public function sendToRoles($roles, string $title, string $message, array $data = []): bool
     {
         $roles = is_array($roles) ? $roles : [$roles];
 
         $userIds = User::whereHas('roles', function ($query) use ($roles) {
             $query->whereIn('name', $roles);
-        })->where('status', User::ACTIVE)
-            ->pluck('id')
-            ->toArray();
+        })->active()->pluck('id')->toArray();
 
         return $this->sendToUsers($userIds, $title, $message, $data);
     }

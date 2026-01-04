@@ -19,12 +19,14 @@ class OnesignalSubscription extends Model
         'is_active' => 'boolean',
     ];
 
-    /**
-     * Get the user that owns the subscription.
-     */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
     }
 }
 
