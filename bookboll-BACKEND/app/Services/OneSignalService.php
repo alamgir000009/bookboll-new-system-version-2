@@ -64,8 +64,6 @@ class OneSignalService
                 'Content-Type'  => 'application/json',
             ])->post('https://api.onesignal.com/notifications', $payload);
 
-            dd($response->json());
-
             if ($response->successful() && isset($response['id'])) {
                 Log::info('OneSignal notification sent successfully', [
                     'player_ids_count' => count($playerIds),
