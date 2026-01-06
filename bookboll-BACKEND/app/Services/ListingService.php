@@ -127,6 +127,7 @@ class ListingService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error('Failed to create listing: ' . $e->getMessage(), ['Exception' => $e]);
             return sendError('Failed to create listing: ' . $e->getMessage());
         }
     }
@@ -194,6 +195,7 @@ class ListingService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error('Failed to update listing: ' . $e->getMessage(), ['listing_id' => $id, 'Exception' => $e]);
             return sendError('Failed to update listing: ' . $e->getMessage());
         }
     }
@@ -752,6 +754,7 @@ class ListingService
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return sendError('Listing not found', [], 404);
         } catch (\Exception $e) {
+            Log::error('Failed to upload listing image: ' . $e->getMessage(), ['listing_id' => $listingId, 'Exception' => $e]);
             return sendError('Failed to upload image: ' . $e->getMessage(), [], 500);
         }
     }
@@ -809,6 +812,7 @@ class ListingService
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return sendError('Listing not found', [], 404);
         } catch (Exception $e) {
+            Log::error('Failed to delete listing image: ' . $e->getMessage(), ['listing_id' => $listingId, 'Exception' => $e]);
             return sendError('Failed to delete image: ' . $e->getMessage(), [], 500);
         }
     }

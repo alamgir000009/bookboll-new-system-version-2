@@ -188,7 +188,7 @@ if (! function_exists('sendSuccess')) {
     {
         $user = auth()->user();
 
-        if ($logActivity && $user && ! request()->is('api/login*', 'api/register*', 'api/health*', 'api/audit-logs*') && ! request()->isMethod('GET')) {
+        if ($logActivity && $user && ! request()->is('api/login*', 'api/register*', 'api/admin-app/register*', 'api/forgot-password*', 'api/reset-password*', 'api/customer/login*', 'api/customer/google-login*', 'api/customer/forgot-password*', 'api/customer/reset-password*', 'api/health*', 'api/audit-logs*') && ! request()->isMethod('GET')) {
             try {
                 $routeName  = request()->route()?->getName();
                 $action     = getActionFromMethod(request()->method());
@@ -443,6 +443,8 @@ if (! function_exists('extractSuccessDetails')) {
                 'users.updateProfileImage' => "Updated profile image for user #{$id}",
                 'users.updatePreferences' => "Updated preferences for user #{$id}",
                 'users.changePassword' => "Changed password for user #{$id}",
+                'users.approve' => "Approved user registration #{$id}",
+                'users.reject' => "Rejected user registration #{$id}",
 
                 'venues.store' => "Created venue #{$id}",
                 'venues.update' => "Updated venue #{$id}",
@@ -514,6 +516,8 @@ if (! function_exists('extractSuccessDetails')) {
                 'bookings.generate-invoice' => "Generated invoice for booking #{$id}",
                 'bookings.confirmBooking' => "Confirmed booking #{$id}",
                 'bookings.pay' => "Processed payment for booking #{$id}",
+                'bookings.mobileUpdate' => "Updated booking #{$id} via mobile",
+                'bookings.validate' => "Validated booking request",
 
                 'reviews.store' => "Created review #{$id}",
                 'reviews.update' => "Updated review #{$id}",
@@ -528,8 +532,20 @@ if (! function_exists('extractSuccessDetails')) {
                 'payments.generate-link' => "Generated payment link",
                 'payments.generatePaymentLink' => "Generated payment link",
                 'payments.createPaymentIntent' => "Created payment intent",
+                'payments.mark-booking-paid' => "Marked booking as paid",
+                'payments.markBookingAsPaid' => "Marked booking as paid",
 
                 'newsletter.subscribe' => "Subscribed to newsletter",
+
+                'lock-slot' => "Locked time slot",
+                'unlock-slot' => "Unlocked time slot",
+                'unlock-all-slots' => "Unlocked all time slots",
+                'extend-slot-lock' => "Extended slot lock",
+                'check-slot-availability' => "Checked slot availability",
+
+                'contact-us' => "Submitted contact form",
+
+                'customer.subscribe-onesignal' => "Subscribed to OneSignal notifications",
             ];
 
             foreach ($detailsMap as $routePattern => $detail) {

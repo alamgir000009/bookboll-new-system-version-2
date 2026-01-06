@@ -119,6 +119,7 @@ class PromocodeService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error('Failed to create promocode: ' . $e->getMessage(), ['Exception' => $e]);
             return sendError('Failed to create promocode: ' . $e->getMessage());
         }
     }
@@ -166,6 +167,7 @@ class PromocodeService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error('Failed to update promocode: ' . $e->getMessage(), ['promocode_id' => $id, 'Exception' => $e]);
             return sendError('Failed to update promocode: ' . $e->getMessage());
         }
     }
