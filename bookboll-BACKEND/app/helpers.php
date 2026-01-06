@@ -188,7 +188,7 @@ if (! function_exists('sendSuccess')) {
     {
         $user = auth()->user();
 
-        if ($logActivity && $user && ! request()->is('api/login*', 'api/register*', 'api/health*', 'api/audit-logs*') && ! request()->isMethod('GET')) {
+        if ($logActivity && $user && ! request()->is('api/login*', 'api/register*', 'api/admin-app/register*', 'api/forgot-password*', 'api/reset-password*', 'api/customer/login*', 'api/customer/google-login*', 'api/customer/forgot-password*', 'api/customer/reset-password*', 'api/health*', 'api/audit-logs*') && ! request()->isMethod('GET')) {
             try {
                 $routeName  = request()->route()?->getName();
                 $action     = getActionFromMethod(request()->method());
