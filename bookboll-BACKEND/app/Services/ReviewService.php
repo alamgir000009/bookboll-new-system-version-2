@@ -5,6 +5,7 @@ use App\Models\Booking;
 use App\Models\Review;
 use BookingStatus;
 use Exception;
+use Illuminate\Support\Facades\Log;
 
 class ReviewService
 {
@@ -191,6 +192,7 @@ class ReviewService
 
             return sendSuccess("Review {$action} as helpful.", $result);
         } catch (Exception $e) {
+            Log::error("Failed to increment helpful count for review: " . $e->getMessage(), ['review_id' => $id, 'Exception' => $e]);
             return sendError($e->getMessage());
         }
     }

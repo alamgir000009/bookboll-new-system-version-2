@@ -209,6 +209,7 @@ class UserService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error("Customer profile update error: " . $e->getMessage(), ['user_id' => $id, 'Exception' => $e]);
             return sendError("Something went wrong: " . $e->getMessage());
         }
     }
@@ -252,6 +253,7 @@ class UserService
             return sendSuccess('Login successful', $response);
 
         } catch (Exception $e) {
+            Log::error("Admin login error: " . $e->getMessage(), ['email' => $request->email ?? null, 'Exception' => $e]);
             return sendError('Something went wrong during login');
         }
     }
@@ -454,6 +456,7 @@ class UserService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error("User profile update error: " . $e->getMessage(), ['user_id' => $id, 'Exception' => $e]);
             return sendError("Something went wrong: " . $e->getMessage());
         }
     }
@@ -586,6 +589,7 @@ class UserService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error("User creation error: " . $e->getMessage(), ['Exception' => $e]);
             return sendError("Something went wrong " . $e->getMessage());
         }
     }
@@ -670,6 +674,7 @@ class UserService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error("User update error: " . $e->getMessage(), ['user_id' => $id, 'Exception' => $e]);
             return sendError("Something went wrong: " . $e->getMessage());
         }
     }
@@ -846,6 +851,7 @@ class UserService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error("Password change error: " . $e->getMessage(), ['user_id' => auth()->id(), 'Exception' => $e]);
             return sendError("Something went wrong: " . $e->getMessage());
         }
     }

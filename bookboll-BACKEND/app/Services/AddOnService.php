@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Models\AddOn;
 use Exception;
+use Illuminate\Support\Facades\Log;
 
 class AddOnService
 {
@@ -85,6 +86,7 @@ class AddOnService
 
             return sendSuccess('Order updated successfully');
         } catch (Exception $e) {
+            Log::error('Failed to update AddOn sort order: ' . $e->getMessage(), ['Exception' => $e]);
             return sendError('Failed to update order');
         }
     }

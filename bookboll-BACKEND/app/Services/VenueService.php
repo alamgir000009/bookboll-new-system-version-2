@@ -4,6 +4,7 @@ namespace App\Services;
 use App\Models\Venue;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class VenueService
 {
@@ -203,6 +204,7 @@ class VenueService
 
         } catch (Exception $e) {
             DB::rollBack();
+            Log::error('Failed to update venue sort order: ' . $e->getMessage(), ['Exception' => $e]);
             return sendError('Failed to update sort order: ' . $e->getMessage());
         }
     }
