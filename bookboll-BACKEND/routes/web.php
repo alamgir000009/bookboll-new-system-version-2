@@ -105,3 +105,9 @@ Route::get('import-users-000009', function() {
     $userService = app(\App\Services\UserService::class);
     return $userService->importUsersFromExcel($filename);
 });
+
+Route::get('import-bookings-000009', function() {
+    $filename = request()->get('filename', 'bookings - Sheet1.xlsx');
+    $bookingService = app(\App\Services\BookingService::class);
+    return $bookingService->importBookingsFromExcel($filename);
+});

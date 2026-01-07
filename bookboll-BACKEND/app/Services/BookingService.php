@@ -2918,4 +2918,127 @@ class BookingService
             ]);
         }
     }
+
+    public function importBookingsFromExcel($filename = 'bookings.xlsx')
+    {
+        try {
+            DB::beginTransaction();
+
+            $filePath = public_path($filename);
+
+            if (!file_exists($filePath)) {
+                return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
+            }
+
+            $import = new \App\Imports\BookingsImport($this);
+
+            \Maatwebsite\Excel\Facades\Excel::import($import, $filePath);
+
+            DB::commit();
+
+            $successCount = $import->getSuccessCount();
+            $errorCount = $import->getErrorCount();
+            $errors = $import->getErrors();
+
+            $message = "Import completed. Successfully imported {$successCount} booking(s)";
+            if ($errorCount > 0) {
+                $message .= ", {$errorCount} error(s) occurred";
+            }
+
+            return sendSuccess($message, [
+                'success_count' => $successCount,
+                'error_count' => $errorCount,
+                'errors' => $errors,
+            ]);
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Booking import failed', [
+                'filename' => $filename,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return sendError('Import failed: ' . $e->getMessage(), [], 500);
+        }
+    }
+
+    public function importFromExcel($filePath = null)
+    {
+        try {
+            // Handle uploaded file (Illuminate\Http\UploadedFile)
+            if ($filePath instanceof \Illuminate\Http\UploadedFile) {
+                $file = $filePath;
+
+                // Validate file
+                if (!$file->isValid()) {
+                    return sendError('Invalid file uploaded', [], 400);
+                }
+
+                $import = new \App\Imports\BookingsImport();
+
+                DB::beginTransaction();
+
+                \Maatwebsite\Excel\Facades\Excel::import($import, $file);
+
+                DB::commit();
+
+                $successCount = $import->getSuccessCount();
+                $errorCount = $import->getErrorCount();
+                $errors = $import->getErrors();
+
+                $message = "Import completed. Successfully imported {$successCount} booking(s)";
+                if ($errorCount > 0) {
+                    $message .= ", {$errorCount} error(s) occurred";
+                }
+
+                return sendSuccess($message, [
+                    'success_count' => $successCount,
+                    'error_count' => $errorCount,
+                    'errors' => $errors,
+                ]);
+            }
+
+            // Handle file path (string) - for backward compatibility
+            // Default to public/bookings.xlsx if no path provided
+            $filePath = $filePath ?? public_path('bookings.xlsx');
+
+            if (!file_exists($filePath)) {
+                return sendError('Excel file not found at: ' . $filePath, [], 404);
+            }
+
+            $import = new \App\Imports\BookingsImport();
+
+            DB::beginTransaction();
+
+            \Maatwebsite\Excel\Facades\Excel::import($import, $filePath);
+
+            DB::commit();
+
+            $successCount = $import->getSuccessCount();
+            $errorCount = $import->getErrorCount();
+            $errors = $import->getErrors();
+
+            $message = "Import completed. Successfully imported {$successCount} booking(s)";
+            if ($errorCount > 0) {
+                $message .= ", {$errorCount} error(s) occurred";
+            }
+
+            return sendSuccess($message, [
+                'success_count' => $successCount,
+                'error_count' => $errorCount,
+                'errors' => $errors,
+            ]);
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Booking import failed', [
+                'file_path' => is_string($filePath) ? $filePath : $filePath->getClientOriginalName(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return sendError('Import failed: ' . $e->getMessage(), [
+                'file' => is_string($filePath) ? $filePath : $filePath->getClientOriginalName(),
+            ], 500);
+        }
+    }
 }
