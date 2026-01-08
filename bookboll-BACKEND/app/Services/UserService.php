@@ -997,7 +997,6 @@ class UserService
             }
 
             $rows      = $data[0];
-            $headerRow = array_shift($rows);
 
             $imported = 0;
             $updated  = 0;
@@ -1005,7 +1004,11 @@ class UserService
             $errors   = [];
 
             foreach ($rows as $index => $row) {
-                $rowNumber = $index + 2;
+                $rowNumber = $index + 1;
+
+                if($index === 0){
+                    continue;
+                }
 
                 if (empty(array_filter($row))) {
                     continue;
@@ -1014,9 +1017,9 @@ class UserService
                 $name          = trim($row[0] ?? '');
                 $email         = trim($row[1] ?? '');
                 $phone         = trim($row[2] ?? '');
-                $nationality   = trim($row[3] ?? '');
-                $dateOfBirth   = trim($row[4] ?? '');
-                $gender        = trim($row[5] ?? '');
+                $gender        = trim($row[3] ?? '');
+                $nationality   = trim($row[4] ?? '');
+                $dateOfBirth   = trim($row[5] ?? '');
                 $loyaltyPoints = trim($row[6] ?? '0');
                 $address       = trim($row[7] ?? '');
 
@@ -1028,8 +1031,6 @@ class UserService
                 }
 
                 if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                    $skipped++;
-                    $errors[] = "Row {$rowNumber}: Skipped - Invalid email format: {$email}";
                     Log::warning("Invalid email format at row {$rowNumber}: {$email}");
                 }
 
@@ -1050,17 +1051,29 @@ class UserService
                     }
                 }
 
+                // Example date formats: 20-01-2000
                 $parsedDateOfBirth = null;
+
                 if (! empty($dateOfBirth)) {
+
+                    $dateOfBirth = trim($dateOfBirth);
+
                     try {
-                        $dateParts = explode('-', $dateOfBirth);
-                        if (count($dateParts) === 3 && strlen($dateParts[0]) <= 2 && strlen($dateParts[1]) <= 2) {
-                            $parsedDateOfBirth = Carbon::createFromFormat('d-m-Y', $dateOfBirth)->format('Y-m-d');
-                        } else {
-                            $parsedDateOfBirth = Carbon::parse($dateOfBirth)->format('Y-m-d');
+
+                        // Try dd-mm-yyyy explicitly first
+                        if (preg_match('/^\d{1,2}-\d{1,2}-\d{4}$/', $dateOfBirth)) {
+                            $parsedDateOfBirth = Carbon::createFromFormat('d-m-Y', $dateOfBirth)
+                                ->format('Y-m-d');
                         }
-                    } catch (Exception $e) {
-                        Log::warning("Could not parse date of birth for row {$rowNumber}: {$dateOfBirth} - " . $e->getMessage());
+
+                        // fallback: let Carbon detect format
+                        else {
+                            $parsedDateOfBirth = Carbon::parse($dateOfBirth)
+                                ->format('Y-m-d');
+                        }
+
+                    } catch (\Throwable $e) {
+                        Log::warning("Could not parse DOB for row {$rowNumber}: {$dateOfBirth} - " . $e->getMessage());
                     }
                 }
 
@@ -1107,10 +1120,6 @@ class UserService
 
                     if (! $user->hasRole('customer')) {
                         $user->assignRole('customer');
-                    }
-
-                    if (empty($user->status)) {
-                        $updateData['status'] = $this->userModel::ACTIVE;
                     }
 
                     if (! empty($updateData)) {
