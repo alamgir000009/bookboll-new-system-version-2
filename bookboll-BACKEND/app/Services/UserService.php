@@ -1,7 +1,6 @@
 <?php
 namespace App\Services;
 
-use App\Imports\UsersImport;
 use App\Mail\CustomerForgotPasswordOtpEmail;
 use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserRejectionEmail;
@@ -1033,18 +1032,58 @@ class UserService
         }
     }
 
-    public function importFromExcel($filename)
+    public function importFromExcel($filePath = null)
     {
         try {
-            DB::beginTransaction();
+            // Handle uploaded file (Illuminate\Http\UploadedFile)
+            if ($filePath instanceof \Illuminate\Http\UploadedFile) {
+                $file = $filePath;
 
-            $filePath = public_path($filename);
+                // Validate file
+                if (! $file->isValid()) {
+                    return sendError('Invalid file uploaded', [], 400);
+                }
 
-            if (!file_exists($filePath)) {
-                return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
+                $import = new \App\Imports\UsersImport();
+
+                DB::beginTransaction();
+
+                Excel::import($import, $file);
+
+                DB::commit();
+
+                $successCount = $import->getSuccessCount();
+                $errorCount = $import->getErrorCount();
+                $skippedCount = $import->getSkippedCount();
+                $errors = $import->getErrors();
+
+                $message = "Import completed. Successfully imported {$successCount} user(s)";
+                if ($errorCount > 0) {
+                    $message .= ", {$errorCount} error(s) occurred";
+                }
+                if ($skippedCount > 0) {
+                    $message .= ", {$skippedCount} row(s) skipped";
+                }
+
+                return sendSuccess($message, [
+                    'success_count' => $successCount,
+                    'error_count' => $errorCount,
+                    'skipped_count' => $skippedCount,
+                    'errors' => $errors,
+                ]);
             }
 
-            $import = new \App\Imports\UsersImport($this);
+            // Handle file path (string) - for backward compatibility
+            // Default to public/bookboll-users.xlsx if no path provided
+            $filePath = $filePath ?? public_path('bookboll-users.xlsx');
+
+            if (! file_exists($filePath)) {
+                return sendError('Excel file not found at: ' . $filePath, [], 404);
+            }
+
+            $import = new \App\Imports\UsersImport();
+
+            DB::beginTransaction();
 
             Excel::import($import, $filePath);
 
@@ -1052,30 +1091,40 @@ class UserService
 
             $successCount = $import->getSuccessCount();
             $errorCount = $import->getErrorCount();
+            $skippedCount = $import->getSkippedCount();
             $errors = $import->getErrors();
 
             $message = "Import completed. Successfully imported {$successCount} user(s)";
             if ($errorCount > 0) {
                 $message .= ", {$errorCount} error(s) occurred";
             }
+            if ($skippedCount > 0) {
+                $message .= ", {$skippedCount} row(s) skipped";
+            }
 
             return sendSuccess($message, [
                 'success_count' => $successCount,
                 'error_count' => $errorCount,
+                'skipped_count' => $skippedCount,
                 'errors' => $errors,
             ]);
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error('Users import failed', [
-                'filename' => $filename,
+            Log::error('User import failed', [
+                'file_path' => is_string($filePath) ? $filePath : $filePath->getClientOriginalName(),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return sendError('Import failed: ' . $e->getMessage(), [], 500);
+            return sendError('Import failed: ' . $e->getMessage(), [
+                'file' => is_string($filePath) ? $filePath : $filePath->getClientOriginalName(),
+            ], 500);
         }
     }
 
+    /**
+     * Register user from admin mobile app (creates registration request)
+     */
     public function registerAdminAppUser($request)
     {
         $formData = $request->validate([
@@ -1088,8 +1137,10 @@ class UserService
         try {
             DB::beginTransaction();
 
+            // Check if user already exists in users table
             $existingUser = $this->userModel->where('email', $formData['email'])->first();
             if ($existingUser) {
+                // Check if there's already a pending registration request
                 $existingRequest = RegistrationRequest::where('email', $formData['email'])
                     ->where('status', RegistrationRequest::PENDING)
                     ->first();
