@@ -107,7 +107,7 @@ Route::get('import-users-000009', function() {
 });
 
 Route::get('import-bookings-000009', function() {
-    $filename = request()->get('filename', 'bookboll_live_bookings.xlsx');
+    $filename = request()->get('filename', 'bookings - Sheet1 (1) (1).csv');
     $bookingService = app(\App\Services\BookingService::class);
     return $bookingService->importBookingsFromExcel($filename);
 });
