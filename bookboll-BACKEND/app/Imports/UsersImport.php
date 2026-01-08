@@ -5,6 +5,7 @@ namespace App\Imports;
 use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
+use App\Services\BookingService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -16,15 +17,39 @@ class UsersImport implements ToCollection, WithHeadingRow
     protected $errors = [];
     protected $successCount = 0;
     protected $errorCount = 0;
-    protected $skippedCount = 0;
+    protected $bookingService;
+
+    public function __construct(BookingService $bookingService = null)
+    {
+        $this->bookingService = $bookingService ?? app(BookingService::class);
+    }
 
     public function collection(Collection $rows)
     {
         foreach ($rows as $index => $row) {
+            dd($row);
             try {
+                // Convert to array for easier checking
+                $rowArray = $row instanceof Collection ? $row->toArray() : $row;
+
                 // Skip empty rows
-                if (empty(array_filter($row->toArray()))) {
+                if (empty(array_filter($rowArray))) {
                     continue;
+                }
+
+                // Skip if this looks like a header row (contains header names)
+                $headerKeywords = ['name', 'email', 'phone', 'gender', 'nationality', 'date', 'loyalty', 'address'];
+                $rowValues = array_map('strtolower', array_values($rowArray));
+                $isHeaderRow = false;
+                foreach ($headerKeywords as $keyword) {
+                    if (in_array($keyword, $rowValues)) {
+                        $isHeaderRow = true;
+                        break;
+                    }
+                }
+
+                if ($isHeaderRow && $index === 0) {
+                    continue; // Skip the first row if it's a header
                 }
 
                 $this->importRow($row, $index + 2); // +2 because heading row is 1, and we start from 2
@@ -42,14 +67,19 @@ class UsersImport implements ToCollection, WithHeadingRow
     protected function importRow($row, $rowNumber)
     {
         // Get values using flexible column name matching
-        $name = $this->getValue($row, 'name');
-        $email = $this->getValue($row, 'email');
-        $phone = $this->getValue($row, 'phone');
-        $nationality = $this->getValue($row, 'nationality');
-        $dateOfBirth = $this->getValue($row, 'date_of_birth') ?: $this->getValue($row, 'dob');
-        $gender = $this->getValue($row, 'gender');
-        $loyaltyPoints = $this->getValue($row, 'loyalty_points', '0');
-        $address = $this->getValue($row, 'address');
+        // Support various header name formats
+        $name = $this->getValue($row, 'Name');
+        $email = $this->getValue($row, 'Email');
+        $phone = $this->getValue($row, 'Phone');
+        $gender = $this->getValue($row, 'Gender');
+        $nationality = $this->getValue($row, 'Nationality');
+        $dateOfBirth = $this->getValue($row, 'Date of Birth');
+        $loyaltyPoints = $this->getValue($row, 'Loyalty points');
+        $address = $this->getValue($row, 'Address');
+        // If address is empty but found in loyalty points column, use it
+        if (empty($address) && !empty($addressFromLoyalty)) {
+            $address = $addressFromLoyalty;
+        }
 
         // Email is required
         if (empty($email)) {
@@ -68,7 +98,7 @@ class UsersImport implements ToCollection, WithHeadingRow
                 'row' => $rowNumber,
                 'error' => "Invalid email format: {$email}",
             ];
-            throw new \Exception("Invalid email format: {$email}");
+            Log::warning("Invalid email format at row {$rowNumber}: {$email}");
         }
 
         // Process phone number
@@ -231,15 +261,24 @@ class UsersImport implements ToCollection, WithHeadingRow
 
     protected function getValue($row, $key, $default = null)
     {
+        // Convert row to array if it's a Collection
+        if ($row instanceof Collection) {
+            $row = $row->toArray();
+        }
+
         // Handle different possible column name formats
+        // Laravel Excel WithHeadingRow normalizes headers: spaces -> underscores, lowercase
         $keys = [
             $key,
             str_replace('_', ' ', $key),
             str_replace(' ', '_', $key),
             strtolower($key),
             strtolower(str_replace('_', ' ', $key)),
+            strtolower(str_replace(' ', '_', $key)),
             ucfirst($key),
             ucwords(str_replace('_', ' ', $key)),
+            // Also try with original case variations
+            ucwords(strtolower(str_replace('_', ' ', $key))),
         ];
 
         // First try exact matches
@@ -252,6 +291,16 @@ class UsersImport implements ToCollection, WithHeadingRow
 
         // Then try case-insensitive matching
         foreach ($row as $rowKey => $rowValue) {
+            // Normalize the row key (Laravel Excel normalizes headers)
+            $normalizedRowKey = strtolower(str_replace(' ', '_', $rowKey));
+            $normalizedKey = strtolower(str_replace(' ', '_', $key));
+
+            if ($normalizedRowKey === $normalizedKey) {
+                $value = $rowValue;
+                return $value !== null && $value !== '' ? trim($value) : $default;
+            }
+
+            // Also try direct case-insensitive comparison
             foreach ($keys as $k) {
                 if (strcasecmp($rowKey, $k) === 0) {
                     $value = $rowValue;
