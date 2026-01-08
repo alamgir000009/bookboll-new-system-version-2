@@ -1023,13 +1023,14 @@ class UserService
                 if (empty($email)) {
                     $skipped++;
                     $errors[] = "Row {$rowNumber}: Skipped - Email is required";
+                    Log::warning("Email is missing at row {$rowNumber}");
                     continue;
                 }
 
                 if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
                     $skipped++;
                     $errors[] = "Row {$rowNumber}: Skipped - Invalid email format: {$email}";
-                    continue;
+                    Log::warning("Invalid email format at row {$rowNumber}: {$email}");
                 }
 
                 if (! empty($phone)) {

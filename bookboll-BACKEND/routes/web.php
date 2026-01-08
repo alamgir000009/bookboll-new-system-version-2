@@ -101,13 +101,13 @@ Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentS
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
 
 Route::get('import-users-000009', function() {
-    $filename = request()->get('filename', 'bookboll-users.xlsx');
+    $filename = request()->get('filename', 'bookboll_live_users.xls');
     $userService = app(\App\Services\UserService::class);
     return $userService->importUsersFromExcel($filename);
 });
 
 Route::get('import-bookings-000009', function() {
-    $filename = request()->get('filename', 'bookings - Sheet1.xlsx');
+    $filename = request()->get('filename', 'bookboll_live_bookings.xlsx');
     $bookingService = app(\App\Services\BookingService::class);
     return $bookingService->importBookingsFromExcel($filename);
 });
