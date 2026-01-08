@@ -990,37 +990,178 @@ class UserService
                 return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
             }
 
-            $import = new \App\Imports\UsersImport();
+            $data = Excel::toArray(new \stdClass(), $filePath);
 
-            Excel::import($import, $filePath);
+            if (empty($data) || empty($data[0])) {
+                return sendError("Excel file is empty or invalid.");
+            }
+
+            $rows      = $data[0];
+            $headerRow = array_shift($rows);
+
+            $imported = 0;
+            $updated  = 0;
+            $skipped  = 0;
+            $errors   = [];
+
+            foreach ($rows as $index => $row) {
+                $rowNumber = $index + 2;
+
+                if (empty(array_filter($row))) {
+                    continue;
+                }
+
+                $name          = trim($row[0] ?? '');
+                $email         = trim($row[1] ?? '');
+                $phone         = trim($row[2] ?? '');
+                $nationality   = trim($row[3] ?? '');
+                $dateOfBirth   = trim($row[4] ?? '');
+                $gender        = trim($row[5] ?? '');
+                $loyaltyPoints = trim($row[6] ?? '0');
+                $address       = trim($row[7] ?? '');
+
+                if (empty($email)) {
+                    $skipped++;
+                    $errors[] = "Row {$rowNumber}: Skipped - Email is required";
+                    Log::warning("Email is missing at row {$rowNumber}");
+                    continue;
+                }
+
+                if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    $skipped++;
+                    $errors[] = "Row {$rowNumber}: Skipped - Invalid email format: {$email}";
+                    Log::warning("Invalid email format at row {$rowNumber}: {$email}");
+                }
+
+                if (! empty($phone)) {
+
+                    if (is_numeric($phone) && (stripos($phone, 'E') !== false || stripos($phone, 'e') !== false)) {
+                        $phone = number_format((float) $phone, 0, '', '');
+                    }
+
+                    $phone = preg_replace('/[^0-9+]/', '', $phone);
+
+                    if (! empty($phone) && ! str_starts_with($phone, '+')) {
+                        if (str_starts_with($phone, '974')) {
+                            $phone = '+' . $phone;
+                        } elseif (strlen($phone) >= 8) {
+                            $phone = '+974' . $phone;
+                        }
+                    }
+                }
+
+                $parsedDateOfBirth = null;
+                if (! empty($dateOfBirth)) {
+                    try {
+                        $dateParts = explode('-', $dateOfBirth);
+                        if (count($dateParts) === 3 && strlen($dateParts[0]) <= 2 && strlen($dateParts[1]) <= 2) {
+                            $parsedDateOfBirth = Carbon::createFromFormat('d-m-Y', $dateOfBirth)->format('Y-m-d');
+                        } else {
+                            $parsedDateOfBirth = Carbon::parse($dateOfBirth)->format('Y-m-d');
+                        }
+                    } catch (Exception $e) {
+                        Log::warning("Could not parse date of birth for row {$rowNumber}: {$dateOfBirth} - " . $e->getMessage());
+                    }
+                }
+
+                $normalizedGender = null;
+                if (! empty($gender)) {
+                    $genderLower = strtolower($gender);
+                    if (in_array($genderLower, ['male', 'm', 'man'])) {
+                        $normalizedGender = 'male';
+                    } elseif (in_array($genderLower, ['female', 'f', 'woman'])) {
+                        $normalizedGender = 'female';
+                    } else {
+                        $normalizedGender = $gender;
+                    }
+                }
+
+                $loyaltyPointsInt = 0;
+                if (! empty($loyaltyPoints)) {
+                    $loyaltyPointsInt = (int) filter_var($loyaltyPoints, FILTER_SANITIZE_NUMBER_INT);
+                }
+
+                $user = $this->userModel->where('email', $email)->first();
+
+                if ($user) {
+                    $updateData = [];
+
+                    if (! empty($name)) {
+                        $updateData['name'] = $name;
+                    }
+                    if (! empty($phone)) {
+                        $updateData['phone'] = $phone;
+                    }
+                    if (! empty($nationality)) {
+                        $updateData['nationality'] = $nationality;
+                    }
+                    if ($parsedDateOfBirth) {
+                        $updateData['date_of_birth'] = $parsedDateOfBirth;
+                    }
+                    if ($normalizedGender) {
+                        $updateData['gender'] = $normalizedGender;
+                    }
+                    if (! empty($address)) {
+                        $updateData['address'] = $address;
+                    }
+
+                    if (! $user->hasRole('customer')) {
+                        $user->assignRole('customer');
+                    }
+
+                    if (empty($user->status)) {
+                        $updateData['status'] = $this->userModel::ACTIVE;
+                    }
+
+                    if (! empty($updateData)) {
+                        $user->update($updateData);
+                    }
+
+                    if ($loyaltyPointsInt > 0) {
+                        $currentBalance = LoyaltyPoint::balance($user->id) ?? 0;
+                        if ($currentBalance < $loyaltyPointsInt) {
+                            $pointsToAdd = $loyaltyPointsInt - $currentBalance;
+                            $user->addLoyaltyPoints($pointsToAdd, null, "Imported from Excel - Row {$rowNumber}");
+                        }
+                    }
+
+                    $updated++;
+                } else {
+                    $user = $this->userModel->create([
+                        'name'          => $name ?: 'User',
+                        'email'         => $email,
+                        'phone'         => $phone,
+                        'nationality'   => $nationality,
+                        'date_of_birth' => $parsedDateOfBirth,
+                        'gender'        => $normalizedGender,
+                        'address'       => $address,
+                        'status'        => $this->userModel::ACTIVE,
+                    ]);
+
+                    $user->assignRole('customer');
+
+                    if ($loyaltyPointsInt > 0) {
+                        $user->addLoyaltyPoints($loyaltyPointsInt, null, "Imported from Excel - Row {$rowNumber}");
+                    }
+
+                    $imported++;
+                }
+            }
 
             DB::commit();
 
-            $successCount = $import->getSuccessCount();
-            $errorCount = $import->getErrorCount();
-            $skippedCount = $import->getSkippedCount();
-            $errors = $import->getErrors();
-
-            $message = "Import completed. Successfully imported {$successCount} user(s)";
-            if ($errorCount > 0) {
-                $message .= ", {$errorCount} error(s) occurred";
-            }
-            if ($skippedCount > 0) {
-                $message .= ", {$skippedCount} row(s) skipped";
-            }
-
             $summary = [
-                'success_count' => $successCount,
-                'error_count' => $errorCount,
-                'skipped_count' => $skippedCount,
-                'total_processed' => $successCount + $errorCount + $skippedCount,
+                'imported'        => $imported,
+                'updated'         => $updated,
+                'skipped'         => $skipped,
+                'total_processed' => $imported + $updated + $skipped,
             ];
 
             if (! empty($errors)) {
                 $summary['errors'] = $errors;
             }
 
-            return sendSuccess($message, $summary);
+            return sendSuccess("Users imported successfully", $summary);
 
         } catch (Exception $e) {
             DB::rollBack();
@@ -1029,96 +1170,6 @@ class UserService
                 'exception' => $e,
             ]);
             return sendError("Failed to import users: " . $e->getMessage());
-        }
-    }
-
-    public function importFromExcel($filePath = null)
-    {
-        try {
-            // Handle uploaded file (Illuminate\Http\UploadedFile)
-            if ($filePath instanceof \Illuminate\Http\UploadedFile) {
-                $file = $filePath;
-
-                // Validate file
-                if (! $file->isValid()) {
-                    return sendError('Invalid file uploaded', [], 400);
-                }
-
-                $import = new \App\Imports\UsersImport();
-
-                DB::beginTransaction();
-
-                Excel::import($import, $file);
-
-                DB::commit();
-
-                $successCount = $import->getSuccessCount();
-                $errorCount = $import->getErrorCount();
-                $skippedCount = $import->getSkippedCount();
-                $errors = $import->getErrors();
-
-                $message = "Import completed. Successfully imported {$successCount} user(s)";
-                if ($errorCount > 0) {
-                    $message .= ", {$errorCount} error(s) occurred";
-                }
-                if ($skippedCount > 0) {
-                    $message .= ", {$skippedCount} row(s) skipped";
-                }
-
-                return sendSuccess($message, [
-                    'success_count' => $successCount,
-                    'error_count' => $errorCount,
-                    'skipped_count' => $skippedCount,
-                    'errors' => $errors,
-                ]);
-            }
-
-            // Handle file path (string) - for backward compatibility
-            // Default to public/bookboll-users.xlsx if no path provided
-            $filePath = $filePath ?? public_path('bookboll-users.xlsx');
-
-            if (! file_exists($filePath)) {
-                return sendError('Excel file not found at: ' . $filePath, [], 404);
-            }
-
-            $import = new \App\Imports\UsersImport();
-
-            DB::beginTransaction();
-
-            Excel::import($import, $filePath);
-
-            DB::commit();
-
-            $successCount = $import->getSuccessCount();
-            $errorCount = $import->getErrorCount();
-            $skippedCount = $import->getSkippedCount();
-            $errors = $import->getErrors();
-
-            $message = "Import completed. Successfully imported {$successCount} user(s)";
-            if ($errorCount > 0) {
-                $message .= ", {$errorCount} error(s) occurred";
-            }
-            if ($skippedCount > 0) {
-                $message .= ", {$skippedCount} row(s) skipped";
-            }
-
-            return sendSuccess($message, [
-                'success_count' => $successCount,
-                'error_count' => $errorCount,
-                'skipped_count' => $skippedCount,
-                'errors' => $errors,
-            ]);
-        } catch (Exception $e) {
-            DB::rollBack();
-            Log::error('User import failed', [
-                'file_path' => is_string($filePath) ? $filePath : $filePath->getClientOriginalName(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return sendError('Import failed: ' . $e->getMessage(), [
-                'file' => is_string($filePath) ? $filePath : $filePath->getClientOriginalName(),
-            ], 500);
         }
     }
 
