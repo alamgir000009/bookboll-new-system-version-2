@@ -13,6 +13,7 @@ use BookingPaymentStatus;
 use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Log;
 use Maatwebsite\Excel\Concerns\ToCollection;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
 use PaymentMethod;
@@ -56,7 +57,8 @@ class BookingsImport implements ToCollection, WithHeadingRow
         // Get customer email (required) - support both customer_email and user_email
         $customerEmail = $this->getValue($row, 'user_email');
         if (empty($customerEmail)) {
-            throw new \Exception('Customer email is required');
+            Log::error("Row {$rowNumber}: Customer email is required");
+            $customerEmail = "systemuser@bookboll.com";
         }
 
         // Find or create user
