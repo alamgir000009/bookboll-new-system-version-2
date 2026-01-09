@@ -979,198 +979,48 @@ class UserService
         }
     }
 
-    public function importUsersFromExcel($filename = 'bookboll-users.xlsx')
+    public function importUsersFromExcel($filename = 'bookboll_live_users.xls')
     {
         try {
             DB::beginTransaction();
 
             $filePath = public_path($filename);
 
-            if (! file_exists($filePath)) {
+            if (!file_exists($filePath)) {
                 return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
             }
 
-            $data = Excel::toArray(new \stdClass(), $filePath);
+            $import = new \App\Imports\UsersImport();
 
-            if (empty($data) || empty($data[0])) {
-                return sendError("Excel file is empty or invalid.");
-            }
-
-            $rows      = $data[0];
-
-            $imported = 0;
-            $updated  = 0;
-            $skipped  = 0;
-            $errors   = [];
-
-            foreach ($rows as $index => $row) {
-                $rowNumber = $index + 1;
-
-                if($index === 0){
-                    continue;
-                }
-
-                if (empty(array_filter($row))) {
-                    continue;
-                }
-
-                $name          = trim($row[0] ?? '');
-                $email         = trim($row[1] ?? '');
-                $phone         = trim($row[2] ?? '');
-                $gender        = trim($row[3] ?? '');
-                $nationality   = trim($row[4] ?? '');
-                $dateOfBirth   = trim($row[5] ?? '');
-                $loyaltyPoints = trim($row[6] ?? '0');
-                $address       = trim($row[7] ?? '');
-
-                if (empty($email)) {
-                    $skipped++;
-                    $errors[] = "Row {$rowNumber}: Skipped - Email is required";
-                    Log::warning("Email is missing at row {$rowNumber}");
-                    continue;
-                }
-
-                if (! filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                    Log::warning("Invalid email format at row {$rowNumber}: {$email}");
-                }
-
-                if (! empty($phone)) {
-
-                    if (is_numeric($phone) && (stripos($phone, 'E') !== false || stripos($phone, 'e') !== false)) {
-                        $phone = number_format((float) $phone, 0, '', '');
-                    }
-
-                    $phone = preg_replace('/[^0-9+]/', '', $phone);
-
-                    if (! empty($phone) && ! str_starts_with($phone, '+')) {
-                        if (str_starts_with($phone, '974')) {
-                            $phone = '+' . $phone;
-                        } elseif (strlen($phone) >= 8) {
-                            $phone = '+974' . $phone;
-                        }
-                    }
-                }
-
-                // Example date formats: 20-01-2000
-                $parsedDateOfBirth = null;
-
-                if (! empty($dateOfBirth)) {
-
-                    $dateOfBirth = trim($dateOfBirth);
-
-                    try {
-
-                        // Try dd-mm-yyyy explicitly first
-                        if (preg_match('/^\d{1,2}-\d{1,2}-\d{4}$/', $dateOfBirth)) {
-                            $parsedDateOfBirth = Carbon::createFromFormat('d-m-Y', $dateOfBirth)
-                                ->format('Y-m-d');
-                        }
-
-                        // fallback: let Carbon detect format
-                        else {
-                            $parsedDateOfBirth = Carbon::parse($dateOfBirth)
-                                ->format('Y-m-d');
-                        }
-
-                    } catch (\Throwable $e) {
-                        Log::warning("Could not parse DOB for row {$rowNumber}: {$dateOfBirth} - " . $e->getMessage());
-                    }
-                }
-
-                $normalizedGender = null;
-                if (! empty($gender)) {
-                    $genderLower = strtolower($gender);
-                    if (in_array($genderLower, ['male', 'm', 'man'])) {
-                        $normalizedGender = 'male';
-                    } elseif (in_array($genderLower, ['female', 'f', 'woman'])) {
-                        $normalizedGender = 'female';
-                    } else {
-                        $normalizedGender = $gender;
-                    }
-                }
-
-                $loyaltyPointsInt = 0;
-                if (! empty($loyaltyPoints)) {
-                    $loyaltyPointsInt = (int) filter_var($loyaltyPoints, FILTER_SANITIZE_NUMBER_INT);
-                }
-
-                $user = $this->userModel->where('email', $email)->first();
-
-                if ($user) {
-                    $updateData = [];
-
-                    if (! empty($name)) {
-                        $updateData['name'] = $name;
-                    }
-                    if (! empty($phone)) {
-                        $updateData['phone'] = $phone;
-                    }
-                    if (! empty($nationality)) {
-                        $updateData['nationality'] = $nationality;
-                    }
-                    if ($parsedDateOfBirth) {
-                        $updateData['date_of_birth'] = $parsedDateOfBirth;
-                    }
-                    if ($normalizedGender) {
-                        $updateData['gender'] = $normalizedGender;
-                    }
-                    if (! empty($address)) {
-                        $updateData['address'] = $address;
-                    }
-
-                    if (! $user->hasRole('customer')) {
-                        $user->assignRole('customer');
-                    }
-
-                    if (! empty($updateData)) {
-                        $user->update($updateData);
-                    }
-
-                    if ($loyaltyPointsInt > 0) {
-                        $currentBalance = LoyaltyPoint::balance($user->id) ?? 0;
-                        if ($currentBalance < $loyaltyPointsInt) {
-                            $pointsToAdd = $loyaltyPointsInt - $currentBalance;
-                            $user->addLoyaltyPoints($pointsToAdd, null, "Imported from Excel - Row {$rowNumber}");
-                        }
-                    }
-
-                    $updated++;
-                } else {
-                    $user = $this->userModel->create([
-                        'name'          => $name ?: 'User',
-                        'email'         => $email,
-                        'phone'         => $phone,
-                        'nationality'   => $nationality,
-                        'date_of_birth' => $parsedDateOfBirth,
-                        'gender'        => $normalizedGender,
-                        'address'       => $address,
-                        'status'        => $this->userModel::ACTIVE,
-                    ]);
-
-                    $user->assignRole('customer');
-
-                    if ($loyaltyPointsInt > 0) {
-                        $user->addLoyaltyPoints($loyaltyPointsInt, null, "Imported from Excel - Row {$rowNumber}");
-                    }
-
-                    $imported++;
-                }
-            }
+            Excel::import($import, $filePath);
 
             DB::commit();
 
+            $successCount = $import->getSuccessCount();
+            $errorCount = $import->getErrorCount();
+            $skippedCount = $import->getSkippedCount();
+            $errors = $import->getErrors();
+
+            $message = "Import completed. Successfully imported {$successCount} user(s)";
+            if ($skippedCount > 0) {
+                $message .= ", {$skippedCount} skipped";
+            }
+            if ($errorCount > 0) {
+                $message .= ", {$errorCount} error(s) occurred";
+            }
+
             $summary = [
-                'imported'        => $imported,
-                'updated'         => $updated,
-                'skipped'         => $skipped,
-                'total_processed' => $imported + $updated + $skipped,
+                'success_count' => $successCount,
+                'error_count' => $errorCount,
+                'skipped_count' => $skippedCount,
+                'total_processed' => $successCount + $errorCount + $skippedCount,
             ];
 
-            if (! empty($errors)) {
+            if (!empty($errors)) {
                 $summary['errors'] = $errors;
             }
 
-            return sendSuccess("Users imported successfully", $summary);
+            return sendSuccess($message, $summary);
 
         } catch (Exception $e) {
             DB::rollBack();
