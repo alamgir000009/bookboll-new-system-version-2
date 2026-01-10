@@ -273,8 +273,32 @@ class BookingsImport implements ToCollection, WithHeadingRow
             }
         }
 
+        // Parse Record date if provided (format: d-m-Y h:i a, e.g., "01-01-2026 10:01 pm")
+        $recordDate = $this->getValue($row, 'record_date');
+        $createdAt = null;
+        
+        if (!empty($recordDate)) {
+            try {
+                // Try parsing the format: d-m-Y h:i a (e.g., "01-01-2026 10:01 pm")
+                $createdAt = Carbon::createFromFormat('d-m-Y h:i a', trim($recordDate));
+            } catch (\Exception $e) {
+                // If that format fails, try other common formats
+                try {
+                    // Try d-m-Y H:i (24-hour format)
+                    $createdAt = Carbon::createFromFormat('d-m-Y H:i', trim($recordDate));
+                } catch (\Exception $e2) {
+                    // Let Carbon auto-detect the format
+                    try {
+                        $createdAt = Carbon::parse(trim($recordDate));
+                    } catch (\Exception $e3) {
+                        Log::warning("Row {$rowNumber}: Could not parse Record date '{$recordDate}'. Using current timestamp.");
+                    }
+                }
+            }
+        }
+
         // Create booking using the same logic as store method
-        $booking = Booking::create([
+        $bookingData = [
             'user_id'               => $user->id,
             'venue_id'              => $venue->id,
             'listing_id'            => $listing->id,
@@ -303,7 +327,15 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - $depositAmount : 0,
                 'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
             ],
-        ]);
+        ];
+
+        // Add created_at if Record date was provided
+        if ($createdAt) {
+            $bookingData['created_at'] = $createdAt;
+            $bookingData['updated_at'] = $createdAt; // Set updated_at to same value to maintain consistency
+        }
+
+        $booking = Booking::create($bookingData);
 
         // Attach add-ons
         if (! empty($addOnIds)) {
