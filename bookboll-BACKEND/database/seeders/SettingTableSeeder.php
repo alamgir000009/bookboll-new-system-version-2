@@ -57,6 +57,12 @@ class SettingTableSeeder extends Seeder
                 'type'        => 'integer',
                 'description' => 'Listing slots will be locked once viewed by a customer for the following time',
             ],
+            [
+                'key'         => 'days_until_next_month_bookings_open',
+                'value'       => 7,
+                'type'        => 'integer',
+                'description' => 'Number of days before the end of current month when next month slots become available',
+            ],
 
             // Modules
             [

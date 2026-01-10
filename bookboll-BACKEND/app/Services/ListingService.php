@@ -1163,6 +1163,13 @@ class ListingService
         $date      = Carbon::parse(request('date', now()->toDateString()));
         $sessionId = getSessionId();
 
+        // Check if the date is available based on next month slots setting (only for frontend-web)
+        $requestFrom = $request->header('from');
+        if ($requestFrom === 'frontend-web' && !isDateAvailableForBooking($date)) {
+            $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
+            return sendError("Slots for this date are not yet available. Next month slots become available when there are {$daysBeforeNextMonth} or fewer days remaining in the current month.");
+        }
+
         $listing = $this->listingModel::with([
             'venue',
             'schedules',
@@ -1584,9 +1591,16 @@ class ListingService
 
             $datesInfo   = [];
             $currentDate = $startDate->copy();
+            $requestFrom = $request->header('from');
 
             while ($currentDate->lte($endDate)) {
                 if ($currentDate->lt($date)) {
+                    $currentDate->addDay();
+                    continue;
+                }
+
+                // Skip dates that are not available based on next month slots setting (only for frontend-web)
+                if ($requestFrom === 'frontend-web' && !isDateAvailableForBooking($currentDate)) {
                     $currentDate->addDay();
                     continue;
                 }
@@ -1782,6 +1796,13 @@ class ListingService
             $startTime = $request->start_time;
             $endTime   = $request->end_time;
             $date      = Carbon::parse($request->date);
+
+            // Check if the date is available based on next month slots setting (only for frontend-web)
+            $requestFrom = $request->header('from');
+            if ($requestFrom === 'frontend-web' && !isDateAvailableForBooking($date)) {
+                $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
+                return sendError("Slots for this date are not yet available. Next month slots become available when there are {$daysBeforeNextMonth} or fewer days remaining in the current month.");
+            }
 
             $listing = $this->listingModel->with('venue')->findOrFail($listingId);
 
@@ -2002,6 +2023,15 @@ class ListingService
             $startTime = $request->start_time;
             $endTime   = $request->end_time;
             $sessionId = getSessionId();
+
+            // Check if the date is available based on next month slots setting (only for frontend-web)
+            $requestFrom = $request->header('from');
+            if ($requestFrom === 'frontend-web' && !isDateAvailableForBooking($date)) {
+                return sendSuccess('Slot availability checked', [
+                    'available' => false,
+                    'reason'    => 'This date is not yet available for booking',
+                ]);
+            }
 
             $listing = $this->listingModel->with('venue')->findOrFail($listingId);
 
