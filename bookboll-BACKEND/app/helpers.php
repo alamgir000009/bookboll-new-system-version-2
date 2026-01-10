@@ -2,6 +2,7 @@
 
 use App\Models\Invoice;
 use App\Models\LoyaltyPoint;
+use App\Models\Setting;
 use App\Models\SlotLock;
 use App\Models\User;
 use App\Notifications\BookingConfirmedUserNotification;
@@ -937,5 +938,33 @@ if (! function_exists('applyVenueFilterToPayments')) {
         return $query->whereHas('booking', function ($q) use ($venueIds) {
             $q->whereIn('venue_id', $venueIds);
         });
+    }
+}
+
+if (! function_exists('isDateAvailableForBooking')) {
+    function isDateAvailableForBooking($date)
+    {
+        $dateCarbon = $date instanceof \Carbon\Carbon ? $date : \Carbon\Carbon::parse($date);
+        $today = \Carbon\Carbon::today();
+
+        if ($dateCarbon->lt($today)) {
+            return false;
+        }
+
+        if ($dateCarbon->month === $today->month && $dateCarbon->year === $today->year) {
+            return true;
+        }
+
+        $nextMonth = $today->copy()->addMonth();
+        if ($dateCarbon->month === $nextMonth->month && $dateCarbon->year === $nextMonth->year) {
+            $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
+
+            $endOfCurrentMonth = $today->copy()->endOfMonth();
+            $daysRemaining = $today->diffInDays($endOfCurrentMonth) + 1;
+
+            return $daysRemaining <= $daysBeforeNextMonth;
+        }
+
+        return false;
     }
 }
