@@ -981,20 +981,17 @@ class UserService
 
     public function importUsersFromExcel($filename = 'bookboll_live_users.xls')
     {
+        $filePath = public_path($filename);
+
+        if (!file_exists($filePath)) {
+            return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
+        }
+
         try {
-            DB::beginTransaction();
-
-            $filePath = public_path($filename);
-
-            if (!file_exists($filePath)) {
-                return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
-            }
-
             $import = new \App\Imports\UsersImport();
 
+            // Import users - Excel handles transactions internally, and UsersImport handles errors per row
             Excel::import($import, $filePath);
-
-            DB::commit();
 
             $successCount = $import->getSuccessCount();
             $errorCount = $import->getErrorCount();
@@ -1023,7 +1020,6 @@ class UserService
             return sendSuccess($message, $summary);
 
         } catch (Exception $e) {
-            DB::rollBack();
             Log::error("User import error: " . $e->getMessage(), [
                 'file'      => $filename,
                 'exception' => $e,
