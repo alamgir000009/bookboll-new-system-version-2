@@ -2,6 +2,7 @@
 namespace App\Imports;
 
 use App\Models\LoyaltyPoint;
+use App\Models\Preference;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -154,6 +155,21 @@ class UsersImport implements ToCollection, WithHeadingRow
                 $user->update($updateData);
             }
 
+            // Create default preferences if user doesn't have them
+            if (!$user->preferences) {
+                Preference::create([
+                    'user_id'         => $user->id,
+                    'notifications'   => [
+                        'booking_emails'   => true,
+                        'sms_reminders'    => false,
+                        'marketing_emails' => true,
+                    ],
+                    'favorite_sports' => [],
+                    'language'        => 'english',
+                    'currency'        => 'QAR',
+                ]);
+            }
+
             // Update loyalty points if needed
             if ($loyaltyPointsInt > 0) {
                 $currentBalance = LoyaltyPoint::balance($user->id) ?? 0;
@@ -178,6 +194,19 @@ class UsersImport implements ToCollection, WithHeadingRow
             ]);
 
             $user->assignRole('customer');
+
+            // Create default preferences for new user
+            Preference::create([
+                'user_id'         => $user->id,
+                'notifications'   => [
+                    'booking_emails'   => true,
+                    'sms_reminders'    => false,
+                    'marketing_emails' => true,
+                ],
+                'favorite_sports' => [],
+                'language'        => 'english',
+                'currency'        => 'QAR',
+            ]);
 
             // Add loyalty points if provided
             if ($loyaltyPointsInt > 0) {
