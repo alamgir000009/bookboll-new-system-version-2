@@ -2922,7 +2922,6 @@ class BookingService
     public function importBookingsFromExcel($filename = 'bookings.xlsx')
     {
         try {
-            DB::beginTransaction();
 
             $filePath = public_path($filename);
 
@@ -2933,8 +2932,6 @@ class BookingService
             $import = new \App\Imports\BookingsImport($this);
 
             \Maatwebsite\Excel\Facades\Excel::import($import, $filePath);
-
-            DB::commit();
 
             $successCount = $import->getSuccessCount();
             $errorCount = $import->getErrorCount();
@@ -2951,7 +2948,6 @@ class BookingService
                 'errors' => $errors,
             ]);
         } catch (Exception $e) {
-            DB::rollBack();
             Log::error('Booking import failed', [
                 'filename' => $filename,
                 'error' => $e->getMessage(),
