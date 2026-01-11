@@ -116,6 +116,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('bookings/generate-invoice', [BookingController::class, 'generateInvoice'])->name('bookings.generate-invoice');
         Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory'])->name('bookings.customer.history');
         Route::get('bookings/form-data', [BookingController::class, 'formData'])->name('bookings.form-data');
+        Route::get('bookings/payment-methods', [BookingController::class, 'getPaymentMethods'])->name('bookings.payment-methods');
         Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar'])->name('bookings.calendar');
         Route::post('bookings/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
         Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings'])->name('bookings.due');
