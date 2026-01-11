@@ -170,7 +170,7 @@ class BookingService
             DB::beginTransaction();
 
             $giftCardAmount = $booking->gift_card_amount ?? 0;
-            $user = $booking->user;
+            $user           = $booking->user;
             if ($giftCardAmount > 0) {
                 $existingRefund = Transaction::where('booking_id', $booking->id)
                     ->where('type', 'credit')
@@ -200,7 +200,6 @@ class BookingService
                 'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
             ]);
 
-
             // Send OneSignal push notification to admins and employees
             $this->sendBookingNotification($booking, 'cancelled');
 
@@ -208,7 +207,6 @@ class BookingService
 
             $booking->load('venue:id,name,maps_url');
             $user->notify(new BookingCancelledUserNotification($booking));
-
 
             return sendSuccess('Booking cancelled successfully.', compact('booking'));
 
@@ -378,9 +376,9 @@ class BookingService
         $pendingTotal   = 0;
         foreach ($grouped as $period => $data) {
             $collectedTotal += $data['collected'];
-            $pendingTotal += $data['pending'];
-            $maxValue    = max($maxValue, $data['collected'], $data['pending']);
-            $chartData[] = [$period, $data['collected'], $data['pending']];
+            $pendingTotal   += $data['pending'];
+            $maxValue        = max($maxValue, $data['collected'], $data['pending']);
+            $chartData[]     = [$period, $data['collected'], $data['pending']];
         }
 
         $transactionCount   = count($payments);
@@ -548,6 +546,8 @@ class BookingService
             'bookings.*.subtotal'           => 'nullable|numeric',
             'bookings.*.total_price'        => 'nullable|numeric',
         ]);
+
+        dd($formData);
 
         $validationErrors = [];
         foreach ($formData['bookings'] as $index => $bookingData) {
@@ -1089,9 +1089,9 @@ class BookingService
                     ? AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
                     : 0;
 
-                $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
-                $recurringQuantity       = $recurring['quantity'] ?? 1;
-                $recurringSubtotal += $recurringSingleSubtotal * $recurringQuantity;
+                $recurringSingleSubtotal  = round($recurring['price'] + $recurringAddOnCost, 2);
+                $recurringQuantity        = $recurring['quantity'] ?? 1;
+                $recurringSubtotal       += $recurringSingleSubtotal * $recurringQuantity;
             }
             $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
 
@@ -2821,49 +2821,32 @@ class BookingService
         }
     }
 
-    /**
-     * Get user IDs who should receive booking notifications
-     * Includes: admins, super_admins, and employees with access to the booking's venue
-     *
-     * @param int $venueId The venue ID from the booking
-     * @return array Array of user IDs
-     */
     protected function getBookingNotificationRecipients(int $venueId): array
     {
-        // Get all admins and super admins
         $adminUserIds = User::whereHas('roles', function ($query) {
             $query->whereIn('name', ['admin', 'super_admin']);
         })
-        ->where('status', User::ACTIVE)
-        ->pluck('id')
-        ->toArray();
+            ->where('status', User::ACTIVE)
+            ->pluck('id')
+            ->toArray();
 
-        // Get employees (senior and junior) who have access to this venue
         $employeeUserIds = User::whereHas('roles', function ($query) {
             $query->whereIn('name', ['senior_employee', 'junior_employee']);
         })
-        ->whereHas('venues', function ($query) use ($venueId) {
-            $query->where('venues.id', $venueId);
-        })
-        ->where('status', User::ACTIVE)
-        ->pluck('id')
-        ->toArray();
+            ->whereHas('venues', function ($query) use ($venueId) {
+                $query->where('venues.id', $venueId);
+            })
+            ->where('status', User::ACTIVE)
+            ->pluck('id')
+            ->toArray();
 
-        // Merge and remove duplicates
         return array_unique(array_merge($adminUserIds, $employeeUserIds));
     }
 
-    /**
-     * Send OneSignal push notification for booking events
-     *
-     * @param Booking $booking The booking instance
-     * @param string $eventType 'created', 'updated', or 'cancelled'
-     * @return void
-     */
     protected function sendBookingNotification(Booking $booking, string $eventType): void
     {
         try {
-            if (!$booking->venue_id) {
+            if (! $booking->venue_id) {
                 return;
             }
 
@@ -2872,30 +2855,30 @@ class BookingService
             if (empty($recipientIds)) {
                 Log::info('No recipients found for booking notification', [
                     'booking_id' => $booking->id,
-                    'venue_id' => $booking->venue_id,
+                    'venue_id'   => $booking->venue_id,
                     'event_type' => $eventType,
                 ]);
                 return;
             }
 
-            $venueName = $booking->venue->name ?? 'Unknown Venue';
+            $venueName    = $booking->venue->name ?? 'Unknown Venue';
             $customerName = $booking->user->name ?? 'Unknown Customer';
-            $bookingId = $booking->booking_id ?? 'N/A';
+            $bookingId    = $booking->booking_id ?? 'N/A';
 
-            $title = '';
+            $title   = '';
             $message = '';
 
             switch ($eventType) {
                 case 'created':
-                    $title = 'New Booking Created';
+                    $title   = 'New Booking Created';
                     $message = "New booking #{$bookingId} by {$customerName} at {$venueName}";
                     break;
                 case 'updated':
-                    $title = 'Booking Updated';
+                    $title   = 'Booking Updated';
                     $message = "Booking #{$bookingId} by {$customerName} at {$venueName} has been updated";
                     break;
                 case 'cancelled':
-                    $title = 'Booking Cancelled';
+                    $title   = 'Booking Cancelled';
                     $message = "Booking #{$bookingId} by {$customerName} at {$venueName} has been cancelled";
                     break;
                 default:
@@ -2903,10 +2886,10 @@ class BookingService
             }
 
             $data = [
-                'type' => 'booking_' . $eventType,
-                'booking_id' => $booking->id,
+                'type'           => 'booking_' . $eventType,
+                'booking_id'     => $booking->id,
                 'booking_number' => $bookingId,
-                'venue_id' => $booking->venue_id,
+                'venue_id'       => $booking->venue_id,
             ];
 
             $this->oneSignalService->sendToUsers($recipientIds, $title, $message, $data);
@@ -2914,8 +2897,49 @@ class BookingService
             Log::error('Failed to send booking notification', [
                 'booking_id' => $booking->id ?? null,
                 'event_type' => $eventType,
-                'error' => $e->getMessage(),
+                'error'      => $e->getMessage(),
             ]);
+        }
+    }
+
+    public function getPaymentMethods()
+    {
+        try {
+
+            $user = auth()->user();
+
+            if (! $user) {
+                return sendError('Unauthorized', [], 401);
+            }
+
+            $userRoles = $user->getRoleNames()->toArray();
+
+            $fullAccessRoles = ['super_admin', 'admin', 'senior_employee'];
+            $hasFullAccess   = ! empty(array_intersect($userRoles, $fullAccessRoles));
+
+            if ($hasFullAccess) {
+                $paymentMethods = BookingPaymentMethod::list();
+            } else {
+                $paymentMethods = [
+                    BookingPaymentMethod::FREE,
+                    BookingPaymentMethod::CASH_ON_ARRIVAL,
+                ];
+            }
+
+            $formattedMethods = array_map(function ($method) {
+                return [
+                    'value' => $method,
+                    'label' => ucwords(str_replace('_', ' ', $method)),
+                ];
+            }, $paymentMethods);
+
+            return sendSuccess('Payment methods fetched successfully', [
+                'payment_methods' => $formattedMethods,
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Get Payment Methods Error: ' . $e->getMessage(), ['Exception' => $e]);
+            return sendError('Something went wrong while fetching payment methods');
         }
     }
 }

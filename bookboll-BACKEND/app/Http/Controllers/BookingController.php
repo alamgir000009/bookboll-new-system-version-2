@@ -134,48 +134,8 @@ class BookingController extends Controller
         return Excel::download(new BookingsExport($bookings), $filename);
     }
 
-    public function getPaymentMethods(Request $request)
+    public function getPaymentMethods()
     {
-        try {
-            $user = auth()->user();
-            
-            if (!$user) {
-                return sendError('Unauthorized', [], 401);
-            }
-
-            $userRoles = $user->getRoleNames()->toArray();
-            
-            // Full payment methods for super_admin, admin, and senior_employee
-            $fullAccessRoles = ['super_admin', 'admin', 'senior_employee'];
-            $hasFullAccess = !empty(array_intersect($userRoles, $fullAccessRoles));
-            
-            if ($hasFullAccess) {
-                // Return all payment methods
-                $paymentMethods = BookingPaymentMethod::list();
-            } else {
-                // Limited payment methods for junior_employee and guard
-                // Only "free" and "pay later" (cash_on_arrival)
-                $paymentMethods = [
-                    BookingPaymentMethod::FREE,
-                    BookingPaymentMethod::CASH_ON_ARRIVAL,
-                ];
-            }
-
-            // Format payment methods with labels for better frontend usage
-            $formattedMethods = array_map(function ($method) {
-                return [
-                    'value' => $method,
-                    'label' => ucwords(str_replace('_', ' ', $method)),
-                ];
-            }, $paymentMethods);
-
-            return sendSuccess('Payment methods fetched successfully', [
-                'payment_methods' => $formattedMethods,
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Get Payment Methods Error: ' . $e->getMessage(), ['Exception' => $e]);
-            return sendError('Something went wrong while fetching payment methods');
-        }
+        return $this->bookingService->getPaymentMethods();
     }
 }
