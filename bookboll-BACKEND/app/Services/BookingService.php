@@ -543,7 +543,7 @@ class BookingService
             'bookings.*.payment_method'     => 'nullable|in:free,cash_on_arrival,paid_cheque,paid_wire_transfer',
             'bookings.*.selected_add_ons'   => 'nullable|array',
             'bookings.*.selected_add_ons.*' => 'exists:add_ons,id',
-            'bookings.*.promocode'          => 'nullable|string|max:50',
+            'bookings.*.promocode'          => 'nullable|string|exists:promocodes,code',
             'bookings.*.notes'              => 'nullable|string|max:1000',
             'bookings.*.subtotal'           => 'nullable|numeric',
             'bookings.*.total_price'        => 'nullable|numeric',
@@ -562,11 +562,13 @@ class BookingService
         }
 
         DB::beginTransaction();
+
         try {
             $bookings = [];
             foreach ($formData['bookings'] as $bookingData) {
-                $listing = Listing::findOrFail($bookingData['listing_id']);
-                $user    = User::findOrFail($bookingData['user_id']);
+
+                $listing = Listing::find($bookingData['listing_id']);
+                $user    = User::find($bookingData['user_id']);
 
                 $subtotal      = $bookingData['subtotal'];
                 $discount      = $bookingData['discount_amount'] ?? 0;
@@ -686,9 +688,7 @@ class BookingService
 
             DB::commit();
 
-            return sendSuccess('Bookings created successfully', [
-                'bookings' => $bookings,
-            ]);
+            return sendSuccess('Bookings created successfully', compact('bookings'));
 
         } catch (Exception $e) {
             DB::rollBack();
