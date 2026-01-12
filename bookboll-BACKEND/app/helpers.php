@@ -77,6 +77,7 @@ if (! class_exists('BookingPaymentStatus')) {
         public static function list(): array
         {
             return [
+                self::FREE,
                 self::PENDING,
                 self::FULLY_PAID,
                 self::DEPOSIT_PAID,

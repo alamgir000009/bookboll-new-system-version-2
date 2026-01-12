@@ -547,8 +547,6 @@ class BookingService
             'bookings.*.total_price'        => 'nullable|numeric',
         ]);
 
-        dd($formData);
-
         $validationErrors = [];
         foreach ($formData['bookings'] as $index => $bookingData) {
             $errors = $this->validateBooking($bookingData);
@@ -587,7 +585,7 @@ class BookingService
                     'cash_on_arrival'    => BookingPaymentStatus::PENDING,
                     'paid_cheque'        => BookingPaymentStatus::FULLY_PAID,
                     'paid_wire_transfer' => BookingPaymentStatus::FULLY_PAID,
-                    'free'               => BookingPaymentStatus::FULLY_PAID,
+                    'free'               => BookingPaymentStatus::FREE,
                 };
 
                 $depositAmount = 0;
@@ -617,7 +615,6 @@ class BookingService
                     'listing_id'            => $bookingData['listing_id'],
                     'loyalty_points_earned' => $listing->loyalty_points ?? 0,
                     'full_payment_received' => in_array($paymentMethod, [
-                        BookingPaymentMethod::FREE,
                         BookingPaymentMethod::PAID_CHEQUE,
                         BookingPaymentMethod::PAID_WIRE_TRANSFER,
                     ]),
@@ -649,7 +646,9 @@ class BookingService
                     'description' => 'Booking created by ' . auth()->user()->name,
                 ]);
 
-                if (! $booking->is_free) {
+                $isFreeBooking = $paymentMethod === BookingPaymentMethod::FREE || $booking->is_free;
+
+                if (! $isFreeBooking) {
                     $this->paymentModel::create([
                         'user_id'    => $user->id,
                         'booking_id' => $booking->id,
