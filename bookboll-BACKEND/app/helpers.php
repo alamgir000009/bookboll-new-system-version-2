@@ -69,18 +69,18 @@ if (! class_exists('PaymentStatus')) {
 if (! class_exists('BookingPaymentStatus')) {
     class BookingPaymentStatus
     {
-        public const FREE         = 'free';
         public const PENDING      = 'pending';
         public const FULLY_PAID   = 'fully_paid';
         public const DEPOSIT_PAID = 'deposit_paid';
+        public const PAYMENT_SKIPPED         = 'payment_skipped';
 
         public static function list(): array
         {
             return [
-                self::FREE,
                 self::PENDING,
                 self::FULLY_PAID,
                 self::DEPOSIT_PAID,
+                self::PAYMENT_SKIPPED,
             ];
         }
     }
@@ -89,22 +89,22 @@ if (! class_exists('BookingPaymentStatus')) {
 if (! class_exists('BookingPaymentMethod')) {
     class BookingPaymentMethod
     {
-        public const FREE                         = 'free';
         public const PAID_CASH                    = 'paid_cash';
         public const PAID_CHEQUE                  = 'paid_cheque';
-        public const PAID_CREDIT_CARD             = 'paid_credit_card';
         public const ONLINE_PAYMENT               = 'online_payment';
+        public const PAYMENT_SKIPPED              = 'payment_skipped';
         public const CASH_ON_ARRIVAL              = 'cash_on_arrival';
+        public const PAID_CREDIT_CARD             = 'paid_credit_card';
         public const PAID_WIRE_TRANSFER           = 'paid_wire_transfer';
         public const DEPOSIT_REMAINING_ON_ARRIVAL = 'deposit_remaining_on_arrival';
 
         public static function list(): array
         {
             return [
-                self::FREE,
                 self::PAID_CASH,
                 self::PAID_CHEQUE,
                 self::ONLINE_PAYMENT,
+                self::PAYMENT_SKIPPED,
                 self::CASH_ON_ARRIVAL,
                 self::PAID_CREDIT_CARD,
                 self::PAID_WIRE_TRANSFER,
