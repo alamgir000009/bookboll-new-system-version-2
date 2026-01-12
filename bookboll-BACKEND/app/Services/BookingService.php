@@ -2935,7 +2935,7 @@ class BookingService
 
             $filePath = public_path($filename);
 
-            if (!file_exists($filePath)) {
+            if (! file_exists($filePath)) {
                 return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
             }
 
@@ -2944,8 +2944,8 @@ class BookingService
             \Maatwebsite\Excel\Facades\Excel::import($import, $filePath);
 
             $successCount = $import->getSuccessCount();
-            $errorCount = $import->getErrorCount();
-            $errors = $import->getErrors();
+            $errorCount   = $import->getErrorCount();
+            $errors       = $import->getErrors();
 
             $message = "Import completed. Successfully imported {$successCount} booking(s)";
             if ($errorCount > 0) {
@@ -2954,17 +2954,58 @@ class BookingService
 
             return sendSuccess($message, [
                 'success_count' => $successCount,
-                'error_count' => $errorCount,
-                'errors' => $errors,
+                'error_count'   => $errorCount,
+                'errors'        => $errors,
             ]);
         } catch (Exception $e) {
             Log::error('Booking import failed', [
                 'filename' => $filename,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'error'    => $e->getMessage(),
+                'trace'    => $e->getTraceAsString(),
             ]);
 
             return sendError('Import failed: ' . $e->getMessage(), [], 500);
+        }
+    }
+
+    public function getPaymentMethods()
+    {
+        try {
+
+            $user = auth()->user();
+
+            if (! $user) {
+                return sendError('Unauthorized', [], 401);
+            }
+
+            $userRoles = $user->getRoleNames()->toArray();
+
+            $fullAccessRoles = ['super_admin', 'admin', 'senior_employee'];
+            $hasFullAccess   = ! empty(array_intersect($userRoles, $fullAccessRoles));
+
+            if ($hasFullAccess) {
+                $paymentMethods = BookingPaymentMethod::list();
+            } else {
+                $paymentMethods = [
+                    BookingPaymentMethod::PAYMENT_SKIPPED,
+                    BookingPaymentMethod::CASH_ON_ARRIVAL,
+                ];
+            }
+
+            $formattedMethods = array_map(function ($method) {
+                return [
+                    'value' => $method,
+                    'label' => ucwords(str_replace('_', ' ', $method)),
+                ];
+            }, $paymentMethods);
+
+            return sendSuccess('Payment methods fetched successfully', [
+                'payment_methods' => $formattedMethods,
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Get Payment Methods Error: ' . $e->getMessage(), ['Exception' => $e]);
+            return sendError('Something went wrong while fetching payment methods');
         }
     }
 }
