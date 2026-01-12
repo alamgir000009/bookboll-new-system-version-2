@@ -202,7 +202,7 @@ class Booking extends Model
                     ? (int) substr($latestBooking->booking_id, -5) + 1
                     : 1;
 
-                // $booking->booking_id = sprintf('BKN_%s_%05d', $year, $nextBookingNumber);
+                $booking->booking_id = sprintf('BKN_%s_%05d', $year, $nextBookingNumber);
             });
         });
     }

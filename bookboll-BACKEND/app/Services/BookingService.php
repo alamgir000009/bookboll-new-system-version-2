@@ -971,7 +971,7 @@ class BookingService
             'date'                            => 'required|date|after_or_equal:today',
             'start_time'                      => 'required|date_format:H:i',
             'end_time'                        => 'required|date_format:H:i',
-            'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival,paid_cash,paid_cheque,paid_credit_card,paid_wire,paid_wire_transfer',
+            'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival,paid_cash,paid_cheque,paid_credit_card,paid_wire,paid_wire_transfer,payment_skipped',
             'notes'                           => 'nullable|string|max:500',
             'add_ons'                         => 'nullable|array',
             'add_ons.*'                       => 'exists:add_ons,id',
@@ -2664,6 +2664,7 @@ class BookingService
                 'paid_wire'                    => BookingPaymentStatus::FULLY_PAID,
                 'paid_wire_transfer'           => BookingPaymentStatus::FULLY_PAID,
                 'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
+                'payment_skipped'              => BookingPaymentStatus::PAYMENT_SKIPPED,
                 default                        => BookingPaymentStatus::PENDING,
             };
 
@@ -2678,6 +2679,8 @@ class BookingService
                     $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
                 }
             }
+
+            $isPaymentSkipped = $paymentStatus == BookingPaymentStatus::PAYMENT_SKIPPED;
 
             $booking = $this->bookingModel::create([
                 'user_id'               => $user->id,
@@ -2697,6 +2700,7 @@ class BookingService
                 'loyalty_points_earned' => $listing->loyalty_points ?? 0,
                 'gift_card_amount'      => $giftCardAmount,
                 'full_payment_received' => $paymentStatus == BookingPaymentStatus::FULLY_PAID,
+                'is_free'               => $isPaymentSkipped,
                 'payment_breakdown'     => [
                     'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
                     'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
@@ -2715,7 +2719,10 @@ class BookingService
                 $booking->addOns()->sync($formData['add_ons']);
             }
 
-            if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
+            // Skip payment records creation for skipped payment method
+            if ($isPaymentSkipped) {
+                // Don't create any payment records for skipped payment
+            } elseif ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
                 $paymentOptions = $listing ? $listing->payment_options : null;
 
                 if (! $paymentOptions || empty($paymentOptions['deposit'])) {
@@ -2826,7 +2833,10 @@ class BookingService
                 ]);
             }
 
-            createBookingInvoiceWithNotification($booking, $user);
+            // Skip invoice creation for skipped payment method
+            if (! $isPaymentSkipped) {
+                createBookingInvoiceWithNotification($booking, $user);
+            }
 
             if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
                 autoConfirmBookingIfPaid($booking);
