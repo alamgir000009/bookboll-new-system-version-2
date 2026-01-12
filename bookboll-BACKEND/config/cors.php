@@ -19,14 +19,14 @@ return [
 
     'allowed_methods'          => ['*'],
 
-    // 'allowed_origins'          => [
-    //     'https://osamasafdar.com',
-    //     'https://www.osamasafdar.com',
-    //     'https://admin.osamasafdar.com',
-    //     'https://admin.www.osamasafdar.com',
-    // ],
-
-    'allowed_origins'          => ['*'],
+    'allowed_origins'          => [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'https://osamasafdar.com',
+        'https://www.osamasafdar.com',
+        'https://admin.osamasafdar.com',
+        'https://www.admin.osamasafdar.com',
+    ],
 
     'allowed_origins_patterns' => [],
 
