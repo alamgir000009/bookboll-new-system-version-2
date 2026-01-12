@@ -2985,6 +2985,9 @@ class BookingService
 
             if ($hasFullAccess) {
                 $paymentMethods = BookingPaymentMethod::list();
+                $paymentMethods = array_values(array_filter($paymentMethods, function ($method) {
+                    return $method !== BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL;
+                }));
             } else {
                 $paymentMethods = [
                     BookingPaymentMethod::PAYMENT_SKIPPED,
