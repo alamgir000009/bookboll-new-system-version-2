@@ -23,6 +23,7 @@ class UsersImport implements ToCollection, WithHeadingRow
             try {
                 // Skip empty rows
                 if (empty(array_filter($row->toArray()))) {
+                    Log::warning("Row " . ($index + 2) . " is empty. Skipping.");
                     continue;
                 }
 

@@ -1,15 +1,14 @@
 <?php
 namespace App\Notifications;
 
-use App\Models\Booking;
 use BookingStatus;
 use Carbon\Carbon;
+use App\Models\Booking;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class BookingCancelledUserNotification extends Notification implements ShouldQueue
+class BookingCancelledUserNotification extends Notification
 {
     use Queueable;
 

@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Services\BookingService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
+use BookingPaymentMethod;
 
 class BookingController extends Controller
 {
@@ -130,5 +132,10 @@ class BookingController extends Controller
         $filename = 'bookings-' . now()->format('Y-m-d') . '.xlsx';
 
         return Excel::download(new BookingsExport($bookings), $filename);
+    }
+
+    public function getPaymentMethods()
+    {
+        return $this->bookingService->getPaymentMethods();
     }
 }

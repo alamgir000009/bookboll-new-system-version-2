@@ -170,7 +170,7 @@ class BookingService
             DB::beginTransaction();
 
             $giftCardAmount = $booking->gift_card_amount ?? 0;
-            $user = $booking->user;
+            $user           = $booking->user;
             if ($giftCardAmount > 0) {
                 $existingRefund = Transaction::where('booking_id', $booking->id)
                     ->where('type', 'credit')
@@ -200,15 +200,16 @@ class BookingService
                 'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
             ]);
 
-
-            // Send OneSignal push notification to admins and employees
             $this->sendBookingNotification($booking, 'cancelled');
 
             DB::commit();
 
             $booking->load('venue:id,name,maps_url');
-            $user->notify(new BookingCancelledUserNotification($booking));
-
+            try {
+                $user->notify(new BookingCancelledUserNotification($booking));
+            } catch (Exception $e) {
+                Log::error("Booking cancellation email error: " . $e->getMessage(), ["Exception" => $e]);
+            }
 
             return sendSuccess('Booking cancelled successfully.', compact('booking'));
 
@@ -378,9 +379,9 @@ class BookingService
         $pendingTotal   = 0;
         foreach ($grouped as $period => $data) {
             $collectedTotal += $data['collected'];
-            $pendingTotal += $data['pending'];
-            $maxValue    = max($maxValue, $data['collected'], $data['pending']);
-            $chartData[] = [$period, $data['collected'], $data['pending']];
+            $pendingTotal   += $data['pending'];
+            $maxValue        = max($maxValue, $data['collected'], $data['pending']);
+            $chartData[]     = [$period, $data['collected'], $data['pending']];
         }
 
         $transactionCount   = count($payments);
@@ -399,7 +400,7 @@ class BookingService
         ]);
     }
 
-    private function groupPaymentsByPeriod(array $payments, string $timeRange, array $dateRange): array
+    private function groupPaymentsByPeriod(array $payments, string $timeRange, array $dateRange)
     {
         $grouped                                 = [];
         list($startYear, $startMonth, $startDay) = explode('-', $dateRange[0]);
@@ -540,10 +541,10 @@ class BookingService
             'bookings.*.date'               => 'required|date',
             'bookings.*.start_time'         => 'required|date_format:H:i',
             'bookings.*.end_time'           => 'required|date_format:H:i',
-            'bookings.*.payment_method'     => 'nullable|in:free,cash_on_arrival,paid_cheque,paid_wire_transfer',
+            'bookings.*.payment_method'     => 'nullable|in:payment_skipped,cash_on_arrival,paid_cheque,paid_wire_transfer',
             'bookings.*.selected_add_ons'   => 'nullable|array',
             'bookings.*.selected_add_ons.*' => 'exists:add_ons,id',
-            'bookings.*.promocode'          => 'nullable|string|max:50',
+            'bookings.*.promocode'          => 'nullable|string|exists:promocodes,code',
             'bookings.*.notes'              => 'nullable|string|max:1000',
             'bookings.*.subtotal'           => 'nullable|numeric',
             'bookings.*.total_price'        => 'nullable|numeric',
@@ -562,11 +563,13 @@ class BookingService
         }
 
         DB::beginTransaction();
+
         try {
             $bookings = [];
             foreach ($formData['bookings'] as $bookingData) {
-                $listing = Listing::findOrFail($bookingData['listing_id']);
-                $user    = User::findOrFail($bookingData['user_id']);
+
+                $listing = Listing::find($bookingData['listing_id']);
+                $user    = User::find($bookingData['user_id']);
 
                 $subtotal      = $bookingData['subtotal'];
                 $discount      = $bookingData['discount_amount'] ?? 0;
@@ -585,7 +588,7 @@ class BookingService
                     'cash_on_arrival'    => BookingPaymentStatus::PENDING,
                     'paid_cheque'        => BookingPaymentStatus::FULLY_PAID,
                     'paid_wire_transfer' => BookingPaymentStatus::FULLY_PAID,
-                    'free'               => BookingPaymentStatus::FULLY_PAID,
+                    'payment_skipped'    => BookingPaymentStatus::PAYMENT_SKIPPED,
                 };
 
                 $depositAmount = 0;
@@ -615,11 +618,10 @@ class BookingService
                     'listing_id'            => $bookingData['listing_id'],
                     'loyalty_points_earned' => $listing->loyalty_points ?? 0,
                     'full_payment_received' => in_array($paymentMethod, [
-                        BookingPaymentMethod::FREE,
                         BookingPaymentMethod::PAID_CHEQUE,
                         BookingPaymentMethod::PAID_WIRE_TRANSFER,
                     ]),
-                    'is_free'               => $paymentMethod === BookingPaymentMethod::FREE,
+                    'is_free'               => $paymentMethod === BookingPaymentMethod::PAYMENT_SKIPPED,
                     'payment_breakdown'     => [
                         'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
                         'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
@@ -647,7 +649,9 @@ class BookingService
                     'description' => 'Booking created by ' . auth()->user()->name,
                 ]);
 
-                if (! $booking->is_free) {
+                $isFreeBooking = $paymentMethod === BookingPaymentMethod::PAYMENT_SKIPPED || $booking->is_free;
+
+                if (! $isFreeBooking) {
                     $this->paymentModel::create([
                         'user_id'    => $user->id,
                         'booking_id' => $booking->id,
@@ -675,7 +679,7 @@ class BookingService
                     $booking->history()->create([
                         'user_id'     => $user->id,
                         'action'      => 'booking_created',
-                        'description' => 'This booking is created as free by ' . auth()->user()->name . ' it marked as fully paid',
+                        'description' => 'This booking is created with payment skipped by ' . auth()->user()->name . ' it marked as payment skipped',
                     ]);
                 }
 
@@ -686,9 +690,7 @@ class BookingService
 
             DB::commit();
 
-            return sendSuccess('Bookings created successfully', [
-                'bookings' => $bookings,
-            ]);
+            return sendSuccess('Bookings created successfully', compact('bookings'));
 
         } catch (Exception $e) {
             DB::rollBack();
@@ -972,7 +974,7 @@ class BookingService
             'date'                            => 'required|date|after_or_equal:today',
             'start_time'                      => 'required|date_format:H:i',
             'end_time'                        => 'required|date_format:H:i',
-            'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival,paid_cash,paid_cheque,paid_credit_card,paid_wire,paid_wire_transfer',
+            'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival,paid_cash,paid_cheque,paid_credit_card,paid_wire,paid_wire_transfer,payment_skipped',
             'notes'                           => 'nullable|string|max:500',
             'add_ons'                         => 'nullable|array',
             'add_ons.*'                       => 'exists:add_ons,id',
@@ -1089,9 +1091,9 @@ class BookingService
                     ? AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
                     : 0;
 
-                $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
-                $recurringQuantity       = $recurring['quantity'] ?? 1;
-                $recurringSubtotal += $recurringSingleSubtotal * $recurringQuantity;
+                $recurringSingleSubtotal  = round($recurring['price'] + $recurringAddOnCost, 2);
+                $recurringQuantity        = $recurring['quantity'] ?? 1;
+                $recurringSubtotal       += $recurringSingleSubtotal * $recurringQuantity;
             }
             $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
 
@@ -1341,6 +1343,7 @@ class BookingService
         ]);
 
         try {
+
             DB::beginTransaction();
 
             $oldBooking   = clone $booking;
@@ -1485,16 +1488,18 @@ class BookingService
                         if ($remainingPayment) {
                             $remainingPayment->update(['amount' => $newRemaining]);
                         } else {
-                            $booking->payments()->create([
-                                'user_id' => $booking->user_id,
-                                'amount'  => $newRemaining,
-                                'type'    => PaymentType::REMAINING,
-                                'method'  => PaymentMethod::CASH,
-                                'status'  => PaymentStatus::PENDING,
-                                'date'    => null,
-                                'notes'   => "Remaining payment for booking #{$booking->booking_id} (updated)",
-                                'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
-                            ]);
+                            if (! $booking->is_free) {
+                                $booking->payments()->create([
+                                    'date'    => null,
+                                    'amount'  => $newRemaining,
+                                    'user_id' => $booking->user_id,
+                                    'method'  => PaymentMethod::CASH,
+                                    'type'    => PaymentType::REMAINING,
+                                    'status'  => PaymentStatus::PENDING,
+                                    'notes'   => "Remaining payment for booking #{$booking->booking_id} (updated)",
+                                    'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
+                                ]);
+                            }
                         }
                     } elseif ($booking->payment_status == BookingPaymentStatus::PENDING) {
                         $pendingPayment = $booking->payments()
@@ -1504,86 +1509,90 @@ class BookingService
                         if ($pendingPayment) {
                             $pendingPayment->update(['amount' => $newPrice]);
                         } else {
-                            $booking->payments()->create([
-                                'date'    => null,
-                                'amount'  => $newPrice,
-                                'user_id' => $booking->user_id,
-                                'type'    => PaymentType::FULL,
-                                'method'  => PaymentMethod::CASH,
-                                'status'  => PaymentStatus::PENDING,
-                                'notes'   => "Payment for booking #{$booking->booking_id} (updated)",
-                                'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
-                            ]);
+                            if (! $booking->is_free) {
+                                $booking->payments()->create([
+                                    'date'    => null,
+                                    'amount'  => $newPrice,
+                                    'user_id' => $booking->user_id,
+                                    'type'    => PaymentType::FULL,
+                                    'method'  => PaymentMethod::CASH,
+                                    'status'  => PaymentStatus::PENDING,
+                                    'notes'   => "Payment for booking #{$booking->booking_id} (updated)",
+                                    'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                                ]);
+                            }
                         }
                     } elseif ($booking->payment_status == BookingPaymentStatus::FULLY_PAID) {
                         if ($totalPaid < $newPrice) {
                             $additionalAmount = $newPrice - $totalPaid;
 
-                            $booking->payments()->create([
-                                'date'    => null,
-                                'user_id' => $booking->user_id,
-                                'amount'  => $additionalAmount,
-                                'type'    => PaymentType::FULL,
-                                'method'  => PaymentMethod::CASH,
-                                'status'  => PaymentStatus::PENDING,
-                                'notes'   => "Additional payment required for booking #{$booking->booking_id} (price increased)",
-                                'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
-                            ]);
+                            if (! $booking->is_free) {
+                                $booking->payments()->create([
+                                    'date'    => null,
+                                    'user_id' => $booking->user_id,
+                                    'amount'  => $additionalAmount,
+                                    'type'    => PaymentType::FULL,
+                                    'method'  => PaymentMethod::CASH,
+                                    'status'  => PaymentStatus::PENDING,
+                                    'notes'   => "Additional payment required for booking #{$booking->booking_id} (price increased)",
+                                    'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                                ]);
 
-                            if ($totalPaid > 0) {
-                                $booking->payment_status              = BookingPaymentStatus::DEPOSIT_PAID;
-                                $paymentBreakdown                     = $booking->payment_breakdown ?? [];
-                                $paymentBreakdown['remaining_amount'] = $additionalAmount;
-                                $booking->payment_breakdown           = $paymentBreakdown;
+                                if ($totalPaid > 0) {
+                                    $booking->payment_status              = BookingPaymentStatus::DEPOSIT_PAID;
+                                    $paymentBreakdown                     = $booking->payment_breakdown ?? [];
+                                    $paymentBreakdown['remaining_amount'] = $additionalAmount;
+                                    $booking->payment_breakdown           = $paymentBreakdown;
+                                }
                             }
                         }
+
+                        $booking->history()->create([
+                            'user_id'     => auth()->id(),
+                            'action'      => 'price_adjusted',
+                            'description' => "Price increased by QAR {$priceDifference}. Payment updated.",
+                        ]);
                     }
+
+                    $booking->save();
+                }
+
+                if (isset($updateData['user_id']) && $updateData['user_id'] != $oldUserId) {
+                    $booking->payments()->update(['user_id' => $updateData['user_id']]);
+
+                    $booking->invoices()->update(['user_id' => $updateData['user_id']]);
 
                     $booking->history()->create([
                         'user_id'     => auth()->id(),
-                        'action'      => 'price_adjusted',
-                        'description' => "Price increased by QAR {$priceDifference}. Payment updated.",
+                        'action'      => 'user_changed',
+                        'description' => "Booking transferred from user #{$oldUserId} to user #{$updateData['user_id']}",
                     ]);
                 }
 
-                $booking->save();
-            }
+                $changes = [];
+                if ($timeSlotChanged) {
+                    $newDate      = $updateData['date'] ?? $booking->date;
+                    $newStartTime = $updateData['start_time'] ?? $booking->start_time;
+                    $newEndTime   = $updateData['end_time'] ?? $booking->end_time;
+                    $changes[]    = "Time slot changed from {$oldDate} {$oldStartTime}-{$oldEndTime} to {$newDate} {$newStartTime}-{$newEndTime}";
+                }
+                if ($priceChanged) {
+                    $changes[] = "Price changed from QAR {$oldPrice} to QAR {$newPrice}";
+                }
+                if (isset($formData['venue_id']) && $formData['venue_id'] != $booking->venue_id) {
+                    $changes[] = "Venue changed";
+                }
+                if (isset($formData['listing_id']) && $formData['listing_id'] != $booking->listing_id) {
+                    $changes[] = "Listing changed";
+                }
 
-            if (isset($updateData['user_id']) && $updateData['user_id'] != $oldUserId) {
-                $booking->payments()->update(['user_id' => $updateData['user_id']]);
-
-                $booking->invoices()->update(['user_id' => $updateData['user_id']]);
-
-                $booking->history()->create([
-                    'user_id'     => auth()->id(),
-                    'action'      => 'user_changed',
-                    'description' => "Booking transferred from user #{$oldUserId} to user #{$updateData['user_id']}",
-                ]);
-            }
-
-            $changes = [];
-            if ($timeSlotChanged) {
-                $newDate      = $updateData['date'] ?? $booking->date;
-                $newStartTime = $updateData['start_time'] ?? $booking->start_time;
-                $newEndTime   = $updateData['end_time'] ?? $booking->end_time;
-                $changes[]    = "Time slot changed from {$oldDate} {$oldStartTime}-{$oldEndTime} to {$newDate} {$newStartTime}-{$newEndTime}";
-            }
-            if ($priceChanged) {
-                $changes[] = "Price changed from QAR {$oldPrice} to QAR {$newPrice}";
-            }
-            if (isset($formData['venue_id']) && $formData['venue_id'] != $booking->venue_id) {
-                $changes[] = "Venue changed";
-            }
-            if (isset($formData['listing_id']) && $formData['listing_id'] != $booking->listing_id) {
-                $changes[] = "Listing changed";
-            }
-
-            if (! empty($changes)) {
-                $booking->history()->create([
-                    'user_id'     => auth()->id(),
-                    'action'      => 'booking_updated',
-                    'description' => 'Booking updated: ' . implode(', ', $changes),
-                ]);
+                if (! empty($changes)) {
+                    $booking->history()->create([
+                        'user_id'     => auth()->id(),
+                        'action'      => 'booking_updated',
+                        'description' => 'Booking updated: ' . implode(', ', $changes),
+                    ]);
+                }
             }
 
             DB::commit();
@@ -1615,7 +1624,6 @@ class BookingService
                 }
             }
 
-            // Send OneSignal push notification to admins and employees
             $this->sendBookingNotification($booking, 'updated');
 
             return sendSuccess('Booking updated successfully', compact('booking'));
@@ -1627,7 +1635,6 @@ class BookingService
                 'booking_id' => $booking->id ?? $bookingId,
                 'exception'  => $e,
             ]);
-
             return sendError('Failed to update booking: ' . $e->getMessage());
         }
     }
@@ -1673,7 +1680,7 @@ class BookingService
             'end_time'       => 'sometimes|date_format:H:i',
             'listing_id'     => 'sometimes|exists:listings,id',
             'date'           => 'sometimes|date|after_or_equal:today',
-            'payment_method' => 'sometimes|in:free,cash_on_arrival,online_payment,paid_cash,paid_cheque,paid_credit_card,paid_wire_transfer,deposit_remaining_on_arrival',
+            'payment_method' => 'sometimes|in:payment_skipped,cash_on_arrival,online_payment,paid_cash,paid_cheque,paid_credit_card,paid_wire_transfer,deposit_remaining_on_arrival',
             'add_ons'        => 'nullable|array',
             'add_ons.*'      => 'exists:add_ons,id',
             'user_id'        => 'sometimes|exists:users,id',
@@ -1912,13 +1919,30 @@ class BookingService
                     'paid_credit_card'             => BookingPaymentStatus::FULLY_PAID,
                     'paid_wire_transfer'           => BookingPaymentStatus::FULLY_PAID,
                     'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
-                    'free'                         => BookingPaymentStatus::PENDING,
+                    'payment_skipped'              => BookingPaymentStatus::PAYMENT_SKIPPED,
                     default                        => BookingPaymentStatus::PENDING,
                 };
 
                 $updateData['payment_status'] = $newPaymentStatus;
 
-                if ($newPaymentStatus === BookingPaymentStatus::DEPOSIT_PAID) {
+                if ($newPaymentStatus === BookingPaymentStatus::PAYMENT_SKIPPED) {
+                    // Payment skipped - mark booking as payment skipped and don't create payment records
+                    $updateData['payment_breakdown']     = null;
+                    $updateData['full_payment_received'] = true;
+                    $updateData['is_free']               = true;
+
+                    // Cancel/void any pending payments since booking is now payment skipped
+                    $pendingPayments = $booking->payments()
+                        ->where('status', PaymentStatus::PENDING)
+                        ->get();
+
+                    foreach ($pendingPayments as $payment) {
+                        $payment->update([
+                            'status' => 'cancelled',
+                            'notes'  => ($payment->notes ?? '') . ' - Cancelled: Booking changed to payment skipped',
+                        ]);
+                    }
+                } elseif ($newPaymentStatus === BookingPaymentStatus::DEPOSIT_PAID) {
                     $totalPrice    = $updateData['total_price'] ?? $booking->total_price;
                     $depositAmount = 0;
 
@@ -1938,8 +1962,10 @@ class BookingService
                         'remaining_method' => PaymentMethod::CASH,
                     ];
                 } elseif ($newPaymentStatus === BookingPaymentStatus::FULLY_PAID) {
+                    // Changing to a paid method - create or update payment records
                     $updateData['payment_breakdown']     = null;
                     $updateData['full_payment_received'] = true;
+                    $updateData['is_free']               = false;
 
                     $paymentMethod = match (trim($newPaymentMethod)) {
                         'paid_cash'          => PaymentMethod::CASH,
@@ -1966,23 +1992,27 @@ class BookingService
                             ]);
                         }
                     } else {
-                        $booking->payments()->create([
-                            'user_id'    => $booking->user_id,
-                            'booking_id' => $booking->id,
-                            'amount'     => $totalPrice,
-                            'type'       => PaymentType::FULL,
-                            'method'     => $paymentMethod,
-                            'status'     => PaymentStatus::PAID,
-                            'date'       => now()->format('Y-m-d'),
-                            'notes'      => "Full payment for booking #{$booking->booking_id} via " . str_replace('paid_', '', $newPaymentMethod),
-                            'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
-                        ]);
+                        // Only create payment if booking is not payment skipped
+                        if (! $booking->is_free) {
+                            $booking->payments()->create([
+                                'user_id'    => $booking->user_id,
+                                'booking_id' => $booking->id,
+                                'amount'     => $totalPrice,
+                                'type'       => PaymentType::FULL,
+                                'method'     => $paymentMethod,
+                                'status'     => PaymentStatus::PAID,
+                                'date'       => now()->format('Y-m-d'),
+                                'notes'      => "Full payment for booking #{$booking->booking_id} via " . str_replace('paid_', '', $newPaymentMethod),
+                                'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                            ]);
+                        }
                     }
 
                     $shouldAutoConfirm = ($booking->status === BookingStatus::PENDING);
                 } else {
                     $updateData['payment_breakdown']     = null;
                     $updateData['full_payment_received'] = false;
+                    $updateData['is_free']               = false;
                 }
             }
 
@@ -2601,7 +2631,7 @@ class BookingService
         ]);
     }
 
-    protected function createSingleBooking(
+    public function createSingleBooking(
         $user,
         array $formData,
         string $date,
@@ -2637,6 +2667,7 @@ class BookingService
                 'paid_wire'                    => BookingPaymentStatus::FULLY_PAID,
                 'paid_wire_transfer'           => BookingPaymentStatus::FULLY_PAID,
                 'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
+                'payment_skipped'              => BookingPaymentStatus::PAYMENT_SKIPPED,
                 default                        => BookingPaymentStatus::PENDING,
             };
 
@@ -2651,6 +2682,8 @@ class BookingService
                     $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
                 }
             }
+
+            $isPaymentSkipped = $paymentStatus == BookingPaymentStatus::PAYMENT_SKIPPED;
 
             $booking = $this->bookingModel::create([
                 'user_id'               => $user->id,
@@ -2670,6 +2703,7 @@ class BookingService
                 'loyalty_points_earned' => $listing->loyalty_points ?? 0,
                 'gift_card_amount'      => $giftCardAmount,
                 'full_payment_received' => $paymentStatus == BookingPaymentStatus::FULLY_PAID,
+                'is_free'               => $isPaymentSkipped,
                 'payment_breakdown'     => [
                     'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
                     'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
@@ -2688,7 +2722,10 @@ class BookingService
                 $booking->addOns()->sync($formData['add_ons']);
             }
 
-            if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
+            // Skip payment records creation for skipped payment method
+            if ($isPaymentSkipped) {
+                // Don't create any payment records for skipped payment
+            } elseif ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
                 $paymentOptions = $listing ? $listing->payment_options : null;
 
                 if (! $paymentOptions || empty($paymentOptions['deposit'])) {
@@ -2799,7 +2836,10 @@ class BookingService
                 ]);
             }
 
-            createBookingInvoiceWithNotification($booking, $user);
+            // Skip invoice creation for skipped payment method
+            if (! $isPaymentSkipped) {
+                createBookingInvoiceWithNotification($booking, $user);
+            }
 
             if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
                 autoConfirmBookingIfPaid($booking);
@@ -2821,49 +2861,32 @@ class BookingService
         }
     }
 
-    /**
-     * Get user IDs who should receive booking notifications
-     * Includes: admins, super_admins, and employees with access to the booking's venue
-     *
-     * @param int $venueId The venue ID from the booking
-     * @return array Array of user IDs
-     */
-    protected function getBookingNotificationRecipients(int $venueId): array
+    public function getBookingNotificationRecipients(int $venueId)
     {
-        // Get all admins and super admins
         $adminUserIds = User::whereHas('roles', function ($query) {
             $query->whereIn('name', ['admin', 'super_admin']);
         })
-        ->where('status', User::ACTIVE)
-        ->pluck('id')
-        ->toArray();
+            ->where('status', User::ACTIVE)
+            ->pluck('id')
+            ->toArray();
 
-        // Get employees (senior and junior) who have access to this venue
         $employeeUserIds = User::whereHas('roles', function ($query) {
             $query->whereIn('name', ['senior_employee', 'junior_employee']);
         })
-        ->whereHas('venues', function ($query) use ($venueId) {
-            $query->where('venues.id', $venueId);
-        })
-        ->where('status', User::ACTIVE)
-        ->pluck('id')
-        ->toArray();
+            ->whereHas('venues', function ($query) use ($venueId) {
+                $query->where('venues.id', $venueId);
+            })
+            ->where('status', User::ACTIVE)
+            ->pluck('id')
+            ->toArray();
 
-        // Merge and remove duplicates
         return array_unique(array_merge($adminUserIds, $employeeUserIds));
     }
 
-    /**
-     * Send OneSignal push notification for booking events
-     *
-     * @param Booking $booking The booking instance
-     * @param string $eventType 'created', 'updated', or 'cancelled'
-     * @return void
-     */
-    protected function sendBookingNotification(Booking $booking, string $eventType): void
+    public function sendBookingNotification(Booking $booking, string $eventType)
     {
         try {
-            if (!$booking->venue_id) {
+            if (! $booking->venue_id) {
                 return;
             }
 
@@ -2872,30 +2895,30 @@ class BookingService
             if (empty($recipientIds)) {
                 Log::info('No recipients found for booking notification', [
                     'booking_id' => $booking->id,
-                    'venue_id' => $booking->venue_id,
+                    'venue_id'   => $booking->venue_id,
                     'event_type' => $eventType,
                 ]);
                 return;
             }
 
-            $venueName = $booking->venue->name ?? 'Unknown Venue';
+            $venueName    = $booking->venue->name ?? 'Unknown Venue';
             $customerName = $booking->user->name ?? 'Unknown Customer';
-            $bookingId = $booking->booking_id ?? 'N/A';
+            $bookingId    = $booking->booking_id ?? 'N/A';
 
-            $title = '';
+            $title   = '';
             $message = '';
 
             switch ($eventType) {
                 case 'created':
-                    $title = 'New Booking Created';
+                    $title   = 'New Booking Created';
                     $message = "New booking #{$bookingId} by {$customerName} at {$venueName}";
                     break;
                 case 'updated':
-                    $title = 'Booking Updated';
+                    $title   = 'Booking Updated';
                     $message = "Booking #{$bookingId} by {$customerName} at {$venueName} has been updated";
                     break;
                 case 'cancelled':
-                    $title = 'Booking Cancelled';
+                    $title   = 'Booking Cancelled';
                     $message = "Booking #{$bookingId} by {$customerName} at {$venueName} has been cancelled";
                     break;
                 default:
@@ -2903,10 +2926,10 @@ class BookingService
             }
 
             $data = [
-                'type' => 'booking_' . $eventType,
-                'booking_id' => $booking->id,
+                'type'           => 'booking_' . $eventType,
+                'booking_id'     => $booking->id,
                 'booking_number' => $bookingId,
-                'venue_id' => $booking->venue_id,
+                'venue_id'       => $booking->venue_id,
             ];
 
             $this->oneSignalService->sendToUsers($recipientIds, $title, $message, $data);
@@ -2914,7 +2937,7 @@ class BookingService
             Log::error('Failed to send booking notification', [
                 'booking_id' => $booking->id ?? null,
                 'event_type' => $eventType,
-                'error' => $e->getMessage(),
+                'error'      => $e->getMessage(),
             ]);
         }
     }
@@ -2925,7 +2948,7 @@ class BookingService
 
             $filePath = public_path($filename);
 
-            if (!file_exists($filePath)) {
+            if (! file_exists($filePath)) {
                 return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
             }
 
@@ -2934,8 +2957,8 @@ class BookingService
             \Maatwebsite\Excel\Facades\Excel::import($import, $filePath);
 
             $successCount = $import->getSuccessCount();
-            $errorCount = $import->getErrorCount();
-            $errors = $import->getErrors();
+            $errorCount   = $import->getErrorCount();
+            $errors       = $import->getErrors();
 
             $message = "Import completed. Successfully imported {$successCount} booking(s)";
             if ($errorCount > 0) {
@@ -2944,17 +2967,61 @@ class BookingService
 
             return sendSuccess($message, [
                 'success_count' => $successCount,
-                'error_count' => $errorCount,
-                'errors' => $errors,
+                'error_count'   => $errorCount,
+                'errors'        => $errors,
             ]);
         } catch (Exception $e) {
             Log::error('Booking import failed', [
                 'filename' => $filename,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'error'    => $e->getMessage(),
+                'trace'    => $e->getTraceAsString(),
             ]);
 
             return sendError('Import failed: ' . $e->getMessage(), [], 500);
+        }
+    }
+
+    public function getPaymentMethods()
+    {
+        try {
+
+            $user = auth()->user();
+
+            if (! $user) {
+                return sendError('Unauthorized', [], 401);
+            }
+
+            $userRoles = $user->getRoleNames()->toArray();
+
+            $fullAccessRoles = ['super_admin', 'admin', 'senior_employee'];
+            $hasFullAccess   = ! empty(array_intersect($userRoles, $fullAccessRoles));
+
+            if ($hasFullAccess) {
+                $paymentMethods = BookingPaymentMethod::list();
+                $paymentMethods = array_values(array_filter($paymentMethods, function ($method) {
+                    return $method !== BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL;
+                }));
+            } else {
+                $paymentMethods = [
+                    BookingPaymentMethod::PAYMENT_SKIPPED,
+                    BookingPaymentMethod::CASH_ON_ARRIVAL,
+                ];
+            }
+
+            $formattedMethods = array_map(function ($method) {
+                return [
+                    'value' => $method,
+                    'label' => ucwords(str_replace('_', ' ', $method)),
+                ];
+            }, $paymentMethods);
+
+            return sendSuccess('Payment methods fetched successfully', [
+                'payment_methods' => $formattedMethods,
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Get Payment Methods Error: ' . $e->getMessage(), ['Exception' => $e]);
+            return sendError('Something went wrong while fetching payment methods');
         }
     }
 }

@@ -68,6 +68,31 @@ class CustomerService
         return sendSuccess('Customers fetched successfully', compact('customers'));
     }
 
+    public function listOptimized($request)
+    {
+        $perPage = $request->records_per_page ?? 15;
+        $search  = trim($request->search ?? '');
+
+        $query = User::query()
+            ->active()
+            ->select('id', 'name', 'email', 'phone')
+            ->whereHas('roles', function ($q) {
+                $q->where('name', 'customer');
+            });
+
+        if (! empty($search)) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%");
+            });
+        }
+
+        $customers = $query->latest()->paginate($perPage);
+
+        return sendSuccess('Customers fetched successfully', compact('customers'));
+    }
+
     public function updateTags($request, $id)
     {
         $customer = $this->customerModel::findOrFail($id);
@@ -109,23 +134,23 @@ class CustomerService
     public function createCustomer($request)
     {
         $formData = $request->validate([
-            'name'          => 'nullable|string|max:100',
-            'email'         => 'required|email|unique:users,email',
-            'phone'         => 'nullable|string|min:6|max:20',
-            'password'      => 'nullable|min:8',
-            'status'        => 'sometimes|in:' . $this->customerModel::ACTIVE . ',' . $this->customerModel::INACTIVE . ',' . $this->customerModel::BLOCKED,
-            'date_of_birth' => 'nullable|date|before:today',
-            'gender'        => 'nullable|string|in:male,female,other',
-            'nationality'   => 'nullable|string|max:100',
-            'address'       => 'nullable|string|max:255',
-            'language'      => 'nullable|string|max:50',
-            'currency'      => 'nullable|string|max:10',
-            'notifications' => 'nullable|array',
+            'name'                         => 'nullable|string|max:100',
+            'email'                        => 'required|email|unique:users,email',
+            'phone'                        => 'nullable|string|min:6|max:20',
+            'password'                     => 'nullable|min:8',
+            'status'                       => 'sometimes|in:' . $this->customerModel::ACTIVE . ',' . $this->customerModel::INACTIVE . ',' . $this->customerModel::BLOCKED,
+            'date_of_birth'                => 'nullable|date|before:today',
+            'gender'                       => 'nullable|string|in:male,female,other',
+            'nationality'                  => 'nullable|string|max:100',
+            'address'                      => 'nullable|string|max:255',
+            'language'                     => 'nullable|string|max:50',
+            'currency'                     => 'nullable|string|max:10',
+            'notifications'                => 'nullable|array',
             'notifications.booking_emails' => 'nullable|boolean',
             'notifications.sms_reminders'  => 'nullable|boolean',
-            'notifications.marketing'     => 'nullable|boolean',
-            'favorite_sports'             => 'nullable|array',
-            'favorite_sports.*'           => 'required|string',
+            'notifications.marketing'      => 'nullable|boolean',
+            'favorite_sports'              => 'nullable|array',
+            'favorite_sports.*'            => 'required|string',
         ]);
 
         try {
@@ -138,19 +163,19 @@ class CustomerService
                 } else {
                     $existingUser->assignRole('customer');
                     $user = $existingUser;
-                    
+
                     // Create default preferences if user doesn't have them
-                    if (!$user->preferences) {
+                    if (! $user->preferences) {
                         Preference::create([
-                            'user_id' => $user->id,
-                            'notifications' => [
-                                'booking_emails' => true,
-                                'sms_reminders' => false,
+                            'user_id'         => $user->id,
+                            'notifications'   => [
+                                'booking_emails'   => true,
+                                'sms_reminders'    => false,
                                 'marketing_emails' => true,
                             ],
                             'favorite_sports' => [],
-                            'language' => 'english',
-                            'currency' => 'QAR',
+                            'language'        => 'english',
+                            'currency'        => 'QAR',
                         ]);
                     }
                 }
@@ -172,19 +197,19 @@ class CustomerService
                 ]);
 
                 $user->assignRole('customer');
-                
+
                 // Create default preferences for new customer
-                if (!$user->preferences) {
+                if (! $user->preferences) {
                     Preference::create([
-                        'user_id' => $user->id,
-                        'notifications' => [
-                            'booking_emails' => true,
-                            'sms_reminders' => false,
+                        'user_id'         => $user->id,
+                        'notifications'   => [
+                            'booking_emails'   => true,
+                            'sms_reminders'    => false,
                             'marketing_emails' => true,
                         ],
                         'favorite_sports' => [],
-                        'language' => 'english',
-                        'currency' => 'QAR',
+                        'language'        => 'english',
+                        'currency'        => 'QAR',
                     ]);
                 }
             }
@@ -201,7 +226,7 @@ class CustomerService
                 }
 
                 if (isset($formData['notifications'])) {
-                    $currentNotifications = $preferences->notifications ?? [];
+                    $currentNotifications       = $preferences->notifications ?? [];
                     $preferences->notifications = array_merge($currentNotifications, $formData['notifications']);
                 }
 
@@ -215,7 +240,7 @@ class CustomerService
             DB::commit();
 
             try {
-                Mail::to($user->email)->queue(new UserWelcomeEmail($user, $formData['password']));
+                Mail::to($user->email)->send(new UserWelcomeEmail($user, $formData['password']));
             } catch (Exception $e) {
                 Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
             }
@@ -235,9 +260,9 @@ class CustomerService
 
     public function getCustomersForExport($request)
     {
-        $search = $request->search ?? null;
-        $status = $request->status ?? null;
-        $tags   = $request->tag ?? null;
+        $search    = $request->search ?? null;
+        $status    = $request->status ?? null;
+        $tags      = $request->tag ?? null;
         $exportAll = $request->export_all == 1 || $request->export_all === '1';
 
         $query = $this->customerModel::whereHas('roles', function ($query) {
@@ -283,9 +308,9 @@ class CustomerService
                 });
             });
 
-        if (!$exportAll) {
+        if (! $exportAll) {
             $records_per_page = $request->records_per_page ?? 10;
-            $page = $request->page ?? 1;
+            $page             = $request->page ?? 1;
             $query->skip(($page - 1) * $records_per_page)->take($records_per_page);
         }
 
@@ -301,7 +326,7 @@ class CustomerService
                 $query->where('name', 'customer');
             })->findOrFail($id);
 
-            $userRoles = $customer->getRoleNames();
+            $userRoles        = $customer->getRoleNames();
             $hasMultipleRoles = $userRoles->count() > 1;
 
             $activeBookings = $customer->bookings()
@@ -322,9 +347,9 @@ class CustomerService
                 DB::commit();
 
                 Log::info("Customer role removed from user", [
-                    'user_id' => $id,
+                    'user_id'         => $id,
                     'remaining_roles' => $customer->getRoleNames()->toArray(),
-                    'deleted_by' => auth()->id(),
+                    'deleted_by'      => auth()->id(),
                 ]);
 
                 return sendSuccess('Customer access removed successfully. User still has other roles: ' . $customer->getRoleNames()->implode(', '));
@@ -340,7 +365,7 @@ class CustomerService
 
                 Log::info("Customer deleted successfully", [
                     'customer_id' => $id,
-                    'deleted_by' => auth()->id(),
+                    'deleted_by'  => auth()->id(),
                 ]);
 
                 return sendSuccess('Customer deleted successfully');

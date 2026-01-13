@@ -34,7 +34,7 @@ class ListingService
 
         $venuesQuery = Venue::active()->orderBy('sort_order', 'ASC');
         $venuesQuery = applyVenueFilter($venuesQuery, 'id');
-        $venues = $venuesQuery->get(['id', 'name']);
+        $venues      = $venuesQuery->get(['id', 'name']);
 
         $query = $this->listingModel::with([
             'addOns',
@@ -68,7 +68,7 @@ class ListingService
             });
 
         // Apply venue filtering
-        $query = applyVenueFilter($query, 'venue_id');
+        $query    = applyVenueFilter($query, 'venue_id');
         $listings = $query->paginate($records_per_page);
 
         return sendSuccess('Listings fetched successfully', compact('listings', 'venues'));
@@ -437,7 +437,7 @@ class ListingService
                     }
 
                     $startTime = $group['start_time'];
-                    $endTime = $group['end_time'];
+                    $endTime   = $group['end_time'];
 
                     // If end_time is 24:00, it's valid (full day pricing)
                     if ($endTime === '24:00') {
@@ -447,7 +447,7 @@ class ListingService
                     // Handle midnight spanning (e.g., 23:00 to 00:00)
                     // If end_time is 00:00, treat it as next day (24:00) for comparison
                     $normalizedStart = $this->normalizeTimeForComparison($startTime);
-                    $normalizedEnd = $this->normalizeTimeForComparison($endTime);
+                    $normalizedEnd   = $this->normalizeTimeForComparison($endTime);
 
                     // If end_time is 00:00, it means it spans to midnight (next day)
                     // Treat it as 24:00 (1440 minutes) for comparison
@@ -487,7 +487,7 @@ class ListingService
         foreach ($rules as $field => $rule) {
             if (is_array($rule)) {
                 // Handle array rules (e.g., File validation rules or regex rules)
-                $hasRequired = false;
+                $hasRequired  = false;
                 $hasSometimes = false;
 
                 foreach ($rule as $ruleItem) {
@@ -504,7 +504,7 @@ class ListingService
                 }
 
                 // If it has 'required' but not 'sometimes', prepend 'sometimes'
-                if ($hasRequired && !$hasSometimes) {
+                if ($hasRequired && ! $hasSometimes) {
                     array_unshift($rules[$field], 'sometimes');
                 }
             } elseif (is_string($rule) && str_contains($rule, 'required') && ! str_contains($rule, 'sometimes')) {
@@ -1025,12 +1025,12 @@ class ListingService
         // If user also specified venue_id, ensure it's accessible
         if ($venueId) {
             $user = auth()->user();
-            if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+            if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
                 $venueIds = DB::table('user_venue')
                     ->where('user_id', $user->id)
                     ->pluck('venue_id')
                     ->toArray();
-                if (!in_array($venueId, $venueIds)) {
+                if (! in_array($venueId, $venueIds)) {
                     $query->whereRaw('1 = 0'); // No results if venue not accessible
                 } else {
                     $query->where('venue_id', $venueId);
@@ -1165,7 +1165,7 @@ class ListingService
 
         // Check if the date is available based on next month slots setting (only for frontend-web)
         $requestFrom = $request->header('from');
-        if ($requestFrom === 'frontend-web' && !isDateAvailableForBooking($date)) {
+        if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
             $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
             return sendError("Slots for this date are not yet available. Next month slots become available when there are {$daysBeforeNextMonth} or fewer days remaining in the current month.");
         }
@@ -1425,7 +1425,7 @@ class ListingService
             }
 
             // Calculate occupied spots (bookings + locks)
-            $occupiedSpots = $bookedCount + $lockedCount;
+            $occupiedSpots  = $bookedCount + $lockedCount;
             $availableCount = max($listing->max_bookings_per_slot - $occupiedSpots, 0);
 
             // For backward compatibility: if max_bookings_per_slot is 1, any lock means fully locked
@@ -1600,16 +1600,16 @@ class ListingService
                 }
 
                 // Skip dates that are not available based on next month slots setting (only for frontend-web)
-                if ($requestFrom === 'frontend-web' && !isDateAvailableForBooking($currentDate)) {
+                if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($currentDate)) {
                     $currentDate->addDay();
                     continue;
                 }
 
-                $dateStr     = $currentDate->format('Y-m-d');
-                $bookedCount = $bookedDates[$dateStr] ?? 0;
-                $lockedCount = $lockedDates[$dateStr] ?? 0;
+                $dateStr       = $currentDate->format('Y-m-d');
+                $bookedCount   = $bookedDates[$dateStr] ?? 0;
+                $lockedCount   = $lockedDates[$dateStr] ?? 0;
                 $occupiedSpots = $bookedCount + $lockedCount;
-                $weekday     = strtolower($currentDate->format('l'));
+                $weekday       = strtolower($currentDate->format('l'));
 
                 $venueSchedules = $listing->venue?->schedules
                     ->where('day', $weekday)
@@ -1799,7 +1799,7 @@ class ListingService
 
             // Check if the date is available based on next month slots setting (only for frontend-web)
             $requestFrom = $request->header('from');
-            if ($requestFrom === 'frontend-web' && !isDateAvailableForBooking($date)) {
+            if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
                 $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
                 return sendError("Slots for this date are not yet available. Next month slots become available when there are {$daysBeforeNextMonth} or fewer days remaining in the current month.");
             }
@@ -1918,7 +1918,20 @@ class ListingService
                 ]);
             }
 
-            return sendError('Slot lock not found or already unlocked');
+            Log::error('No slot lock found to unlock', [
+                'listing_id' => $listingId,
+                'date'       => $date->toDateString(),
+                'start_time' => $startTime,
+                'end_time'   => $endTime,
+                'session_id' => $sessionId,
+            ]);
+
+            return sendSuccess('Slot unlocked successfully', [
+                'listing_id' => $listingId,
+                'date'       => $date->toDateString(),
+                'start_time' => $startTime,
+                'end_time'   => $endTime,
+            ]);
 
         } catch (Exception $e) {
             Log::error('Failed to unlock slot: ' . $e->getMessage(), ['exception' => $e]);
@@ -2026,7 +2039,7 @@ class ListingService
 
             // Check if the date is available based on next month slots setting (only for frontend-web)
             $requestFrom = $request->header('from');
-            if ($requestFrom === 'frontend-web' && !isDateAvailableForBooking($date)) {
+            if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
                 return sendSuccess('Slot availability checked', [
                     'available' => false,
                     'reason'    => 'This date is not yet available for booking',
@@ -2064,7 +2077,7 @@ class ListingService
                 ->count();
 
             // Calculate total occupied spots (bookings + locks)
-            $occupiedSpots = $existingBookingCount + $existingLockCount;
+            $occupiedSpots  = $existingBookingCount + $existingLockCount;
             $availableSpots = max(0, $maxBookingsPerSlot - $occupiedSpots);
 
             if ($availableSpots <= 0) {
@@ -2074,12 +2087,12 @@ class ListingService
                         ? 'Slot is already fully booked'
                         : 'All spots in this slot are currently locked',
                     'occupied_spots' => $occupiedSpots,
-                    'max_bookings'    => $maxBookingsPerSlot,
+                    'max_bookings'   => $maxBookingsPerSlot,
                 ]);
             }
 
             return sendSuccess('Slot availability checked', [
-                'available'      => true,
+                'available'       => true,
                 'available_spots' => $availableSpots,
                 'occupied_spots'  => $occupiedSpots,
                 'max_bookings'    => $maxBookingsPerSlot,
@@ -2140,10 +2153,10 @@ class ListingService
      */
     protected function slotFallsInPricingGroup($slotStart, $slotEnd, $groupStart, $groupEnd)
     {
-        $slotStartMinutes = $this->timeToMinutes($slotStart);
-        $slotEndMinutes = $this->timeToMinutes($slotEnd);
+        $slotStartMinutes  = $this->timeToMinutes($slotStart);
+        $slotEndMinutes    = $this->timeToMinutes($slotEnd);
         $groupStartMinutes = $this->timeToMinutes($groupStart);
-        $groupEndMinutes = $this->normalizeTimeForComparison($groupEnd);
+        $groupEndMinutes   = $this->normalizeTimeForComparison($groupEnd);
 
         // Handle slot that spans midnight
         $slotSpansMidnight = ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00'));

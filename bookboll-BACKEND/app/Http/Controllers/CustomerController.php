@@ -16,6 +16,11 @@ class CustomerController extends Controller
         return $this->customerService->list($request);
     }
 
+    public function listOptimized(Request $request)
+    {
+        return $this->customerService->listOptimized($request);
+    }
+
     public function updateTags(Request $request, $id)
     {
         return $this->customerService->updateTags($request, $id);

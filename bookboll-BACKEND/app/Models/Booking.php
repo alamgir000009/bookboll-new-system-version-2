@@ -4,7 +4,6 @@ namespace App\Models;
 use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\DB;
 
 class Booking extends Model
 {

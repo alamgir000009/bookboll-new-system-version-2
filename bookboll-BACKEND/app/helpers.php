@@ -69,10 +69,10 @@ if (! class_exists('PaymentStatus')) {
 if (! class_exists('BookingPaymentStatus')) {
     class BookingPaymentStatus
     {
-        public const FREE         = 'free';
-        public const PENDING      = 'pending';
-        public const FULLY_PAID   = 'fully_paid';
-        public const DEPOSIT_PAID = 'deposit_paid';
+        public const PENDING         = 'pending';
+        public const FULLY_PAID      = 'fully_paid';
+        public const DEPOSIT_PAID    = 'deposit_paid';
+        public const PAYMENT_SKIPPED = 'payment_skipped';
 
         public static function list(): array
         {
@@ -80,6 +80,7 @@ if (! class_exists('BookingPaymentStatus')) {
                 self::PENDING,
                 self::FULLY_PAID,
                 self::DEPOSIT_PAID,
+                self::PAYMENT_SKIPPED,
             ];
         }
     }
@@ -88,22 +89,22 @@ if (! class_exists('BookingPaymentStatus')) {
 if (! class_exists('BookingPaymentMethod')) {
     class BookingPaymentMethod
     {
-        public const FREE                         = 'free';
         public const PAID_CASH                    = 'paid_cash';
         public const PAID_CHEQUE                  = 'paid_cheque';
-        public const PAID_CREDIT_CARD             = 'paid_credit_card';
         public const ONLINE_PAYMENT               = 'online_payment';
+        public const PAYMENT_SKIPPED              = 'payment_skipped';
         public const CASH_ON_ARRIVAL              = 'cash_on_arrival';
+        public const PAID_CREDIT_CARD             = 'paid_credit_card';
         public const PAID_WIRE_TRANSFER           = 'paid_wire_transfer';
         public const DEPOSIT_REMAINING_ON_ARRIVAL = 'deposit_remaining_on_arrival';
 
         public static function list(): array
         {
             return [
-                self::FREE,
                 self::PAID_CASH,
                 self::PAID_CHEQUE,
                 self::ONLINE_PAYMENT,
+                self::PAYMENT_SKIPPED,
                 self::CASH_ON_ARRIVAL,
                 self::PAID_CREDIT_CARD,
                 self::PAID_WIRE_TRANSFER,
@@ -175,12 +176,12 @@ if (! class_exists('SubscriberStatus')) {
 if (! class_exists('CompnayInfo')) {
     class CompnayInfo
     {
-        public const EMAIL       = 'support@bookboll.com';
+        public const EMAIL       = 'info@bookboll.com';
         public const NAME        = 'BOOKBOLL';
         public const CITY        = 'Doha';
         public const POSTAL_CODE = '12345';
         public const PHONE       = '123456789';
-        public const ADDRESS     = '123 Main Street, Doha, Qatar';
+        public const ADDRESS     = 'Qatar';
     }
 }
 
@@ -761,13 +762,29 @@ if (! function_exists('createBookingInvoiceWithNotification')) {
             ]);
 
             $booking->load('venue:id,name,maps_url');
-            $user->notify(new BookingCreatedUserNotification($booking, $invoice->path));
+
+            try {
+                $user->notify(new BookingCreatedUserNotification($booking, $invoice->path));
+            } catch (\Exception $e) {
+                Log::error("Booking created user notification failed: " . $e->getMessage(), [
+                    'booking_id' => $booking->id,
+                    'user_id'    => $user->id,
+                    'exception'  => $e,
+                ]);
+            }
 
             $admins = User::whereHas("roles", function ($query) {
                 $query->whereIn("name", ["super_admin", "admin"]);
             })->get();
 
-            Notification::send($admins, new BookingCreatedAdminNotification($booking));
+            try {
+                Notification::send($admins, new BookingCreatedAdminNotification($booking));
+            } catch (Exception $e) {
+                Log::error("Booking created admin notification failed: " . $e->getMessage(), [
+                    'booking_id' => $booking->id,
+                    'exception'  => $e,
+                ]);
+            }
 
         } catch (Exception $e) {
             Log::error("Booking created notification errors: " . $e->getMessage(), ["Exception" => $e]);
@@ -944,8 +961,8 @@ if (! function_exists('applyVenueFilterToPayments')) {
 if (! function_exists('isDateAvailableForBooking')) {
     function isDateAvailableForBooking($date)
     {
-        $dateCarbon = $date instanceof \Carbon\Carbon ? $date : \Carbon\Carbon::parse($date);
-        $today = \Carbon\Carbon::today();
+        $dateCarbon = $date instanceof \Carbon\Carbon  ? $date : \Carbon\Carbon::parse($date);
+        $today      = \Carbon\Carbon::today();
 
         if ($dateCarbon->lt($today)) {
             return false;
@@ -960,7 +977,7 @@ if (! function_exists('isDateAvailableForBooking')) {
             $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
 
             $endOfCurrentMonth = $today->copy()->endOfMonth();
-            $daysRemaining = $today->diffInDays($endOfCurrentMonth) + 1;
+            $daysRemaining     = $today->diffInDays($endOfCurrentMonth) + 1;
 
             return $daysRemaining <= $daysBeforeNextMonth;
         }
