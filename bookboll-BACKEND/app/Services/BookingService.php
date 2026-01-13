@@ -200,13 +200,16 @@ class BookingService
                 'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
             ]);
 
-            // Send OneSignal push notification to admins and employees
             $this->sendBookingNotification($booking, 'cancelled');
 
             DB::commit();
 
             $booking->load('venue:id,name,maps_url');
-            $user->notify(new BookingCancelledUserNotification($booking));
+            try {
+                $user->notify(new BookingCancelledUserNotification($booking));
+            } catch (Exception $e) {
+                Log::error("Booking cancellation email error: " . $e->getMessage(), ["Exception" => $e]);
+            }
 
             return sendSuccess('Booking cancelled successfully.', compact('booking'));
 
