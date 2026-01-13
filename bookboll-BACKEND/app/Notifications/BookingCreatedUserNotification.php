@@ -4,12 +4,11 @@ namespace App\Notifications;
 use App\Models\Booking;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\Storage;
 
-class BookingCreatedUserNotification extends Notification implements ShouldQueue
+class BookingCreatedUserNotification extends Notification
 {
     use Queueable;
 
