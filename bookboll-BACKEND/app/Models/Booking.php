@@ -190,20 +190,36 @@ class Booking extends Model
             }
         });
 
-        static::creating(function ($booking) {
+        // static::creating(function ($booking) {
 
-            $year = now()->year;
+        //     $year       = now()->year;
+        //     $maxRetries = 5;
+        //     $attempts   = 0;
 
-            DB::transaction(function () use ($year, $booking) {
+        //     do {
 
-                $latestBooking = static::lockForUpdate()->whereYear('created_at', $year)->latest('id')->first();
+        //         $attempts++;
 
-                $nextBookingNumber = $latestBooking
-                    ? (int) substr($latestBooking->booking_id, -5) + 1
-                    : 1;
+        //         $latestBooking = static::lockForUpdate()
+        //             ->where('booking_id', 'like', "BKN_{$year}_%")
+        //             ->orderByDesc('id')
+        //             ->first();
 
-                // $booking->booking_id = sprintf('BKN_%s_%05d', $year, $nextBookingNumber);
-            });
-        });
+        //         $nextNumber = $latestBooking
+        //             ? ((int) substr($latestBooking->booking_id, -5)) + 1
+        //             : 1;
+
+        //         $bookingId = sprintf('BKN_%s_%05d', $year, $nextNumber);
+
+        //         $exists = static::where('booking_id', $bookingId)->exists();
+
+        //         if ($attempts >= $maxRetries && $exists) {
+        //             throw new \Exception('Failed to generate unique booking ID after multiple attempts');
+        //         }
+
+        //     } while ($exists);
+
+        //     $booking->booking_id = $bookingId;
+        // });
     }
 }
