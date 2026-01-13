@@ -69,10 +69,10 @@ if (! class_exists('PaymentStatus')) {
 if (! class_exists('BookingPaymentStatus')) {
     class BookingPaymentStatus
     {
-        public const PENDING      = 'pending';
-        public const FULLY_PAID   = 'fully_paid';
-        public const DEPOSIT_PAID = 'deposit_paid';
-        public const PAYMENT_SKIPPED         = 'payment_skipped';
+        public const PENDING         = 'pending';
+        public const FULLY_PAID      = 'fully_paid';
+        public const DEPOSIT_PAID    = 'deposit_paid';
+        public const PAYMENT_SKIPPED = 'payment_skipped';
 
         public static function list(): array
         {
@@ -762,13 +762,29 @@ if (! function_exists('createBookingInvoiceWithNotification')) {
             ]);
 
             $booking->load('venue:id,name,maps_url');
-            $user->notify(new BookingCreatedUserNotification($booking, $invoice->path));
+
+            try {
+                $user->notify(new BookingCreatedUserNotification($booking, $invoice->path));
+            } catch (\Exception $e) {
+                Log::error("Booking created user notification failed: " . $e->getMessage(), [
+                    'booking_id' => $booking->id,
+                    'user_id'    => $user->id,
+                    'exception'  => $e,
+                ]);
+            }
 
             $admins = User::whereHas("roles", function ($query) {
                 $query->whereIn("name", ["super_admin", "admin"]);
             })->get();
 
-            Notification::send($admins, new BookingCreatedAdminNotification($booking));
+            try {
+                Notification::send($admins, new BookingCreatedAdminNotification($booking));
+            } catch (Exception $e) {
+                Log::error("Booking created admin notification failed: " . $e->getMessage(), [
+                    'booking_id' => $booking->id,
+                    'exception'  => $e,
+                ]);
+            }
 
         } catch (Exception $e) {
             Log::error("Booking created notification errors: " . $e->getMessage(), ["Exception" => $e]);
@@ -945,8 +961,8 @@ if (! function_exists('applyVenueFilterToPayments')) {
 if (! function_exists('isDateAvailableForBooking')) {
     function isDateAvailableForBooking($date)
     {
-        $dateCarbon = $date instanceof \Carbon\Carbon ? $date : \Carbon\Carbon::parse($date);
-        $today = \Carbon\Carbon::today();
+        $dateCarbon = $date instanceof \Carbon\Carbon  ? $date : \Carbon\Carbon::parse($date);
+        $today      = \Carbon\Carbon::today();
 
         if ($dateCarbon->lt($today)) {
             return false;
@@ -961,7 +977,7 @@ if (! function_exists('isDateAvailableForBooking')) {
             $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
 
             $endOfCurrentMonth = $today->copy()->endOfMonth();
-            $daysRemaining = $today->diffInDays($endOfCurrentMonth) + 1;
+            $daysRemaining     = $today->diffInDays($endOfCurrentMonth) + 1;
 
             return $daysRemaining <= $daysBeforeNextMonth;
         }
