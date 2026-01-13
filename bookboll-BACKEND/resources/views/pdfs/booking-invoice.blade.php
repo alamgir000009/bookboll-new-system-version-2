@@ -173,7 +173,7 @@
                                     <div style="font-weight: bold; font-size: 18px; color: #ffffff; margin-bottom: 3px;">{{ \CompnayInfo::NAME ?? 'Bookbool' }}</div>
                                     <div style="line-height: 1.4; font-size: 10px; color: #ffffff;">
                                         {{ \CompnayInfo::ADDRESS ?? '' }}<br>
-                                        {{ \CompnayInfo::EMAIL ?? '' }} | {{ \CompnayInfo::PHONE ?? '' }}
+                                        {{ \CompnayInfo::EMAIL ?? '' }}
                                     </div>
                                 </td>
                             </tr>
