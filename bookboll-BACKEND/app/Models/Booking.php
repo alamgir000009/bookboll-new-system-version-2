@@ -130,10 +130,10 @@ class Booking extends Model
         return $query->whereDate('start_time', $date);
     }
 
-    public function calculateDuration()
-    {
-        return $this->start_time->diffInHours($this->end_time);
-    }
+    // public function calculateDuration()
+    // {
+    //     return $this->start_time->diffInHours($this->end_time);
+    // }
 
     public function isFullyPaid()
     {

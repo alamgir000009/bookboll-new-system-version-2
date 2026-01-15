@@ -242,7 +242,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
             // Case 2: Processor = "check" - Amount column is the PAID amount
             $paidAmount = $paymentAmount;
             $pendingAmount = $bookingPrice - $paymentAmount;
-            
+
             if ($pendingAmount > 0) {
                 // Partial payment - some amount paid, rest is pending
                 $paymentMethod = BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL;
@@ -258,7 +258,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
             // Example: Price=250, Amount=200 means Paid=50, Remaining=200
             $pendingAmount = $paymentAmount;
             $paidAmount = $bookingPrice - $paymentAmount;
-            
+
             if ($paidAmount > 0) {
                 // Partial payment made, rest is pending
                 $paymentMethod = BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL;
@@ -324,7 +324,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
         // Calculate deposit amount if needed
         $depositAmount = 0;
         $remainingAmount = 0;
-        
+
         // If payment status is DEPOSIT_PAID (partial payment from Excel), use the calculated paid/pending amounts
         if ($paymentStatus === BookingPaymentStatus::DEPOSIT_PAID && $paidAmount > 0) {
             $depositAmount = $paidAmount;
@@ -343,19 +343,19 @@ class BookingsImport implements ToCollection, WithHeadingRow
             $remainingAmount = $totalPrice - $depositAmount;
         }
 
-        // Parse Record date if provided (format: d-m-Y h:i a, e.g., "01-01-2026 10:01 pm")
+        // Parse Record date if provided (format: d-m-Y H:i, e.g., "01-01-2026 22:50")
         $recordDate = $this->getValue($row, 'record_date');
         $createdAt = null;
-        
+
         if (!empty($recordDate)) {
             try {
-                // Try parsing the format: d-m-Y h:i a (e.g., "01-01-2026 10:01 pm")
-                $createdAt = Carbon::createFromFormat('d-m-Y h:i a', trim($recordDate));
+                // Try parsing the format: d-m-Y H:i (24-hour format, e.g., "01-01-2026 22:50")
+                $createdAt = Carbon::createFromFormat('d-m-Y H:i', trim($recordDate));
             } catch (\Exception $e) {
                 // If that format fails, try other common formats
                 try {
-                    // Try d-m-Y H:i (24-hour format)
-                    $createdAt = Carbon::createFromFormat('d-m-Y H:i', trim($recordDate));
+                    // Try d-m-Y h:i a (12-hour format with AM/PM)
+                    $createdAt = Carbon::createFromFormat('d-m-Y h:i a', trim($recordDate));
                 } catch (\Exception $e2) {
                     // Let Carbon auto-detect the format
                     try {
@@ -427,7 +427,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
 
         // Create payment entry based on payment status
         $isPaymentSkipped = $paymentMethod === BookingPaymentMethod::PAYMENT_SKIPPED;
-        
+
         if (! $booking->is_free && ! $isPaymentSkipped) {
             $paymentMethodEnum = match (trim($paymentMethod)) {
                 BookingPaymentMethod::PAID_CASH, 'paid_cash' => PaymentMethod::CASH,
@@ -442,7 +442,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
             if ($paymentStatus === BookingPaymentStatus::DEPOSIT_PAID) {
                 // Determine the deposit method based on processor type
                 $depositMethodEnum = $paymentProcessor === 'check' ? PaymentMethod::CHEQUE : PaymentMethod::CASH;
-                
+
                 // Create deposit payment (paid amount from Excel)
                 Payment::create([
                     'user_id'    => $user->id,
