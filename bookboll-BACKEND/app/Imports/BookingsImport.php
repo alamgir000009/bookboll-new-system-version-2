@@ -367,6 +367,9 @@ class BookingsImport implements ToCollection, WithHeadingRow
             }
         }
 
+        // Get duration (in hours, e.g., 1, 2, 3, 4)
+        $duration = $this->getValue($row, 'duration');
+
         // Create booking using the same logic as store method
         $bookingData = [
             'user_id'               => $user->id,
@@ -375,6 +378,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
             'date'                  => $date,
             'start_time'            => $startTime,
             'end_time'              => $endTime,
+            'duration'              => !empty($duration) ? (int) $duration : null,
             'subtotal'              => $subtotal,
             'discount_amount'       => $discountAmount,
             'total_price'           => $totalPrice,
