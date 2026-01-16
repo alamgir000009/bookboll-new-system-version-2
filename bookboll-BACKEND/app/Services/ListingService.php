@@ -1217,15 +1217,22 @@ class ListingService
             return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
         }
 
-        $bookings = Booking::where('listing_id', $listing->id)
+        $venueBookings = Booking::where('venue_id', $listing->venue_id)
             ->where('date', $date)
             ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
-            ->with('resourcesAllocated')
-            ->get(['id', 'start_time', 'end_time', 'status']);
+            ->with(['resourcesAllocated', 'listing' => function($q) {
+                $q->with('resources');
+            }])
+            ->get(['id', 'listing_id', 'start_time', 'end_time', 'status']);
 
-        $activeLocks = SlotLock::where('listing_id', $listing->id)
+        $venueLocks = SlotLock::whereHas('listing', function ($query) use ($listing) {
+                $query->where('venue_id', $listing->venue_id);
+            })
             ->where('date', $date->toDateString())
             ->active()
+            ->with(['listing' => function($q) {
+                $q->with('resources');
+            }])
             ->get();
 
         $timeSlots = collect();
@@ -1237,9 +1244,9 @@ class ListingService
                 $listing,
                 $weekday,
                 $specialDay,
-                $bookings,
+                $venueBookings,
                 $isHoliday,
-                $activeLocks,
+                $venueLocks,
                 $sessionId,
                 $date
             );
@@ -1348,7 +1355,7 @@ class ListingService
         return $merged;
     }
 
-    protected function generateTimeSlots($startTime, $endTime, $slotMinutes, $listing, $weekday, $specialDay, $bookings, $isHoliday, $activeLocks = null, $sessionId = null, $date = null)
+    protected function generateTimeSlots($startTime, $endTime, $slotMinutes, $listing, $weekday, $specialDay, $venueBookings, $isHoliday, $venueLocks = null, $sessionId = null, $date = null)
     {
         $start = Carbon::parse($startTime);
         $end   = Carbon::parse($endTime);
@@ -1375,18 +1382,19 @@ class ListingService
                 break;
             }
 
-            $activeBookings = $bookings->filter(fn($b) => $b->status !== BookingStatus::CANCELLED && $b->status !== BookingStatus::COMPLETED);
+            $activeBookings = $venueBookings->filter(fn($b) => $b->status !== BookingStatus::CANCELLED && $b->status !== BookingStatus::COMPLETED);
 
             $slotBookings = $activeBookings->filter(fn($b) => ! (
                 strtotime($b->end_time) <= strtotime($slotStart) ||
                 strtotime($b->start_time) >= strtotime($slotEnd)
             ));
 
-            $bookedCount = $slotBookings->count();
+            $bookedCount = $slotBookings->where('listing_id', $listing->id)->count();
 
             $lockedCount = 0;
-            if ($activeLocks && $sessionId) {
-                $lockedCount = $activeLocks->filter(function ($lock) use ($slotStart, $slotEnd, $sessionId) {
+            $slotLocks = collect();
+            if ($venueLocks && $sessionId) {
+                $slotLocks = $venueLocks->filter(function ($lock) use ($slotStart, $slotEnd, $sessionId) {
                     if ($lock->session_id === $sessionId) {
                         return false;
                     }
@@ -1396,7 +1404,8 @@ class ListingService
                         $lock->start_time ? Carbon::parse($lock->start_time)->format('H:i') : null,
                         $lock->end_time ? Carbon::parse($lock->end_time)->format('H:i') : null
                     );
-                })->count();
+                });
+                $lockedCount = $slotLocks->where('listing_id', $listing->id)->count();
             }
 
             $occupiedSpots  = $bookedCount + $lockedCount;
@@ -1409,9 +1418,15 @@ class ListingService
 
             foreach ($listingResources as $res) {
 
-                $bookedQty = $slotBookings->flatMap(fn($b) => $b->resourcesAllocated)->where('id', $res->id)->sum('pivot.quantity');
+                // Resources from bookings (any listing at the venue)
+                $bookedResourcesQty = $slotBookings->flatMap(fn($b) => $b->resourcesAllocated)->where('id', $res->id)->sum('pivot.quantity');
 
-                $availableQty = $res->total_quantity - $bookedQty;
+                // Resources from locks (any listing at the venue)
+                $lockedResourcesQty = $slotLocks->flatMap(function($lock) use ($res) {
+                    return $lock->listing ? $lock->listing->resources->where('id', $res->id) : collect();
+                })->sum('pivot.quantity');
+
+                $availableQty = $res->total_quantity - ($bookedResourcesQty + $lockedResourcesQty);
 
                 if ($availableQty < $res->required_qty) {
                     $allResourcesAvailable = false;
