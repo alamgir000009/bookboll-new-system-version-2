@@ -71,7 +71,6 @@ class BookingService
             })
             ->latest('id');
 
-        // Apply venue filtering
         $query = applyVenueFilter($query, 'venue_id');
 
         $bookings = $records_per_page == 'all' ? $query->get() : $query->paginate($records_per_page);
@@ -118,7 +117,6 @@ class BookingService
             })
             ->latest('id');
 
-        // Apply venue filtering
         $query = applyVenueFilter($query, 'venue_id');
 
         if (! $exportAll) {
@@ -328,7 +326,6 @@ class BookingService
                 return $q->whereIn('bookings.listing_id', $filters['selectedListings']);
             });
 
-        // Apply venue filtering
         $user = auth()->user();
         if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
             $venueIds = DB::table('user_venue')
@@ -337,7 +334,6 @@ class BookingService
                 ->toArray();
             if (! empty($venueIds)) {
                 $query->whereIn('bookings.venue_id', $venueIds);
-                // Intersect with selectedVenues if provided
                 if (! empty($filters['selectedVenues'])) {
                     $intersected = array_intersect($filters['selectedVenues'], $venueIds);
                     if (empty($intersected)) {
@@ -837,10 +833,8 @@ class BookingService
             );
         }
 
-        // Apply venue filtering
         $query = applyVenueFilter($query, 'venue_id');
 
-        // If user also specified venue_id, ensure it's accessible
         if ($request->venue_id) {
             $user = auth()->user();
             if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
@@ -849,7 +843,7 @@ class BookingService
                     ->pluck('venue_id')
                     ->toArray();
                 if (! in_array($request->venue_id, $venueIds)) {
-                    $query->whereRaw('1 = 0'); // No results if venue not accessible
+                    $query->whereRaw('1 = 0');
                 } else {
                     $query->where('venue_id', $request->venue_id);
                 }
@@ -1097,18 +1091,13 @@ class BookingService
             }
             $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
 
-            // Handle gift card balance usage
             $giftCardBalanceUsed = 0;
             if (! empty($formData['use_gift_card_balance']) && $formData['use_gift_card_balance']) {
                 $userGiftCardBalance = Transaction::balance($user->id) ?? 0;
                 $requestedAmount     = $formData['gift_card_balance_used'] ?? 0;
 
                 if ($requestedAmount > 0 && $userGiftCardBalance > 0) {
-                    // Use the minimum of requested amount and available balance
                     $giftCardBalanceUsed = min($requestedAmount, $userGiftCardBalance);
-
-                    // Ensure gift card balance doesn't exceed the total price after discount
-                    // We'll calculate this after discount is calculated
                 }
             }
 
@@ -1137,7 +1126,6 @@ class BookingService
                 $promocode->incrementUsage($user->id);
             }
 
-            // Ensure gift card balance doesn't exceed the total price after discount
             if ($giftCardBalanceUsed > 0) {
                 $totalAfterDiscount  = $combinedSubtotal - $totalDiscount;
                 $giftCardBalanceUsed = min($giftCardBalanceUsed, $totalAfterDiscount);
@@ -1147,7 +1135,6 @@ class BookingService
             $giftCardAmounts = [];
 
             if ($totalBookings > 0) {
-                // Distribute discounts
                 if ($totalDiscount > 0) {
                     $baseDiscountPerBooking = round($totalDiscount / $totalBookings, 2);
 
@@ -1174,7 +1161,6 @@ class BookingService
                     }
                 }
 
-                // Distribute gift card balance equally across all bookings
                 if ($giftCardBalanceUsed > 0) {
                     $baseGiftCardPerBooking = round($giftCardBalanceUsed / $totalBookings, 2);
                     $calculatedTotal        = $baseGiftCardPerBooking * $totalBookings;
@@ -1302,7 +1288,6 @@ class BookingService
                 ->whereIn('id', $bookingIds)
                 ->get();
 
-            // Send OneSignal notifications for each created booking
             foreach ($createdBookings as $booking) {
                 $this->sendBookingNotification($booking, 'created');
             }
@@ -1653,7 +1638,6 @@ class BookingService
             return sendError('Cannot update ' . $booking->status . ' bookings. Only pending or confirmed bookings can be updated.');
         }
 
-        // Normalize start_time and end_time: strip seconds if present and ensure HH:MM format with leading zero on hour
         if ($request->has('start_time')) {
             $time  = $request->input('start_time');
             $parts = explode(':', $time);
@@ -1926,12 +1910,10 @@ class BookingService
                 $updateData['payment_status'] = $newPaymentStatus;
 
                 if ($newPaymentStatus === BookingPaymentStatus::PAYMENT_SKIPPED) {
-                    // Payment skipped - mark booking as payment skipped and don't create payment records
                     $updateData['payment_breakdown']     = null;
                     $updateData['full_payment_received'] = true;
                     $updateData['is_free']               = true;
 
-                    // Cancel/void any pending payments since booking is now payment skipped
                     $pendingPayments = $booking->payments()
                         ->where('status', PaymentStatus::PENDING)
                         ->get();
@@ -1962,7 +1944,6 @@ class BookingService
                         'remaining_method' => PaymentMethod::CASH,
                     ];
                 } elseif ($newPaymentStatus === BookingPaymentStatus::FULLY_PAID) {
-                    // Changing to a paid method - create or update payment records
                     $updateData['payment_breakdown']     = null;
                     $updateData['full_payment_received'] = true;
                     $updateData['is_free']               = false;
@@ -1992,7 +1973,6 @@ class BookingService
                             ]);
                         }
                     } else {
-                        // Only create payment if booking is not payment skipped
                         if (! $booking->is_free) {
                             $booking->payments()->create([
                                 'user_id'    => $booking->user_id,
@@ -2388,7 +2368,6 @@ class BookingService
                 ->orderBy('sort_order', 'ASC')
                 ->orderBy('name');
 
-            // Apply venue filtering
             $query = applyVenueFilter($query, 'venue_id');
 
             $result = $isPaginated
@@ -2413,7 +2392,6 @@ class BookingService
                 ->orderBy('sort_order', 'ASC')
                 ->orderBy('name');
 
-            // Apply venue filtering
             $query = applyVenueFilter($query, 'id');
 
             $result = $isPaginated
@@ -2544,10 +2522,8 @@ class BookingService
             $query->whereIn('listing_id', $data['listing_ids']);
         }
 
-        // Apply venue filtering
         $query = applyVenueFilter($query, 'venue_id');
 
-        // If user also specified venue_ids, intersect them
         if (! empty($data['venue_ids'])) {
             $user = auth()->user();
             if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
@@ -2650,10 +2626,8 @@ class BookingService
             $startTimeCarbon = Carbon::parse($startTime);
             $endTimeCarbon   = Carbon::parse($endTime);
 
-            // Apply discount and gift card amount
             $totalPrice = round($subtotal - $discount - $giftCardAmount, 2);
 
-            // Ensure total price doesn't go negative
             if ($totalPrice < 0) {
                 $totalPrice = 0;
             }
@@ -2722,9 +2696,7 @@ class BookingService
                 $booking->addOns()->sync($formData['add_ons']);
             }
 
-            // Skip payment records creation for skipped payment method
             if ($isPaymentSkipped) {
-                // Don't create any payment records for skipped payment
             } elseif ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
                 $paymentOptions = $listing ? $listing->payment_options : null;
 
@@ -2742,7 +2714,6 @@ class BookingService
                     throw new Exception('Invalid deposit configuration: must specify amount or percentage.');
                 }
 
-                // Adjust deposit amount if it exceeds total price after gift card
                 if ($depositAmount > $totalPrice) {
                     $depositAmount = $totalPrice;
                 }
@@ -2798,7 +2769,6 @@ class BookingService
                 ]);
             }
 
-            // Create debit transaction for gift card usage
             if ($giftCardAmount > 0) {
                 $booking->user->transactions()->create([
                     'type'       => 'debit',
@@ -2836,7 +2806,6 @@ class BookingService
                 ]);
             }
 
-            // Skip invoice creation for skipped payment method
             if (! $isPaymentSkipped) {
                 createBookingInvoiceWithNotification($booking, $user);
             }

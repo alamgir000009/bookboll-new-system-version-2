@@ -164,7 +164,6 @@ class CustomerService
                     $existingUser->assignRole('customer');
                     $user = $existingUser;
 
-                    // Create default preferences if user doesn't have them
                     if (! $user->preferences) {
                         Preference::create([
                             'user_id'         => $user->id,
@@ -198,7 +197,6 @@ class CustomerService
 
                 $user->assignRole('customer');
 
-                // Create default preferences for new customer
                 if (! $user->preferences) {
                     Preference::create([
                         'user_id'         => $user->id,

@@ -28,7 +28,6 @@ class VenueService
             ->active()
             ->orderBy('sort_order', 'ASC');
 
-        // Apply venue filtering
         if ($applyVenueFilter) {
             $query = applyVenueFilter($query, 'id');
         }
@@ -159,7 +158,6 @@ class VenueService
     {
         $venue = $this->venueModel::with(['schedules', 'users', 'listings'])->findOrFail($id);
 
-        // Check venue access
         $user = auth()->user();
         if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
             $venueIds = DB::table('user_venue')

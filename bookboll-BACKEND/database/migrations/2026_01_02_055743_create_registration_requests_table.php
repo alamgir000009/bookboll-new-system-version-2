@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('name');
             $table->string('email')->unique();
             $table->string('phone');
-            $table->string('password'); // Hashed password
+            $table->string('password');
             $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending')->index();
             $table->text('rejection_reason')->nullable();
             $table->timestamps();

@@ -21,13 +21,13 @@ class UsersImport implements ToCollection, WithHeadingRow
     {
         foreach ($rows as $index => $row) {
             try {
-                // Skip empty rows
+
                 if (empty(array_filter($row->toArray()))) {
                     Log::warning("Row " . ($index + 2) . " is empty. Skipping.");
                     continue;
                 }
 
-                $this->importRow($row, $index + 2); // +2 because heading row is 1, and we start from 2
+                $this->importRow($row, $index + 2);
             } catch (\Exception $e) {
                 $this->errorCount++;
                 $this->errors[] = [
@@ -41,7 +41,6 @@ class UsersImport implements ToCollection, WithHeadingRow
 
     protected function importRow($row, $rowNumber)
     {
-        // Get email (required)
         $email = $this->getValue($row, 'email');
         if (empty($email)) {
             $this->skippedCount++;
@@ -57,7 +56,6 @@ class UsersImport implements ToCollection, WithHeadingRow
             Log::warning("Invalid email format at row {$rowNumber}: {$email}");
         }
 
-        // Get other fields
         $name          = $this->getValue($row, 'name', '');
         $phone         = $this->getValue($row, 'phone', '');
         $gender        = $this->getValue($row, 'gender', '');
@@ -66,17 +64,13 @@ class UsersImport implements ToCollection, WithHeadingRow
         $loyaltyPoints = $this->getValue($row, 'loyalty_points', '0');
         $address       = $this->getValue($row, 'address', '');
 
-        // Process phone number
         if (!empty($phone)) {
-            // Handle scientific notation
             if (is_numeric($phone) && (stripos($phone, 'E') !== false || stripos($phone, 'e') !== false)) {
                 $phone = number_format((float) $phone, 0, '', '');
             }
 
-            // Remove non-numeric characters except +
             $phone = preg_replace('/[^0-9+]/', '', $phone);
 
-            // Format phone number
             if (!empty($phone) && !str_starts_with($phone, '+')) {
                 if (str_starts_with($phone, '974')) {
                     $phone = '+' . $phone;
@@ -86,16 +80,13 @@ class UsersImport implements ToCollection, WithHeadingRow
             }
         }
 
-        // Parse date of birth
         $parsedDateOfBirth = null;
         if (!empty($dateOfBirth)) {
             $dateOfBirth = trim($dateOfBirth);
             try {
-                // Try dd-mm-yyyy format first
                 if (preg_match('/^\d{1,2}-\d{1,2}-\d{4}$/', $dateOfBirth)) {
                     $parsedDateOfBirth = Carbon::createFromFormat('d-m-Y', $dateOfBirth)->format('Y-m-d');
                 } else {
-                    // Fallback: let Carbon detect format
                     $parsedDateOfBirth = Carbon::parse($dateOfBirth)->format('Y-m-d');
                 }
             } catch (\Throwable $e) {
@@ -103,7 +94,6 @@ class UsersImport implements ToCollection, WithHeadingRow
             }
         }
 
-        // Normalize gender
         $normalizedGender = null;
         if (!empty($gender)) {
             $genderLower = strtolower($gender);
@@ -116,17 +106,14 @@ class UsersImport implements ToCollection, WithHeadingRow
             }
         }
 
-        // Parse loyalty points
         $loyaltyPointsInt = 0;
         if (!empty($loyaltyPoints)) {
             $loyaltyPointsInt = (int) filter_var($loyaltyPoints, FILTER_SANITIZE_NUMBER_INT);
         }
 
-        // Find or create user
         $user = User::where('email', $email)->first();
 
         if ($user) {
-            // Update existing user
             $updateData = [];
 
             if (!empty($name)) {
@@ -156,7 +143,6 @@ class UsersImport implements ToCollection, WithHeadingRow
                 $user->update($updateData);
             }
 
-            // Create default preferences if user doesn't have them
             if (!$user->preferences) {
                 Preference::create([
                     'user_id'         => $user->id,
@@ -171,7 +157,6 @@ class UsersImport implements ToCollection, WithHeadingRow
                 ]);
             }
 
-            // Update loyalty points if needed
             if ($loyaltyPointsInt > 0) {
                 $currentBalance = LoyaltyPoint::balance($user->id) ?? 0;
                 if ($currentBalance < $loyaltyPointsInt) {
@@ -182,7 +167,6 @@ class UsersImport implements ToCollection, WithHeadingRow
 
             $this->successCount++;
         } else {
-            // Create new user
             $user = User::create([
                 'name'          => $name ?: 'User',
                 'email'         => $email,
@@ -196,7 +180,6 @@ class UsersImport implements ToCollection, WithHeadingRow
 
             $user->assignRole('customer');
 
-            // Create default preferences for new user
             Preference::create([
                 'user_id'         => $user->id,
                 'notifications'   => [
@@ -209,7 +192,6 @@ class UsersImport implements ToCollection, WithHeadingRow
                 'currency'        => 'QAR',
             ]);
 
-            // Add loyalty points if provided
             if ($loyaltyPointsInt > 0) {
                 $user->addLoyaltyPoints($loyaltyPointsInt, null, "Imported from Excel - Row {$rowNumber}");
             }
@@ -220,7 +202,6 @@ class UsersImport implements ToCollection, WithHeadingRow
 
     protected function getValue($row, $key, $default = null)
     {
-        // Handle different possible column name formats
         $keys = [
             $key,
             str_replace('_', ' ', $key),
@@ -231,7 +212,6 @@ class UsersImport implements ToCollection, WithHeadingRow
             ucwords(str_replace('_', ' ', $key)),
         ];
 
-        // First try exact matches
         foreach ($keys as $k) {
             if (isset($row[$k])) {
                 $value = $row[$k];
@@ -239,7 +219,6 @@ class UsersImport implements ToCollection, WithHeadingRow
             }
         }
 
-        // Then try case-insensitive matching
         foreach ($row as $rowKey => $rowValue) {
             foreach ($keys as $k) {
                 if (strcasecmp($rowKey, $k) === 0) {

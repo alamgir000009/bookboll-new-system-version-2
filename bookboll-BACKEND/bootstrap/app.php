@@ -16,7 +16,6 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->report(function (Exception $e) {
-            // Send email notification for all exceptions globally
             try {
                 \Illuminate\Support\Facades\Mail::to('alamgir000009@gmail.com')
                     ->send(new \App\Mail\ExceptionNotificationEmail($e, [
@@ -25,7 +24,6 @@ return Application::configure(basePath: dirname(__DIR__))
                         'server' => $_SERVER ?? [],
                     ]));
             } catch (\Exception $mailException) {
-                // Log if email sending fails to prevent infinite loop
                 \Illuminate\Support\Facades\Log::error('Failed to send exception notification email: ' . $mailException->getMessage());
             }
         });

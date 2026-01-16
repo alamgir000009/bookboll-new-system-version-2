@@ -22,14 +22,12 @@ class HelperController extends Controller
     {
         $venuesQuery = Venue::with(['listings:id,venue_id,name', 'schedules'])
             ->orderBy('sort_order', 'ASC');
-        
-        // Apply venue filtering
+
         $venuesQuery = applyVenueFilter($venuesQuery, 'id');
         $venues = $venuesQuery->get(['id', 'name']);
-        
+
         $listingsQuery = Listing::with(['venue']);
-        
-        // Apply venue filtering
+
         $listingsQuery = applyVenueFilter($listingsQuery, 'venue_id');
         $listings = $listingsQuery->get(['id', 'name', 'venue_id', 'calendar_color']);
 

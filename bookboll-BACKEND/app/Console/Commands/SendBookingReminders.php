@@ -67,9 +67,8 @@ class SendBookingReminders extends Command
 
                         if (! $sentToday) {
 
-                            // Check if user has marketing_emails enabled in preferences
                             $marketingEmailsEnabled = $user->preferences?->notifications['marketing_emails'] ?? false;
-                            
+
                             if (! $marketingEmailsEnabled) {
                                 Log::info("Skipping reminder for {$user->name} ({$user->email}) — marketing emails disabled in preferences");
                                 continue;

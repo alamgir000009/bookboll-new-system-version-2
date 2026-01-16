@@ -62,7 +62,6 @@ class PaymentService
                 $query->whereBetween('created_at', [$from, $to]);
             });
 
-        // Apply venue filtering
         $query = applyVenueFilterToPayments($query);
 
         $statsQuery = clone $query;
@@ -144,7 +143,6 @@ class PaymentService
                 });
             });
 
-        // Apply venue filtering
         $query = applyVenueFilterToPayments($query);
 
         if (!$exportAll) {
@@ -160,11 +158,10 @@ class PaymentService
     {
         $totalQuery = $this->paymentModel::newQuery();
         $paidQuery = $this->paymentModel::where('status', 'paid');
-        
-        // Apply venue filtering
+
         $totalQuery = applyVenueFilterToPayments($totalQuery);
         $paidQuery = applyVenueFilterToPayments($paidQuery);
-        
+
         $total   = $totalQuery->sum('amount');
         $paid    = $paidQuery->sum('amount');
         $pending = $total - $paid;
@@ -184,7 +181,6 @@ class PaymentService
             ->byStatus($filters['status'] ?? null)
             ->byDateRange($filters['date_from'] ?? null, $filters['date_to'] ?? null);
 
-        // Apply venue filtering
         $query = applyVenueFilterToPayments($query);
 
         $payments = $query->get()->map(fn($p) => [
@@ -303,18 +299,16 @@ class PaymentService
     private function validateDueBookings($booking, $selectedDueBookings)
     {
         $dueIds = collect($selectedDueBookings ?? [])->pluck('id');
-        
+
         if ($dueIds->isEmpty()) {
             return collect();
         }
 
-        // Get all bookings first
         $allDueBookings = $this->bookingModel::whereIn('id', $dueIds)->get();
-        
-        // Check if all booking IDs exist
+
         $foundIds = $allDueBookings->pluck('id');
         $missingIds = $dueIds->diff($foundIds);
-        
+
         if ($missingIds->isNotEmpty()) {
             throw new Exception("Bookings not found: " . $missingIds->implode(', '));
         }
@@ -325,28 +319,23 @@ class PaymentService
         foreach ($allDueBookings as $dueBooking) {
             $bookingErrors = [];
 
-            // Check if booking is the same as main booking
             if ($dueBooking->id == $booking->id) {
                 $bookingErrors[] = "Booking #{$dueBooking->id} is the same as the main booking";
             }
 
-            // Check user_id
             if ($dueBooking->user_id !== $booking->user_id) {
                 $bookingErrors[] = "Booking #{$dueBooking->id} belongs to a different user (User ID: {$dueBooking->user_id}, Expected: {$booking->user_id})";
             }
 
-            // Check venue_id
             if ($dueBooking->venue_id !== $booking->venue_id) {
                 $bookingErrors[] = "Booking #{$dueBooking->id} belongs to a different venue (Venue ID: {$dueBooking->venue_id}, Expected: {$booking->venue_id})";
             }
 
-            // Check payment_status
             if (!in_array($dueBooking->payment_status, ['pending', 'deposit_paid'])) {
                 $currentStatus = $dueBooking->payment_status ?? 'null';
                 $bookingErrors[] = "Booking #{$dueBooking->id} has invalid payment status: '{$currentStatus}' (Expected: 'pending' or 'deposit_paid')";
             }
 
-            // Check status (not cancelled)
             if ($dueBooking->status === BookingStatus::CANCELLED) {
                 $bookingErrors[] = "Booking #{$dueBooking->id} is cancelled";
             }
@@ -533,7 +522,6 @@ class PaymentService
 
             $mainBookingForValidation = $this->bookingModel::findOrFail($mainBookingId);
 
-            // Validate due bookings belong to the same user
             foreach ($dueBookingsData as $due) {
                 $dueBooking = $this->bookingModel::findOrFail($due['id']);
                 if ($dueBooking->user_id !== $mainBookingForValidation->user_id) {
@@ -553,7 +541,6 @@ class PaymentService
             $paymentMethod = $paymentMethodMap[$validated['payment_status']];
             $paymentMethodName = str_replace('paid_', '', str_replace('_', ' ', $validated['payment_status']));
 
-            // Collect all booking IDs to process (main + due bookings)
             $allBookingIds = collect([$mainBookingId])->merge($dueBookingsData->pluck('id'))->unique();
 
             $mainBooking = null;

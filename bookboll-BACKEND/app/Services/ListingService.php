@@ -67,7 +67,6 @@ class ListingService
                 $query->whereRelation('venue', 'id', $venue_id);
             });
 
-        // Apply venue filtering
         $query    = applyVenueFilter($query, 'venue_id');
         $listings = $query->paginate($records_per_page);
 
@@ -429,7 +428,6 @@ class ListingService
                 }
             }
 
-            // Validate pricing group times (handle 24:00 as full day and midnight spanning)
             if (! empty($data['pricing_groups']) && is_array($data['pricing_groups'])) {
                 foreach ($data['pricing_groups'] as $index => $group) {
                     if (! isset($group['start_time']) || ! isset($group['end_time'])) {
@@ -439,34 +437,21 @@ class ListingService
                     $startTime = $group['start_time'];
                     $endTime   = $group['end_time'];
 
-                    // If end_time is 24:00, it's valid (full day pricing)
                     if ($endTime === '24:00') {
                         continue;
                     }
 
-                    // Handle midnight spanning (e.g., 23:00 to 00:00)
-                    // If end_time is 00:00, treat it as next day (24:00) for comparison
                     $normalizedStart = $this->normalizeTimeForComparison($startTime);
                     $normalizedEnd   = $this->normalizeTimeForComparison($endTime);
 
-                    // If end_time is 00:00, it means it spans to midnight (next day)
-                    // Treat it as 24:00 (1440 minutes) for comparison
                     if ($endTime === '00:00') {
-                        $normalizedEnd = 24 * 60; // Treat as 24:00 (1440 minutes)
+                        $normalizedEnd = 24 * 60;
                     }
 
-                    // Check if end_time is after start_time
-                    // Special cases:
-                    // 1. Both 00:00 means full day (already handled by 24:00 check above)
-                    // 2. end_time 00:00 with any start_time means spans midnight (valid)
-                    // 3. Normal case: end_time must be after start_time
                     if ($endTime === '00:00') {
-                        // Valid: spans midnight (e.g., 23:00 to 00:00, 22:00 to 00:00, 10:00 to 00:00)
-                        // This means from start_time to midnight (next day)
                         continue;
                     }
 
-                    // For normal cases (not spanning midnight), ensure end_time is after start_time
                     if ($normalizedEnd <= $normalizedStart) {
                         $validator->errors()->add(
                             "pricing_groups.$index.end_time",
@@ -486,7 +471,6 @@ class ListingService
     {
         foreach ($rules as $field => $rule) {
             if (is_array($rule)) {
-                // Handle array rules (e.g., File validation rules or regex rules)
                 $hasRequired  = false;
                 $hasSometimes = false;
 
@@ -503,7 +487,6 @@ class ListingService
                     }
                 }
 
-                // If it has 'required' but not 'sometimes', prepend 'sometimes'
                 if ($hasRequired && ! $hasSometimes) {
                     array_unshift($rules[$field], 'sometimes');
                 }
@@ -522,13 +505,11 @@ class ListingService
         ];
 
         if (isset($data['tags']) && is_array($data['tags'])) {
-            // Handle new structured format with left_tag and right_tag
             if (isset($data['tags']['left_tag']) && is_array($data['tags']['left_tag'])) {
                 $tags['left_tag'] = [
                     'text'  => isset($data['tags']['left_tag']['text']) ? trim($data['tags']['left_tag']['text']) : null,
                     'color' => isset($data['tags']['left_tag']['color']) ? trim($data['tags']['left_tag']['color']) : null,
                 ];
-                // Remove if both are empty
                 if (empty($tags['left_tag']['text']) && empty($tags['left_tag']['color'])) {
                     $tags['left_tag'] = null;
                 }
@@ -539,13 +520,11 @@ class ListingService
                     'text'  => isset($data['tags']['right_tag']['text']) ? trim($data['tags']['right_tag']['text']) : null,
                     'color' => isset($data['tags']['right_tag']['color']) ? trim($data['tags']['right_tag']['color']) : null,
                 ];
-                // Remove if both are empty
                 if (empty($tags['right_tag']['text']) && empty($tags['right_tag']['color'])) {
                     $tags['right_tag'] = null;
                 }
             }
 
-            // If both tags are null, set tags to null
             if ($tags['left_tag'] === null && $tags['right_tag'] === null) {
                 $tags = null;
             }
@@ -1019,10 +998,8 @@ class ListingService
                 });
             });
 
-        // Apply venue filtering using helper function
         $query = applyVenueFilter($query, 'venue_id');
 
-        // If user also specified venue_id, ensure it's accessible
         if ($venueId) {
             $user = auth()->user();
             if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
@@ -1031,7 +1008,7 @@ class ListingService
                     ->pluck('venue_id')
                     ->toArray();
                 if (! in_array($venueId, $venueIds)) {
-                    $query->whereRaw('1 = 0'); // No results if venue not accessible
+                    $query->whereRaw('1 = 0');
                 } else {
                     $query->where('venue_id', $venueId);
                 }
@@ -1163,7 +1140,6 @@ class ListingService
         $date      = Carbon::parse(request('date', now()->toDateString()));
         $sessionId = getSessionId();
 
-        // Check if the date is available based on next month slots setting (only for frontend-web)
         $requestFrom = $request->header('from');
         if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
             $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
@@ -1408,7 +1384,6 @@ class ListingService
 
             $bookedCount = $slotBookings->count();
 
-            // Count locks for this slot (excluding current session)
             $lockedCount = 0;
             if ($activeLocks && $sessionId) {
                 $lockedCount = $activeLocks->filter(function ($lock) use ($slotStart, $slotEnd, $sessionId) {
@@ -1424,11 +1399,9 @@ class ListingService
                 })->count();
             }
 
-            // Calculate occupied spots (bookings + locks)
             $occupiedSpots  = $bookedCount + $lockedCount;
             $availableCount = max($listing->max_bookings_per_slot - $occupiedSpots, 0);
 
-            // For backward compatibility: if max_bookings_per_slot is 1, any lock means fully locked
             $isLocked = ($listing->max_bookings_per_slot === 1 && $lockedCount > 0);
 
             $allResourcesAvailable = true;
@@ -1560,7 +1533,6 @@ class ListingService
                 $bookedDates[$dateStr]++;
             }
 
-            // Fetch and count locks for the date range
             $locks = SlotLock::where('listing_id', $listingId)
                 ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
                 ->where('start_time', $startTime)
@@ -1599,7 +1571,6 @@ class ListingService
                     continue;
                 }
 
-                // Skip dates that are not available based on next month slots setting (only for frontend-web)
                 if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($currentDate)) {
                     $currentDate->addDay();
                     continue;
@@ -1797,7 +1768,6 @@ class ListingService
             $endTime   = $request->end_time;
             $date      = Carbon::parse($request->date);
 
-            // Check if the date is available based on next month slots setting (only for frontend-web)
             $requestFrom = $request->header('from');
             if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
                 $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
@@ -1812,7 +1782,6 @@ class ListingService
 
             $maxBookingsPerSlot = (int) $listing->max_bookings_per_slot;
 
-            // Count existing bookings for this slot
             $existingBookingCount = Booking::where('listing_id', $listingId)
                 ->whereDate('date', $date)
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
@@ -1822,7 +1791,6 @@ class ListingService
                 })
                 ->count();
 
-            // Count existing locks for this slot (excluding current session)
             $existingLockCount = SlotLock::where('listing_id', $listingId)
                 ->where('date', $date->toDateString())
                 ->where('start_time', $startTime)
@@ -1831,13 +1799,9 @@ class ListingService
                 ->active()
                 ->count();
 
-            // Calculate total occupied spots (bookings + locks)
             $occupiedSpots = $existingBookingCount + $existingLockCount;
 
-            // If max_bookings_per_slot is 1, any lock means fully locked (backward compatibility)
-            // Otherwise, check if there are available spots
             if ($maxBookingsPerSlot === 1) {
-                // For single booking per slot, any existing lock means fully locked
                 if ($existingLockCount > 0) {
                     return sendError('This slot is currently locked by another user. Please try again in a moment.');
                 }
@@ -1845,7 +1809,6 @@ class ListingService
                     return sendError('This slot is already fully booked.');
                 }
             } else {
-                // For multiple bookings per slot, check if there are available spots
                 if ($occupiedSpots >= $maxBookingsPerSlot) {
                     return sendError('This slot is already fully booked. All spots are taken.');
                 }
@@ -2037,7 +2000,6 @@ class ListingService
             $endTime   = $request->end_time;
             $sessionId = getSessionId();
 
-            // Check if the date is available based on next month slots setting (only for frontend-web)
             $requestFrom = $request->header('from');
             if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
                 return sendSuccess('Slot availability checked', [
@@ -2057,7 +2019,6 @@ class ListingService
 
             $maxBookingsPerSlot = (int) $listing->max_bookings_per_slot;
 
-            // Count existing bookings for this slot
             $existingBookingCount = Booking::where('listing_id', $listingId)
                 ->whereDate('date', $date)
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
@@ -2067,7 +2028,6 @@ class ListingService
                 })
                 ->count();
 
-            // Count existing locks for this slot (excluding current session)
             $existingLockCount = SlotLock::where('listing_id', $listingId)
                 ->where('date', $date->toDateString())
                 ->where('start_time', $startTime)
@@ -2076,7 +2036,6 @@ class ListingService
                 ->active()
                 ->count();
 
-            // Calculate total occupied spots (bookings + locks)
             $occupiedSpots  = $existingBookingCount + $existingLockCount;
             $availableSpots = max(0, $maxBookingsPerSlot - $occupiedSpots);
 
@@ -2127,30 +2086,14 @@ class ListingService
         return $start1Minutes < $end2Minutes && $start2Minutes < $end1Minutes;
     }
 
-    /**
-     * Normalize time string for comparison (handles 24:00 as full day)
-     *
-     * @param string $time Time string in H:i format (can be 24:00)
-     * @return int Minutes since midnight
-     */
     protected function normalizeTimeForComparison($time)
     {
         if ($time === '24:00') {
-            return 24 * 60; // 1440 minutes (full day)
+            return 24 * 60;
         }
         return $this->timeToMinutes($time);
     }
 
-    /**
-     * Check if a time slot falls within a pricing group time range
-     * Handles full day pricing (00:00 to 24:00) and midnight cases
-     *
-     * @param string $slotStart Slot start time
-     * @param string $slotEnd Slot end time
-     * @param string $groupStart Pricing group start time
-     * @param string $groupEnd Pricing group end time
-     * @return bool
-     */
     protected function slotFallsInPricingGroup($slotStart, $slotEnd, $groupStart, $groupEnd)
     {
         $slotStartMinutes  = $this->timeToMinutes($slotStart);
@@ -2158,30 +2101,19 @@ class ListingService
         $groupStartMinutes = $this->timeToMinutes($groupStart);
         $groupEndMinutes   = $this->normalizeTimeForComparison($groupEnd);
 
-        // Handle slot that spans midnight
         $slotSpansMidnight = ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00'));
         if ($slotSpansMidnight) {
             $slotEndMinutes = 24 * 60;
         }
 
-        // Handle range that spans midnight (e.g., 23:00 to 00:00)
         if ($groupEnd === '00:00') {
-            $groupEndMinutes = 24 * 60; // Treat as 24:00 (1440 minutes)
+            $groupEndMinutes = 24 * 60;
         }
 
-        // Full day pricing (00:00 to 24:00)
         if ($groupStart === '00:00' && $groupEnd === '24:00') {
             return true;
         }
 
-        // Check if slot overlaps with the pricing group range
-        // Two ranges overlap if: slotStart < groupEnd AND slotEnd > groupStart
-        // This handles all cases:
-        // - Slot completely within group range
-        // - Group range completely within slot
-        // - Slot starts before group but ends within/after group
-        // - Slot starts within group but ends after group
-        // - Slot spans midnight and overlaps with group
         return $slotStartMinutes < $groupEndMinutes && $slotEndMinutes > $groupStartMinutes;
     }
 }

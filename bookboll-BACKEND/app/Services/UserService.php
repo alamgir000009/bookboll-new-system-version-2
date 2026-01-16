@@ -49,7 +49,6 @@ class UserService
                 if (! $user->hasRole('customer')) {
                     $user->assignRole('customer');
 
-                    // Create default preferences if user doesn't have them
                     if (! $user->preferences) {
                         Preference::create([
                             'user_id'         => $user->id,
@@ -79,7 +78,6 @@ class UserService
 
                 $user->assignRole('customer');
 
-                // Create default preferences for new customer
                 if (! $user->preferences) {
                     Preference::create([
                         'user_id'         => $user->id,
@@ -305,7 +303,6 @@ class UserService
                 $user->assignRole('customer');
             }
 
-            // Create default preferences for new customer
             if (! $user->preferences) {
                 Preference::create([
                     'user_id'         => $user->id,
@@ -554,7 +551,6 @@ class UserService
 
             $user->assignRole($role['name']);
 
-            // Create default preferences if user is a customer
             if ($role['name'] === 'customer' && ! $user->preferences) {
                 Preference::create([
                     'user_id'         => $user->id,
@@ -878,23 +874,19 @@ class UserService
 
         $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
 
-        // Update notifications - merge with existing to preserve other notification settings
         if (isset($formData['notifications'])) {
             $currentNotifications       = $preferences->notifications ?? [];
             $preferences->notifications = array_merge($currentNotifications, $formData['notifications']);
         }
 
-        // Update favorite_sports if provided
         if (isset($formData['favorite_sports'])) {
             $preferences->favorite_sports = $formData['favorite_sports'];
         }
 
-        // Update language if provided
         if (isset($formData['language'])) {
             $preferences->language = $formData['language'];
         }
 
-        // Update currency if provided
         if (isset($formData['currency'])) {
             $preferences->currency = $formData['currency'];
         }
@@ -990,7 +982,6 @@ class UserService
         try {
             $import = new \App\Imports\UsersImport();
 
-            // Import users - Excel handles transactions internally, and UsersImport handles errors per row
             Excel::import($import, $filePath);
 
             $successCount = $import->getSuccessCount();
@@ -1028,9 +1019,6 @@ class UserService
         }
     }
 
-    /**
-     * Register user from admin mobile app (creates registration request)
-     */
     public function registerAdminAppUser($request)
     {
         $formData = $request->validate([
@@ -1043,10 +1031,8 @@ class UserService
         try {
             DB::beginTransaction();
 
-            // Check if user already exists in users table
             $existingUser = $this->userModel->where('email', $formData['email'])->first();
             if ($existingUser) {
-                // Check if there's already a pending registration request
                 $existingRequest = RegistrationRequest::where('email', $formData['email'])
                     ->where('status', RegistrationRequest::PENDING)
                     ->first();
@@ -1151,8 +1137,6 @@ class UserService
 
                 $user = $existingUser;
             } else {
-                // Create user without password first to avoid double hashing
-                // (password is already hashed in RegistrationRequest)
                 $user = $this->userModel->create([
                     'status' => $this->userModel::ACTIVE,
                     'name'   => $registrationRequest->name,
@@ -1160,13 +1144,10 @@ class UserService
                     'phone'  => $registrationRequest->phone,
                 ]);
 
-                // Update password directly via DB to bypass the 'hashed' cast
-                // since password is already hashed in RegistrationRequest
                 DB::table('users')
                     ->where('id', $user->id)
                     ->update(['password' => $registrationRequest->password]);
 
-                // Refresh the user model to get the updated password
                 $user->refresh();
 
                 $user->assignRole($roleName);

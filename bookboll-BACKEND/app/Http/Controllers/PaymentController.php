@@ -38,7 +38,7 @@ class PaymentController extends Controller
     public function export(Request $request)
     {
         $user = auth()->user();
-        
+
         if (!$user->hasAnyRole(['super_admin', 'admin'])) {
             return sendError('Unauthorized. Only super admin or admin can export payments.', [], 403);
         }
@@ -52,7 +52,7 @@ class PaymentController extends Controller
     public function downloadInvoice($id)
     {
         $user = auth()->user();
-        
+
         if (!$user->hasAnyRole(['super_admin', 'admin'])) {
             return sendError('Unauthorized. Only super admin or admin can download payment invoices.', [], 403);
         }
@@ -185,7 +185,7 @@ class PaymentController extends Controller
     public function generatePaymentLink(Request $request)
     {
         $user = auth()->user();
-        
+
         if (!$user->hasAnyRole(['super_admin', 'admin'])) {
             return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
         }
@@ -196,7 +196,7 @@ class PaymentController extends Controller
     public function confirmPayment(Request $request)
     {
         $user = auth()->user();
-        
+
         if (!$user->hasAnyRole(['super_admin', 'admin'])) {
             return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
         }
@@ -216,7 +216,6 @@ class PaymentController extends Controller
 
             $existingSession = StripeSession::where('session_id', $session_id)->first();
             if ($existingSession && $existingSession->processed) {
-                // Load bookings for already processed session
                 $mainBookingId   = $session->metadata['booking_id'] ?? null;
                 $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
                 $dueIds          = json_decode($dueBookingsJson, true) ?? [];
@@ -327,7 +326,6 @@ class PaymentController extends Controller
 
             DB::commit();
 
-            // Load bookings with relationships for the success page
             $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
                 ->whereIn('id', $bookingIds)
                 ->get();
@@ -354,7 +352,7 @@ class PaymentController extends Controller
     public function markBookingAsPaid(Request $request)
     {
         $user = auth()->user();
-        
+
         if (!$user->hasAnyRole(['super_admin', 'admin'])) {
             return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
         }
