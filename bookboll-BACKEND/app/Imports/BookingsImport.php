@@ -284,8 +284,9 @@ class BookingsImport implements ToCollection, WithHeadingRow
             $addOnNames = array_map('trim', explode(',', $addOnsString));
 
             foreach ($addOnNames as $addOnName) {
-                // Extract name before dash or parentheses (e.g., "Click & Add Hour! (60mins.) - 100.00 QAR" -> "Click & Add Hour!")
-                $cleanName = trim(preg_split('/\s*-\s*|\s*\(/', $addOnName)[0]);
+                // Parse add-on string: "Click & Add Hour! (60mins.) - 125.00 QAR"
+                $parsedAddOn = $this->parseAddOnString($addOnName);
+                $cleanName = $parsedAddOn['name'];
 
                 // Try exact match first
                 $addOn = AddOn::where('name', $cleanName)->first();
@@ -298,6 +299,17 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 // If still not found, try the original name
                 if (! $addOn) {
                     $addOn = AddOn::where('name', $addOnName)->first();
+                }
+
+                // If add-on doesn't exist, create it
+                if (! $addOn && ! empty($cleanName)) {
+                    $addOn = AddOn::create([
+                        'name'            => $cleanName,
+                        'price'           => $parsedAddOn['price'],
+                        'hours_extension' => $parsedAddOn['hours_extension'],
+                        'status'          => 'active',
+                        'currency'        => 'QAR',
+                    ]);
                 }
 
                 if ($addOn) {
@@ -677,6 +689,41 @@ class BookingsImport implements ToCollection, WithHeadingRow
 
         $float = (float) $value;
         return round($float, 2);
+    }
+
+    /**
+     * Parse add-on string like "Click & Add Hour! (60mins.) - 125.00 QAR"
+     * Returns: ['name' => 'Click & Add Hour!', 'hours_extension' => 1, 'price' => 125.00]
+     */
+    protected function parseAddOnString($addOnString)
+    {
+        $name = '';
+        $hoursExtension = 0;
+        $price = 0;
+
+        // Extract name (before parentheses or dash)
+        // e.g., "Click & Add Hour! (60mins.) - 125.00 QAR" -> "Click & Add Hour!"
+        $name = trim(preg_split('/\s*[\(\-]/', $addOnString)[0]);
+
+        // Extract minutes from parentheses (e.g., "(60mins.)" -> 60)
+        if (preg_match('/\((\d+)\s*min/i', $addOnString, $matches)) {
+            $minutes = (int) $matches[1];
+            $hoursExtension = (int) round($minutes / 60); // Convert to hours
+            if ($hoursExtension < 1 && $minutes > 0) {
+                $hoursExtension = 1; // Minimum 1 hour
+            }
+        }
+
+        // Extract price (e.g., "- 125.00 QAR" -> 125.00)
+        if (preg_match('/[\-]\s*([\d.]+)\s*(?:QAR)?/i', $addOnString, $matches)) {
+            $price = (float) $matches[1];
+        }
+
+        return [
+            'name'            => $name,
+            'hours_extension' => $hoursExtension,
+            'price'           => $price,
+        ];
     }
 
     public function getErrors()
