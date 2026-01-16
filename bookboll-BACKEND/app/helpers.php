@@ -117,7 +117,6 @@ if (! class_exists('BookingPaymentMethod')) {
 if (! class_exists('PaymentMethod')) {
     class PaymentMethod
     {
-
         public const CASH          = 'cash';
         public const ONLINE        = 'online';
         public const CHEQUE        = 'cheque';
@@ -140,7 +139,6 @@ if (! class_exists('PaymentMethod')) {
 if (! class_exists('PaymentType')) {
     class PaymentType
     {
-
         public const FULL      = 'full';
         public const DEPOSIT   = 'deposit';
         public const REMAINING = 'remaining';
@@ -159,7 +157,6 @@ if (! class_exists('PaymentType')) {
 if (! class_exists('SubscriberStatus')) {
     class SubscriberStatus
     {
-
         public const SUBSCRIBED   = 'subscribed';
         public const UNSUBSCRIBED = 'unsubscribed';
 
@@ -629,59 +626,31 @@ if (! function_exists('determineSlotPrice')) {
 }
 
 if (! function_exists('timeSlotFallsInRange')) {
-    /**
-     * Check if a time slot falls within a time range
-     * Handles full day pricing (00:00 to 24:00) and midnight cases
-     *
-     * @param string $slotStart Slot start time
-     * @param string $slotEnd Slot end time
-     * @param string $rangeStart Range start time
-     * @param string $rangeEnd Range end time
-     * @return bool
-     */
     function timeSlotFallsInRange($slotStart, $slotEnd, $rangeStart, $rangeEnd)
     {
-        // Convert times to minutes for comparison
         $slotStartMinutes  = timeToMinutes($slotStart);
         $slotEndMinutes    = timeToMinutes($slotEnd);
         $rangeStartMinutes = timeToMinutes($rangeStart);
         $rangeEndMinutes   = ($rangeEnd === '24:00') ? 24 * 60 : timeToMinutes($rangeEnd);
 
-        // Handle slot that spans midnight (00:00 means next day)
         $slotSpansMidnight = ($slotEnd === '00:00' || ($slotEndMinutes < $slotStartMinutes && $slotEnd !== '24:00'));
         if ($slotSpansMidnight) {
             $slotEndMinutes = 24 * 60;
         }
 
-        // Handle range that spans midnight (e.g., 23:00 to 00:00)
         if ($rangeEnd === '00:00') {
-            $rangeEndMinutes = 24 * 60; // Treat as 24:00 (1440 minutes)
+            $rangeEndMinutes = 24 * 60;
         }
 
-        // Full day pricing (00:00 to 24:00) - matches any slot
         if ($rangeStart === '00:00' && $rangeEnd === '24:00') {
             return true;
         }
 
-        // Check if slot overlaps with the pricing group range
-        // Two ranges overlap if: slotStart < rangeEnd AND slotEnd > rangeStart
-        // This handles all cases:
-        // - Slot completely within range
-        // - Range completely within slot
-        // - Slot starts before range but ends within/after range
-        // - Slot starts within range but ends after range
-        // - Slot spans midnight and overlaps with range
         return $slotStartMinutes < $rangeEndMinutes && $slotEndMinutes > $rangeStartMinutes;
     }
 }
 
 if (! function_exists('timeToMinutes')) {
-    /**
-     * Convert time string to minutes since midnight
-     *
-     * @param string $time Time string in H:i format
-     * @return int Minutes since midnight
-     */
     function timeToMinutes($time)
     {
         if ($time === '00:00' || $time === '24:00') {
