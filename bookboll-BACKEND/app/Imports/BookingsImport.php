@@ -5,6 +5,7 @@ use App\Models\AddOn;
 use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\Payment;
+use App\Models\Resource;
 use App\Models\User;
 use App\Models\Venue;
 use App\Services\BookingService;
@@ -435,10 +436,34 @@ class BookingsImport implements ToCollection, WithHeadingRow
             $booking->addOns()->attach($addOnIds);
         }
 
-        // Attach resources
-        $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
-        foreach ($resources as $resource) {
-            $booking->resourcesAllocated()->attach($resource->id, ['quantity' => $resource->pivot->quantity]);
+        // Attach resources from "Related resources" column
+        $relatedResourcesString = $this->getValue($row, 'related_resources');
+        if (!empty($relatedResourcesString)) {
+            // Split by comma (e.g., "Bin Omran Football Pitch 1, Bin Omran Football Pitch 2")
+            $resourceNames = array_map('trim', explode(',', $relatedResourcesString));
+
+            foreach ($resourceNames as $resourceName) {
+                // Remove trailing digit and space (e.g., "Al Waab Football Pitch 1" -> "Al Waab Football Pitch")
+                $cleanName = preg_replace('/\s+\d+$/', '', trim($resourceName));
+
+                // Search for resource in database
+                $resource = Resource::where('name', $cleanName)->first();
+
+                // If not found with clean name, try original name
+                if (!$resource) {
+                    $resource = Resource::where('name', $resourceName)->first();
+                }
+
+                // If still not found, try partial match
+                if (!$resource) {
+                    $resource = Resource::where('name', 'like', '%' . $cleanName . '%')->first();
+                }
+
+                if ($resource) {
+                    // Attach with quantity 1 (default)
+                    $booking->resourcesAllocated()->syncWithoutDetaching([$resource->id => ['quantity' => 1]]);
+                }
+            }
         }
 
         // Create booking history
