@@ -25,4 +25,14 @@ class SlotLock extends Model
     {
         return $query->where('locked_until', '>', now());
     }
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function listing()
+    {
+        return $this->belongsTo(Listing::class);
+    }
 }
