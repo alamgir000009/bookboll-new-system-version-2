@@ -79,10 +79,10 @@ class BookingsImport implements ToCollection, WithHeadingRow
             $customerPhone = trim($customerPhone, "'\"+ ");
 
             $user = User::create([
-                'name'     => $customerName,
-                'email'    => $customerEmail,
-                'phone'    => $customerPhone,
-                'status'   => User::ACTIVE,
+                'name'   => $customerName,
+                'email'  => $customerEmail,
+                'phone'  => $customerPhone,
+                'status' => User::ACTIVE,
             ]);
 
             // Assign customer role
@@ -231,20 +231,20 @@ class BookingsImport implements ToCollection, WithHeadingRow
         //    - If price <= amount: fully paid
         $paymentMethod = null;
         $paymentStatus = null;
-        $paidAmount = 0;
+        $paidAmount    = 0;
         $pendingAmount = 0;
 
         if ((empty($paymentAmount) || $paymentAmount == 0) && empty($paymentProcessor)) {
             // Case 1: No payment info or amount is 0 - mark as payment skipped
             $paymentMethod = BookingPaymentMethod::PAYMENT_SKIPPED;
             $paymentStatus = BookingPaymentStatus::PAYMENT_SKIPPED;
-            $paidAmount = 0;
+            $paidAmount    = 0;
             $pendingAmount = 0;
         } elseif ($paymentProcessor === 'delay') {
             // Case 2: Processor = "delay" - Amount column is the REMAINING/PENDING amount
             // Example: Price=125, Amount=100 means Deposit=25 paid, Remaining=100
             $pendingAmount = $paymentAmount;
-            $paidAmount = $bookingPrice - $paymentAmount;
+            $paidAmount    = $bookingPrice - $paymentAmount;
 
             if ($paidAmount > 0) {
                 // Partial payment made (deposit paid), rest is pending
@@ -254,23 +254,23 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 // No payment made yet, full amount is pending
                 $paymentMethod = BookingPaymentMethod::CASH_ON_ARRIVAL;
                 $paymentStatus = BookingPaymentStatus::PENDING;
-                $paidAmount = 0;
+                $paidAmount    = 0;
             }
         } else {
             // Case 3: Other processors (wire_transfer, cash, stripe, check) - Amount = PAID amount
             // Example: price=125, amount=100, wire_transfer -> 100 paid via wire_transfer, 25 remaining
             // Example: price=200, amount=200, cash -> fully paid via cash
-            $paidAmount = $paymentAmount;
+            $paidAmount    = $paymentAmount;
             $pendingAmount = $bookingPrice - $paymentAmount;
 
             // Determine the payment method based on processor
             $paymentMethod = match ($paymentProcessor) {
                 'wire_transfer' => BookingPaymentMethod::PAID_WIRE_TRANSFER,
-                'cash' => BookingPaymentMethod::PAID_CASH,
-                'stripe', 'online' => BookingPaymentMethod::ONLINE_PAYMENT,
-                'check', 'cheque' => BookingPaymentMethod::PAID_CHEQUE,
+                'cash'          => BookingPaymentMethod::PAID_CASH,
+                'stripe', 'online'    => BookingPaymentMethod::ONLINE_PAYMENT,
+                'check', 'cheque'     => BookingPaymentMethod::PAID_CHEQUE,
                 'credit_card', 'card' => BookingPaymentMethod::PAID_CREDIT_CARD,
-                default => BookingPaymentMethod::PAID_CASH,
+                default         => BookingPaymentMethod::PAID_CASH,
             };
 
             if ($pendingAmount > 0) {
@@ -294,7 +294,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
             foreach ($addOnNames as $addOnName) {
                 // Parse add-on string: "Click & Add Hour! (60mins.) - 125.00 QAR"
                 $parsedAddOn = $this->parseAddOnString($addOnName);
-                $cleanName = $parsedAddOn['name'];
+                $cleanName   = $parsedAddOn['name'];
 
                 // Try exact match first
                 $addOn = AddOn::where('name', $cleanName)->first();
@@ -329,29 +329,29 @@ class BookingsImport implements ToCollection, WithHeadingRow
         // If payment status was not set by the Excel data processing logic above, determine from payment method
         if ($paymentStatus === null) {
             $paymentStatus = match (trim($paymentMethod)) {
-                BookingPaymentMethod::CASH_ON_ARRIVAL, 'cash_on_arrival' => BookingPaymentStatus::PENDING,
-                BookingPaymentMethod::PAID_CASH, 'paid_cash' => BookingPaymentStatus::FULLY_PAID,
-                BookingPaymentMethod::PAID_CHEQUE, 'paid_cheque' => BookingPaymentStatus::FULLY_PAID,
-                BookingPaymentMethod::PAID_CREDIT_CARD, 'paid_credit_card' => BookingPaymentStatus::FULLY_PAID,
-                BookingPaymentMethod::PAID_WIRE_TRANSFER, 'paid_wire_transfer' => BookingPaymentStatus::FULLY_PAID,
-                BookingPaymentMethod::ONLINE_PAYMENT, 'online_payment' => BookingPaymentStatus::FULLY_PAID,
-                BookingPaymentMethod::PAYMENT_SKIPPED, 'payment_skipped' => BookingPaymentStatus::PAYMENT_SKIPPED,
+                BookingPaymentMethod::CASH_ON_ARRIVAL, 'cash_on_arrival'                           => BookingPaymentStatus::PENDING,
+                BookingPaymentMethod::PAID_CASH, 'paid_cash'                                       => BookingPaymentStatus::FULLY_PAID,
+                BookingPaymentMethod::PAID_CHEQUE, 'paid_cheque'                                   => BookingPaymentStatus::FULLY_PAID,
+                BookingPaymentMethod::PAID_CREDIT_CARD, 'paid_credit_card'                         => BookingPaymentStatus::FULLY_PAID,
+                BookingPaymentMethod::PAID_WIRE_TRANSFER, 'paid_wire_transfer'                     => BookingPaymentStatus::FULLY_PAID,
+                BookingPaymentMethod::ONLINE_PAYMENT, 'online_payment'                             => BookingPaymentStatus::FULLY_PAID,
+                BookingPaymentMethod::PAYMENT_SKIPPED, 'payment_skipped'                           => BookingPaymentStatus::PAYMENT_SKIPPED,
                 BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL, 'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
                 default => BookingPaymentStatus::PENDING,
             };
         }
 
         // Calculate deposit amount if needed
-        $depositAmount = 0;
+        $depositAmount   = 0;
         $remainingAmount = 0;
 
         // If payment status is DEPOSIT_PAID (partial payment from Excel), use the calculated paid/pending amounts
         if ($paymentStatus === BookingPaymentStatus::DEPOSIT_PAID && $paidAmount > 0) {
-            $depositAmount = $paidAmount;
+            $depositAmount   = $paidAmount;
             $remainingAmount = $pendingAmount;
         } elseif ($paymentStatus === BookingPaymentStatus::PENDING) {
             // Full amount is pending
-            $depositAmount = 0;
+            $depositAmount   = 0;
             $remainingAmount = $totalPrice;
         } elseif (! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
             $deposit = $listing->payment_options['deposit'];
@@ -365,9 +365,9 @@ class BookingsImport implements ToCollection, WithHeadingRow
 
         // Parse Record date if provided (format: d-m-Y H:i, e.g., "01-01-2026 22:50")
         $recordDate = $this->getValue($row, 'record_date');
-        $createdAt = null;
+        $createdAt  = null;
 
-        if (!empty($recordDate)) {
+        if (! empty($recordDate)) {
             try {
                 // Try parsing the format: d-m-Y H:i (24-hour format, e.g., "01-01-2026 22:50")
                 $createdAt = Carbon::createFromFormat('d-m-Y H:i', trim($recordDate));
@@ -398,7 +398,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
             'date'                  => $date,
             'start_time'            => $startTime,
             'end_time'              => $endTime,
-            'duration'              => !empty($duration) ? (int) $duration : null,
+            'duration'              => ! empty($duration) ? (int) $duration : null,
             'subtotal'              => $subtotal,
             'discount_amount'       => $discountAmount,
             'total_price'           => $totalPrice,
@@ -438,7 +438,8 @@ class BookingsImport implements ToCollection, WithHeadingRow
 
         // Attach resources from "Related resources" column
         $relatedResourcesString = $this->getValue($row, 'related_resources');
-        if (!empty($relatedResourcesString)) {
+
+        if (! empty($relatedResourcesString)) {
             // Split by comma (e.g., "Bin Omran Football Pitch 1, Bin Omran Football Pitch 2")
             $resourceNames = array_map('trim', explode(',', $relatedResourcesString));
 
@@ -450,18 +451,27 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 $resource = Resource::where('name', $cleanName)->first();
 
                 // If not found with clean name, try original name
-                if (!$resource) {
+                if (! $resource) {
                     $resource = Resource::where('name', $resourceName)->first();
                 }
 
                 // If still not found, try partial match
-                if (!$resource) {
+                if (! $resource) {
                     $resource = Resource::where('name', 'like', '%' . $cleanName . '%')->first();
                 }
 
                 if ($resource) {
-                    // Attach with quantity 1 (default)
-                    $booking->resourcesAllocated()->syncWithoutDetaching([$resource->id => ['quantity' => 1]]);
+                    // Check if resource is already attached, if so increment quantity
+                    $existingPivot = $booking->resourcesAllocated()->where('resource_id', $resource->id)->first();
+                    
+                    if ($existingPivot) {
+                        // Increment the quantity
+                        $newQuantity = $existingPivot->pivot->quantity + 1;
+                        $booking->resourcesAllocated()->updateExistingPivot($resource->id, ['quantity' => $newQuantity]);
+                    } else {
+                        // Attach with quantity 1
+                        $booking->resourcesAllocated()->attach($resource->id, ['quantity' => 1]);
+                    }
                 }
             }
         }
@@ -478,11 +488,11 @@ class BookingsImport implements ToCollection, WithHeadingRow
 
         if (! $booking->is_free && ! $isPaymentSkipped) {
             $paymentMethodEnum = match (trim($paymentMethod)) {
-                BookingPaymentMethod::PAID_CASH, 'paid_cash' => PaymentMethod::CASH,
-                BookingPaymentMethod::PAID_CHEQUE, 'paid_cheque' => PaymentMethod::CHEQUE,
-                BookingPaymentMethod::PAID_CREDIT_CARD, 'paid_credit_card' => PaymentMethod::CREDIT_CARD,
-                BookingPaymentMethod::PAID_WIRE_TRANSFER, 'paid_wire_transfer' => PaymentMethod::WIRE_TRANSFER,
-                BookingPaymentMethod::ONLINE_PAYMENT, 'online_payment' => PaymentMethod::ONLINE,
+                BookingPaymentMethod::PAID_CASH, 'paid_cash'                                       => PaymentMethod::CASH,
+                BookingPaymentMethod::PAID_CHEQUE, 'paid_cheque'                                   => PaymentMethod::CHEQUE,
+                BookingPaymentMethod::PAID_CREDIT_CARD, 'paid_credit_card'                         => PaymentMethod::CREDIT_CARD,
+                BookingPaymentMethod::PAID_WIRE_TRANSFER, 'paid_wire_transfer'                     => PaymentMethod::WIRE_TRANSFER,
+                BookingPaymentMethod::ONLINE_PAYMENT, 'online_payment'                             => PaymentMethod::ONLINE,
                 BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL, 'deposit_remaining_on_arrival' => PaymentMethod::CHEQUE,
                 default => PaymentMethod::CASH,
             };
@@ -491,22 +501,22 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 // Determine the deposit method based on processor type
                 $depositMethodEnum = match ($paymentProcessor) {
                     'wire_transfer' => PaymentMethod::WIRE_TRANSFER,
-                    'cash' => PaymentMethod::CASH,
-                    'stripe', 'online' => PaymentMethod::ONLINE,
-                    'check', 'cheque' => PaymentMethod::CHEQUE,
+                    'cash'          => PaymentMethod::CASH,
+                    'stripe', 'online'    => PaymentMethod::ONLINE,
+                    'check', 'cheque'     => PaymentMethod::CHEQUE,
                     'credit_card', 'card' => PaymentMethod::CREDIT_CARD,
-                    'delay' => PaymentMethod::CASH, // For delay, deposit was paid in cash
-                    default => PaymentMethod::CASH,
+                    'delay'         => PaymentMethod::CASH, // For delay, deposit was paid in cash
+                    default         => PaymentMethod::CASH,
                 };
 
                 $depositMethodName = match ($paymentProcessor) {
                     'wire_transfer' => 'wire transfer',
-                    'cash' => 'cash',
-                    'stripe', 'online' => 'online payment',
-                    'check', 'cheque' => 'cheque',
+                    'cash'          => 'cash',
+                    'stripe', 'online'    => 'online payment',
+                    'check', 'cheque'     => 'cheque',
                     'credit_card', 'card' => 'credit card',
-                    'delay' => 'cash',
-                    default => 'cash',
+                    'delay'         => 'cash',
+                    default         => 'cash',
                 };
 
                 // Create deposit payment (paid amount)
@@ -559,11 +569,11 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 // Fully paid or other status
                 $fullyPaidMethodName = match ($paymentProcessor) {
                     'wire_transfer' => 'wire transfer',
-                    'cash' => 'cash',
-                    'stripe', 'online' => 'online payment',
-                    'check', 'cheque' => 'cheque',
+                    'cash'          => 'cash',
+                    'stripe', 'online'    => 'online payment',
+                    'check', 'cheque'     => 'cheque',
                     'credit_card', 'card' => 'credit card',
-                    default => 'cash',
+                    default         => 'cash',
                 };
 
                 Payment::create([
@@ -756,9 +766,9 @@ class BookingsImport implements ToCollection, WithHeadingRow
      */
     protected function parseAddOnString($addOnString)
     {
-        $name = '';
+        $name           = '';
         $hoursExtension = 0;
-        $price = 0;
+        $price          = 0;
 
         // Extract name (before parentheses or dash)
         // e.g., "Click & Add Hour! (60mins.) - 125.00 QAR" -> "Click & Add Hour!"
@@ -766,7 +776,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
 
         // Extract minutes from parentheses (e.g., "(60mins.)" -> 60)
         if (preg_match('/\((\d+)\s*min/i', $addOnString, $matches)) {
-            $minutes = (int) $matches[1];
+            $minutes        = (int) $matches[1];
             $hoursExtension = (int) round($minutes / 60); // Convert to hours
             if ($hoursExtension < 1 && $minutes > 0) {
                 $hoursExtension = 1; // Minimum 1 hour
