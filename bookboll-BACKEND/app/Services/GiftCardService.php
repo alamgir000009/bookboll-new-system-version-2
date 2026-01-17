@@ -131,7 +131,7 @@ class GiftCardService
 
     public function getUserGiftCardBalance(int $userId)
     {
-        $balance = LoyaltyPoint::balance($userId ?? auth()->id()) ?? 0;
+        $balance = Transaction::balance($userId ?? auth()->id()) ?? 0;
         return sendSuccess('Balance fetched successfully', compact('balance'));
     }
 }
