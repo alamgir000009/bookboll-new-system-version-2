@@ -26,6 +26,10 @@ return [
         'https://www.osamasafdar.com',
         'https://admin.osamasafdar.com',
         'https://www.admin.osamasafdar.com',
+        'https://bookboll.com',
+        'https://www.bookboll.com',
+        'https://admin.bookboll.com',
+        'https://www.admin.bookboll.com',
     ],
 
     'allowed_origins_patterns' => [],
