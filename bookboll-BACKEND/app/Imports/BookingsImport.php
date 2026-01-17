@@ -224,10 +224,12 @@ class BookingsImport implements ToCollection, WithHeadingRow
         // 1. If no amount/processor or amount is 0 -> payment_skipped (no payment records)
         // 2. Processor = "delay" -> Amount column = REMAINING/PENDING amount
         //    - Paid = Price - Amount, Remaining = Amount (pending)
-        //    - Example: price=125, amount=100 -> deposit=25 paid, remaining=100
-        // 3. Other processors (wire_transfer, cash, stripe, check) -> Amount = PAID amount
-        //    - If price > amount: partial payment (amount paid, remaining pending)
-        //    - If price <= amount: fully paid
+        //    - Example: price=250, amount=200 -> deposit=50 paid, remaining=200 pending
+        //    - Example: price=200, amount=200 -> single payment=200 pending
+        // 3. Other processors (wire_transfer, cash, stripe, check) -> ALL payments are PAID
+        //    - If price > amount: deposit = Price - Amount (paid), remaining = Amount (paid)
+        //    - Example: price=250, amount=200, cash -> deposit=50 paid, remaining=200 paid (all paid)
+        //    - If price = amount: single payment fully paid
         $paymentMethod = null;
         $paymentStatus = null;
         $paidAmount    = 0;
@@ -241,7 +243,8 @@ class BookingsImport implements ToCollection, WithHeadingRow
             $pendingAmount = 0;
         } elseif ($paymentProcessor === 'delay') {
             // Case 2: Processor = "delay" - Amount column is the REMAINING/PENDING amount
-            // Example: Price=125, Amount=100 means Deposit=25 paid, Remaining=100
+            // Example: Price=250, Amount=200 means Deposit=50 paid, Remaining=200 pending
+            // Example: Price=200, Amount=200 means single payment=200 pending
             $pendingAmount = $paymentAmount;
             $paidAmount    = $bookingPrice - $paymentAmount;
 
@@ -256,11 +259,9 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 $paidAmount    = 0;
             }
         } else {
-            // Case 3: Other processors (wire_transfer, cash, stripe, check) - Amount = PAID amount
-            // Example: price=125, amount=100, wire_transfer -> 100 paid via wire_transfer, 25 remaining
-            // Example: price=200, amount=200, cash -> fully paid via cash
-            $paidAmount    = $paymentAmount;
-            $pendingAmount = $bookingPrice - $paymentAmount;
+            // Case 3: Other processors (wire_transfer, cash, stripe, check) - ALL payments are PAID
+            // Example: price=250, amount=200, cash -> deposit=50 paid, remaining=200 paid (all paid)
+            // Example: price=200, amount=200, cash -> single payment=200 paid (fully paid)
 
             // Determine the payment method based on processor
             $paymentMethod = match ($paymentProcessor) {
@@ -272,14 +273,18 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 default         => BookingPaymentMethod::PAID_CASH,
             };
 
-            if ($pendingAmount > 0) {
-                // Partial payment - amount paid, remaining pending
-                $paymentMethod = BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL;
-                $paymentStatus = BookingPaymentStatus::DEPOSIT_PAID;
-            } else {
-                // Full payment received
-                $paymentStatus = BookingPaymentStatus::FULLY_PAID;
+            if ($bookingPrice > $paymentAmount) {
+                // Price > Amount: deposit = Price - Amount (paid), remaining = Amount (paid)
+                // All payments are paid, but we track them separately
+                $paidAmount    = $bookingPrice; // Total paid = deposit + remaining
                 $pendingAmount = 0;
+                $paymentStatus = BookingPaymentStatus::FULLY_PAID;
+                // Keep the payment method as the processor type (e.g., PAID_CASH, PAID_WIRE_TRANSFER)
+            } else {
+                // Price = Amount: single payment fully paid
+                $paidAmount    = $paymentAmount;
+                $pendingAmount = 0;
+                $paymentStatus = BookingPaymentStatus::FULLY_PAID;
             }
         }
 
@@ -344,8 +349,13 @@ class BookingsImport implements ToCollection, WithHeadingRow
         $depositAmount   = 0;
         $remainingAmount = 0;
 
-        // If payment status is DEPOSIT_PAID (partial payment from Excel), use the calculated paid/pending amounts
-        if ($paymentStatus === BookingPaymentStatus::DEPOSIT_PAID && $paidAmount > 0) {
+        // If payment status is FULLY_PAID and processor is NOT "delay", calculate deposit/remaining from Price and Amount
+        if ($paymentStatus === BookingPaymentStatus::FULLY_PAID && $paymentProcessor !== 'delay' && !empty($paymentProcessor) && $bookingPrice > $paymentAmount) {
+            // All payments are paid: deposit = Price - Amount (paid), remaining = Amount (paid)
+            $depositAmount   = $bookingPrice - $paymentAmount;
+            $remainingAmount = $paymentAmount;
+        } elseif ($paymentStatus === BookingPaymentStatus::DEPOSIT_PAID && $paidAmount > 0) {
+            // If payment status is DEPOSIT_PAID (delay processor), use the calculated paid/pending amounts
             $depositAmount   = $paidAmount;
             $remainingAmount = $pendingAmount;
         } elseif ($paymentStatus === BookingPaymentStatus::PENDING) {
@@ -447,6 +457,37 @@ class BookingsImport implements ToCollection, WithHeadingRow
             $createdById = 2;
         }
 
+        // Determine payment method enum for payment_breakdown
+        $breakdownDepositMethod = null;
+        $breakdownRemainingMethod = null;
+
+        if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::FULLY_PAID && $depositAmount > 0)) {
+            $breakdownDepositMethod = match ($paymentProcessor) {
+                'wire_transfer' => PaymentMethod::WIRE_TRANSFER,
+                'cash'          => PaymentMethod::CASH,
+                'stripe', 'online'    => PaymentMethod::ONLINE,
+                'check', 'cheque'     => PaymentMethod::CHEQUE,
+                'credit_card', 'card' => PaymentMethod::CREDIT_CARD,
+                'delay'         => PaymentMethod::CASH,
+                default         => PaymentMethod::CASH,
+            };
+        }
+
+        if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::FULLY_PAID && $remainingAmount > 0)) {
+            if ($paymentProcessor === 'delay') {
+                $breakdownRemainingMethod = PaymentMethod::CASH; // Pending payment method
+            } else {
+                $breakdownRemainingMethod = match ($paymentProcessor) {
+                    'wire_transfer' => PaymentMethod::WIRE_TRANSFER,
+                    'cash'          => PaymentMethod::CASH,
+                    'stripe', 'online'    => PaymentMethod::ONLINE,
+                    'check', 'cheque'     => PaymentMethod::CHEQUE,
+                    'credit_card', 'card' => PaymentMethod::CREDIT_CARD,
+                    default         => PaymentMethod::CASH,
+                };
+            }
+        }
+
         // Create booking using the same logic as store method
         $bookingData = [
             'user_id'               => $user->id,
@@ -466,18 +507,19 @@ class BookingsImport implements ToCollection, WithHeadingRow
             'booking_id'            => $this->getValue($row, 'booking_number'),
             'created_by'            => $createdById,
             'is_free'               => $paymentMethod === BookingPaymentMethod::PAYMENT_SKIPPED,
-            'full_payment_received' => in_array($paymentMethod, [
+            'full_payment_received' => $paymentStatus === BookingPaymentStatus::FULLY_PAID || in_array($paymentMethod, [
                 BookingPaymentMethod::PAID_CHEQUE,
                 BookingPaymentMethod::PAID_WIRE_TRANSFER,
                 BookingPaymentMethod::PAID_CREDIT_CARD,
                 BookingPaymentMethod::PAID_CASH,
+                BookingPaymentMethod::ONLINE_PAYMENT,
                 BookingPaymentMethod::PAYMENT_SKIPPED,
             ]),
             'payment_breakdown'     => [
-                'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
-                'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CHEQUE : null,
-                'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $remainingAmount : 0,
-                'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
+                'deposit_amount'   => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::FULLY_PAID && $depositAmount > 0)) ? $depositAmount : 0,
+                'deposit_method'   => $breakdownDepositMethod,
+                'remaining_amount' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::FULLY_PAID && $remainingAmount > 0)) ? $remainingAmount : 0,
+                'remaining_method' => $breakdownRemainingMethod,
             ],
         ];
 
@@ -555,25 +597,36 @@ class BookingsImport implements ToCollection, WithHeadingRow
                     'notes'      => "Deposit payment of {$depositAmount} via {$depositMethodName} for booking #{$booking->booking_id}",
                 ]);
 
-                // Create remaining payment (pending)
+                // Create remaining payment (pending for delay, paid for other processors)
                 if ($remainingAmount > 0) {
+                    $remainingStatus = ($paymentProcessor === 'delay') ? PaymentStatus::PENDING : PaymentStatus::PAID;
+                    $remainingDate = ($paymentProcessor === 'delay') ? null : ($createdAt ? $createdAt->format('Y-m-d') : now()->format('Y-m-d'));
+                    $remainingMethod = ($paymentProcessor === 'delay') ? PaymentMethod::CASH : $depositMethodEnum;
+                    $remainingNotes = ($paymentProcessor === 'delay')
+                        ? "Remaining payment of {$remainingAmount} pending for booking #{$booking->booking_id}"
+                        : "Remaining payment of {$remainingAmount} via {$depositMethodName} for booking #{$booking->booking_id}";
+
                     Payment::create([
                         'user_id'    => $user->id,
                         'booking_id' => $booking->id,
                         'type'       => PaymentType::REMAINING,
                         'amount'     => $remainingAmount,
                         'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
-                        'date'       => null,
-                        'status'     => PaymentStatus::PENDING,
-                        'method'     => PaymentMethod::CASH,
-                        'notes'      => "Remaining payment of {$remainingAmount} pending for booking #{$booking->booking_id}",
+                        'date'       => $remainingDate,
+                        'status'     => $remainingStatus,
+                        'method'     => $remainingMethod,
+                        'notes'      => $remainingNotes,
                     ]);
                 }
+
+                $historyDescription = ($paymentProcessor === 'delay')
+                    ? "Deposit of {$depositAmount} paid via {$depositMethodName}, remaining {$remainingAmount} pending"
+                    : "Deposit of {$depositAmount} paid via {$depositMethodName}, remaining {$remainingAmount} paid via {$depositMethodName}";
 
                 $booking->history()->create([
                     'user_id'     => $user->id,
                     'action'      => 'deposit_paid',
-                    'description' => "Deposit of {$depositAmount} paid via {$depositMethodName}, remaining {$remainingAmount} pending",
+                    'description' => $historyDescription,
                 ]);
             } elseif ($paymentStatus === BookingPaymentStatus::PENDING) {
                 // Delay/pending payment - create as pending
@@ -599,26 +652,62 @@ class BookingsImport implements ToCollection, WithHeadingRow
                     default         => 'cash',
                 };
 
-                Payment::create([
-                    'user_id'    => $user->id,
-                    'booking_id' => $booking->id,
-                    'type'       => PaymentType::FULL,
-                    'amount'     => $booking->total_price,
-                    'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
-                    'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? ($createdAt ? $createdAt->format('Y-m-d') : now()->format('Y-m-d')) : null,
-                    'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
-                    'method'     => $paymentMethodEnum,
-                    'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID
-                        ? "Full payment of {$booking->total_price} via {$fullyPaidMethodName} for booking #{$booking->booking_id}"
-                        : "Payment pending for booking #{$booking->booking_id}",
-                ]);
+                // If processor is NOT "delay" and we have deposit/remaining split (Price > Amount), create separate payments
+                if ($paymentStatus == BookingPaymentStatus::FULLY_PAID && $paymentProcessor !== 'delay' && !empty($paymentProcessor) && $bookingPrice > $paymentAmount && $depositAmount > 0 && $remainingAmount > 0) {
+                    // Create deposit payment (paid)
+                    Payment::create([
+                        'user_id'    => $user->id,
+                        'booking_id' => $booking->id,
+                        'type'       => PaymentType::DEPOSIT,
+                        'amount'     => $depositAmount,
+                        'payment_id' => generatePaymentId($booking->id, PaymentType::DEPOSIT),
+                        'date'       => $createdAt ? $createdAt->format('Y-m-d') : now()->format('Y-m-d'),
+                        'status'     => PaymentStatus::PAID,
+                        'method'     => $paymentMethodEnum,
+                        'notes'      => "Deposit payment of {$depositAmount} via {$fullyPaidMethodName} for booking #{$booking->booking_id}",
+                    ]);
 
-                if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
+                    // Create remaining payment (paid)
+                    Payment::create([
+                        'user_id'    => $user->id,
+                        'booking_id' => $booking->id,
+                        'type'       => PaymentType::REMAINING,
+                        'amount'     => $remainingAmount,
+                        'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
+                        'date'       => $createdAt ? $createdAt->format('Y-m-d') : now()->format('Y-m-d'),
+                        'status'     => PaymentStatus::PAID,
+                        'method'     => $paymentMethodEnum,
+                        'notes'      => "Remaining payment of {$remainingAmount} via {$fullyPaidMethodName} for booking #{$booking->booking_id}",
+                    ]);
+
                     $booking->history()->create([
                         'user_id'     => $user->id,
                         'action'      => $paymentMethod,
-                        'description' => "Full payment of {$booking->total_price} received via {$fullyPaidMethodName}",
+                        'description' => "Full payment received: deposit of {$depositAmount} and remaining of {$remainingAmount} via {$fullyPaidMethodName}",
                     ]);
+                } else {
+                    // Single payment (Price = Amount) or other cases - create full payment
+                    Payment::create([
+                        'user_id'    => $user->id,
+                        'booking_id' => $booking->id,
+                        'type'       => PaymentType::FULL,
+                        'amount'     => $booking->total_price,
+                        'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                        'date'       => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? ($createdAt ? $createdAt->format('Y-m-d') : now()->format('Y-m-d')) : null,
+                        'status'     => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                        'method'     => $paymentMethodEnum,
+                        'notes'      => $paymentStatus == BookingPaymentStatus::FULLY_PAID
+                            ? "Full payment of {$booking->total_price} via {$fullyPaidMethodName} for booking #{$booking->booking_id}"
+                            : "Payment pending for booking #{$booking->booking_id}",
+                    ]);
+
+                    if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
+                        $booking->history()->create([
+                            'user_id'     => $user->id,
+                            'action'      => $paymentMethod,
+                            'description' => "Full payment of {$booking->total_price} received via {$fullyPaidMethodName}",
+                        ]);
+                    }
                 }
             }
         } elseif ($isPaymentSkipped) {
