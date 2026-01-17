@@ -52,9 +52,9 @@ return [
     |
     */
 
-    'url' => env('APP_URL', 'https://backend.osamasafdar.com'),
-    'frontend_url' => env('FRONTEND_URL', 'https://osamasafdar.com'),
-    'admin_url' => env('ADMIN_URL', 'https://admin.osamasafdar.com'),
+    'url' => env('APP_URL', 'https://backend.bookboll.com'),
+    'frontend_url' => env('FRONTEND_URL', 'https://bookboll.com'),
+    'admin_url' => env('ADMIN_URL', 'https://admin.bookboll.com'),
 
     /*
     |--------------------------------------------------------------------------
