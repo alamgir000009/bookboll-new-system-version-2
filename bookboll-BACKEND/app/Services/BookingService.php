@@ -28,6 +28,8 @@ use Illuminate\Support\Facades\Storage;
 use PaymentMethod;
 use PaymentStatus;
 use PaymentType;
+use Stripe\PaymentIntent;
+use Stripe\Stripe;
 
 class BookingService
 {
@@ -1010,14 +1012,73 @@ class BookingService
             if (in_array($formData['payment_method'], ['online_payment', 'deposit_remaining_on_arrival'])) {
 
                 if (! empty($formData['payment_intent_id'])) {
-                    $payment = $user->findPayment($formData['payment_intent_id']);
+                    try {
+                        // Verify payment directly with Stripe API instead of relying on Cashier's findPayment
+                        // This ensures we check the actual payment status even if it's not synced in the database yet
+                        Stripe::setApiKey(config('services.stripe.secret'));
+                        $paymentIntent = PaymentIntent::retrieve($formData['payment_intent_id']);
 
-                    if (! $payment || $payment->status !== 'succeeded') {
-                        return sendError('Payment not confirmed');
+                        // Verify the payment intent belongs to the user's Stripe customer (if both exist)
+                        if ($user->stripe_id && $paymentIntent->customer && $paymentIntent->customer !== $user->stripe_id) {
+                            Log::error('Payment intent customer mismatch', [
+                                'payment_intent_id' => $formData['payment_intent_id'],
+                                'user_id' => $user->id,
+                                'user_stripe_id' => $user->stripe_id,
+                                'payment_intent_customer' => $paymentIntent->customer,
+                            ]);
+                            DB::rollBack();
+                            return sendError('Payment verification failed: Payment does not belong to this user');
+                        }
+
+                        // Log warning if user has stripe_id but payment intent doesn't have customer
+                        if ($user->stripe_id && !$paymentIntent->customer) {
+                            Log::warning('Payment intent created without customer association', [
+                                'payment_intent_id' => $formData['payment_intent_id'],
+                                'user_id' => $user->id,
+                                'user_stripe_id' => $user->stripe_id,
+                            ]);
+                        }
+
+                        // Check if payment succeeded
+                        if ($paymentIntent->status !== 'succeeded') {
+                            Log::error('Payment intent not succeeded', [
+                                'payment_intent_id' => $formData['payment_intent_id'],
+                                'status' => $paymentIntent->status,
+                                'user_id' => $user->id,
+                            ]);
+                            DB::rollBack();
+                            return sendError('Payment not confirmed. Payment status: ' . $paymentIntent->status);
+                        }
+
+                        $paymentIntentId = $formData['payment_intent_id'];
+                        $chargeId        = $paymentIntent->latest_charge;
+
+                        if (empty($chargeId)) {
+                            Log::error('No charge ID found for payment intent', [
+                                'payment_intent_id' => $formData['payment_intent_id'],
+                                'user_id' => $user->id,
+                            ]);
+                            DB::rollBack();
+                            return sendError('Payment verification failed: No charge found');
+                        }
+
+                    } catch (\Stripe\Exception\InvalidRequestException $e) {
+                        Log::error('Stripe payment verification error', [
+                            'payment_intent_id' => $formData['payment_intent_id'],
+                            'user_id' => $user->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                        DB::rollBack();
+                        return sendError('Payment verification failed: ' . $e->getMessage());
+                    } catch (Exception $e) {
+                        Log::error('Payment verification error', [
+                            'payment_intent_id' => $formData['payment_intent_id'],
+                            'user_id' => $user->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                        DB::rollBack();
+                        return sendError('Payment verification failed: ' . $e->getMessage());
                     }
-
-                    $paymentIntentId = $formData['payment_intent_id'];
-                    $chargeId        = $payment->latest_charge;
                 }
 
                 if (! empty($formData['payment_method_id']) && $formData['save_payment_details']) {
