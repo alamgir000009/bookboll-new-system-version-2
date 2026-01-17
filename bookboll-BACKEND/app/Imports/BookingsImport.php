@@ -408,6 +408,45 @@ class BookingsImport implements ToCollection, WithHeadingRow
         // Get duration (in hours, e.g., 1, 2, 3, 4)
         $duration = $this->getValue($row, 'duration');
 
+        // Parse created_by column - if "admin" use user ID 2, otherwise find user by email/name
+        $createdByValue = $this->getValue($row, 'created_by');
+        $createdById = null;
+
+        if (! empty($createdByValue)) {
+            $createdByValueLower = strtolower(trim($createdByValue));
+
+            if ($createdByValueLower === 'admin') {
+                // Use admin user ID 2
+                $createdById = 2;
+            } else {
+                $originalValue = trim($createdByValue);
+
+                // Try to find user by email first (since created_by might be an email)
+                $createdByUser = User::where('email', $originalValue)->first();
+
+                // If not found by email, try case-insensitive email match
+                if (! $createdByUser) {
+                    $createdByUser = User::whereRaw('LOWER(email) = ?', [$createdByValueLower])->first();
+                }
+
+                // If still not found, try by name (case-insensitive)
+                if (! $createdByUser) {
+                    $createdByUser = User::whereRaw('LOWER(name) = ?', [$createdByValueLower])->first();
+                }
+
+                if ($createdByUser) {
+                    $createdById = $createdByUser->id;
+                } else {
+                    // If user not found, log warning and use admin (ID 2) as fallback
+                    Log::warning("Row {$rowNumber}: Created by user '{$originalValue}' not found. Using admin (ID 2) as fallback.");
+                    $createdById = 2;
+                }
+            }
+        } else {
+            // If created_by is empty, use admin (ID 2) as default
+            $createdById = 2;
+        }
+
         // Create booking using the same logic as store method
         $bookingData = [
             'user_id'               => $user->id,
@@ -425,6 +464,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
             'payment_method'        => $paymentMethod,
             'notes'                 => $this->getValue($row, 'notes'),
             'booking_id'            => $this->getValue($row, 'booking_number'),
+            'created_by'            => $createdById,
             'is_free'               => $paymentMethod === BookingPaymentMethod::PAYMENT_SKIPPED,
             'full_payment_received' => in_array($paymentMethod, [
                 BookingPaymentMethod::PAID_CHEQUE,
