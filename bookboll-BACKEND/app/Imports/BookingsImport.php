@@ -457,6 +457,11 @@ class BookingsImport implements ToCollection, WithHeadingRow
             $createdById = 2;
         }
 
+        // If all payments are paid, mark booking as confirmed (unless already cancelled)
+        if ($paymentStatus === BookingPaymentStatus::FULLY_PAID && $status !== BookingStatus::CANCELLED) {
+            $status = BookingStatus::CONFIRMED;
+        }
+
         // Determine payment method enum for payment_breakdown
         $breakdownDepositMethod = null;
         $breakdownRemainingMethod = null;
