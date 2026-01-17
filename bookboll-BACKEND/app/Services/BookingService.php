@@ -1213,6 +1213,7 @@ class BookingService
 
                 if (! $booking) {
                     DB::rollBack();
+                    Log::error("First: Failed to create booking for user {$user->id} on {$formData['date']}");
                     return sendError('Failed to create booking');
                 }
 
@@ -1222,6 +1223,7 @@ class BookingService
             foreach ($recurringBookings as $recurring) {
                 if ($recurring['start_time'] !== $formData['start_time'] || $recurring['end_time'] !== $formData['end_time']) {
                     DB::rollBack();
+                    Log::error("Recurring booking times do not match base booking times for user {$user->id} on {$recurring['date']}");
                     return sendError('Recurring booking times must match base booking times');
                 }
 
@@ -1229,6 +1231,7 @@ class BookingService
                 $baseDate      = Carbon::parse($formData['date']);
                 if ($recurringDate->lte($baseDate)) {
                     DB::rollBack();
+                    Log::error("Recurring booking dates must be after the base booking date for user {$user->id} on {$recurring['date']}");
                     return sendError('Recurring booking dates must be after the base booking date');
                 }
 
@@ -1275,6 +1278,7 @@ class BookingService
 
                     if (! $booking) {
                         DB::rollBack();
+                        Log::error("Second: Failed to create recurring booking for user {$user->id} on {$recurring['date']}");
                         return sendError('Failed to create recurring booking');
                     }
 
@@ -1297,7 +1301,7 @@ class BookingService
         } catch (Exception $e) {
 
             DB::rollBack();
-            Log::error("Order placing Failed: " . $e->getMessage(), ["Exception" => $e]);
+            Log::error("Bookings Failed: " . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong please try again later: " . $e->getMessage());
         }
     }
