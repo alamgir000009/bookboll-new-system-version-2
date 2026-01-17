@@ -362,25 +362,44 @@ class BookingsImport implements ToCollection, WithHeadingRow
             $remainingAmount = $totalPrice - $depositAmount;
         }
 
-        // Parse Record date if provided (format: d-m-Y H:i, e.g., "01-01-2026 22:50")
+        // Parse Record date if provided
+        // Supported formats:
+        // - d-m-Y H:i (24-hour format, e.g., "01-01-2026 22:50")
+        // - d-m-Y h:i A (12-hour format with uppercase AM/PM, e.g., "13-01-2026 06:09 PM")
+        // - d-m-Y h:i a (12-hour format with lowercase am/pm, e.g., "01-01-2026 10:35 pm")
         $recordDate = $this->getValue($row, 'record_date');
         $createdAt  = null;
 
         if (! empty($recordDate)) {
+            $recordDate = trim($recordDate);
+
             try {
                 // Try parsing the format: d-m-Y H:i (24-hour format, e.g., "01-01-2026 22:50")
-                $createdAt = Carbon::createFromFormat('d-m-Y H:i', trim($recordDate));
+                $createdAt = Carbon::createFromFormat('d-m-Y H:i', $recordDate);
             } catch (\Exception $e) {
-                // If that format fails, try other common formats
+                // If that format fails, try 12-hour formats
                 try {
-                    // Try d-m-Y h:i a (12-hour format with AM/PM)
-                    $createdAt = Carbon::createFromFormat('d-m-Y h:i a', trim($recordDate));
+                    // Try d-m-Y h:i A (12-hour format with uppercase AM/PM, e.g., "13-01-2026 06:09 PM")
+                    $createdAt = Carbon::createFromFormat('d-m-Y h:i A', $recordDate);
                 } catch (\Exception $e2) {
-                    // Let Carbon auto-detect the format
                     try {
-                        $createdAt = Carbon::parse(trim($recordDate));
+                        // Try d-m-Y h:i a (12-hour format with lowercase am/pm, e.g., "01-01-2026 10:35 pm")
+                        $createdAt = Carbon::createFromFormat('d-m-Y h:i a', $recordDate);
                     } catch (\Exception $e3) {
-                        Log::warning("Row {$rowNumber}: Could not parse Record date '{$recordDate}'. Using current timestamp.");
+                        // Normalize AM/PM to lowercase and try again
+                        try {
+                            $normalizedDate = preg_replace_callback('/\b(AM|PM)\b/', function($matches) {
+                                return strtolower($matches[1]);
+                            }, $recordDate);
+                            $createdAt = Carbon::createFromFormat('d-m-Y h:i a', $normalizedDate);
+                        } catch (\Exception $e4) {
+                            // Let Carbon auto-detect the format as last resort
+                            try {
+                                $createdAt = Carbon::parse($recordDate);
+                            } catch (\Exception $e5) {
+                                Log::warning("Row {$rowNumber}: Could not parse Record date '{$recordDate}'. Using current timestamp.");
+                            }
+                        }
                     }
                 }
             }

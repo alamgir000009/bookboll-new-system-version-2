@@ -17,6 +17,7 @@ class Booking extends Model
         'duration',
         'subtotal',
         'venue_id',
+        'created_by',
         'listing_id',
         'start_time',
         'booking_id',
@@ -130,10 +131,10 @@ class Booking extends Model
         return $query->whereDate('start_time', $date);
     }
 
-    public function calculateDuration()
-    {
-        return $this->start_time->diffInHours($this->end_time);
-    }
+    // public function calculateDuration()
+    // {
+    //     return $this->start_time->diffInHours($this->end_time);
+    // }
 
     public function isFullyPaid()
     {
@@ -181,44 +182,50 @@ class Booking extends Model
 
     protected static function booted()
     {
-        static::saving(function ($booking) {
-            if ($booking->start_time && $booking->end_time) {
-                $start             = Carbon::parse($booking->start_time);
-                $end               = Carbon::parse($booking->end_time);
-                $booking->duration = abs($end->diffInHours($start));
+        static::creating(function ($booking) {
+            if (auth()->check()) {
+                $booking->created_by = $booking->created_by ?? auth()->id();
             }
         });
 
-        static::creating(function ($booking) {
-
-            $year       = now()->year;
-            $maxRetries = 5;
-            $attempts   = 0;
-
-            do {
-
-                $attempts++;
-
-                $latestBooking = static::lockForUpdate()
-                    ->where('booking_id', 'like', "BKN_{$year}_%")
-                    ->orderByDesc('id')
-                    ->first();
-
-                $nextNumber = $latestBooking
-                    ? ((int) substr($latestBooking->booking_id, -5)) + 1
-                    : 1;
-
-                $bookingId = sprintf('BKN_%s_%05d', $year, $nextNumber);
-
-                $exists = static::where('booking_id', $bookingId)->exists();
-
-                if ($attempts >= $maxRetries && $exists) {
-                    throw new \Exception('Failed to generate unique booking ID after multiple attempts');
-                }
-
-            } while ($exists);
-
-            $booking->booking_id = $bookingId;
+        static::saving(function ($booking) {
+            if ($booking->start_time && $booking->end_time) {
+                $start = Carbon::parse($booking->start_time);
+                $end   = Carbon::parse($booking->end_time);
+                // $booking->duration = abs($end->diffInHours($start));
+            }
         });
+
+        // static::creating(function ($booking) {
+
+        //     $year       = now()->year;
+        //     $maxRetries = 5;
+        //     $attempts   = 0;
+
+        //     do {
+
+        //         $attempts++;
+
+        //         $latestBooking = static::lockForUpdate()
+        //             ->where('booking_id', 'like', "BKN_{$year}_%")
+        //             ->orderByDesc('id')
+        //             ->first();
+
+        //         $nextNumber = $latestBooking
+        //             ? ((int) substr($latestBooking->booking_id, -5)) + 1
+        //             : 1;
+
+        //         $bookingId = sprintf('BKN_%s_%05d', $year, $nextNumber);
+
+        //         $exists = static::where('booking_id', $bookingId)->exists();
+
+        //         if ($attempts >= $maxRetries && $exists) {
+        //             throw new \Exception('Failed to generate unique booking ID after multiple attempts');
+        //         }
+
+        //     } while ($exists);
+
+        //     $booking->booking_id = $bookingId;
+        // });
     }
 }

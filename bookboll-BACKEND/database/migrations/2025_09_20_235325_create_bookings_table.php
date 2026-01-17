@@ -39,6 +39,7 @@ return new class extends Migration
             $table->json('payment_breakdown')->nullable();
             $table->integer('loyalty_points_earned')->nullable();
             $table->boolean('is_free')->default(false);
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
 
             $table->index(['user_id', 'venue_id', 'listing_id']);
