@@ -190,8 +190,26 @@ class Booking extends Model
 
         static::saving(function ($booking) {
             if ($booking->start_time && $booking->end_time) {
-                $start = Carbon::parse($booking->start_time);
-                $end   = Carbon::parse($booking->end_time);
+                // Use date if available, otherwise use today's date
+                $date = $booking->date ?? now()->format('Y-m-d');
+                
+                // Parse start_time and end_time - they might be datetime strings or time strings
+                $startTimeParsed = Carbon::parse($booking->start_time);
+                $endTimeParsed   = Carbon::parse($booking->end_time);
+                
+                // Extract just the time portion (H:i format)
+                $startTimeStr = $startTimeParsed->format('H:i');
+                $endTimeStr   = $endTimeParsed->format('H:i');
+                
+                // Create datetime objects using the booking date
+                $start = Carbon::parse($date . ' ' . $startTimeStr);
+                $end   = Carbon::parse($date . ' ' . $endTimeStr);
+                
+                // If end time is less than start time, it means end time is on the next day
+                if ($end->lt($start)) {
+                    $end->addDay();
+                }
+                
                 $booking->duration = abs($end->diffInHours($start));
             }
         });
