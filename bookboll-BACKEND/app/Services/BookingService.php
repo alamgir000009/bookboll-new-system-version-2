@@ -866,6 +866,9 @@ class BookingService
 
         if ($request->has('statuses') && is_array($request->statuses)) {
             $query->whereIn('status', $request->statuses);
+        } else {
+            // Exclude cancelled bookings by default
+            $query->where('status', '!=', BookingStatus::CANCELLED);
         }
 
         $bookings = $query->get();
