@@ -23,14 +23,14 @@ return [
         'http://localhost:8081',
         'http://localhost:5173',
         'http://localhost:5174',
-        'https://osamasafdar.com',
-        'https://www.osamasafdar.com',
-        'https://admin.osamasafdar.com',
-        'https://www.admin.osamasafdar.com',
+
         'https://bookboll.com',
         'https://www.bookboll.com',
         'https://admin.bookboll.com',
         'https://www.admin.bookboll.com',
+
+        'https://staging.bookboll.com',
+        'https://stagingadmin.bookboll.com',
     ],
 
     'allowed_origins_patterns' => [],
