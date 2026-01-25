@@ -2205,9 +2205,9 @@ class BookingService
                     $user = $booking->user;
                     $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id, "Loyalty points earned for booking confirmation");
                     $booking->history()->create([
-                        'user_id'     => auth()->id(),
+                        'user_id'     => auth()->id() ?? $booking->user_id,
                         'action'      => 'loyalty_points_earned',
-                        'description' => "{$booking->loyalty_points_earned} loyalty points added to user #{$user->id} for booking auto-confirmation.",
+                        'description' => "{$booking->loyalty_points_earned} loyalty points added to user #{$user->id} for booking confirmation.",
                     ]);
                 }
             }
