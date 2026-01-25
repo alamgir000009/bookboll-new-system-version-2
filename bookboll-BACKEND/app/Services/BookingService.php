@@ -706,8 +706,13 @@ class BookingService
         }
 
         $venue     = Venue::find($data['venue_id']);
-        $listing   = Listing::find($data['listing_id']);
+        $listing   = Listing::with('resourceRequirements')->find($data['listing_id']);
         $dayOfWeek = strtolower(Carbon::parse($data['date'])->format('l'));
+
+        if (! $listing) {
+            $errors['listing_id'] = 'Listing not found';
+            return $errors;
+        }
 
         $dataStartCarbon = Carbon::createFromFormat('H:i', $data['start_time']);
         $dataEndCarbon   = Carbon::createFromFormat('H:i', $data['end_time']);
