@@ -1423,12 +1423,21 @@ class ListingService
             foreach ($listingResources as $res) {
 
                 // Resources from bookings (any listing at the venue)
-                $bookedResourcesQty = $slotBookings->flatMap(fn($b) => $b->resourcesAllocated)->where('id', $res->id)->sum('pivot.quantity');
+                $bookedResourcesQty = $slotBookings->flatMap(function($b) use ($res) {
+                    return $b->resourcesAllocated->where('id', $res->id)->map(function($resource) {
+                        return $resource->pivot->quantity ?? 0;
+                    });
+                })->sum();
 
                 // Resources from locks (any listing at the venue)
                 $lockedResourcesQty = $slotLocks->flatMap(function($lock) use ($res) {
-                    return $lock->listing ? $lock->listing->resources->where('id', $res->id) : collect();
-                })->sum('pivot.quantity');
+                    if (!$lock->listing) {
+                        return collect();
+                    }
+                    return $lock->listing->resources->where('id', $res->id)->map(function($resource) {
+                        return $resource->pivot->quantity ?? 0;
+                    });
+                })->sum();
 
                 $availableQty = $res->total_quantity - ($bookedResourcesQty + $lockedResourcesQty);
 
