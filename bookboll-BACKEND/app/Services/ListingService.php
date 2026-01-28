@@ -1388,10 +1388,18 @@ class ListingService
 
             $activeBookings = $venueBookings->filter(fn($b) => $b->status !== BookingStatus::CANCELLED && $b->status !== BookingStatus::COMPLETED);
 
-            $slotBookings = $activeBookings->filter(fn($b) => ! (
-                strtotime($b->end_time) <= strtotime($slotStart) ||
-                strtotime($b->start_time) >= strtotime($slotEnd)
-            ));
+            // Determine which bookings overlap this slot, correctly handling midnight (00:00)
+            $slotBookings = $activeBookings->filter(function ($b) use ($slotStart, $slotEnd) {
+                $bookingStart = $b->start_time ? Carbon::parse($b->start_time)->format('H:i') : null;
+                $bookingEnd   = $b->end_time ? Carbon::parse($b->end_time)->format('H:i') : null;
+
+                return $this->slotsOverlap(
+                    $slotStart,
+                    $slotEnd,
+                    $bookingStart,
+                    $bookingEnd
+                );
+            });
 
             $bookedCount = $slotBookings->where('listing_id', $listing->id)->count();
 
