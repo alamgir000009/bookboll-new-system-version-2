@@ -642,7 +642,7 @@ class BookingService
                 }
 
                 $booking->history()->create([
-                    'user_id'     => $user->id,
+                    'user_id'     => auth()->id(),
                     'action'      => 'booking_created',
                     'description' => 'Booking created by ' . auth()->user()->name,
                 ]);
@@ -664,7 +664,7 @@ class BookingService
 
                     if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {
                         $booking->history()->create([
-                            'user_id'     => $user->id,
+                            'user_id'     => auth()->id(),
                             'action'      => $request->payment_method,
                             'description' => 'Payment ' . str_replace('_', ' ', $request->payment_method),
                         ]);
@@ -675,7 +675,7 @@ class BookingService
                     createBookingInvoiceWithNotification($booking, $user);
                 } else {
                     $booking->history()->create([
-                        'user_id'     => $user->id,
+                        'user_id'     => auth()->id(),
                         'action'      => 'booking_created',
                         'description' => 'This booking is created with payment skipped by ' . auth()->user()->name . ' it marked as payment skipped',
                     ]);
@@ -1309,6 +1309,7 @@ class BookingService
                 $validationErrors = $this->validateBooking($recurringValidationData);
                 if (! empty($validationErrors)) {
                     DB::rollBack();
+                    Log::error("Validation failed for recurring booking on {$recurring['date']} for user {$user->id}", ["Errors" => $validationErrors]);
                     return sendError('Validation failed for recurring booking on ' . $recurring['date'], $validationErrors, 422);
                 }
 
@@ -1357,7 +1358,7 @@ class BookingService
 
             DB::commit();
             $bookingIds      = $createdBookings->pluck('id');
-            $createdBookings = Booking::with(['user', 'venue', 'listing', 'payments', 'addOns'])
+            $createdBookings = Booking::with(['user', 'venue', 'listing', 'payments', 'addOns', 'resourcesAllocated', 'promocode', 'history'])
                 ->whereIn('id', $bookingIds)
                 ->get();
 
@@ -2090,13 +2091,12 @@ class BookingService
                 if ($booking->status === BookingStatus::PENDING) {
                     $booking->update(['status' => BookingStatus::CONFIRMED]);
                     $booking->history()->create([
-                        'user_id'     => $user->id,
+                        'user_id'     => auth()->id() ?? $user->id,
                         'action'      => 'booking_confirmed',
                         'description' => 'Booking automatically confirmed after payment method update to fully paid',
                     ]);
                 }
             }
-
             $changes = [];
             if ($timeChanged) {
                 $newDate      = $updateData['date'] ?? $booking->date;
