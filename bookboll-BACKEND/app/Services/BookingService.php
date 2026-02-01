@@ -1742,6 +1742,7 @@ class BookingService
             'add_ons'        => 'nullable|array',
             'add_ons.*'      => 'exists:add_ons,id',
             'user_id'        => 'sometimes|exists:users,id',
+            'notes'          => 'nullable|string|max:1000',
         ]);
 
         try {
@@ -1756,6 +1757,7 @@ class BookingService
             $oldPaymentMethod = $booking->payment_method;
             $oldUserId        = $booking->user_id;
             $oldAddOns        = $booking->addOns->pluck('id')->toArray();
+            $oldNotes         = $booking->notes;
 
             $updateData = [];
 
@@ -1771,6 +1773,9 @@ class BookingService
             }
             if (isset($formData['listing_id'])) {
                 $updateData['listing_id'] = $formData['listing_id'];
+            }
+            if (isset($formData['notes'])) {
+                $updateData['notes'] = $formData['notes'];
             }
 
             if (isset($formData['date']) || isset($formData['start_time']) || isset($formData['end_time'])) {
@@ -1863,7 +1868,7 @@ class BookingService
                     $promocode = $booking->promocode;
                     $isValid   = $promocode->isValidForOrder(
                         $newSubtotal,
-                        $user->id,
+                        isset($formData['user_id']) ? $formData['user_id'] : $booking->user_id,
                         $booking->payment_method,
                         $venueId,
                         $listingId
@@ -1872,7 +1877,7 @@ class BookingService
                     if ($isValid) {
                         $newDiscount = $promocode->applyDiscount($newSubtotal);
                     } else {
-                        $promocode->decrementUsage($user->id);
+                        $promocode->decrementUsage(isset($formData['user_id']) ? $formData['user_id'] : $booking->user_id);
                         $updateData['promocode_id']    = null;
                         $updateData['discount_amount'] = 0;
                     }
@@ -2124,6 +2129,9 @@ class BookingService
                 $newUserName = User::find($updateData['user_id'])->name ?? "User #{$updateData['user_id']}";
                 $changes[]   = "Customer changed from {$oldUserName} to {$newUserName}";
             }
+            if (isset($formData['notes']) && $formData['notes'] !== $oldNotes) {
+                $changes[] = "Notes updated";
+            }
             if ($listingChanged || $venueChanged || $timeChanged || $addOnsChanged) {
                 $newPrice = $updateData['total_price'] ?? $booking->total_price;
                 if ($oldPrice != $newPrice) {
@@ -2135,7 +2143,7 @@ class BookingService
                 $booking->history()->create([
                     'user_id'     => auth()->id() ?? $user->id,
                     'action'      => 'booking_updated',
-                    'description' => 'Booking updated via mobile app: ' . implode(', ', $changes),
+                    'description' => 'Booking updated via mobile app: ' . implode(', ', $changes) . ' by ' . $user->name,
                 ]);
             }
 
