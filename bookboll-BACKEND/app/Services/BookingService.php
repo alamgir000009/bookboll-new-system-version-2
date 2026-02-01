@@ -2133,7 +2133,7 @@ class BookingService
 
             if (! empty($changes)) {
                 $booking->history()->create([
-                    'user_id'     => $user->id,
+                    'user_id'     => auth()->id() ?? $user->id,
                     'action'      => 'booking_updated',
                     'description' => 'Booking updated via mobile app: ' . implode(', ', $changes),
                 ]);
