@@ -783,9 +783,20 @@ class PaymentService
                 $depositAmount = 0;
                 if (!empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
                     $deposit = $listing->payment_options['deposit'];
+                    
+                    // Calculate total number of bookings (base + recurring)
+                    $baseQuantity = $validated['quantity'] ?? 1;
+                    $totalRecurringQuantity = 0;
+                    foreach ($validated['recurring_bookings'] ?? [] as $recurring) {
+                        $totalRecurringQuantity += $recurring['quantity'] ?? 1;
+                    }
+                    $totalBookings = $baseQuantity + $totalRecurringQuantity;
+                    
                     if (!empty($deposit['amount']) && $deposit['amount'] > 0) {
-                        $depositAmount = $deposit['amount'];
+                        // For fixed amount, multiply by total number of bookings
+                        $depositAmount = $deposit['amount'] * $totalBookings;
                     } elseif (!empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                        // For percentage, calculate on total price
                         $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
                     }
                 }
@@ -820,14 +831,16 @@ class PaymentService
                 throw new Exception('No bookings were created');
             }
 
-            $mainBookingId = $createdBookings[0]->id ?? null;
+            // Get all booking IDs (base + recurring)
+            $allBookingIds = collect($createdBookings)->pluck('id')->toArray();
+            $mainBookingId = $allBookingIds[0] ?? null;
             if (!$mainBookingId) {
                 throw new Exception('Failed to get main booking ID');
             }
             
-            // Update booking payment status to pending if it's online payment
+            // Update all bookings payment status to pending if it's online payment
             if ($validated['payment_method'] === 'online_payment') {
-                \App\Models\Booking::where('id', $mainBookingId)->update([
+                \App\Models\Booking::whereIn('id', $allBookingIds)->update([
                     'payment_status' => \BookingPaymentStatus::PENDING,
                     'payment_method' => \BookingPaymentMethod::ONLINE_PAYMENT,
                 ]);
@@ -845,7 +858,8 @@ class PaymentService
                 'cancel_url' => $cancelUrl,
                 'metadata' => [
                     'user_id' => $user->id,
-                    'booking_id' => $mainBookingId,
+                    'booking_id' => $mainBookingId, // Main booking for backward compatibility
+                    'all_booking_ids' => json_encode($allBookingIds), // All booking IDs (base + recurring)
                     'payment_type' => $paymentType,
                     'payment_method' => $validated['payment_method'],
                     'source' => 'customer', // Customer booking from frontend

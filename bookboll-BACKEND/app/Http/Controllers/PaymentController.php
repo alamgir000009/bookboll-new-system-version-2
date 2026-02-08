@@ -219,8 +219,22 @@ class PaymentController extends Controller
                 $mainBookingId   = $session->metadata['booking_id'] ?? null;
                 $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
                 $dueIds          = json_decode($dueBookingsJson, true) ?? [];
-                $bookingIds      = array_unique(array_filter(array_merge([$mainBookingId], $dueIds)));
-                $source          = $session->metadata['source'] ?? 'customer';
+                
+                // Get all booking IDs from metadata (for customer bookings with recurring)
+                $allBookingIdsJson = $session->metadata['all_booking_ids'] ?? null;
+                $allBookingIds = null;
+                if ($allBookingIdsJson) {
+                    $allBookingIds = json_decode($allBookingIdsJson, true) ?? [];
+                }
+                
+                // Prioritize all_booking_ids if available
+                if ($allBookingIds && !empty($allBookingIds)) {
+                    $bookingIds = array_unique(array_filter($allBookingIds));
+                } else {
+                    $bookingIds = array_unique(array_filter(array_merge([$mainBookingId], $dueIds)));
+                }
+                
+                $source = $session->metadata['source'] ?? 'customer';
 
                 // Check source and redirect accordingly
                 if ($source === 'admin') {
@@ -278,6 +292,13 @@ class PaymentController extends Controller
             $userId          = $session->metadata['user_id'] ?? null;
             $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
             $dueIds          = json_decode($dueBookingsJson, true) ?? [];
+            
+            // Get all booking IDs from metadata (for customer bookings with recurring)
+            $allBookingIdsJson = $session->metadata['all_booking_ids'] ?? null;
+            $allBookingIds = null;
+            if ($allBookingIdsJson) {
+                $allBookingIds = json_decode($allBookingIdsJson, true) ?? [];
+            }
 
             if (! $userId) {
                 DB::rollBack();
@@ -292,14 +313,20 @@ class PaymentController extends Controller
                 }
             }
 
-            $bookingIds = [];
-            if ($mainBookingId) {
-                $bookingIds[] = $mainBookingId;
+            // Prioritize all_booking_ids if available (for customer bookings with recurring)
+            // Otherwise fall back to main booking + due bookings (for admin payment links)
+            if ($allBookingIds && !empty($allBookingIds)) {
+                $bookingIds = array_unique(array_filter($allBookingIds));
+            } else {
+                $bookingIds = [];
+                if ($mainBookingId) {
+                    $bookingIds[] = $mainBookingId;
+                }
+                if (! empty($dueIds)) {
+                    $bookingIds = array_merge($bookingIds, $dueIds);
+                }
+                $bookingIds = array_unique(array_filter($bookingIds));
             }
-            if (! empty($dueIds)) {
-                $bookingIds = array_merge($bookingIds, $dueIds);
-            }
-            $bookingIds = array_unique(array_filter($bookingIds));
 
             if (empty($bookingIds)) {
                 DB::rollBack();
@@ -315,6 +342,13 @@ class PaymentController extends Controller
             }
 
             $paymentType = $session->metadata['payment_type'] ?? 'full'; // 'full' or 'deposit'
+            
+            Log::info('Processing payment for bookings', [
+                'session_id' => $session_id,
+                'booking_ids' => $bookingIds,
+                'payment_type' => $paymentType,
+                'total_bookings' => count($bookingIds),
+            ]);
             
             foreach ($bookingIds as $bookingId) {
                 $booking = Booking::find($bookingId);
@@ -416,6 +450,13 @@ class PaymentController extends Controller
                 // Customer booking from frontend - redirect to frontend
                 $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
                 $bookingIdsParam = implode(',', $bookingIds);
+                
+                Log::info('Redirecting to frontend thank you page', [
+                    'booking_ids' => $bookingIds,
+                    'booking_ids_param' => $bookingIdsParam,
+                    'total_bookings' => count($bookingIds),
+                ]);
+                
                 $redirectUrl = rtrim($frontendUrl, '/') . '/thank-you?booking_ids=' . $bookingIdsParam;
                 return redirect($redirectUrl);
             }
