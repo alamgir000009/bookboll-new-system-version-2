@@ -18,7 +18,7 @@
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            background: linear-gradient(135deg, #0b28f5 0%, #06d9ad 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -150,10 +150,18 @@
         </div>
 
         <h1>Payment Cancelled</h1>
-        <p class="subtitle">Your payment was cancelled. Your booking has been cancelled as well. If you would like to complete your booking, please try again.</p>
+        @if(isset($isAdminPayment) && $isAdminPayment)
+            <p class="subtitle">The payment process was cancelled. Your booking is still active. You can try the payment again using the button below.</p>
+        @else
+            <p class="subtitle">Your payment was cancelled. Your booking has been cancelled as well. If you would like to complete your booking, please try again.</p>
+        @endif
 
         <div class="actions">
-            <a href="/" class="btn btn-primary">Return to Homepage</a>
+            @if(isset($isAdminPayment) && $isAdminPayment && isset($paymentLinkUrl) && $paymentLinkUrl)
+                <a href="{{ $paymentLinkUrl }}" class="btn btn-primary">Try Again</a>
+            @else
+                <a href="/" class="btn btn-primary">Return to Homepage</a>
+            @endif
             <a href="javascript:history.back()" class="btn btn-secondary">Go Back</a>
         </div>
     </div>

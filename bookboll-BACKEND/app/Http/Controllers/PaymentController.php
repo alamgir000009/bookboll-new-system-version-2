@@ -490,6 +490,7 @@ class PaymentController extends Controller
     {
         $sessionId = request()->get('session_id');
         $source = 'customer'; // Default to customer
+        $paymentLinkUrl = null;
         
         if ($sessionId) {
             try {
@@ -499,7 +500,8 @@ class PaymentController extends Controller
                 $source = $session->metadata['source'] ?? 'customer';
                 $bookingId = $session->metadata['booking_id'] ?? null;
                 
-                if ($bookingId) {
+                // Only cancel bookings for customer payments, not admin-generated links
+                if ($source === 'customer' && $bookingId) {
                     DB::beginTransaction();
                     
                     $booking = Booking::find($bookingId);
@@ -519,9 +521,15 @@ class PaymentController extends Controller
                     }
                     
                     DB::commit();
+                } elseif ($source === 'admin') {
+                    // For admin payments, get the payment link URL for "Try Again" button
+                    // The session URL can be reused
+                    $paymentLinkUrl = $session->url ?? null;
                 }
             } catch (Exception $e) {
-                DB::rollBack();
+                if ($source === 'customer') {
+                    DB::rollBack();
+                }
                 Log::error('Payment cancellation error: ' . $e->getMessage(), [
                     'session_id' => $sessionId,
                 ]);
@@ -530,10 +538,14 @@ class PaymentController extends Controller
         
         // Check source and redirect accordingly
         if ($source === 'admin') {
-            // Admin QR code payment - show backend blade view
-            return view('payment-cancel');
+            // Admin QR code payment - show backend blade view with try again option
+            // Don't cancel the booking, just show the cancel page
+            return view('payment-cancel', [
+                'isAdminPayment' => true,
+                'paymentLinkUrl' => $paymentLinkUrl,
+            ]);
         } else {
-            // Customer booking from frontend - redirect to frontend
+            // Customer booking from frontend - cancel booking and redirect to frontend
             $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
             $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
             return redirect($redirectUrl);
