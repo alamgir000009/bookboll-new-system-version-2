@@ -813,7 +813,7 @@ class PaymentService
                 ]);
             }
 
-            // Create Stripe Checkout Session
+            // Create Stripe Checkout Session - use backend routes that will redirect to frontend
             $successUrl = url('/payment/success/{CHECKOUT_SESSION_ID}');
             $cancelUrl = url('/payment/cancel?session_id={CHECKOUT_SESSION_ID}');
 

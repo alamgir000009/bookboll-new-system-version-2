@@ -221,11 +221,12 @@ class PaymentController extends Controller
                 $dueIds          = json_decode($dueBookingsJson, true) ?? [];
                 $bookingIds      = array_unique(array_filter(array_merge([$mainBookingId], $dueIds)));
 
-                $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
-                    ->whereIn('id', $bookingIds)
-                    ->get();
+                // Redirect to frontend thank you page with booking IDs
+                $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+                $bookingIdsParam = implode(',', $bookingIds);
+                $redirectUrl = rtrim($frontendUrl, '/') . '/thank-you?booking_ids=' . $bookingIdsParam;
 
-                return view('payment-success', compact('bookings'));
+                return redirect($redirectUrl);
             }
 
             $stripeSession = $existingSession ?? StripeSession::create([
@@ -235,7 +236,10 @@ class PaymentController extends Controller
 
             if ($session->payment_status !== 'paid') {
                 DB::rollBack();
-                return view('payment-success', ['error' => 'Payment not completed. Please try again.']);
+                // Redirect to frontend cancel page if payment not completed
+                $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+                $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
+                return redirect($redirectUrl);
             }
 
             $paymentIntentId = $session->payment_intent;
@@ -245,7 +249,10 @@ class PaymentController extends Controller
             if (! $chargeId) {
                 DB::rollBack();
                 Log::error('No charge ID found for payment intent', ['payment_intent_id' => $paymentIntentId]);
-                return view('payment-success', ['error' => 'Payment verification failed: No charge found.']);
+                // Redirect to frontend cancel page
+                $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+                $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
+                return redirect($redirectUrl);
             }
 
             $mainBookingId   = $session->metadata['booking_id'] ?? null;
@@ -256,7 +263,10 @@ class PaymentController extends Controller
             if (! $userId) {
                 DB::rollBack();
                 Log::error('No user ID found in session metadata', ['session_id' => $session_id]);
-                return view('payment-success', ['error' => 'Payment verification failed: No user found.']);
+                // Redirect to frontend cancel page
+                $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+                $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
+                return redirect($redirectUrl);
             }
 
             $bookingIds = [];
@@ -271,7 +281,10 @@ class PaymentController extends Controller
             if (empty($bookingIds)) {
                 DB::rollBack();
                 Log::error('No booking IDs found in session metadata', ['session_id' => $session_id]);
-                return view('payment-success', ['error' => 'Payment verification failed: No bookings found.']);
+                // Redirect to frontend cancel page
+                $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+                $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
+                return redirect($redirectUrl);
             }
 
             $paymentType = $session->metadata['payment_type'] ?? 'full'; // 'full' or 'deposit'
@@ -365,16 +378,20 @@ class PaymentController extends Controller
 
             DB::commit();
 
-            $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
-                ->whereIn('id', $bookingIds)
-                ->get();
+            // Redirect to frontend thank you page with booking IDs
+            $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+            $bookingIdsParam = implode(',', $bookingIds);
+            $redirectUrl = rtrim($frontendUrl, '/') . '/thank-you?booking_ids=' . $bookingIdsParam;
 
-            return view('payment-success', compact('bookings'));
+            return redirect($redirectUrl);
 
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Stripe success route error: ' . $e->getMessage(), ['session_id' => $session_id]);
-            return view('payment-success', ['error' => 'Payment verification failed. Please contact support if this issue persists.']);
+            // Redirect to frontend cancel page on error
+            $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+            $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
+            return redirect($redirectUrl);
         }
     }
 
@@ -461,7 +478,11 @@ class PaymentController extends Controller
             }
         }
         
-        return view('payment-cancel');
+        // Redirect to frontend payment cancel page
+        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+        $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
+
+        return redirect($redirectUrl);
     }
 
     public function getPaymentMethods()

@@ -138,4 +138,33 @@ class BookingController extends Controller
     {
         return $this->bookingService->getPaymentMethods();
     }
+
+    public function getBookingsByIds(Request $request)
+    {
+        $request->validate([
+            'booking_ids' => 'required|string',
+        ]);
+
+        $bookingIds = explode(',', $request->booking_ids);
+        $bookingIds = array_filter(array_map('intval', $bookingIds));
+
+        if (empty($bookingIds)) {
+            return sendError('No valid booking IDs provided', [], 400);
+        }
+
+        $bookings = Booking::with([
+            'venue:id,name',
+            'listing:id,name',
+            'user:id,name,email',
+            'payments',
+            'addOns',
+        ])
+            ->whereIn('id', $bookingIds)
+            ->where('user_id', auth()->id())
+            ->get();
+
+        return sendSuccess('Bookings fetched successfully', [
+            'bookings' => $bookings,
+        ]);
+    }
 }

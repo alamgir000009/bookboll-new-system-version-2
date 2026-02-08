@@ -154,6 +154,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('bookings/confirm', [BookingController::class, 'confirmBooking'])->name('bookings.confirmBooking');
         Route::get('bookings/upcoming', [BookingController::class, 'upcoming'])->name('bookings.upcoming');
         Route::get('bookings/recent', [BookingController::class, 'recent'])->name('bookings.recent');
+        Route::get('bookings/by-ids', [BookingController::class, 'getBookingsByIds'])->name('bookings.byIds');
         Route::post('bookings/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
         Route::post('bookings/{id}/pay', [BookingController::class, 'pay'])->name('bookings.pay');
         Route::put('bookings/{id}/update', [BookingController::class, 'mobileUpdateBooking'])->name('bookings.mobileUpdate');
