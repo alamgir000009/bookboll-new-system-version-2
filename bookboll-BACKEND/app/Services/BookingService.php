@@ -2716,7 +2716,7 @@ class BookingService
             // For online_payment, if no payment_intent_id, set status to PENDING (will be paid via Stripe checkout)
             $isOnlinePaymentPending = ($formData['payment_method'] === 'online_payment' && !$paymentIntentId);
             $isDepositPending = ($formData['payment_method'] === 'deposit_remaining_on_arrival' && !$paymentIntentId);
-            
+
             $paymentStatus = match (trim($formData['payment_method'])) {
                 'cash_on_arrival'              => BookingPaymentStatus::PENDING,
                 'online_payment'               => $isOnlinePaymentPending ? BookingPaymentStatus::PENDING : BookingPaymentStatus::FULLY_PAID,
@@ -2817,8 +2817,8 @@ class BookingService
                     'type'              => PaymentType::DEPOSIT,
                     'method'            => PaymentMethod::ONLINE,
                     'date'              => $depositPaymentDate,
-                    'notes'             => $depositPaymentStatus === PaymentStatus::PAID 
-                        ? 'Deposit payment for booking #' . $booking->booking_id 
+                    'notes'             => $depositPaymentStatus === PaymentStatus::PAID
+                        ? 'Deposit payment for booking #' . $booking->booking_id
                         : 'Deposit payment pending for booking #' . $booking->booking_id,
                     'payment_id'        => generatePaymentId($booking->id, PaymentType::DEPOSIT),
                 ]);
@@ -2848,11 +2848,11 @@ class BookingService
 
                 // For online_payment, if no payment_intent_id, create pending payment (will be paid via Stripe checkout success)
                 $isOnlinePaymentPending = ($formData['payment_method'] === 'online_payment' && !$paymentIntentId);
-                $finalPaymentStatus = ($paymentStatus == BookingPaymentStatus::FULLY_PAID && !$isOnlinePaymentPending) 
-                    ? PaymentStatus::PAID 
+                $finalPaymentStatus = ($paymentStatus == BookingPaymentStatus::FULLY_PAID && !$isOnlinePaymentPending)
+                    ? PaymentStatus::PAID
                     : PaymentStatus::PENDING;
-                $finalPaymentDate = ($finalPaymentStatus == PaymentStatus::PAID) 
-                    ? now()->format('Y-m-d') 
+                $finalPaymentDate = ($finalPaymentStatus == PaymentStatus::PAID)
+                    ? now()->format('Y-m-d')
                     : null;
 
                 $booking->payments()->create([
@@ -2865,8 +2865,8 @@ class BookingService
                     'date'              => $finalPaymentDate,
                     'method'            => $paymentMethod,
                     'status'            => $finalPaymentStatus,
-                    'notes'             => $finalPaymentStatus == PaymentStatus::PAID 
-                        ? "Full payment for booking #{$booking->booking_id}" 
+                    'notes'             => $finalPaymentStatus == PaymentStatus::PAID
+                        ? "Full payment for booking #{$booking->booking_id}"
                         : "Payment pending for booking #{$booking->booking_id}",
                 ]);
             }

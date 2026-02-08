@@ -244,29 +244,49 @@ class PaymentService
                 'total_amount'   => $totalAmount,
                 'payment_method' => 'online_payment',
                 'due_bookings'   => json_encode($dueBookings->pluck('id')),
+                'source'         => 'admin', // Admin-generated payment link (for QR codes, etc.)
             ];
 
             Stripe::setApiKey(config('services.stripe.secret'));
 
-            $paymentLink = PaymentLink::create([
+            // Use Checkout Session instead of PaymentLink for better control and consistency
+            $user->createOrGetStripeCustomer();
+            if (!$user->stripe_id) {
+                throw new Exception('Failed to create Stripe customer');
+            }
+
+            $successUrl = url('/payment/success/{CHECKOUT_SESSION_ID}');
+            $cancelUrl = url('/payment/cancel?session_id={CHECKOUT_SESSION_ID}');
+
+            $session = \Stripe\Checkout\Session::create([
+                'customer' => $user->stripe_id,
+                'payment_method_types' => ['card'],
+                'mode' => 'payment',
+                'success_url' => $successUrl,
+                'cancel_url' => $cancelUrl,
+                'metadata' => $metadata,
                 'line_items' => [[
                     'price_data' => [
-                        'currency'     => 'qar',
-                        'unit_amount'  => $totalAmount * 100,
+                        'currency' => 'qar',
+                        'unit_amount' => $totalAmount * 100,
                         'product_data' => [
                             'name' => "Payment for Booking #{$booking->id}",
                         ],
                     ],
                     'quantity' => 1,
                 ]],
-                'metadata'         => $metadata,
-                'after_completion' => [
-                    'type'     => 'redirect',
-                    'redirect' => [
-                        'url' => url('/payment/success/{CHECKOUT_SESSION_ID}'),
-                    ],
-                ],
             ]);
+
+            // Store session in database
+            \App\Models\StripeSession::create([
+                'session_id' => $session->id,
+                'processed' => false,
+            ]);
+
+            $paymentLink = (object) [
+                'id' => $session->id,
+                'url' => $session->url,
+            ];
 
             return sendSuccess('Link generated successfully', [
                 'link'               => $paymentLink->url,
@@ -828,6 +848,7 @@ class PaymentService
                     'booking_id' => $mainBookingId,
                     'payment_type' => $paymentType,
                     'payment_method' => $validated['payment_method'],
+                    'source' => 'customer', // Customer booking from frontend
                 ],
                 'line_items' => [[
                     'price_data' => [
