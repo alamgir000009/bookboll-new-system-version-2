@@ -278,12 +278,9 @@
                 </div>
             @endif
 
-            {{-- <div class="actions">
-                <a href="/" class="btn btn-primary">Return to Homepage</a>
-                @if(isset($bookings) && count($bookings) > 0)
-                    <button onclick="window.print()" class="btn btn-secondary">Print Receipt</button>
-                @endif
-            </div> --}}
+            <div class="actions">
+                <a href="https://bookboll.com" class="btn btn-primary">Visit Bookboll</a>
+            </div>
         </div>
     @endif
 </body>
