@@ -2220,7 +2220,7 @@ class BookingService
                     $booking->history()->create([
                         'user_id'     => auth()->id() ?? $booking->user_id,
                         'action'      => 'loyalty_points_earned',
-                        'description' => "{$booking->loyalty_points_earned} loyalty points added to user #{$user->id} for booking confirmation.",
+                        'description' => "{$booking->loyalty_points_earned} loyalty points added to user #{$user->id} ({$user->name}) for booking confirmation.",
                     ]);
                 }
             }
