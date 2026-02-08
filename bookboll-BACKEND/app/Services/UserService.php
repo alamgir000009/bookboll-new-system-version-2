@@ -417,6 +417,7 @@ class UserService
         $formData = $request->validate([
             'name'             => 'sometimes|string|max:100',
             'email'            => 'sometimes|email|unique:users,email,' . $user->id,
+            'phone'            => 'nullable',
             'password'         => 'sometimes|min:8|confirmed',
             'current_password' => 'required_with:password|current_password',
         ]);
@@ -436,6 +437,10 @@ class UserService
 
             if (isset($formData['password'])) {
                 $updateData['password'] = $formData['password'];
+            }
+
+            if (isset($formData['phone'])) {
+                $updateData['phone'] = $formData['phone'];
             }
 
             if (! empty($updateData)) {
@@ -975,7 +980,7 @@ class UserService
     {
         $filePath = public_path($filename);
 
-        if (!file_exists($filePath)) {
+        if (! file_exists($filePath)) {
             return sendError("Excel file not found: {$filename}. Please place the file in the public folder.");
         }
 
@@ -985,9 +990,9 @@ class UserService
             Excel::import($import, $filePath);
 
             $successCount = $import->getSuccessCount();
-            $errorCount = $import->getErrorCount();
+            $errorCount   = $import->getErrorCount();
             $skippedCount = $import->getSkippedCount();
-            $errors = $import->getErrors();
+            $errors       = $import->getErrors();
 
             $message = "Import completed. Successfully imported {$successCount} user(s)";
             if ($skippedCount > 0) {
@@ -997,14 +1002,14 @@ class UserService
                 $message .= ", {$errorCount} error(s) occurred";
             }
 
-            $summary = [
-                'success_count' => $successCount,
-                'error_count' => $errorCount,
-                'skipped_count' => $skippedCount,
+            $summary  = [
+                'success_count'   => $successCount,
+                'error_count'     => $errorCount,
+                'skipped_count'   => $skippedCount,
                 'total_processed' => $successCount + $errorCount + $skippedCount,
             ];
 
-            if (!empty($errors)) {
+            if (! empty($errors)) {
                 $summary['errors'] = $errors;
             }
 
