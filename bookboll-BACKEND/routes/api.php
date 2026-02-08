@@ -158,6 +158,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('bookings/{id}/pay', [BookingController::class, 'pay'])->name('bookings.pay');
         Route::put('bookings/{id}/update', [BookingController::class, 'mobileUpdateBooking'])->name('bookings.mobileUpdate');
         Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent'])->name('payments.createPaymentIntent');
+        Route::post('payments/create-checkout-session', [PaymentController::class, 'createCheckoutSession'])->name('payments.createCheckoutSession');
 
         Route::get('promocodes', [PromocodeController::class, 'customerIndex'])->name('promocodes.customer.index');
     });

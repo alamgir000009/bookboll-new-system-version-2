@@ -554,6 +554,7 @@ class PaymentService
                     $mainBooking = $booking;
                 }
 
+                // Get ALL pending payments (deposit, remaining, full)
                 $pendingPayments = $booking->payments()
                     ->where('status', PaymentStatus::PENDING)
                     ->get();
@@ -564,9 +565,12 @@ class PaymentService
 
                 $hasAnyPendingPayments = true;
 
+                // Mark all pending payments as paid
                 foreach ($pendingPayments as $payment) {
                     $notes = $payment->notes ?? "Payment for booking #{$booking->id}";
                     $notes = str_replace('pending', 'paid via ' . $paymentMethodName, $notes);
+                    $notes = str_replace('Deposit payment pending', 'Deposit payment paid via ' . $paymentMethodName, $notes);
+                    $notes = str_replace('Remaining payment pending', 'Remaining payment paid via ' . $paymentMethodName, $notes);
 
                     $payment->update([
                         'notes'  => $notes,
@@ -576,10 +580,38 @@ class PaymentService
                     ]);
                 }
 
+                // Determine final payment status based on payment types
+                $hasDepositPayment = $booking->payments()
+                    ->where('type', PaymentType::DEPOSIT)
+                    ->where('status', PaymentStatus::PAID)
+                    ->exists();
+                
+                $hasRemainingPayment = $booking->payments()
+                    ->where('type', PaymentType::REMAINING)
+                    ->exists();
+                
+                $hasFullPayment = $booking->payments()
+                    ->where('type', PaymentType::FULL)
+                    ->where('status', PaymentStatus::PAID)
+                    ->exists();
+
+                $finalPaymentStatus = BookingPaymentStatus::FULLY_PAID;
+                if ($hasDepositPayment && $hasRemainingPayment) {
+                    // Check if remaining is also paid
+                    $remainingPaid = $booking->payments()
+                        ->where('type', PaymentType::REMAINING)
+                        ->where('status', PaymentStatus::PAID)
+                        ->exists();
+                    
+                    if (!$remainingPaid) {
+                        $finalPaymentStatus = BookingPaymentStatus::DEPOSIT_PAID;
+                    }
+                }
+
                 $bookingUpdates = [
-                    'full_payment_received' => true,
+                    'full_payment_received' => ($finalPaymentStatus === BookingPaymentStatus::FULLY_PAID),
                     'payment_method'        => $validated['payment_status'],
-                    'payment_status'        => BookingPaymentStatus::FULLY_PAID,
+                    'payment_status'        => $finalPaymentStatus,
                 ];
 
                 if ($isMain && $booking->payment_method === 'deposit_remaining_on_arrival') {
@@ -637,6 +669,203 @@ class PaymentService
                 'trace'          => $e,
             ]);
             return sendError('Failed to update booking payments. Please try again.');
+        }
+    }
+
+    public function createCheckoutSession(array $validated, $user)
+    {
+        try {
+            DB::beginTransaction();
+
+            Stripe::setApiKey(config('services.stripe.secret'));
+            
+            $user->createOrGetStripeCustomer();
+            if (!$user->stripe_id) {
+                throw new Exception('Failed to create Stripe customer');
+            }
+
+            // Calculate total amount
+            $listing = \App\Models\Listing::with('pricingGroups')->findOrFail($validated['listing_id']);
+            $weekday = strtolower(\Carbon\Carbon::parse($validated['date'])->format('l'));
+            
+            $specialDay = \App\Models\SpecialDay::with('timeBlocks')
+                ->where('venue_id', $listing->venue_id)
+                ->where(function ($q) use ($listing) {
+                    $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+                })
+                ->whereDate('date', $validated['date'])->active()->first();
+
+            $basePrice = determineSlotPrice(
+                $listing,
+                $weekday,
+                $validated['start_time'],
+                $validated['end_time'],
+                $specialDay
+            );
+
+            $addOnCost = !empty($validated['add_ons'])
+                ? \App\Models\AddOn::whereIn('id', $validated['add_ons'])->sum('price')
+                : 0;
+
+            $singleSubtotal = round($basePrice + $addOnCost, 2);
+            $baseSubtotal = round($singleSubtotal * $validated['quantity'], 2);
+
+            $recurringSubtotal = 0;
+            foreach ($validated['recurring_bookings'] ?? [] as $recurring) {
+                $recurringAddOnCost = !empty($recurring['add_ons'])
+                    ? \App\Models\AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
+                    : 0;
+                $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
+                $recurringQuantity = $recurring['quantity'] ?? 1;
+                $recurringSubtotal += $recurringSingleSubtotal * $recurringQuantity;
+            }
+
+            $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
+
+            // Apply promocode if provided
+            $totalDiscount = 0;
+            if (!empty($validated['promocode'])) {
+                $promocode = \App\Models\Promocode::where('code', $validated['promocode'])->active()->first();
+                if ($promocode) {
+                    $isValid = $promocode->isValidForOrder(
+                        $combinedSubtotal,
+                        $user->id,
+                        $validated['payment_method'],
+                        $validated['venue_id'],
+                        $validated['listing_id']
+                    );
+                    if ($isValid) {
+                        $totalDiscount = $promocode->applyDiscount($combinedSubtotal);
+                    }
+                }
+            }
+
+            // Apply gift card balance
+            $giftCardBalanceUsed = 0;
+            if (!empty($validated['use_gift_card_balance']) && $validated['use_gift_card_balance']) {
+                $userGiftCardBalance = \App\Models\Transaction::balance($user->id) ?? 0;
+                $requestedAmount = $validated['gift_card_balance_used'] ?? 0;
+                if ($requestedAmount > 0 && $userGiftCardBalance > 0) {
+                    $giftCardBalanceUsed = min($requestedAmount, $userGiftCardBalance, $combinedSubtotal - $totalDiscount);
+                }
+            }
+
+            $totalPrice = round($combinedSubtotal - $totalDiscount - $giftCardBalanceUsed, 2);
+            if ($totalPrice < 0) {
+                $totalPrice = 0;
+            }
+
+            // Determine payment amount based on payment method
+            $paymentAmount = $totalPrice;
+            $paymentType = 'full';
+            
+            if ($validated['payment_method'] === 'deposit_remaining_on_arrival') {
+                $depositAmount = 0;
+                if (!empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
+                    $deposit = $listing->payment_options['deposit'];
+                    if (!empty($deposit['amount']) && $deposit['amount'] > 0) {
+                        $depositAmount = $deposit['amount'];
+                    } elseif (!empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                        $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
+                    }
+                }
+                $paymentAmount = $depositAmount;
+                $paymentType = 'deposit';
+            }
+
+            if ($paymentAmount <= 0) {
+                throw new Exception('Payment amount must be greater than zero');
+            }
+
+            // Create bookings first (with pending payments) - bookings will be created with pending payment status
+            $bookingService = app(\App\Services\BookingService::class);
+            $bookingRequest = new \Illuminate\Http\Request();
+            $bookingRequest->merge(array_merge($validated, [
+                'payment_method' => $validated['payment_method'],
+                'payment_intent_id' => null, // Will be set after payment via success callback
+                'user_id' => $user->id,
+            ]));
+            $bookingRequest->setUserResolver(function () use ($user) {
+                return $user;
+            });
+
+            $bookingResult = $bookingService->createBooking($bookingRequest);
+            
+            if (!$bookingResult->getData()->success) {
+                throw new Exception($bookingResult->getData()->message ?? 'Failed to create booking');
+            }
+
+            $createdBookings = $bookingResult->getData()->data->bookings ?? [];
+            if (empty($createdBookings)) {
+                throw new Exception('No bookings were created');
+            }
+
+            $mainBookingId = $createdBookings[0]->id ?? null;
+            if (!$mainBookingId) {
+                throw new Exception('Failed to get main booking ID');
+            }
+            
+            // Update booking payment status to pending if it's online payment
+            if ($validated['payment_method'] === 'online_payment') {
+                \App\Models\Booking::where('id', $mainBookingId)->update([
+                    'payment_status' => \BookingPaymentStatus::PENDING,
+                    'payment_method' => \BookingPaymentMethod::ONLINE_PAYMENT,
+                ]);
+            }
+
+            // Create Stripe Checkout Session
+            $successUrl = url('/payment/success/{CHECKOUT_SESSION_ID}');
+            $cancelUrl = url('/payment/cancel?session_id={CHECKOUT_SESSION_ID}');
+
+            $sessionData = [
+                'customer' => $user->stripe_id,
+                'payment_method_types' => ['card'],
+                'mode' => 'payment',
+                'success_url' => $successUrl,
+                'cancel_url' => $cancelUrl,
+                'metadata' => [
+                    'user_id' => $user->id,
+                    'booking_id' => $mainBookingId,
+                    'payment_type' => $paymentType,
+                    'payment_method' => $validated['payment_method'],
+                ],
+                'line_items' => [[
+                    'price_data' => [
+                        'currency' => 'qar',
+                        'unit_amount' => $paymentAmount * 100, // Convert to cents
+                        'product_data' => [
+                            'name' => $paymentType === 'deposit' 
+                                ? "Deposit for Booking #{$mainBookingId}" 
+                                : "Payment for Booking #{$mainBookingId}",
+                        ],
+                    ],
+                    'quantity' => 1,
+                ]],
+            ];
+
+            $session = \Stripe\Checkout\Session::create($sessionData);
+
+            // Store session in database
+            \App\Models\StripeSession::create([
+                'session_id' => $session->id,
+                'processed' => false,
+            ]);
+
+            DB::commit();
+
+            return sendSuccess('Checkout session created successfully', [
+                'url' => $session->url,
+                'session_id' => $session->id,
+            ]);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Create checkout session error: ' . $e->getMessage(), [
+                'user_id' => $user->id,
+                'validated' => $validated,
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
         }
     }
 }

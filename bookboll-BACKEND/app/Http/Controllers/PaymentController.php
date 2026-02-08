@@ -274,6 +274,8 @@ class PaymentController extends Controller
                 return view('payment-success', ['error' => 'Payment verification failed: No bookings found.']);
             }
 
+            $paymentType = $session->metadata['payment_type'] ?? 'full'; // 'full' or 'deposit'
+            
             foreach ($bookingIds as $bookingId) {
                 $booking = Booking::find($bookingId);
                 if (! $booking) {
@@ -281,38 +283,75 @@ class PaymentController extends Controller
                     continue;
                 }
 
-                $pendingPayments = $booking->payments()
-                    ->where('status', PaymentStatus::PENDING)
-                    ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
-                    ->get();
+                if ($paymentType === 'deposit') {
+                    // Handle deposit payment
+                    $depositPayment = $booking->payments()
+                        ->where('status', PaymentStatus::PENDING)
+                        ->where('type', PaymentType::DEPOSIT)
+                        ->first();
 
-                if ($pendingPayments->isNotEmpty()) {
-                    foreach ($pendingPayments as $payment) {
-                        $notes = $payment->notes ?? "Full payment for booking #{$booking->id}";
-                        $notes = str_replace('pending', 'paid online via Stripe', $notes);
-
-                        $payment->update([
-                            'notes'             => $notes,
+                    if ($depositPayment) {
+                        $depositPayment->update([
+                            'notes'             => str_replace('pending', 'paid online via Stripe', $depositPayment->notes ?? 'Deposit payment for booking #' . $booking->booking_id),
                             'charge_id'         => $chargeId,
                             'payment_intent_id' => $paymentIntentId,
                             'status'            => PaymentStatus::PAID,
                             'method'            => PaymentMethod::ONLINE,
                             'date'              => now()->format('Y-m-d'),
                         ]);
+                        
+                        $booking->update([
+                            'payment_status' => BookingPaymentStatus::DEPOSIT_PAID,
+                            'payment_method' => BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL,
+                        ]);
+                        
                         $booking->history()->create([
                             'user_id'     => $userId,
                             'action'      => 'payment_received',
-                            'description' => "Payment #{$payment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
+                            'description' => "Deposit payment #{$depositPayment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
                         ]);
                     }
+                } else {
+                    // Handle full payment - update all pending payments (FULL or REMAINING)
+                    $pendingPayments = $booking->payments()
+                        ->where('status', PaymentStatus::PENDING)
+                        ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
+                        ->get();
+
+                    if ($pendingPayments->isNotEmpty()) {
+                        foreach ($pendingPayments as $payment) {
+                            $notes = $payment->notes ?? "Full payment for booking #{$booking->id}";
+                            $notes = str_replace('pending', 'paid online via Stripe', $notes);
+
+                            $payment->update([
+                                'notes'             => $notes,
+                                'charge_id'         => $chargeId,
+                                'payment_intent_id' => $paymentIntentId,
+                                'status'            => PaymentStatus::PAID,
+                                'method'            => PaymentMethod::ONLINE,
+                                'date'              => now()->format('Y-m-d'),
+                            ]);
+                            $booking->history()->create([
+                                'user_id'     => $userId,
+                                'action'      => 'payment_received',
+                                'description' => "Payment #{$payment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
+                            ]);
+                        }
+                    }
+                    
+                    $booking->update([
+                        'full_payment_received' => true,
+                        'payment_status'        => BookingPaymentStatus::FULLY_PAID,
+                        'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
+                    ]);
+                }
+                
+                // Auto-confirm booking if fully paid
+                if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
+                    autoConfirmBookingIfPaid($booking);
+                    regenerateBookingInvoice($booking);
                 }
             }
-
-            Booking::whereIn('id', $bookingIds)->update([
-                'full_payment_received' => true,
-                'payment_status'        => BookingPaymentStatus::FULLY_PAID,
-                'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
-            ]);
 
             foreach ($bookingIds as $bookingId) {
                 $booking = Booking::find($bookingId);
@@ -339,9 +378,90 @@ class PaymentController extends Controller
         }
     }
 
+    public function createCheckoutSession(Request $request)
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return sendError('Unauthorized', [], 401);
+        }
+
+        $validated = $request->validate([
+            'venue_id'                => 'required|exists:venues,id',
+            'listing_id'             => 'required|exists:listings,id',
+            'date'                    => 'required|date|after_or_equal:today',
+            'start_time'               => 'required|date_format:H:i',
+            'end_time'                 => 'required|date_format:H:i',
+            'payment_method'           => 'required|in:online_payment,deposit_remaining_on_arrival',
+            'quantity'                 => 'required|numeric|min:1',
+            'add_ons'                  => 'nullable|array',
+            'add_ons.*'                => 'exists:add_ons,id',
+            'promocode'                => 'nullable|string',
+            'notes'                    => 'nullable|string|max:500',
+            'phone'                    => 'nullable|string|min:5',
+            'recurring_bookings'       => 'nullable|array',
+            'recurring_bookings.*.date' => 'required|date|after:today',
+            'recurring_bookings.*.start_time' => 'required|date_format:H:i',
+            'recurring_bookings.*.end_time' => 'required|date_format:H:i',
+            'recurring_bookings.*.price' => 'required|numeric|min:0',
+            'recurring_bookings.*.quantity' => 'required|numeric|min:1',
+            'recurring_bookings.*.add_ons' => 'nullable|array',
+            'use_gift_card_balance'    => 'nullable|boolean',
+            'gift_card_balance_used'  => 'nullable|numeric|min:0',
+        ]);
+
+        try {
+            return $this->paymentService->createCheckoutSession($validated, $user);
+        } catch (Exception $e) {
+            Log::error('Create checkout session error: ' . $e->getMessage(), [
+                'user_id' => $user->id,
+                'request' => $request->all(),
+            ]);
+            return sendError('Failed to create checkout session: ' . $e->getMessage());
+        }
+    }
+
     public function cancelPayment()
     {
-        echo 'Payment cancelled. Please try again.';
+        $sessionId = request()->get('session_id');
+        
+        if ($sessionId) {
+            try {
+                Stripe::setApiKey(config('services.stripe.secret'));
+                $session = \Stripe\Checkout\Session::retrieve($sessionId);
+                
+                $bookingId = $session->metadata['booking_id'] ?? null;
+                
+                if ($bookingId) {
+                    DB::beginTransaction();
+                    
+                    $booking = Booking::find($bookingId);
+                    if ($booking && in_array($booking->status, [\BookingStatus::PENDING, \BookingStatus::CONFIRMED])) {
+                        $booking->update([
+                            'status' => \BookingStatus::CANCELLED,
+                            'cancelled_at' => now(),
+                            'cancelled_by' => $booking->user_id,
+                            'cancel_reason' => 'Payment cancelled by customer',
+                        ]);
+                        
+                        $booking->history()->create([
+                            'user_id' => $booking->user_id,
+                            'action' => 'booking_cancelled',
+                            'description' => 'Booking cancelled due to payment cancellation',
+                        ]);
+                    }
+                    
+                    DB::commit();
+                }
+            } catch (Exception $e) {
+                DB::rollBack();
+                Log::error('Payment cancellation error: ' . $e->getMessage(), [
+                    'session_id' => $sessionId,
+                ]);
+            }
+        }
+        
+        return view('payment-cancel');
     }
 
     public function getPaymentMethods()

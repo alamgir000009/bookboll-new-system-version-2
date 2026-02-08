@@ -984,7 +984,7 @@ class BookingService
             'add_ons.*'                       => 'exists:add_ons,id',
             'phone'                           => 'nullable|string|min:5',
             'payment_method_id'               => 'nullable|string',
-            'payment_intent_id'               => 'nullable|required_if:payment_method,online_payment,deposit_remaining_on_arrival',
+            'payment_intent_id'               => 'nullable', // Made nullable - will be set after Stripe checkout completion
             'save_payment_details'            => 'nullable|boolean',
             'quantity'                        => 'required|numeric|min:1',
             'recurring_bookings'              => 'nullable|array',
@@ -2713,15 +2713,19 @@ class BookingService
                 $totalPrice = 0;
             }
 
+            // For online_payment, if no payment_intent_id, set status to PENDING (will be paid via Stripe checkout)
+            $isOnlinePaymentPending = ($formData['payment_method'] === 'online_payment' && !$paymentIntentId);
+            $isDepositPending = ($formData['payment_method'] === 'deposit_remaining_on_arrival' && !$paymentIntentId);
+            
             $paymentStatus = match (trim($formData['payment_method'])) {
                 'cash_on_arrival'              => BookingPaymentStatus::PENDING,
-                'online_payment'               => BookingPaymentStatus::FULLY_PAID,
+                'online_payment'               => $isOnlinePaymentPending ? BookingPaymentStatus::PENDING : BookingPaymentStatus::FULLY_PAID,
                 'paid_cash'                    => BookingPaymentStatus::FULLY_PAID,
                 'paid_cheque'                  => BookingPaymentStatus::FULLY_PAID,
                 'paid_credit_card'             => BookingPaymentStatus::FULLY_PAID,
                 'paid_wire'                    => BookingPaymentStatus::FULLY_PAID,
                 'paid_wire_transfer'           => BookingPaymentStatus::FULLY_PAID,
-                'deposit_remaining_on_arrival' => BookingPaymentStatus::DEPOSIT_PAID,
+                'deposit_remaining_on_arrival' => $isDepositPending ? BookingPaymentStatus::PENDING : BookingPaymentStatus::DEPOSIT_PAID,
                 'payment_skipped'              => BookingPaymentStatus::PAYMENT_SKIPPED,
                 default                        => BookingPaymentStatus::PENDING,
             };
@@ -2760,10 +2764,10 @@ class BookingService
                 'full_payment_received' => $paymentStatus == BookingPaymentStatus::FULLY_PAID,
                 'is_free'               => $isPaymentSkipped,
                 'payment_breakdown'     => [
-                    'deposit_amount'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $depositAmount : 0,
-                    'deposit_method'   => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::ONLINE : null,
-                    'remaining_amount' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? $totalPrice - $depositAmount : 0,
-                    'remaining_method' => $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID ? PaymentMethod::CASH : null,
+                    'deposit_amount'   => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? $depositAmount : 0,
+                    'deposit_method'   => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? PaymentMethod::ONLINE : null,
+                    'remaining_amount' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? $totalPrice - $depositAmount : 0,
+                    'remaining_method' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? PaymentMethod::CASH : null,
                 ],
             ]);
 
@@ -2778,7 +2782,7 @@ class BookingService
             }
 
             if ($isPaymentSkipped) {
-            } elseif ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
+            } elseif ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) {
                 $paymentOptions = $listing ? $listing->payment_options : null;
 
                 if (! $paymentOptions || empty($paymentOptions['deposit'])) {
@@ -2799,17 +2803,23 @@ class BookingService
                     $depositAmount = $totalPrice;
                 }
 
+                // Create deposit payment - pending if no payment_intent_id (Stripe checkout), paid if payment_intent_id exists
+                $depositPaymentStatus = $paymentIntentId ? PaymentStatus::PAID : PaymentStatus::PENDING;
+                $depositPaymentDate = $paymentIntentId ? now()->format('Y-m-d') : null;
+
                 $this->paymentModel::create([
                     'charge_id'         => $chargeId,
                     'user_id'           => $user->id,
                     'booking_id'        => $booking->id,
                     'amount'            => $depositAmount,
                     'payment_intent_id' => $paymentIntentId,
-                    'status'            => PaymentStatus::PAID,
+                    'status'            => $depositPaymentStatus,
                     'type'              => PaymentType::DEPOSIT,
                     'method'            => PaymentMethod::ONLINE,
-                    'date'              => now()->format('Y-m-d'),
-                    'notes'             => 'Deposit payment for booking #' . $booking->booking_id,
+                    'date'              => $depositPaymentDate,
+                    'notes'             => $depositPaymentStatus === PaymentStatus::PAID 
+                        ? 'Deposit payment for booking #' . $booking->booking_id 
+                        : 'Deposit payment pending for booking #' . $booking->booking_id,
                     'payment_id'        => generatePaymentId($booking->id, PaymentType::DEPOSIT),
                 ]);
 
@@ -2836,6 +2846,15 @@ class BookingService
                     default              => PaymentMethod::CASH,
                 };
 
+                // For online_payment, if no payment_intent_id, create pending payment (will be paid via Stripe checkout success)
+                $isOnlinePaymentPending = ($formData['payment_method'] === 'online_payment' && !$paymentIntentId);
+                $finalPaymentStatus = ($paymentStatus == BookingPaymentStatus::FULLY_PAID && !$isOnlinePaymentPending) 
+                    ? PaymentStatus::PAID 
+                    : PaymentStatus::PENDING;
+                $finalPaymentDate = ($finalPaymentStatus == PaymentStatus::PAID) 
+                    ? now()->format('Y-m-d') 
+                    : null;
+
                 $booking->payments()->create([
                     'charge_id'         => $chargeId,
                     'user_id'           => $user->id,
@@ -2843,10 +2862,12 @@ class BookingService
                     'payment_intent_id' => $paymentIntentId,
                     'type'              => PaymentType::FULL,
                     'payment_id'        => generatePaymentId($booking->id, PaymentType::FULL),
-                    'date'              => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
+                    'date'              => $finalPaymentDate,
                     'method'            => $paymentMethod,
-                    'status'            => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
-                    'notes'             => $paymentStatus == BookingPaymentStatus::FULLY_PAID ? "Full payment for booking #{$booking->booking_id}" : "Payment pending for booking #{$booking->booking_id}",
+                    'status'            => $finalPaymentStatus,
+                    'notes'             => $finalPaymentStatus == PaymentStatus::PAID 
+                        ? "Full payment for booking #{$booking->booking_id}" 
+                        : "Payment pending for booking #{$booking->booking_id}",
                 ]);
             }
 
@@ -2870,6 +2891,12 @@ class BookingService
                     'user_id'     => $user->id,
                     'description' => 'Deposit payment processed.',
                     'action'      => BookingPaymentStatus::DEPOSIT_PAID,
+                ]);
+            } elseif ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival') {
+                $booking->history()->create([
+                    'user_id'     => $user->id,
+                    'description' => 'Booking created with deposit payment pending.',
+                    'action'      => 'booking_created',
                 ]);
             } elseif ($paymentStatus == BookingPaymentStatus::FULLY_PAID && in_array($formData['payment_method'], ['paid_cash', 'paid_cheque', 'paid_credit_card', 'paid_wire', 'paid_wire_transfer'])) {
                 $paymentMethodName = match (trim($formData['payment_method'])) {
