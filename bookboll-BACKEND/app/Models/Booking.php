@@ -4,6 +4,9 @@ namespace App\Models;
 use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
+use PaymentMethod;
+use PaymentStatus;
+use PaymentType;
 
 class Booking extends Model
 {
@@ -45,8 +48,35 @@ class Booking extends Model
         'total_price'           => 'decimal:2',
     ];
 
-    protected $appends = ['due_amount'];
+    protected $appends = ['due_amount', 'status_label'];
+    public function getStatusLabelAttribute()
+    {
+        if (
+            $this->payment_status === \BookingPaymentStatus::DEPOSIT_PAID
+            && $this->relationLoaded('payments')
+                ? $this->payments->count() > 1
+                : $this->payments()->count() > 1
+        ) {
 
+            $remainingPaymentExists = $this->relationLoaded('payments')
+                ? $this->payments
+                ->where('type', PaymentType::REMAINING)
+                ->where('method', PaymentMethod::CASH)
+                ->where('status', PaymentStatus::PENDING)
+                ->isNotEmpty()
+                : $this->payments()
+                ->where('type', PaymentType::REMAINING)
+                ->where('method', PaymentMethod::CASH)
+                ->where('status', PaymentStatus::PENDING)
+                ->exists();
+
+            if ($remainingPaymentExists) {
+                return 'Deposit paid - confirmed';
+            }
+        }
+
+        return $this->status;
+    }
     public function getDueAmountAttribute()
     {
         $dueAmount = 0;
@@ -192,24 +222,24 @@ class Booking extends Model
             if ($booking->start_time && $booking->end_time) {
                 // Use date if available, otherwise use today's date
                 $date = $booking->date ?? now()->format('Y-m-d');
-                
+
                 // Parse start_time and end_time - they might be datetime strings or time strings
                 $startTimeParsed = Carbon::parse($booking->start_time);
                 $endTimeParsed   = Carbon::parse($booking->end_time);
-                
+
                 // Extract just the time portion (H:i format)
                 $startTimeStr = $startTimeParsed->format('H:i');
                 $endTimeStr   = $endTimeParsed->format('H:i');
-                
+
                 // Create datetime objects using the booking date
                 $start = Carbon::parse($date . ' ' . $startTimeStr);
                 $end   = Carbon::parse($date . ' ' . $endTimeStr);
-                
+
                 // If end time is less than start time, it means end time is on the next day
                 if ($end->lt($start)) {
                     $end->addDay();
                 }
-                
+
                 $booking->duration = abs($end->diffInHours($start));
             }
         });
