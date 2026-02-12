@@ -753,7 +753,19 @@ class BookingService
             $validBlock = collect($specialDay->time_blocks)->first(function ($b) use ($dataStartCarbon, $dataEndCarbon) {
                 $blockStart = Carbon::createFromFormat('H:i', $b->start_time);
                 $blockEnd   = Carbon::createFromFormat('H:i', $b->end_time);
-                return $dataStartCarbon->gte($blockStart) && $dataEndCarbon->lte($blockEnd);
+
+                // Treat 00:00 end time as midnight end-of-day (next day)
+                if ($b->end_time === '00:00') {
+                    $blockEnd->addDay();
+                }
+
+                // Also handle booking end time of 00:00
+                $bookingEnd = $dataEndCarbon->copy();
+                if ($bookingEnd->format('H:i') === '00:00' && $bookingEnd->lte($dataStartCarbon)) {
+                    $bookingEnd->addDay();
+                }
+
+                return $dataStartCarbon->gte($blockStart) && $bookingEnd->lte($blockEnd);
             });
             if (! $validBlock) {
                 $errors['start_time'] = 'Outside special day blocks';

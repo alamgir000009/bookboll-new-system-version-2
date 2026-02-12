@@ -79,11 +79,18 @@ class SpecialDayService
 
         if (! empty($validated['time_blocks'])) {
             foreach ($validated['time_blocks'] as $block) {
-                if (
-                    isset($block['start_time'], $block['end_time']) &&
-                    Carbon::parse($block['end_time'])->lessThanOrEqualTo(Carbon::parse($block['start_time']))
-                ) {
-                    return sendError('End time must be after start time for all time blocks.');
+                if (isset($block['start_time'], $block['end_time'])) {
+                    $startTime = Carbon::parse($block['start_time']);
+                    $endTime   = Carbon::parse($block['end_time']);
+
+                    // Treat 00:00 as midnight end-of-day (next day) so blocks like 22:00-00:00 are valid
+                    if ($block['end_time'] === '00:00') {
+                        $endTime->addDay();
+                    }
+
+                    if ($endTime->lessThanOrEqualTo($startTime)) {
+                        return sendError('End time must be after start time for all time blocks.');
+                    }
                 }
             }
         }
