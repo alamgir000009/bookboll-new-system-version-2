@@ -274,12 +274,12 @@
                                 </tr>
                             </table>
                         </div>
-                        @if($booking->status)
+                        @if($booking->status || $booking->status_label)
                         <div class="booking-row">
                             <table>
                                 <tr>
                                     <td>Status:</td>
-                                    <td style="font-weight: 600; color: {{ $booking->status === 'confirmed' ? '#27ae60' : ($booking->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($booking->status) }}</td>
+                                    <td style="font-weight: 600; color: {{ $booking->status === 'confirmed' ? '#27ae60' : ($booking->status === 'pending' ? '#f39c12' : '#e74c3c') }};">{{ ucfirst($booking->status_label ?? $booking->status ?? 'N/A') }}</td>
                                 </tr>
                             </table>
                         </div>
