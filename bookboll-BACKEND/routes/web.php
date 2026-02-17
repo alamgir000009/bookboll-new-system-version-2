@@ -9,9 +9,7 @@ use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 Route::get('newsletter/unsubscribe/{email}', [NewsletterController::class, 'unsubscribe'])->name('newsletter.unsubscribe');
 
 Route::get('/', function () {
-    $subscribers = App\Models\Subscriber::where('status', 'subscribed')->get();
-    dispatch(new App\Jobs\SendNewsletter('Test Subject', '<p>Hello!</p>', $subscribers));
-    return view('welcome');
+    return "NANANANANANANANANAN";
 });
 
 Route::get('storage-link-000009', function () {
