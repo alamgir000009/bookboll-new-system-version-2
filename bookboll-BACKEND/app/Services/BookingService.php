@@ -753,7 +753,19 @@ class BookingService
             $validBlock = collect($specialDay->time_blocks)->first(function ($b) use ($dataStartCarbon, $dataEndCarbon) {
                 $blockStart = Carbon::createFromFormat('H:i', $b->start_time);
                 $blockEnd   = Carbon::createFromFormat('H:i', $b->end_time);
-                return $dataStartCarbon->gte($blockStart) && $dataEndCarbon->lte($blockEnd);
+
+                // Treat 00:00 end time as midnight end-of-day (next day)
+                if ($b->end_time === '00:00') {
+                    $blockEnd->addDay();
+                }
+
+                // Also handle booking end time of 00:00
+                $bookingEnd = $dataEndCarbon->copy();
+                if ($bookingEnd->format('H:i') === '00:00' && $bookingEnd->lte($dataStartCarbon)) {
+                    $bookingEnd->addDay();
+                }
+
+                return $dataStartCarbon->gte($blockStart) && $bookingEnd->lte($blockEnd);
             });
             if (! $validBlock) {
                 $errors['start_time'] = 'Outside special day blocks';
@@ -2383,7 +2395,7 @@ class BookingService
     {
         $today = Carbon::today();
 
-        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice'])
+        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice', 'payments'])
             ->where('user_id', auth()->id())->where('date', '>=', $today)
             ->orderBy('date', 'desc')->orderBy('start_time', 'asc')->get();
 
@@ -2394,7 +2406,7 @@ class BookingService
     {
         $today = Carbon::today();
 
-        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice'])
+        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice', 'payments'])
             ->where('user_id', auth()->id())->where('date', '<', $today)
             ->orderBy('date', 'desc')->orderBy('start_time', 'asc')->get();
 
