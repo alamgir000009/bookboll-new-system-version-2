@@ -2752,7 +2752,10 @@ class BookingService
                 } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
                     $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
                 }
+                $depositAmount = min($depositAmount, max(0, $totalPrice));
             }
+
+            $remainingAmount = max(0, $totalPrice - $depositAmount);
 
             $isPaymentSkipped = $paymentStatus == BookingPaymentStatus::PAYMENT_SKIPPED;
 
@@ -2778,7 +2781,7 @@ class BookingService
                 'payment_breakdown'     => [
                     'deposit_amount'   => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? $depositAmount : 0,
                     'deposit_method'   => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? PaymentMethod::ONLINE : null,
-                    'remaining_amount' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? $totalPrice - $depositAmount : 0,
+                    'remaining_amount' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? $remainingAmount : 0,
                     'remaining_method' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? PaymentMethod::CASH : null,
                 ],
             ]);

@@ -29,6 +29,7 @@ class PromocodeService
 
         $query = $this->promocodeModel::with(['venues', 'listings', 'users'])
             ->nonReminderPromocodes()
+            ->where('is_gift_card_promocode', false)
             ->latest()
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {

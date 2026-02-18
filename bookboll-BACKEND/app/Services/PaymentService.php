@@ -797,8 +797,8 @@ class PaymentService
                 $paymentType = 'deposit';
             }
 
-            if ($paymentAmount <= 0) {
-                throw new Exception('Payment amount must be greater than zero');
+            if ($totalPrice <= 0) {
+                $paymentAmount = 0;
             }
 
             $bookingService = app(\App\Services\BookingService::class);
@@ -827,6 +827,16 @@ class PaymentService
             $mainBookingId = $allBookingIds[0] ?? null;
             if (!$mainBookingId) {
                 throw new Exception('Failed to get main booking ID');
+            }
+
+            if ($paymentAmount <= 0) {
+                $this->markBookingsAsFullyPaidFree($createdBookings, $totalPrice, $totalDiscount);
+                DB::commit();
+                return sendSuccess('Booking confirmed successfully', [
+                    'free_booking' => true,
+                    'bookings' => $createdBookings,
+                    'url' => null,
+                ]);
             }
 
             if ($validated['payment_method'] === 'online_payment') {
@@ -889,6 +899,48 @@ class PaymentService
                 'trace' => $e->getTraceAsString(),
             ]);
             throw $e;
+        }
+    }
+
+    protected function markBookingsAsFullyPaidFree(array $createdBookings, float $totalPrice, float $totalDiscount): void
+    {
+        foreach ($createdBookings as $bookingItem) {
+            $bookingId = $bookingItem instanceof Booking
+                ? $bookingItem->id
+                : (is_array($bookingItem) ? ($bookingItem['id'] ?? null) : ($bookingItem->id ?? null));
+            $booking = $bookingItem instanceof Booking ? $bookingItem : Booking::find($bookingId);
+            if (!$booking) {
+                continue;
+            }
+
+            $booking->update([
+                'payment_status' => BookingPaymentStatus::FULLY_PAID,
+                'full_payment_received' => true,
+                'payment_breakdown' => [
+                    'deposit_amount'   => 0,
+                    'deposit_method'   => null,
+                    'remaining_amount' => 0,
+                    'remaining_method' => null,
+                ],
+            ]);
+
+            $booking->payments()->where('status', PaymentStatus::PENDING)->update([
+                'status' => PaymentStatus::PAID,
+                'date' => now()->format('Y-m-d'),
+                'notes' => 'Free booking - fully covered by promocode',
+            ]);
+
+            $booking->history()->create([
+                'user_id' => $booking->user_id,
+                'action' => 'payment_received',
+                'description' => 'Booking fully covered by promocode – no payment required',
+            ]);
+
+            $user = $booking->user;
+            if ($user) {
+                createBookingInvoiceWithNotification($booking, $user);
+            }
+            autoConfirmBookingIfPaid($booking);
         }
     }
 }
