@@ -49,13 +49,17 @@ class Booking extends Model
     ];
 
     protected $appends = ['due_amount', 'status_label'];
+
     public function getStatusLabelAttribute()
     {
         if (
-            $this->payment_status === \BookingPaymentStatus::DEPOSIT_PAID
-            && $this->relationLoaded('payments')
-                ? $this->payments->count() > 1
-                : $this->payments()->count() > 1
+            $this->status == BookingStatus::PENDING
+            && $this->payment_status === \BookingPaymentStatus::DEPOSIT_PAID
+            && (
+                $this->relationLoaded('payments')
+                    ? $this->payments->count() > 1
+                    : $this->payments()->count() > 1
+            )
         ) {
 
             $remainingPaymentExists = $this->relationLoaded('payments')
@@ -77,6 +81,7 @@ class Booking extends Model
 
         return $this->status;
     }
+
     public function getDueAmountAttribute()
     {
         $dueAmount = 0;
