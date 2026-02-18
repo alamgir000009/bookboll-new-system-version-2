@@ -862,7 +862,9 @@ class PaymentService
             $slotLines = [];
             foreach ($allBookings as $b) {
                 $d = \Carbon\Carbon::parse($b->date)->format('M j, Y');
-                $t = trim(($b->start_time ?? '') . ' - ' . ($b->end_time ?? ''));
+                $startAmPm = $b->start_time ? \Carbon\Carbon::parse($b->start_time)->format('g:i A') : '';
+                $endAmPm = $b->end_time ? \Carbon\Carbon::parse($b->end_time)->format('g:i A') : '';
+                $t = trim($startAmPm . ($startAmPm && $endAmPm ? ' - ' : '') . $endAmPm);
                 $slotLines[] = $t ? "{$d} {$t}" : $d;
             }
             $allSlotsSummary = implode('; ', $slotLines);
