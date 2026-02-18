@@ -854,20 +854,25 @@ class PaymentService
             $listingName = $mainBooking?->listing?->name ?? $listing->name ?? 'Facility';
             $bookingRef = $mainBooking?->booking_id ?? "BKN#{$mainBookingId}";
 
-            $bookingDate = \Carbon\Carbon::parse($validated['date'])->format('D, M j, Y');
-            $bookingTime = ($validated['start_time'] ?? '') . ' - ' . ($validated['end_time'] ?? '');
-            $quantity = $validated['quantity'] ?? 1;
-            $recurringCount = count($validated['recurring_bookings'] ?? []);
-            $totalSlots = $quantity + $recurringCount;
+            $baseQuantity = $validated['quantity'] ?? 1;
+            $totalRecurringQty = collect($validated['recurring_bookings'] ?? [])->sum('quantity');
+            $totalSlots = $baseQuantity + $totalRecurringQty;
+
+            $allBookings = Booking::whereIn('id', $allBookingIds)->orderBy('id')->get(['id', 'booking_id', 'date', 'start_time', 'end_time']);
+            $slotLines = [];
+            foreach ($allBookings as $b) {
+                $d = \Carbon\Carbon::parse($b->date)->format('M j, Y');
+                $t = trim(($b->start_time ?? '') . ' - ' . ($b->end_time ?? ''));
+                $slotLines[] = $t ? "{$d} {$t}" : $d;
+            }
+            $allSlotsSummary = implode('; ', $slotLines);
 
             $productName = $paymentType === 'deposit'
-                ? "Deposit: {$listingName} @ {$venueName}"
-                : "Payment: {$listingName} @ {$venueName}";
+                ? "Deposit: {$listingName} @ {$venueName} ({$totalSlots} slots)"
+                : "Payment: {$listingName} @ {$venueName} ({$totalSlots} slots)";
 
             $productDescription = trim(implode(' | ', array_filter([
-                "Date: {$bookingDate}",
-                $bookingTime ? "Time: {$bookingTime}" : null,
-                "Slots: {$totalSlots}",
+                "Slots ({$totalSlots}): " . $allSlotsSummary,
                 $validated['promocode'] ? "Promo: {$validated['promocode']}" : null,
                 "Subtotal: QAR " . number_format($combinedSubtotal, 2),
                 $totalDiscount > 0 ? "Discount: -QAR " . number_format($totalDiscount, 2) : null,
@@ -889,12 +894,12 @@ class PaymentService
                     'booking_id' => (string) $mainBookingId,
                     'booking_ref' => $bookingRef,
                     'all_booking_ids' => json_encode($allBookingIds),
+                    'all_booking_refs' => $allBookings->pluck('booking_id')->filter()->implode(','),
+                    'all_slots' => $allSlotsSummary,
                     'venue_id' => (string) ($listing->venue_id ?? ''),
                     'venue_name' => $venueName,
                     'listing_id' => (string) ($listing->id ?? ''),
                     'listing_name' => $listingName,
-                    'booking_date' => $validated['date'] ?? '',
-                    'booking_time' => $bookingTime,
                     'payment_type' => $paymentType,
                     'payment_method' => $validated['payment_method'],
                     'payment_amount_qar' => (string) $paymentAmount,
@@ -916,7 +921,8 @@ class PaymentService
                                 'booking_ref' => $bookingRef,
                                 'venue' => $venueName,
                                 'listing' => $listingName,
-                                'date' => $validated['date'] ?? '',
+                                'slot_count' => (string) $totalSlots,
+                                'slots' => strlen($allSlotsSummary) <= 500 ? $allSlotsSummary : substr($allSlotsSummary, 0, 497) . '...',
                             ],
                         ],
                     ],
