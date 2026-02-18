@@ -849,6 +849,33 @@ class PaymentService
             $successUrl = url('/payment/success/{CHECKOUT_SESSION_ID}');
             $cancelUrl = url('/payment/cancel?session_id={CHECKOUT_SESSION_ID}');
 
+            $mainBooking = Booking::with(['venue:id,name', 'listing:id,name'])->find($mainBookingId);
+            $venueName = $mainBooking?->venue?->name ?? $listing->venue?->name ?? 'Venue';
+            $listingName = $mainBooking?->listing?->name ?? $listing->name ?? 'Facility';
+            $bookingRef = $mainBooking?->booking_id ?? "BKN#{$mainBookingId}";
+
+            $bookingDate = \Carbon\Carbon::parse($validated['date'])->format('D, M j, Y');
+            $bookingTime = ($validated['start_time'] ?? '') . ' - ' . ($validated['end_time'] ?? '');
+            $quantity = $validated['quantity'] ?? 1;
+            $recurringCount = count($validated['recurring_bookings'] ?? []);
+            $totalSlots = $quantity + $recurringCount;
+
+            $productName = $paymentType === 'deposit'
+                ? "Deposit: {$listingName} @ {$venueName}"
+                : "Payment: {$listingName} @ {$venueName}";
+
+            $productDescription = trim(implode(' | ', array_filter([
+                "Date: {$bookingDate}",
+                $bookingTime ? "Time: {$bookingTime}" : null,
+                "Slots: {$totalSlots}",
+                $validated['promocode'] ? "Promo: {$validated['promocode']}" : null,
+                "Subtotal: QAR " . number_format($combinedSubtotal, 2),
+                $totalDiscount > 0 ? "Discount: -QAR " . number_format($totalDiscount, 2) : null,
+                "Total: QAR " . number_format($totalPrice, 2),
+                $paymentType === 'deposit' ? "Deposit due: QAR " . number_format($paymentAmount, 2) : null,
+            ])));
+            $productDescription = strlen($productDescription) > 500 ? substr($productDescription, 0, 497) . '...' : $productDescription;
+
             $sessionData = [
                 'customer' => $user->stripe_id,
                 'payment_method_types' => ['card'],
@@ -856,21 +883,41 @@ class PaymentService
                 'success_url' => $successUrl,
                 'cancel_url' => $cancelUrl,
                 'metadata' => [
-                    'user_id' => $user->id,
-                    'booking_id' => $mainBookingId,
+                    'user_id' => (string) $user->id,
+                    'user_email' => $user->email ?? '',
+                    'user_name' => $user->name ?? '',
+                    'booking_id' => (string) $mainBookingId,
+                    'booking_ref' => $bookingRef,
                     'all_booking_ids' => json_encode($allBookingIds),
+                    'venue_id' => (string) ($listing->venue_id ?? ''),
+                    'venue_name' => $venueName,
+                    'listing_id' => (string) ($listing->id ?? ''),
+                    'listing_name' => $listingName,
+                    'booking_date' => $validated['date'] ?? '',
+                    'booking_time' => $bookingTime,
                     'payment_type' => $paymentType,
                     'payment_method' => $validated['payment_method'],
+                    'payment_amount_qar' => (string) $paymentAmount,
+                    'subtotal_qar' => (string) $combinedSubtotal,
+                    'discount_qar' => (string) $totalDiscount,
+                    'total_qar' => (string) $totalPrice,
+                    'quantity' => (string) $totalSlots,
+                    'promocode' => $validated['promocode'] ?? '',
                     'source' => 'customer',
                 ],
                 'line_items' => [[
                     'price_data' => [
                         'currency' => 'qar',
-                        'unit_amount' => $paymentAmount * 100,
+                        'unit_amount' => (int) round($paymentAmount * 100),
                         'product_data' => [
-                            'name' => $paymentType === 'deposit'
-                                ? "Deposit for Booking #{$mainBookingId}"
-                                : "Payment for Booking #{$mainBookingId}",
+                            'name' => $productName,
+                            'description' => $productDescription,
+                            'metadata' => [
+                                'booking_ref' => $bookingRef,
+                                'venue' => $venueName,
+                                'listing' => $listingName,
+                                'date' => $validated['date'] ?? '',
+                            ],
                         ],
                     ],
                     'quantity' => 1,
