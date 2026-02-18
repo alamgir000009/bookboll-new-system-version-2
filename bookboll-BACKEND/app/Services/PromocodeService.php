@@ -59,6 +59,7 @@ class PromocodeService
 
         $query = $this->promocodeModel::with(['venues', 'listings'])
             ->active()
+            ->where('is_gift_card_promocode', false)
             ->where(function ($q) use ($user) {
                 $q->where(function ($subQ) {
                     $subQ->whereDoesntHave('users')

@@ -21,6 +21,8 @@ class Promocode extends Model
         'min_order_amount',
         'max_discount_amount',
         'is_reminder_promocode',
+        'is_gift_card_promocode',
+        'gift_card_id',
     ];
 
     protected $casts = [
@@ -28,7 +30,8 @@ class Promocode extends Model
         'expires_at'            => 'date',
         'used_by_users'         => 'array',
         'discount_value'         => 'decimal:2',
-        'is_reminder_promocode' => 'boolean',
+        'is_reminder_promocode'  => 'boolean',
+        'is_gift_card_promocode' => 'boolean',
         'min_order_amount'    => 'decimal:2',
         'max_discount_amount' => 'decimal:2',
     ];
@@ -41,6 +44,16 @@ class Promocode extends Model
     public function listings()
     {
         return $this->belongsToMany(Listing::class);
+    }
+
+    public function giftCard()
+    {
+        return $this->belongsTo(GiftCard::class);
+    }
+
+    public function scopeGiftCardPromocodes($query)
+    {
+        return $query->where('is_gift_card_promocode', true);
     }
 
     public function users()

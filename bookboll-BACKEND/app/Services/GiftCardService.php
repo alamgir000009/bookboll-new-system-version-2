@@ -3,7 +3,7 @@ namespace App\Services;
 
 use App\Models\GiftCard;
 use App\Models\LoyaltyPoint;
-use App\Models\Transaction;
+use App\Models\Promocode;
 
 class GiftCardService
 {
@@ -28,17 +28,19 @@ class GiftCardService
             ->get();
 
         $data['giftCards'] = $giftCards;
-        if ($request->status) {
-
-            $customer        = auth()->user();
+        $customer = auth()->user();
+        if ($customer) {
             $availablePoints = LoyaltyPoint::balance($customer->id);
             $redeemedPoints  = $customer->loyaltyPoints()->where('type', 'debit')->sum('points');
-            $balance         = Transaction::balance($customer->id);
+            $giftCardPromocodesTotal = Promocode::giftCardPromocodes()
+                ->whereHas('users', fn($q) => $q->where('user_id', $customer->id))
+                ->where('status', 'active')
+                ->whereRaw('(usage_limit IS NULL OR used_count < usage_limit)')
+                ->sum('discount_value');
 
-            $data['balance']         = $balance;
+            $data['balance']         = $giftCardPromocodesTotal;
             $data['redeemedPoints']  = $redeemedPoints;
             $data['availablePoints'] = $availablePoints;
-
         }
 
         return sendSuccess('Gift cards retrieved successfully', $data);
@@ -103,7 +105,7 @@ class GiftCardService
         $giftCard = GiftCard::find($request->gift_card_id);
 
         if (LoyaltyPoint::balance($customer->id) < $giftCard->points_required) {
-            return sendSuccess('Insufficient points to redeem this gift card.');
+            return sendError('Insufficient points to redeem this gift card.');
         }
 
         $customer->loyaltyPoints()->create([
@@ -112,26 +114,63 @@ class GiftCardService
             'reason' => "Redeemed '{$giftCard->title}' gift card",
         ]);
 
-        $customer->transactions()->create([
-            'gift_card_id' => $giftCard->id,
-            'amount'       => $giftCard->value,
-            'reason'       => "Gift card redeemed: {$giftCard->title}",
+        $code = $this->generateUniqueGiftCardPromocode();
+
+        $promocode = Promocode::create([
+            'code'                   => $code,
+            'status'                 => 'active',
+            'description'            => "Gift card redeemed: {$giftCard->title}",
+            'discount_type'          => 'fixed',
+            'discount_value'         => $giftCard->value,
+            'payment_methods'        => 'all',
+            'usage_limit'            => 1,
+            'per_user_limit'         => 1,
+            'is_gift_card_promocode' => true,
+            'gift_card_id'           => $giftCard->id,
         ]);
+
+        $promocode->users()->attach($customer->id, ['usage_count' => 0]);
 
         $availablePoints = LoyaltyPoint::balance($customer->id);
         $redeemedPoints  = $customer->loyaltyPoints()->where('type', 'debit')->sum('points');
-        $balance         = Transaction::balance($customer->id);
 
-        $data['balance']         = $balance;
+        $data['promocode']       = [
+            'code'   => $promocode->code,
+            'value'  => (float) $promocode->discount_value,
+            'format' => "QAR {$promocode->discount_value} off - Use at checkout",
+        ];
         $data['redeemedPoints']  = $redeemedPoints;
         $data['availablePoints'] = $availablePoints;
 
-        return sendSuccess("Gift card redeemed successfully", $data);
+        return sendSuccess("Gift card redeemed successfully! Use code {$promocode->code} at checkout.", $data);
     }
 
     public function getUserGiftCardBalance(int $userId)
     {
-        $balance = Transaction::balance($userId ?? auth()->id()) ?? 0;
+        $userId = $userId ?? auth()->id();
+        $balance = \App\Models\Transaction::balance($userId) ?? 0;
         return sendSuccess('Balance fetched successfully', compact('balance'));
+    }
+
+    public function getGiftCardPromocodes(int $userId)
+    {
+        $promocodes = Promocode::giftCardPromocodes()
+            ->with('giftCard:id,title,value')
+            ->whereHas('users', fn($q) => $q->where('user_id', $userId))
+            ->where('status', 'active')
+            ->whereRaw('(usage_limit IS NULL OR used_count < usage_limit)')
+            ->latest()
+            ->get();
+
+        return sendSuccess('Gift card promocodes fetched successfully', compact('promocodes'));
+    }
+
+    protected function generateUniqueGiftCardPromocode(): string
+    {
+        do {
+            $code = 'GC-' . strtoupper(substr(bin2hex(random_bytes(6)), 0, 8));
+        } while (Promocode::where('code', $code)->exists());
+
+        return $code;
     }
 }

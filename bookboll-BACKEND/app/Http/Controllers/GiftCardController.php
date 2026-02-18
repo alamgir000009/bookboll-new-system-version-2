@@ -42,6 +42,11 @@ class GiftCardController extends Controller
 
     public function getBalance()
     {
-        return  $this->giftCardService->getUserGiftCardBalance(auth()->id());
+        return $this->giftCardService->getUserGiftCardBalance(auth()->id());
+    }
+
+    public function getGiftCardPromocodes()
+    {
+        return $this->giftCardService->getGiftCardPromocodes(auth()->id());
     }
 }

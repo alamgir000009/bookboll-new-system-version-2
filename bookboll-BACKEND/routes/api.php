@@ -149,6 +149,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards'])->name('gift-cards.index');
         Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard'])->name('gift-cards.redeem');
         Route::get('gift-cards/balance', [GiftCardController::class, 'getBalance'])->name('gift-cards.balance');
+        Route::get('gift-cards/promocodes', [GiftCardController::class, 'getGiftCardPromocodes'])->name('gift-cards.promocodes');
 
         Route::post('bookings/validate', [BookingController::class, 'validateBooking'])->name('bookings.validate');
         Route::post('bookings/confirm', [BookingController::class, 'confirmBooking'])->name('bookings.confirmBooking');
