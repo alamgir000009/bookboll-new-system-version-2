@@ -166,6 +166,14 @@ class BookingService
             return sendError('Booking is already cancelled.');
         }
 
+        $currentUser = auth()->user();
+        $isBookingOwner = (int) $currentUser->id === (int) $booking->user_id;
+        $hasCancelPermission = $currentUser->hasAnyRole(['super_admin', 'admin', 'senior_employee', 'junior_employee', 'guard']);
+
+        if (! $isBookingOwner && ! $hasCancelPermission) {
+            return sendError('You are not allowed to cancel this booking. Only the booking creator or staff can cancel.');
+        }
+
         try {
             DB::beginTransaction();
 
