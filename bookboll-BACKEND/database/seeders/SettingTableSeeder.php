@@ -63,6 +63,12 @@ class SettingTableSeeder extends Seeder
                 'type'        => 'integer',
                 'description' => 'Number of days before the end of current month when next month slots become available',
             ],
+            [
+                'key'         => 'deposit_payment_timeout_minutes',
+                'value'       => 10,
+                'type'        => 'integer',
+                'description' => 'Auto-cancel unpaid deposit bookings after the following minutes',
+            ],
 
             // Modules
             [

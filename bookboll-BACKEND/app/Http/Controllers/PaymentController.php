@@ -219,21 +219,21 @@ class PaymentController extends Controller
                 $mainBookingId   = $session->metadata['booking_id'] ?? null;
                 $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
                 $dueIds          = json_decode($dueBookingsJson, true) ?? [];
-                
+
                 // Get all booking IDs from metadata (for customer bookings with recurring)
                 $allBookingIdsJson = $session->metadata['all_booking_ids'] ?? null;
                 $allBookingIds = null;
                 if ($allBookingIdsJson) {
                     $allBookingIds = json_decode($allBookingIdsJson, true) ?? [];
                 }
-                
+
                 // Prioritize all_booking_ids if available
                 if ($allBookingIds && !empty($allBookingIds)) {
                     $bookingIds = array_unique(array_filter($allBookingIds));
                 } else {
                     $bookingIds = array_unique(array_filter(array_merge([$mainBookingId], $dueIds)));
                 }
-                
+
                 $source = $session->metadata['source'] ?? 'customer';
 
                 // Check source and redirect accordingly
@@ -292,7 +292,7 @@ class PaymentController extends Controller
             $userId          = $session->metadata['user_id'] ?? null;
             $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
             $dueIds          = json_decode($dueBookingsJson, true) ?? [];
-            
+
             // Get all booking IDs from metadata (for customer bookings with recurring)
             $allBookingIdsJson = $session->metadata['all_booking_ids'] ?? null;
             $allBookingIds = null;
@@ -342,14 +342,14 @@ class PaymentController extends Controller
             }
 
             $paymentType = $session->metadata['payment_type'] ?? 'full'; // 'full' or 'deposit'
-            
+
             Log::info('Processing payment for bookings', [
                 'session_id' => $session_id,
                 'booking_ids' => $bookingIds,
                 'payment_type' => $paymentType,
                 'total_bookings' => count($bookingIds),
             ]);
-            
+
             foreach ($bookingIds as $bookingId) {
                 $booking = Booking::find($bookingId);
                 if (! $booking) {
@@ -373,12 +373,12 @@ class PaymentController extends Controller
                             'method'            => PaymentMethod::ONLINE,
                             'date'              => now()->format('Y-m-d'),
                         ]);
-                        
+
                         $booking->update([
                             'payment_status' => BookingPaymentStatus::DEPOSIT_PAID,
                             'payment_method' => BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL,
                         ]);
-                        
+
                         $booking->history()->create([
                             'user_id'     => $userId,
                             'action'      => 'payment_received',
@@ -412,14 +412,14 @@ class PaymentController extends Controller
                             ]);
                         }
                     }
-                    
+
                     $booking->update([
                         'full_payment_received' => true,
                         'payment_status'        => BookingPaymentStatus::FULLY_PAID,
                         'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
                     ]);
                 }
-                
+
                 // Auto-confirm booking if fully paid
                 if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
                     autoConfirmBookingIfPaid($booking);
@@ -450,13 +450,13 @@ class PaymentController extends Controller
                 // Customer booking from frontend - redirect to frontend
                 $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
                 $bookingIdsParam = implode(',', $bookingIds);
-                
+
                 Log::info('Redirecting to frontend thank you page', [
                     'booking_ids' => $bookingIds,
                     'booking_ids_param' => $bookingIdsParam,
                     'total_bookings' => count($bookingIds),
                 ]);
-                
+
                 $redirectUrl = rtrim($frontendUrl, '/') . '/thank-you?booking_ids=' . $bookingIdsParam;
                 return redirect($redirectUrl);
             }
@@ -464,7 +464,7 @@ class PaymentController extends Controller
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Stripe success route error: ' . $e->getMessage(), ['session_id' => $session_id]);
-            
+
             // Try to get source from session if available
             try {
                 $session = \Stripe\Checkout\Session::retrieve($session_id);
@@ -472,7 +472,7 @@ class PaymentController extends Controller
             } catch (Exception $ex) {
                 $source = 'customer';
             }
-            
+
             // Check source and redirect accordingly
             if ($source === 'admin') {
                 return view('payment-cancel', ['error' => 'Payment verification failed. Please contact support if this issue persists.']);
@@ -530,41 +530,38 @@ class PaymentController extends Controller
     public function cancelPayment()
     {
         $sessionId = request()->get('session_id');
-        $source = 'customer'; // Default to customer
+        $source = 'customer';
         $paymentLinkUrl = null;
-        
+
         if ($sessionId) {
             try {
                 Stripe::setApiKey(config('services.stripe.secret'));
                 $session = \Stripe\Checkout\Session::retrieve($sessionId);
-                
+
                 $source = $session->metadata['source'] ?? 'customer';
                 $bookingId = $session->metadata['booking_id'] ?? null;
-                
-                // Only cancel bookings for customer payments, not admin-generated links
+
                 if ($source === 'customer' && $bookingId) {
                     DB::beginTransaction();
-                    
+
                     $booking = Booking::find($bookingId);
                     if ($booking && in_array($booking->status, [\BookingStatus::PENDING, \BookingStatus::CONFIRMED])) {
                         $booking->update([
-                            'status' => \BookingStatus::CANCELLED,
                             'cancelled_at' => now(),
                             'cancelled_by' => $booking->user_id,
-                            'cancel_reason' => 'Payment cancelled by customer',
+                            'status' => \BookingStatus::CANCELLED,
+                            'cancel_reason' => "Payment cancelled by customer ({$booking->user?->name}, {$booking->user?->email})",
                         ]);
-                        
+
                         $booking->history()->create([
                             'user_id' => $booking->user_id,
                             'action' => 'booking_cancelled',
                             'description' => 'Booking cancelled due to payment cancellation',
                         ]);
                     }
-                    
+
                     DB::commit();
                 } elseif ($source === 'admin') {
-                    // For admin payments, get the payment link URL for "Try Again" button
-                    // The session URL can be reused
                     $paymentLinkUrl = $session->url ?? null;
                 }
             } catch (Exception $e) {
@@ -576,17 +573,13 @@ class PaymentController extends Controller
                 ]);
             }
         }
-        
-        // Check source and redirect accordingly
+
         if ($source === 'admin') {
-            // Admin QR code payment - show backend blade view with try again option
-            // Don't cancel the booking, just show the cancel page
             return view('payment-cancel', [
                 'isAdminPayment' => true,
                 'paymentLinkUrl' => $paymentLinkUrl,
             ]);
         } else {
-            // Customer booking from frontend - cancel booking and redirect to frontend
             $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
             $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
             return redirect($redirectUrl);

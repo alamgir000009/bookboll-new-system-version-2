@@ -277,10 +277,15 @@ class PaymentService
                 ]],
             ]);
 
-            // Store session in database
             \App\Models\StripeSession::create([
-                'session_id' => $session->id,
-                'processed' => false,
+                'session_id'  => $session->id,
+                'booking_id'  => $booking->id,
+                'booking_ids' => array_values(array_unique(array_filter(array_merge(
+                    [$booking->id],
+                    $dueBookings->pluck('id')->toArray()
+                )))),
+                'source'      => 'admin',
+                'processed'   => false,
             ]);
 
             $paymentLink = (object) [
@@ -935,8 +940,11 @@ class PaymentService
             $session = \Stripe\Checkout\Session::create($sessionData);
 
             \App\Models\StripeSession::create([
-                'session_id' => $session->id,
-                'processed' => false,
+                'session_id'  => $session->id,
+                'booking_id'  => $mainBookingId,
+                'booking_ids' => $allBookingIds,
+                'source'      => 'customer',
+                'processed'   => false,
             ]);
 
             DB::commit();
