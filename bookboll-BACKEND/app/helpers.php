@@ -260,6 +260,7 @@ if (! function_exists('getResourceFromRoute')) {
             'bookings.update'              => 'Booking',
             'bookings.destroy'             => 'Booking',
             'bookings.cancel'              => 'Booking',
+            'customer.bookings.cancel'     => 'Booking',
             'bookings.completed'           => 'Booking',
             'bookings.confirm'             => 'Booking',
             'bookings.generate-invoice'    => 'Booking',
@@ -927,10 +928,10 @@ if (! function_exists('applyVenueFilterToPayments')) {
     }
 }
 
-if (!function_exists('isDateAvailableForBooking')) {
+if (! function_exists('isDateAvailableForBooking')) {
     function isDateAvailableForBooking($date)
     {
-        $dateCarbon = $date instanceof \Carbon\Carbon ? $date : \Carbon\Carbon::parse($date);
+        $dateCarbon = $date instanceof \Carbon\Carbon  ? $date : \Carbon\Carbon::parse($date);
         $today      = \Carbon\Carbon::today();
 
         if ($dateCarbon->lt($today)) {
@@ -947,7 +948,7 @@ if (!function_exists('isDateAvailableForBooking')) {
             $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
 
             $endOfCurrentMonth = $today->copy()->endOfMonth();
-            $daysRemaining = $today->diffInDays($endOfCurrentMonth) + 1;
+            $daysRemaining     = $today->diffInDays($endOfCurrentMonth) + 1;
 
             return $daysRemaining <= $daysBeforeNextMonth;
         }
