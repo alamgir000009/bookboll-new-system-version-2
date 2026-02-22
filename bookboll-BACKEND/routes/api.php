@@ -193,7 +193,7 @@ Route::get('blog-articles', [PostController::class, 'blogArticles'])->name('blog
 Route::get('blog-articles/{slug}', [PostController::class, 'blogPostDetails'])->name('blog-articles.show');
 Route::get('sports-categories', [SportsCategoryController::class, 'sportsCategories'])->name('sports-categories.public');
 Route::post('contact-us', [HelperController::class, 'contactUs'])->name('contact-us');
-Route::get('fetch-venues', [VenueController::class, 'fetchVenues'])->name('fetch-venues');
+Route::get('fetch-venues', [VenueController::class, 'fetchVenues'])->name('customer.fetch-venues');
 Route::get('fetch-listings', [ListingController::class, 'fetchListings'])->name('fetch-listings');
 Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings'])->name('fetch-suggested-listings');
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing'])->name('fetch-listing');
