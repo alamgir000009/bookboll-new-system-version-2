@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Log;
 class SendBookingReminders extends Command
 {
     protected $signature   = 'send-booking-reminders';
-    protected $description = 'Send recurring booking reminders every X days after last completed booking';
+    protected $description = 'Send recurring booking reminders every X days after last eligible booking';
 
     public function handle()
     {
@@ -26,12 +26,24 @@ class SendBookingReminders extends Command
             return 0;
         }
 
-        $users = User::whereHas('bookings', fn($q) => $q->where('status', BookingStatus::COMPLETED))
-            ->with(['bookings' => fn($q) => $q->completed()->orderByDesc('date')->select('user_id', 'date'), 'preferences'])
+        $users = User::whereHas('bookings', function ($q) {
+            $q->where(function ($bookingQuery) {
+                $bookingQuery->whereIn('status', [BookingStatus::COMPLETED, BookingStatus::CONFIRMED])
+                    ->orWhere('full_payment_received', true);
+            });
+        })
+            ->with(['bookings' => function ($q) {
+                $q->where(function ($bookingQuery) {
+                    $bookingQuery->whereIn('status', [BookingStatus::COMPLETED, BookingStatus::CONFIRMED])
+                        ->orWhere('full_payment_received', true);
+                })
+                    ->orderByDesc('date')
+                    ->select('user_id', 'date');
+            }, 'preferences'])
             ->get();
 
         if ($users->isEmpty()) {
-            Log::info('No users found with completed bookings.');
+            Log::info('No users found with eligible bookings (completed/confirmed/fully paid).');
             return 0;
         }
 
