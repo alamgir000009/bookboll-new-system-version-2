@@ -66,6 +66,28 @@ class AutoCancelUnpaidDepositBookings extends Command
                                 return;
                             }
 
+                            // Expire Stripe checkout sessions FIRST so the customer cannot complete
+                            // payment after we decide to cancel (avoids race where payment lands seconds later).
+                            if ($stripeClient) {
+                                try {
+                                    $this->expireOpenStripeCheckoutSessions($lockedBooking, $stripeClient);
+                                } catch (\Throwable $e) {
+                                    Log::error('Failed to expire Stripe checkout sessions for auto-cancelled booking', [
+                                        'booking_id' => $lockedBooking->id,
+                                        'error'      => $e->getMessage(),
+                                    ]);
+                                }
+                            }
+
+                            // Re-check payment status after expiring sessions (payment may have completed in the meantime).
+                            $lockedBooking->refresh();
+                            if (
+                                $lockedBooking->payment_status !== BookingPaymentStatus::PENDING
+                                || ! in_array($lockedBooking->status, [BookingStatus::PENDING, BookingStatus::CONFIRMED], true)
+                            ) {
+                                return;
+                            }
+
                             $lockedBooking->update([
                                 'cancelled_by'  => null,
                                 'cancelled_at'  => now(),
@@ -82,17 +104,6 @@ class AutoCancelUnpaidDepositBookings extends Command
                             $lockedBooking->loadMissing(['user', 'venue:id,name,maps_url', 'listing:id,name']);
                             $lockedBooking->user?->notify(new BookingCancelledUserNotification($lockedBooking));
                             app(BookingService::class)->sendBookingNotification($lockedBooking, 'cancelled');
-
-                            if ($stripeClient) {
-                                try {
-                                    $this->expireOpenStripeCheckoutSessions($lockedBooking, $stripeClient);
-                                } catch (\Throwable $e) {
-                                    Log::error('Failed to expire Stripe checkout sessions for auto-cancelled booking', [
-                                        'booking_id' => $lockedBooking->id,
-                                        'error'      => $e->getMessage(),
-                                    ]);
-                                }
-                            }
 
                             $cancelledCount++;
 
