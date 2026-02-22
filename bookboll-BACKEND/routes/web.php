@@ -6,6 +6,17 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 
+// temporary route for checking mail configuration
+Route::get('test-mail-000009', function () {
+    $to = request('to', 'alamgir000009@gmail.com');
+    try {
+        \Illuminate\Support\Facades\Mail::to($to)->send(new \App\Mail\GenericTestMail());
+        return "Mail sent to {$to}";
+    } catch (\Exception $e) {
+        return "Mail failed: " . $e->getMessage();
+    }
+});
+
 Route::get('newsletter/unsubscribe/{email}', [NewsletterController::class, 'unsubscribe'])->name('newsletter.unsubscribe');
 
 Route::get('/', function () {
