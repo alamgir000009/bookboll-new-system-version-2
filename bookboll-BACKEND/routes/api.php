@@ -146,7 +146,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('reviews', ReviewController::class)->except(['show', 'index']);
         Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings'])->name('bookings.reviewable');
 
-        Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards'])->name('gift-cards.index');
+        Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards']);
         Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard'])->name('gift-cards.redeem');
         Route::get('gift-cards/balance', [GiftCardController::class, 'getBalance'])->name('gift-cards.balance');
         Route::get('gift-cards/promocodes', [GiftCardController::class, 'getGiftCardPromocodes'])->name('gift-cards.promocodes');
