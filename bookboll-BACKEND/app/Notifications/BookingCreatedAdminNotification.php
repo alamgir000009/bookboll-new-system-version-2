@@ -27,7 +27,7 @@ class BookingCreatedAdminNotification extends Notification implements ShouldQueu
         $mail = (new MailMessage)
             ->subject('New Booking Received')
             ->greeting('Hello Admin,')
-            ->line('A new booking has been confirmed.')
+            ->line('A new booking has been received.')
             ->line('Customer: ' . $booking->user->name)
             ->line('Venue: ' . $booking->venue->name)
             ->line('Listing: ' . $booking->listing->name)
