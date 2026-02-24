@@ -2906,7 +2906,7 @@ class BookingService
             $booking->history()->create([
                 'user_id'     => $user->id,
                 'action'      => 'booking_created',
-                'description' => 'Booking created by '.$user->name,
+                'description' => 'Booking created by '.(auth()->user() ? auth()->user()->name : $user->name),
             ]);
 
             if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
