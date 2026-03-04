@@ -904,6 +904,7 @@ class ListingService
             ->when($categoryIds, function ($query, $categoryIds) {
                 $query->whereNotIn('sports_category_id', $categoryIds);
             })
+            ->active()
             ->whereRelation('venue', 'status', 'active')
             ->take($limit)
             ->get()
@@ -1085,7 +1086,9 @@ class ListingService
             'venue:id,name,maps_url',
             'sportsCategory:id,name',
             'assets',
-        ])->findOrFail($id);
+        ])
+        ->active()
+        ->findOrFail($id);
 
         $specialDay = SpecialDay::with('timeBlocks')
             ->where('venue_id', $listing->venue_id)
