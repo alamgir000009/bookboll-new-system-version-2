@@ -25,12 +25,16 @@ class VenueService
                         ->orWhere('max_bookings_per_slot', 'LIKE', "%{$search}%");
                 });
             })
-            ->active()
             ->orderBy('sort_order', 'ASC');
 
         if ($applyVenueFilter) {
             $query = applyVenueFilter($query, 'id');
         }
+
+        if ($request->header('from') != 'admin-web') {
+            $query->active();
+        }
+
         $venues = $query->get();
 
         return sendSuccess('Venues fetched successfully', compact('venues'));
@@ -159,12 +163,12 @@ class VenueService
         $venue = $this->venueModel::with(['schedules', 'users', 'listings'])->findOrFail($id);
 
         $user = auth()->user();
-        if ($user && !$user->hasAnyRole(['super_admin', 'admin'])) {
+        if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
             $venueIds = DB::table('user_venue')
                 ->where('user_id', $user->id)
                 ->pluck('venue_id')
                 ->toArray();
-            if (!in_array($venue->id, $venueIds)) {
+            if (! in_array($venue->id, $venueIds)) {
                 return sendError('You do not have access to this venue', [], 403);
             }
         }
