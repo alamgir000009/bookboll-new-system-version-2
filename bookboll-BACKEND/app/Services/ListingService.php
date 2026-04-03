@@ -29,8 +29,9 @@ class ListingService
 
     public function all($request)
     {
-        $records_per_page = $request->records_per_page ?? 20;
         $search           = $request->search ?? null;
+        $schedule         = $request->schedule ?? true;
+        $records_per_page = $request->records_per_page ?? 20;
 
         $venuesQuery = Venue::active()->orderBy('sort_order', 'ASC');
         $venuesQuery = applyVenueFilter($venuesQuery, 'id');
@@ -41,11 +42,8 @@ class ListingService
             'assets',
             'resources',
             'pricingGroups',
-            'venue'     => function ($q) {
+            'venue' => function ($q) {
                 $q->orderBy('sort_order', 'ASC');
-            },
-            'schedules' => function ($q) {
-                $q->where('is_open', true)->orderBy('day');
             },
         ])
             ->orderBy('sort_order', 'ASC')
@@ -56,10 +54,9 @@ class ListingService
                         ->orWhere('status', 'LIKE', "%{$search}%")
                         ->orWhere('description', 'LIKE', "%{$search}%")
                         ->orWhere('base_price', 'LIKE', "%{$search}%")
-                        ->orWhere('status', 'LIKE', "%{$search}%")
                         ->orWhereHas('sportsCategory', function ($query) use ($search) {
                             $query->where('name', 'LIKE', "%{$search}%")
-                                ->orWhere("slug", 'LIKE', "%{$search}%");
+                                ->orWhere('slug', 'LIKE', "%{$search}%");
                         });
                 });
             })
@@ -67,7 +64,16 @@ class ListingService
                 $query->whereRelation('venue', 'id', $venue_id);
             });
 
-        $query    = applyVenueFilter($query, 'venue_id');
+        if ($schedule) {
+            $query->with([
+                'schedules' => function ($q) {
+                    $q->where('is_open', true)->orderBy('day');
+                },
+            ]);
+        }
+
+        $query = applyVenueFilter($query, 'venue_id');
+
         $listings = $query->paginate($records_per_page);
 
         return sendSuccess('Listings fetched successfully', compact('listings', 'venues'));
@@ -1087,8 +1093,8 @@ class ListingService
             'sportsCategory:id,name',
             'assets',
         ])
-        ->active()
-        ->findOrFail($id);
+            ->active()
+            ->findOrFail($id);
 
         $specialDay = SpecialDay::with('timeBlocks')
             ->where('venue_id', $listing->venue_id)
@@ -1143,8 +1149,8 @@ class ListingService
         $date      = Carbon::parse(request('date', now()->toDateString()));
         $sessionId = getSessionId();
 
-        $requestFrom = $request->header('from');
-        $user = auth()->user();
+        $requestFrom          = $request->header('from');
+        $user                 = auth()->user();
         $isAdminFromMobileApp = $requestFrom === \MobileApps::ADMIN;
 
         // Skip date availability check for admins from admin_mobile_app
@@ -1227,17 +1233,17 @@ class ListingService
         $venueBookings = Booking::where('venue_id', $listing->venue_id)
             ->where('date', $date)
             ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
-            ->with(['resourcesAllocated', 'listing' => function($q) {
+            ->with(['resourcesAllocated', 'listing' => function ($q) {
                 $q->with('resources');
             }])
             ->get(['id', 'listing_id', 'start_time', 'end_time', 'status']);
 
         $venueLocks = SlotLock::whereHas('listing', function ($query) use ($listing) {
-                $query->where('venue_id', $listing->venue_id);
-            })
+            $query->where('venue_id', $listing->venue_id);
+        })
             ->where('date', $date->toDateString())
             ->active()
-            ->with(['listing' => function($q) {
+            ->with(['listing' => function ($q) {
                 $q->with('resources');
             }])
             ->get();
@@ -1407,7 +1413,7 @@ class ListingService
             $bookedCount = $slotBookings->where('listing_id', $listing->id)->count();
 
             $lockedCount = 0;
-            $slotLocks = collect();
+            $slotLocks   = collect();
             if ($venueLocks && $sessionId) {
                 $slotLocks = $venueLocks->filter(function ($lock) use ($slotStart, $slotEnd, $sessionId) {
                     if ($lock->session_id === $sessionId) {
@@ -1434,18 +1440,18 @@ class ListingService
             foreach ($listingResources as $res) {
 
                 // Resources from bookings (any listing at the venue)
-                $bookedResourcesQty = $slotBookings->flatMap(function($b) use ($res) {
-                    return $b->resourcesAllocated->where('id', $res->id)->map(function($resource) {
+                $bookedResourcesQty = $slotBookings->flatMap(function ($b) use ($res) {
+                    return $b->resourcesAllocated->where('id', $res->id)->map(function ($resource) {
                         return $resource->pivot->quantity ?? 0;
                     });
                 })->sum();
 
                 // Resources from locks (any listing at the venue)
-                $lockedResourcesQty = $slotLocks->flatMap(function($lock) use ($res) {
-                    if (!$lock->listing) {
+                $lockedResourcesQty = $slotLocks->flatMap(function ($lock) use ($res) {
+                    if (! $lock->listing) {
                         return collect();
                     }
-                    return $lock->listing->resources->where('id', $res->id)->map(function($resource) {
+                    return $lock->listing->resources->where('id', $res->id)->map(function ($resource) {
                         return $resource->pivot->quantity ?? 0;
                     });
                 })->sum();
