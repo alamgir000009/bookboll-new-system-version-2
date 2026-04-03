@@ -6,9 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Services\BookingService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
-use BookingPaymentMethod;
 
 class BookingController extends Controller
 {

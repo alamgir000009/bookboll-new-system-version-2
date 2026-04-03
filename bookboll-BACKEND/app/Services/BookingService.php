@@ -2613,7 +2613,8 @@ class BookingService
 
         if ($request->filled('type')) {
             if ($data['type'] === 'upcoming') {
-                $query->where('date', '>=', $today);
+                $query->where('status', '!=', BookingStatus::CANCELLED)
+                    ->where('date', '>=', $today);
             } elseif ($data['type'] === 'recent') {
                 $query->latest('id');
             }
