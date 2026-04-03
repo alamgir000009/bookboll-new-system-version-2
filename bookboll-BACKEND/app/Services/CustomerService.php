@@ -2,10 +2,13 @@
 namespace App\Services;
 
 use App\Mail\UserWelcomeEmail;
+use App\Models\Booking;
+use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
 use BookingStatus;
 use Exception;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -313,6 +316,140 @@ class CustomerService
         }
 
         return $query->get();
+    }
+
+    /**
+     * Admin app: full customer profile, loyalty summary, and booking counts by status.
+     */
+    public function getAdminProfile(string $id)
+    {
+        $customer = $this->customerModel::query()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'customer');
+            })
+            ->with(['tags:id,name,color'])
+            ->find($id);
+
+        if (! $customer) {
+            return sendError('Customer not found', [], 404);
+        }
+
+        $balance = (int) LoyaltyPoint::balance($customer->id);
+        $tier    = $customer->loyalty_tier;
+
+        $loyaltyTier = $tier ? [
+            'id'         => $tier->id,
+            'name'       => $tier->name,
+            'slug'       => $tier->slug,
+            'color'      => $tier->color,
+            'min_points' => $tier->min_points,
+            'max_points' => $tier->max_points,
+        ] : null;
+
+        $rawStats = Booking::query()
+            ->where('user_id', $customer->id)
+            ->selectRaw('status, COUNT(*) as c')
+            ->groupBy('status')
+            ->pluck('c', 'status')
+            ->toArray();
+
+        $bookingStats = [
+            'pending'   => (int) ($rawStats[BookingStatus::PENDING] ?? 0),
+            'confirmed' => (int) ($rawStats[BookingStatus::CONFIRMED] ?? 0),
+            'completed' => (int) ($rawStats[BookingStatus::COMPLETED] ?? 0),
+            'cancelled' => (int) ($rawStats[BookingStatus::CANCELLED] ?? 0),
+            'total'     => array_sum(array_map('intval', $rawStats)),
+        ];
+
+        $statusLabelMap = [
+            User::ACTIVE   => 'Active',
+            User::INACTIVE => 'Inactive',
+            User::BLOCKED  => 'Blocked',
+            User::PENDING  => 'Pending',
+        ];
+
+        $dob = $customer->date_of_birth;
+        if ($dob instanceof \Carbon\CarbonInterface) {
+            $dob = $dob->format('Y-m-d');
+        } elseif (is_string($dob) && $dob !== '') {
+            try {
+                $dob = \Carbon\Carbon::parse($dob)->format('Y-m-d');
+            } catch (\Throwable) {
+                // keep raw string
+            }
+        }
+
+        $customerPayload = [
+            'id'                => $customer->id,
+            'name'              => $customer->name,
+            'email'             => $customer->email,
+            'phone'             => $customer->phone,
+            'image'             => $customer->image,
+            'status'            => $customer->status,
+            'status_label'      => $statusLabelMap[$customer->status] ?? ucfirst((string) $customer->status),
+            'blocking_reason'   => $customer->blocking_reason,
+            'gender'            => $customer->gender,
+            'address'           => $customer->address,
+            'nationality'       => $customer->nationality,
+            'date_of_birth'     => $dob,
+            'created_at'        => $customer->created_at?->toIso8601String(),
+            'updated_at'        => $customer->updated_at?->toIso8601String(),
+            'tags'              => $customer->tags->map(fn ($t) => [
+                'id'    => $t->id,
+                'name'  => $t->name,
+                'color' => $t->color,
+            ])->values(),
+        ];
+
+        return sendSuccess('Customer profile fetched', [
+            'customer'       => $customerPayload,
+            'loyalty'        => [
+                'points_balance'      => $balance,
+                'tier'                => $loyaltyTier,
+                'points_to_next_tier' => (int) $customer->points_to_next_tier,
+                'loyalty_progress'    => (int) $customer->loyalty_progress,
+            ],
+            'booking_stats' => $bookingStats,
+        ]);
+    }
+
+    /**
+     * Admin app: paginated bookings for a customer, optional status filter.
+     */
+    public function getAdminBookings(Request $request, string $id)
+    {
+        $exists = $this->customerModel::query()
+            ->whereHas('roles', function ($query) {
+                $query->where('name', 'customer');
+            })
+            ->whereKey($id)
+            ->exists();
+
+        if (! $exists) {
+            return sendError('Customer not found', [], 404);
+        }
+
+        $perPage = (int) ($request->input('records_per_page', 20));
+        $perPage = min(max($perPage, 1), 100);
+
+        $status = $request->input('status');
+
+        $query = Booking::query()
+            ->where('user_id', $id)
+            ->with([
+                'listing:id,name,calendar_color',
+                'venue:id,name',
+            ])
+            ->orderByDesc('date')
+            ->orderByDesc('id');
+
+        if ($status && $status !== 'all' && in_array($status, BookingStatus::list(), true)) {
+            $query->where('status', $status);
+        }
+
+        $bookings = $query->paginate($perPage);
+
+        return sendSuccess('Customer bookings fetched', compact('bookings'));
     }
 
     public function delete($id)

@@ -133,6 +133,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::get('customers/export', [CustomerController::class, 'export'])->name('customers.export');
         Route::get('customers/list', [CustomerController::class, 'listOptimized'])->name('customers.listOptimized');
+        Route::get('customers/{id}/profile', [CustomerController::class, 'adminProfile'])->name('customers.profile');
+        Route::get('customers/{id}/bookings', [CustomerController::class, 'adminBookings'])->name('customers.bookings');
         Route::put('customers/{id}/tags', [CustomerController::class, 'updateTags'])->name('customers.updateTags');
         Route::put('customers/{id}/status', [CustomerController::class, 'updateStatus'])->name('customers.updateStatus');
         Route::apiResource('customers', CustomerController::class);

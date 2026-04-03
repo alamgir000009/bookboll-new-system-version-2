@@ -44,6 +44,16 @@ class CustomerController extends Controller
         return Excel::download(new CustomersExport($customers), $filename);
     }
 
+    public function adminProfile($id)
+    {
+        return $this->customerService->getAdminProfile((string) $id);
+    }
+
+    public function adminBookings(Request $request, $id)
+    {
+        return $this->customerService->getAdminBookings($request, (string) $id);
+    }
+
     public function destroy($id)
     {
         return $this->customerService->delete($id);
