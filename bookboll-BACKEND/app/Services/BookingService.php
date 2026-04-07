@@ -1029,7 +1029,7 @@ class BookingService
 
             DB::beginTransaction();
 
-            if (! $user->phone || $user->phone != $request->phone) {
+            if ($request->filled('phone') && $user->phone !== $request->phone) {
                 $user->phone = $request->phone;
                 $user->save();
             }
