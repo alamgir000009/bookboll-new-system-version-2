@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Setting;
+use App\Models\Payment;
 use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +16,7 @@ class RestoreUserPhones extends Command
                             {--dry-run : Preview updates without saving}
                             {--show-changes : Print each matched change}
                             {--from-stripe : Enrich missing phones from Stripe customers}
+                            {--from-stripe-payments : Enrich missing phones from Stripe charge/payment-intent billing details}
                             {--include-non-null : Also overwrite non-null phone values}
                             {--users-file=public/bookboll_live_users.csv : Primary CSV source}
                             {--bookings-file=public/bookboll_live_bookings.csv : Secondary CSV source}';
@@ -28,6 +30,7 @@ class RestoreUserPhones extends Command
         $dryRun          = (bool) $this->option('dry-run');
         $showChanges     = (bool) $this->option('show-changes');
         $fromStripe      = (bool) $this->option('from-stripe');
+        $fromStripePay   = (bool) $this->option('from-stripe-payments');
         $includeNonNull  = (bool) $this->option('include-non-null');
 
         $map = [];
@@ -35,13 +38,14 @@ class RestoreUserPhones extends Command
         $usersImported = $this->loadUsersCsvMap($usersCsvPath, $map);
         $bookingsAdded = $this->loadBookingsCsvMap($bookingsCsvPath, $map);
         $stripeAdded   = $fromStripe ? $this->loadStripeMap($map) : 0;
+        $stripePayAdded = $fromStripePay ? $this->loadStripePaymentMap($map) : 0;
 
         if (empty($map)) {
             $this->error('No recoverable phone data found in configured sources.');
             return self::FAILURE;
         }
 
-        $this->info("Prepared phone map for " . count($map) . " emails (users source: {$usersImported}, bookings source added: {$bookingsAdded}, stripe source added: {$stripeAdded}).");
+        $this->info("Prepared phone map for " . count($map) . " emails (users source: {$usersImported}, bookings source added: {$bookingsAdded}, stripe customers added: {$stripeAdded}, stripe payments added: {$stripePayAdded}).");
 
         $query = User::query()->whereIn('email', array_keys($map));
         if (! $includeNonNull) {
@@ -149,6 +153,81 @@ class RestoreUserPhones extends Command
                 Log::warning('Stripe customer phone lookup failed in users:restore-phones', [
                     'email' => $email,
                     'stripe_id' => $user->stripe_id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $added;
+    }
+
+    private function loadStripePaymentMap(array &$map): int
+    {
+        $secret = $this->resolveStripeSecret();
+        if (! $secret) {
+            $this->warn('Stripe secret key not found. Skipping Stripe payments source.');
+            return 0;
+        }
+
+        $stripe = new StripeClient($secret);
+        $added  = 0;
+
+        $userIds = User::query()
+            ->where(function ($q) {
+                $q->whereNull('phone')->orWhere('phone', '');
+            })
+            ->pluck('id')
+            ->all();
+
+        if (empty($userIds)) {
+            return 0;
+        }
+
+        $payments = Payment::query()
+            ->whereIn('user_id', $userIds)
+            ->where(function ($q) {
+                $q->whereNotNull('charge_id')->orWhereNotNull('payment_intent_id');
+            })
+            ->orderByDesc('id')
+            ->get(['user_id', 'charge_id', 'payment_intent_id']);
+
+        $usersById = User::whereIn('id', $userIds)->get(['id', 'email'])->keyBy('id');
+
+        foreach ($payments as $payment) {
+            $user = $usersById[$payment->user_id] ?? null;
+            if (! $user) {
+                continue;
+            }
+
+            $email = strtolower(trim((string) $user->email));
+            if ($email === '' || isset($map[$email])) {
+                continue;
+            }
+
+            $phone = null;
+            try {
+                if (! empty($payment->charge_id)) {
+                    $charge = $stripe->charges->retrieve((string) $payment->charge_id, []);
+                    $phone  = $this->normalizePhone((string) ($charge->billing_details->phone ?? ''));
+                }
+
+                if (! $phone && ! empty($payment->payment_intent_id)) {
+                    $intent = $stripe->paymentIntents->retrieve((string) $payment->payment_intent_id, []);
+                    if (! empty($intent->latest_charge)) {
+                        $charge = $stripe->charges->retrieve((string) $intent->latest_charge, []);
+                        $phone  = $this->normalizePhone((string) ($charge->billing_details->phone ?? ''));
+                    }
+                }
+
+                if ($phone) {
+                    $map[$email] = $phone;
+                    $added++;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Stripe payment phone lookup failed in users:restore-phones', [
+                    'user_id' => $payment->user_id,
+                    'charge_id' => $payment->charge_id,
+                    'payment_intent_id' => $payment->payment_intent_id,
                     'error' => $e->getMessage(),
                 ]);
             }
