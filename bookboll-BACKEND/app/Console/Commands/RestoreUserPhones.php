@@ -2,16 +2,19 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Stripe\StripeClient;
 
 class RestoreUserPhones extends Command
 {
     protected $signature = 'users:restore-phones
                             {--dry-run : Preview updates without saving}
                             {--show-changes : Print each matched change}
+                            {--from-stripe : Enrich missing phones from Stripe customers}
                             {--include-non-null : Also overwrite non-null phone values}
                             {--users-file=public/bookboll_live_users.csv : Primary CSV source}
                             {--bookings-file=public/bookboll_live_bookings.csv : Secondary CSV source}';
@@ -24,19 +27,21 @@ class RestoreUserPhones extends Command
         $bookingsCsvPath = base_path((string) $this->option('bookings-file'));
         $dryRun          = (bool) $this->option('dry-run');
         $showChanges     = (bool) $this->option('show-changes');
+        $fromStripe      = (bool) $this->option('from-stripe');
         $includeNonNull  = (bool) $this->option('include-non-null');
 
         $map = [];
 
         $usersImported = $this->loadUsersCsvMap($usersCsvPath, $map);
         $bookingsAdded = $this->loadBookingsCsvMap($bookingsCsvPath, $map);
+        $stripeAdded   = $fromStripe ? $this->loadStripeMap($map) : 0;
 
         if (empty($map)) {
             $this->error('No recoverable phone data found in configured sources.');
             return self::FAILURE;
         }
 
-        $this->info("Prepared phone map for " . count($map) . " emails (users source: {$usersImported}, bookings source added: {$bookingsAdded}).");
+        $this->info("Prepared phone map for " . count($map) . " emails (users source: {$usersImported}, bookings source added: {$bookingsAdded}, stripe source added: {$stripeAdded}).");
 
         $query = User::query()->whereIn('email', array_keys($map));
         if (! $includeNonNull) {
@@ -105,6 +110,66 @@ class RestoreUserPhones extends Command
         $this->line('- Scope: ' . ($includeNonNull ? 'all matched users' : 'only users with null/empty phone'));
 
         return self::SUCCESS;
+    }
+
+    private function loadStripeMap(array &$map): int
+    {
+        $secret = $this->resolveStripeSecret();
+        if (! $secret) {
+            $this->warn('Stripe secret key not found. Skipping Stripe source.');
+            return 0;
+        }
+
+        $stripe = new StripeClient($secret);
+        $added  = 0;
+
+        $users = User::query()
+            ->whereNotNull('stripe_id')
+            ->where(function ($q) {
+                $q->whereNull('phone')->orWhere('phone', '');
+            })
+            ->get(['email', 'stripe_id']);
+
+        foreach ($users as $user) {
+            /** @var User $user */
+            $email = strtolower(trim((string) $user->email));
+            if ($email === '' || isset($map[$email])) {
+                continue;
+            }
+
+            try {
+                $customer = $stripe->customers->retrieve($user->stripe_id, []);
+                $rawPhone = (string) ($customer->phone ?? ($customer->shipping->phone ?? ''));
+                $phone    = $this->normalizePhone($rawPhone);
+                if ($phone) {
+                    $map[$email] = $phone;
+                    $added++;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Stripe customer phone lookup failed in users:restore-phones', [
+                    'email' => $email,
+                    'stripe_id' => $user->stripe_id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $added;
+    }
+
+    private function resolveStripeSecret(): ?string
+    {
+        $configSecret = trim((string) config('services.stripe.secret'));
+        if ($configSecret !== '') {
+            return $configSecret;
+        }
+
+        $settingSecret = trim((string) Setting::where('key', 'stripe_secret_key')->value('value'));
+        if ($settingSecret !== '') {
+            return $settingSecret;
+        }
+
+        return null;
     }
 
     private function loadUsersCsvMap(string $path, array &$map): int
