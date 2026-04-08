@@ -19,7 +19,8 @@ class RecoverPhonesFromLaravelLogs extends Command
                             {--show-changes : Print each matched change}
                             {--include-non-null : Also overwrite non-null phone values}
                             {--window=120 : Minutes around log timestamp to narrow booking created_at (0 = skip time filter)}
-                            {--all-logs : Include any *.log / *.log.gz, not only laravel*.log}';
+                            {--all-logs : Include any *.log / *.log.gz, not only laravel*.log}
+                            {--write-booking-ids= : Write matched booking DB ids as JSON array to this file (optional)}';
 
     protected $description = 'Scan Laravel logs for "Booking creation request" payload and restore user phones';
 
@@ -45,6 +46,7 @@ class RecoverPhonesFromLaravelLogs extends Command
 
         $idMap = [];
         $emailMap = [];
+        $bookingIdsSeen = [];
         $hits = 0;
         $parsed = 0;
         $noPhoneInPayload = 0;
@@ -52,21 +54,49 @@ class RecoverPhonesFromLaravelLogs extends Command
 
         foreach ($files as $file) {
             $this->line("Scanning: {$file}");
-            $result = $this->scanFile($file, $idMap, $emailMap, $windowMinutes);
+            $result = $this->scanFile($file, $idMap, $emailMap, $windowMinutes, $bookingIdsSeen);
             $hits += $result['hits'];
             $parsed += $result['parsed'];
             $noPhoneInPayload += $result['no_phone'];
             $unresolved += $result['unresolved'];
         }
 
+        $bookingIdList = array_map('intval', array_keys($bookingIdsSeen));
+        sort($bookingIdList);
+
         $this->info("Lines mentioning booking creation: {$hits}");
         $this->info("Payloads with JSON + phone extracted: {$parsed}");
         $this->info("Payloads without usable phone: {$noPhoneInPayload}");
         $this->info("Payloads with phone but no user resolved: {$unresolved}");
         $this->info('Recovered maps: ' . count($idMap) . ' user_id->phone, ' . count($emailMap) . ' email->phone.');
+        $this->newLine();
+        $this->info('Matched booking IDs (database `bookings.id`, unique):');
+        $this->line(json_encode($bookingIdList, JSON_THROW_ON_ERROR));
+        if ($bookingIdList !== []) {
+            $this->line('MySQL: SELECT * FROM bookings WHERE id IN (' . implode(',', $bookingIdList) . ');');
+        } else {
+            $this->line('MySQL: (no booking ids resolved — need date/venue/listing/times in payload and a matching row, or payment_intent_id on payments.)');
+        }
+        if ($bookingIdList === []) {
+            $this->warn('No booking IDs matched (need slot fields + DB row, or payment_intent_id on a payment row).');
+        }
+
+        $writePath = $this->option('write-booking-ids');
+        if (is_string($writePath) && $writePath !== '') {
+            $path = $writePath;
+            if (! preg_match('/^[A-Za-z]:[\\\\\\/]|^\\/|^\\\\/', $path)) {
+                $path = base_path($path);
+            }
+            $dir = dirname($path);
+            if (! is_dir($dir)) {
+                @mkdir($dir, 0755, true);
+            }
+            file_put_contents($path, json_encode($bookingIdList, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            $this->info("Wrote booking IDs to: {$path}");
+        }
 
         if (empty($idMap) && empty($emailMap)) {
-            $this->warn('No recoverable phones found in logs.');
+            $this->warn('No recoverable phones found in logs (no user_id/email/inferred user from payload).');
             return self::SUCCESS;
         }
 
@@ -169,9 +199,10 @@ class RecoverPhonesFromLaravelLogs extends Command
     }
 
     /**
+     * @param  array<int, true>  $bookingIdsSeen
      * @return array{hits:int, parsed:int, no_phone:int, unresolved:int}
      */
-    private function scanFile(string $path, array &$idMap, array &$emailMap, int $windowMinutes): array
+    private function scanFile(string $path, array &$idMap, array &$emailMap, int $windowMinutes, array &$bookingIdsSeen): array
     {
         $hits = 0;
         $parsed = 0;
@@ -208,7 +239,7 @@ class RecoverPhonesFromLaravelLogs extends Command
                     $guard++;
                 }
                 $hits++;
-                $r = $this->extractFromLogBlock($buffer, $idMap, $emailMap, $windowMinutes);
+                $r = $this->extractFromLogBlock($buffer, $idMap, $emailMap, $windowMinutes, $bookingIdsSeen);
                 $parsed += $r['parsed'];
                 $noPhone += $r['no_phone'];
                 $unresolved += $r['unresolved'];
@@ -241,9 +272,10 @@ class RecoverPhonesFromLaravelLogs extends Command
     }
 
     /**
+     * @param  array<int, true>  $bookingIdsSeen
      * @return array{parsed:int, no_phone:int, unresolved:int}
      */
-    private function extractFromLogBlock(string $block, array &$idMap, array &$emailMap, int $windowMinutes): array
+    private function extractFromLogBlock(string $block, array &$idMap, array &$emailMap, int $windowMinutes, array &$bookingIdsSeen): array
     {
         $parsed = 0;
         $noPhone = 0;
@@ -265,7 +297,12 @@ class RecoverPhonesFromLaravelLogs extends Command
         }
 
         $phoneRaw = $req['phone'] ?? null;
-        $phone = is_string($phoneRaw) ? $this->normalizePhone($phoneRaw) : null;
+        $phone = null;
+        if (is_string($phoneRaw)) {
+            $phone = $this->normalizePhone($phoneRaw);
+        } elseif (is_numeric($phoneRaw)) {
+            $phone = $this->normalizePhone((string) $phoneRaw);
+        }
         if (! $phone) {
             return ['parsed' => 0, 'no_phone' => 1, 'unresolved' => 0];
         }
@@ -275,6 +312,8 @@ class RecoverPhonesFromLaravelLogs extends Command
         $userId = isset($req['user_id']) ? (int) $req['user_id'] : 0;
         $email = isset($req['email']) ? strtolower(trim((string) $req['email'])) : '';
 
+        $loggedAt = $this->extractLogTimestampFromBlock($block);
+
         if ($userId > 0) {
             $idMap[$userId] = $phone;
         }
@@ -283,13 +322,19 @@ class RecoverPhonesFromLaravelLogs extends Command
         }
 
         if ($userId > 0 || $email !== '') {
+            $bid = $this->findBookingIdForPayload($req, $loggedAt, $windowMinutes);
+            if ($bid) {
+                $bookingIdsSeen[$bid] = true;
+            }
             return ['parsed' => $parsed, 'no_phone' => 0, 'unresolved' => 0];
         }
 
-        $loggedAt = $this->extractLogTimestampFromBlock($block);
-        $resolved = $this->resolveUserIdFromRequest($req, $loggedAt, $windowMinutes);
-        if ($resolved) {
-            $idMap[$resolved] = $phone;
+        $resolved = $this->resolveUserFromRequest($req, $loggedAt, $windowMinutes);
+        if ($resolved !== null) {
+            $idMap[$resolved['user_id']] = $phone;
+            if (isset($resolved['booking_id']) && $resolved['booking_id'] > 0) {
+                $bookingIdsSeen[(int) $resolved['booking_id']] = true;
+            }
             return ['parsed' => $parsed, 'no_phone' => 0, 'unresolved' => 0];
         }
 
@@ -340,14 +385,20 @@ class RecoverPhonesFromLaravelLogs extends Command
 
     /**
      * @param  array<string, mixed>  $req
+     * @return array{user_id: int, booking_id: int|null}|null
      */
-    private function resolveUserIdFromRequest(array $req, ?Carbon $loggedAt, int $windowMinutes): ?int
+    private function resolveUserFromRequest(array $req, ?Carbon $loggedAt, int $windowMinutes): ?array
     {
         $paymentIntentId = isset($req['payment_intent_id']) ? trim((string) $req['payment_intent_id']) : '';
         if ($paymentIntentId !== '') {
-            $payment = Payment::query()->where('payment_intent_id', $paymentIntentId)->value('user_id');
-            if ($payment) {
-                return (int) $payment;
+            $payment = Payment::query()
+                ->where('payment_intent_id', $paymentIntentId)
+                ->first(['user_id', 'booking_id']);
+            if ($payment && $payment->user_id) {
+                return [
+                    'user_id' => (int) $payment->user_id,
+                    'booking_id' => $payment->booking_id ? (int) $payment->booking_id : null,
+                ];
             }
         }
 
@@ -368,9 +419,56 @@ class RecoverPhonesFromLaravelLogs extends Command
             return null;
         }
 
-        $booking = $this->findBookingBySlot($date, $venueId, $listingId, $startNorm, $endNorm, $loggedAt, $windowMinutes);
+        $booking = $this->findBookingBySlot($date, $venueId, $listingId, $startNorm, $endNorm, $loggedAt, $windowMinutes, null);
 
-        return $booking && $booking->user_id ? (int) $booking->user_id : null;
+        if ($booking && $booking->user_id) {
+            return [
+                'user_id' => (int) $booking->user_id,
+                'booking_id' => (int) $booking->id,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Same slot match as recovery, optionally scoped to payload user_id when present.
+     *
+     * @param  array<string, mixed>  $req
+     */
+    private function findBookingIdForPayload(array $req, ?Carbon $loggedAt, int $windowMinutes): ?int
+    {
+        $date = isset($req['date']) ? trim((string) $req['date']) : '';
+        $venueId = isset($req['venue_id']) ? (int) $req['venue_id'] : 0;
+        $listingId = isset($req['listing_id']) ? (int) $req['listing_id'] : 0;
+        $startTime = isset($req['start_time']) ? trim((string) $req['start_time']) : '';
+        $endTime = isset($req['end_time']) ? trim((string) $req['end_time']) : '';
+
+        if ($date === '' || $venueId <= 0 || $listingId <= 0 || $startTime === '' || $endTime === '') {
+            return null;
+        }
+
+        try {
+            $startNorm = Carbon::parse($startTime)->format('H:i:s');
+            $endNorm = Carbon::parse($endTime)->format('H:i:s');
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $forUserId = isset($req['user_id']) ? (int) $req['user_id'] : 0;
+
+        $booking = $this->findBookingBySlot(
+            $date,
+            $venueId,
+            $listingId,
+            $startNorm,
+            $endNorm,
+            $loggedAt,
+            $windowMinutes,
+            $forUserId > 0 ? $forUserId : null
+        );
+
+        return $booking ? (int) $booking->id : null;
     }
 
     private function findBookingBySlot(
@@ -380,7 +478,8 @@ class RecoverPhonesFromLaravelLogs extends Command
         string $startNorm,
         string $endNorm,
         ?Carbon $loggedAt,
-        int $windowMinutes
+        int $windowMinutes,
+        ?int $forUserId
     ): ?Booking {
         $base = Booking::query()
             ->whereDate('date', $date)
@@ -388,6 +487,10 @@ class RecoverPhonesFromLaravelLogs extends Command
             ->where('listing_id', $listingId)
             ->whereRaw('TIME(start_time) = TIME(?)', [$startNorm])
             ->whereRaw('TIME(end_time) = TIME(?)', [$endNorm]);
+
+        if ($forUserId !== null && $forUserId > 0) {
+            $base->where('user_id', $forUserId);
+        }
 
         if ($loggedAt && $windowMinutes > 0) {
             $from = $loggedAt->copy()->subMinutes($windowMinutes);
