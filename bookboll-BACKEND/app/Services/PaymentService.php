@@ -58,9 +58,8 @@ class PaymentService
             ->when($status, function ($query, $status) {
                 $query->where('status', $status);
             })
-            ->when($from && $to, function ($query) use ($from, $to) {
-                $query->whereBetween('created_at', [$from, $to]);
-            });
+            ->when($from, fn($q, $from) => $q->whereDate('date', '>=', $from))
+            ->when($to, fn($q, $to) => $q->whereDate('date', '<=', $to));
 
         $query = applyVenueFilterToPayments($query);
 
