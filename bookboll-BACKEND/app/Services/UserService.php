@@ -832,6 +832,105 @@ class UserService
         }
     }
 
+    /**
+     * Staff roles allowed to use the admin mobile app (excludes customer-only accounts).
+     */
+    protected function adminAppStaffRoleQuery($query)
+    {
+        return $query->whereIn('name', ['super_admin', 'admin', 'senior_employee', 'junior_employee', 'guard']);
+    }
+
+    public function adminAppForgotPassword($request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        try {
+            $user = $this->userModel
+                ->where('email', $request->email)
+                ->whereHas('roles', fn ($q) => $this->adminAppStaffRoleQuery($q))
+                ->first();
+
+            if (! $user) {
+                return sendError('No admin account found with this email address');
+            }
+
+            $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+
+            DB::table('password_reset_tokens')->updateOrInsert(
+                ['email' => $request->email],
+                ['token' => Hash::make($otp), 'created_at' => Carbon::now()]
+            );
+
+            try {
+                Mail::to($user->email)->send(new CustomerForgotPasswordOtpEmail($otp, $user));
+            } catch (Exception $e) {
+                Log::error('Failed to send admin app OTP email: '.$e->getMessage(), ['Exception' => $e]);
+
+                return sendError('Failed to send OTP email. Please try again later.');
+            }
+
+            return sendSuccess('OTP has been sent to your email address. Please check your inbox.');
+        } catch (Exception $e) {
+            Log::error('Admin app forgot password error: '.$e->getMessage(), ['Exception' => $e]);
+
+            return sendError('Something went wrong. Please try again later.');
+        }
+    }
+
+    public function adminAppResetPassword($request)
+    {
+        $request->validate([
+            'email'    => 'required|email',
+            'otp'      => 'required|string|size:6',
+            'password' => 'required|min:8|confirmed',
+        ]);
+
+        try {
+            $user = $this->userModel
+                ->where('email', $request->email)
+                ->whereHas('roles', fn ($q) => $this->adminAppStaffRoleQuery($q))
+                ->first();
+
+            if (! $user) {
+                return sendError('No admin account found with this email address');
+            }
+
+            $otpRecord = DB::table('password_reset_tokens')
+                ->where('email', $request->email)
+                ->first();
+
+            if (! $otpRecord) {
+                return sendError('Invalid or expired OTP. Please request a new one.');
+            }
+
+            if (Carbon::parse($otpRecord->created_at)->addMinutes(10)->isPast()) {
+                DB::table('password_reset_tokens')->where('email', $request->email)->delete();
+
+                return sendError('OTP has expired. Please request a new one.');
+            }
+
+            if (! Hash::check($request->otp, $otpRecord->token)) {
+                return sendError('Invalid OTP. Please check and try again.');
+            }
+
+            DB::beginTransaction();
+
+            $user->password = $request->password;
+            $user->save();
+
+            DB::table('password_reset_tokens')->where('email', $request->email)->delete();
+
+            DB::commit();
+
+            return sendSuccess('Password has been reset successfully. You can now login with your new password.');
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Admin app reset password error: '.$e->getMessage(), ['Exception' => $e]);
+
+            return sendError('Something went wrong. Please try again later.');
+        }
+    }
+
     public function changePassword($request, $id)
     {
         $user = $this->findById($id);

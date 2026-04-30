@@ -129,6 +129,16 @@ class UserController extends Controller
         return $this->userService->registerAdminAppUser($request);
     }
 
+    public function adminAppForgotPassword(Request $request)
+    {
+        return $this->userService->adminAppForgotPassword($request);
+    }
+
+    public function adminAppResetPassword(Request $request)
+    {
+        return $this->userService->adminAppResetPassword($request);
+    }
+
     public function listPendingUsers(Request $request)
     {
         return $this->userService->listPendingUsers($request);

@@ -31,6 +31,8 @@ Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail'])->n
 Route::post('reset-password', [UserController::class, 'reset'])->name('reset-password');
 
 Route::post('admin-app/register', [UserController::class, 'registerAdminAppUser'])->name('admin-app.register');
+Route::post('admin-app/forgot-password', [UserController::class, 'adminAppForgotPassword'])->name('admin-app.forgot-password');
+Route::post('admin-app/reset-password', [UserController::class, 'adminAppResetPassword'])->name('admin-app.reset-password');
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
