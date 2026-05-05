@@ -103,7 +103,7 @@ class Promocode extends Model
         }
 
         if ($this->payment_methods !== 'all') {
-            if ($this->payment_methods == 'online_only' && $paymentMethod !== 'online') {
+            if ($this->payment_methods == 'online_only' && !in_array($paymentMethod, ['online', 'online_payment'])) {
                 return false;
             }
         }
