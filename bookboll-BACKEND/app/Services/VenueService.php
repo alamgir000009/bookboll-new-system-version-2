@@ -13,10 +13,12 @@ class VenueService
 
     public function all($request, $applyVenueFilter = true)
     {
-        $search = $request->search ?? null;
+        $search           = $request->search ?? null;
+        $schedule         = $request->boolean('schedule', true);
+        $paginate         = $request->boolean('paginate', false);
+        $records_per_page = $request->records_per_page ?? 20;
 
-        $query = $this->venueModel::with(['schedules'])
-            ->when($search, function ($query, $search) {
+        $query = $this->venueModel::when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
                         ->orWhere('status', 'LIKE', "%{$search}%")
@@ -27,6 +29,10 @@ class VenueService
             })
             ->orderBy('sort_order', 'ASC');
 
+        if ($schedule) {
+            $query->with(['schedules']);
+        }
+
         if ($applyVenueFilter) {
             $query = applyVenueFilter($query, 'id');
         }
@@ -35,7 +41,7 @@ class VenueService
             $query->active();
         }
 
-        $venues = $query->get();
+        $venues = $paginate ? $query->paginate($records_per_page) : $query->get();
 
         return sendSuccess('Venues fetched successfully', compact('venues'));
     }

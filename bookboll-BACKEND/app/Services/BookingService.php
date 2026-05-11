@@ -237,11 +237,11 @@ class BookingService
         $total_redeemed = LoyaltyPoint::where('type', 'debit')->sum('points');
         $total_earned   = LoyaltyPoint::where('type', 'credit')->sum('points');
 
-        $totalCollectedQuery = $this->paymentModel->query()->where('status', PaymentStatus::PAID);
+        $totalCollectedQuery = $this->paymentModel->where('status', PaymentStatus::PAID);
         $totalCollectedQuery = applyVenueFilterToPayments($totalCollectedQuery);
         $totalCollected      = $totalCollectedQuery->sum('amount');
 
-        $totalPendingQuery = $this->paymentModel->query()->where('status', PaymentStatus::PENDING);
+        $totalPendingQuery = $this->paymentModel->where('status', PaymentStatus::PENDING);
         $totalPendingQuery = applyVenueFilterToPayments($totalPendingQuery);
         $totalPending      = $totalPendingQuery->sum('amount');
 

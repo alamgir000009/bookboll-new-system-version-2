@@ -47,7 +47,7 @@ class RestoreUserPhones extends Command
 
         $this->info("Prepared phone map for " . count($map) . " emails (users source: {$usersImported}, bookings source added: {$bookingsAdded}, stripe customers added: {$stripeAdded}, stripe payments added: {$stripePayAdded}).");
 
-        $query = User::query()->whereIn('email', array_keys($map));
+        $query = User::whereIn('email', array_keys($map));
         if (! $includeNonNull) {
             $query->where(function ($q) {
                 $q->whereNull('phone')->orWhere('phone', '');
