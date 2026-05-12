@@ -127,8 +127,7 @@ class RestoreUserPhones extends Command
         $stripe = new StripeClient($secret);
         $added  = 0;
 
-        $users = User::query()
-            ->whereNotNull('stripe_id')
+        $users = User::whereNotNull('stripe_id')
             ->where(function ($q) {
                 $q->whereNull('phone')->orWhere('phone', '');
             })
@@ -172,8 +171,7 @@ class RestoreUserPhones extends Command
         $stripe = new StripeClient($secret);
         $added  = 0;
 
-        $userIds = User::query()
-            ->where(function ($q) {
+        $userIds = User::where(function ($q) {
                 $q->whereNull('phone')->orWhere('phone', '');
             })
             ->pluck('id')
@@ -183,8 +181,7 @@ class RestoreUserPhones extends Command
             return 0;
         }
 
-        $payments = Payment::query()
-            ->whereIn('user_id', $userIds)
+        $payments = Payment::whereIn('user_id', $userIds)
             ->where(function ($q) {
                 $q->whereNotNull('charge_id')->orWhereNotNull('payment_intent_id');
             })

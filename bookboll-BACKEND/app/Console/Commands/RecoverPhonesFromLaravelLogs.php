@@ -100,8 +100,7 @@ class RecoverPhonesFromLaravelLogs extends Command
             return self::SUCCESS;
         }
 
-        $users = User::query()
-            ->where(function ($q) use ($idMap, $emailMap) {
+        $users = User::where(function ($q) use ($idMap, $emailMap) {
                 if (! empty($idMap)) {
                     $q->orWhereIn('id', array_map('intval', array_keys($idMap)));
                 }
@@ -391,8 +390,7 @@ class RecoverPhonesFromLaravelLogs extends Command
     {
         $paymentIntentId = isset($req['payment_intent_id']) ? trim((string) $req['payment_intent_id']) : '';
         if ($paymentIntentId !== '') {
-            $payment = Payment::query()
-                ->where('payment_intent_id', $paymentIntentId)
+            $payment = Payment::where('payment_intent_id', $paymentIntentId)
                 ->first(['user_id', 'booking_id']);
             if ($payment && $payment->user_id) {
                 return [
@@ -481,8 +479,7 @@ class RecoverPhonesFromLaravelLogs extends Command
         int $windowMinutes,
         ?int $forUserId
     ): ?Booking {
-        $base = Booking::query()
-            ->whereDate('date', $date)
+        $base = Booking::whereDate('date', $date)
             ->where('venue_id', $venueId)
             ->where('listing_id', $listingId)
             ->whereRaw('TIME(start_time) = TIME(?)', [$startNorm])

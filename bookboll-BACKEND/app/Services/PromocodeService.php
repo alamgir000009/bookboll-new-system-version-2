@@ -197,21 +197,13 @@ class PromocodeService
     public function getApplicableVenues(Request $request)
     {
         $search = $request->search ?? '';
-        $query  = Venue::query()
-            ->when($search, fn($q) => $q->where('name', 'LIKE', "%{$search}%"))
-            ->limit(10);
-
-        return $query->get();
+        return Venue::when($search, fn($q) => $q->where('name', 'LIKE', "%{$search}%"))->limit(10)->get();
     }
 
     public function getApplicableListings(Request $request)
     {
         $search = $request->search ?? '';
-        $query  = Listing::query()
-            ->when($search, fn($q) => $q->where('name', 'LIKE', "%{$search}%"))
-            ->limit(10);
-
-        return $query->get();
+        return Listing::when($search, fn($q) => $q->where('name', 'LIKE', "%{$search}%"))->limit(10)->get();
     }
 
     protected function validateRequest($request, bool $isUpdate = false, $promocodeId = null): array

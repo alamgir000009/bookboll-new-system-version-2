@@ -53,8 +53,7 @@ class RecoverPhonesFromSqlBackups extends Command
         $this->info("Extracted " . count($map) . " email->phone pairs and " . count($idMap) . " user_id->phone pairs from {$processedFiles} backup files.");
 
         $userIdsFromMap = array_map('intval', array_keys($idMap));
-        $users = User::query()
-            ->when(! empty($map), fn($q) => $q->orWhereIn('email', array_keys($map)))
+        $users = User::when(! empty($map), fn($q) => $q->orWhereIn('email', array_keys($map)))
             ->when(! empty($userIdsFromMap), fn($q) => $q->orWhereIn('id', $userIdsFromMap))
             ->when(! $includeNonNull, function ($q) {
                 $q->where(function ($qq) {

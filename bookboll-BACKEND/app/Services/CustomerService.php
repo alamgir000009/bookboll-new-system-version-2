@@ -76,8 +76,7 @@ class CustomerService
         $perPage = $request->records_per_page ?? 15;
         $search  = trim($request->search ?? '');
 
-        $query = User::query()
-            ->active()
+        $query = User::active()
             ->select('id', 'name', 'email', 'phone')
             ->whereHas('roles', function ($q) {
                 $q->where('name', 'customer');
@@ -323,8 +322,7 @@ class CustomerService
      */
     public function getAdminProfile(string $id)
     {
-        $customer = $this->customerModel::query()
-            ->whereHas('roles', function ($query) {
+        $customer = $this->customerModel::whereHas('roles', function ($query) {
                 $query->where('name', 'customer');
             })
             ->with(['tags:id,name,color'])
@@ -346,8 +344,7 @@ class CustomerService
             'max_points' => $tier->max_points,
         ] : null;
 
-        $rawStats = Booking::query()
-            ->where('user_id', $customer->id)
+        $rawStats = Booking::where('user_id', $customer->id)
             ->selectRaw('status, COUNT(*) as c')
             ->groupBy('status')
             ->pluck('c', 'status')
@@ -418,8 +415,7 @@ class CustomerService
      */
     public function getAdminBookings(Request $request, string $id)
     {
-        $exists = $this->customerModel::query()
-            ->whereHas('roles', function ($query) {
+        $exists = $this->customerModel::whereHas('roles', function ($query) {
                 $query->where('name', 'customer');
             })
             ->whereKey($id)
@@ -434,8 +430,7 @@ class CustomerService
 
         $status = $request->input('status');
 
-        $query = Booking::query()
-            ->where('user_id', $id)
+        $query = Booking::where('user_id', $id)
             ->with([
                 'listing:id,name,calendar_color',
                 'venue:id,name',
