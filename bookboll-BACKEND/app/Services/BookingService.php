@@ -2962,28 +2962,6 @@ class BookingService
         }
     }
 
-    public function getBookingNotificationRecipients(int $venueId)
-    {
-        $adminUserIds = User::whereHas('roles', function ($query) {
-            $query->whereIn('name', ['admin', 'super_admin']);
-        })
-            ->where('status', User::ACTIVE)
-            ->pluck('id')
-            ->toArray();
-
-        $employeeUserIds = User::whereHas('roles', function ($query) {
-            $query->whereIn('name', ['senior_employee', 'junior_employee']);
-        })
-            ->whereHas('venues', function ($query) use ($venueId) {
-                $query->where('venues.id', $venueId);
-            })
-            ->where('status', User::ACTIVE)
-            ->pluck('id')
-            ->toArray();
-
-        return array_unique(array_merge($adminUserIds, $employeeUserIds));
-    }
-
     public function sendBookingNotification(Booking $booking, string $eventType)
     {
         try {
@@ -2991,7 +2969,7 @@ class BookingService
                 return;
             }
 
-            $recipientIds = $this->getBookingNotificationRecipients($booking->venue_id);
+            $recipientIds = venueNotificationRecipientIds($booking->venue_id);
 
             if (empty($recipientIds)) {
                 Log::info('No recipients found for booking notification', [
