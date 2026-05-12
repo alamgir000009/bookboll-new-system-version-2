@@ -48,6 +48,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('posts-tags', [PostController::class, 'postTagsList']);
 
         Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
+        Route::post('venues/{id}/move', [VenueController::class, 'move'])->name('venues.move');
         Route::get('fetch-venues', [VenueController::class, 'adminFetchVenues'])->name('fetch-venues');
         Route::apiResource('venues', VenueController::class);
 
