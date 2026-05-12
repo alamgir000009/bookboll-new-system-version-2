@@ -21,6 +21,47 @@ class PaymentService
     public function __construct(protected Payment $paymentModel, protected Booking $bookingModel)
     {}
 
+    public function details($id)
+    {
+        try {
+            $query = $this->paymentModel::with([
+                'user:id,name,email,phone',
+                'booking' => function ($q) {
+                    $q->with([
+                        'user:id,name,email,phone',
+                        'venue:id,name,maps_url',
+                        'listing:id,name,venue_id',
+                        'addOns',
+                        'promocode:id,code,discount,discount_type',
+                        'payments' => function ($q) {
+                            $q->orderBy('created_at', 'asc');
+                        },
+                        'history' => function ($q) {
+                            $q->with('user:id,name')->orderByDesc('id');
+                        },
+                        'latestInvoice',
+                    ]);
+                },
+            ]);
+
+            $query = applyVenueFilterToPayments($query);
+
+            $payment = $query->where('id', $id)->first();
+
+            if (! $payment) {
+                return sendError('Payment not found or you do not have access to it.', [], 404);
+            }
+
+            return sendSuccess('Payment details fetched successfully', compact('payment'));
+        } catch (Exception $e) {
+            Log::error('Failed to fetch payment details: ' . $e->getMessage(), [
+                'payment_id' => $id,
+                'exception'  => $e,
+            ]);
+            return sendError('Failed to fetch payment details.');
+        }
+    }
+
     public function list($request)
     {
         $search           = $request->search ?? null;
