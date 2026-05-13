@@ -11,4 +11,7 @@ Artisan::command('inspire', function () {
 Schedule::command('slot-locks:clear')->everyFiveMinutes();
 
 Schedule::command('send-booking-reminders')->daily();
+
 Schedule::command('bookings:auto-cancel-unpaid-deposit')->everyMinute();
+
+Schedule::command('backup:run --only-db')->daily()->at('01:30');
