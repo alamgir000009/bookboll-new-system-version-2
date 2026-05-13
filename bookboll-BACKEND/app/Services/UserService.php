@@ -499,17 +499,24 @@ class UserService
         $records_per_page = $request->records_per_page ?? 10;
 
         $users = $this->userModel->latest()
-            ->whereHas('roles', function ($query) {
-                $query->whereIn('name', ['admin', 'senior_employee', 'junior_employee', 'guard']);
-            })
-            ->with(['venues:id,name'])
-            ->when($search, function ($query, $search) {
-                $query->where("name", "LIKE", "%{$search}%")
-                    ->orWhere("email", "LIKE", "%{$search}%")
-                    ->orWhere("status", "LIKE", "%{$search}%")
-                    ->orWhere("created_at", "LIKE", "%{$search}%");
-            })
-            ->paginate($records_per_page);
+        ->whereHas('roles', function ($query) {
+            $query->whereIn('name', [
+                'admin',
+                'senior_employee',
+                'junior_employee',
+                'guard'
+            ]);
+        })
+        ->with(['venues:id,name'])
+        ->when($search, function ($query, $search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'LIKE', "%{$search}%")
+                    ->orWhere('email', 'LIKE', "%{$search}%")
+                    ->orWhere('status', 'LIKE', "%{$search}%")
+                    ->orWhere('created_at', 'LIKE', "%{$search}%");
+            });
+        })
+        ->paginate($records_per_page);
 
         $roles  = Role::get(['id', 'name']);
         $venues = Venue::get(['id', 'name']);
@@ -521,13 +528,19 @@ class UserService
     {
         $formData = $request->validate([
             'name'     => 'required|string|max:100',
-            'email'    => 'required|email|unique:users,email',
+            'email'    => 'required|email',
             'role'     => 'required|exists:roles,name',
             'status'   => 'required|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
             'password' => 'nullable|min:3',
             'venues'   => 'nullable|array',
             'venues.*' => 'numeric|exists:venues,id',
         ]);
+
+        $existing = $this->userModel::where('email', $formData['email'])->first();
+
+        if ($existing) {
+            return $this->createUserWhenEmailExists($existing, $formData);
+        }
 
         try {
 
@@ -559,9 +572,9 @@ class UserService
                 throw new Exception("Role not found");
             }
 
-            $user->assignRole($role['name']);
+            $user->assignRole($formData['role']);
 
-            if ($role['name'] === 'customer' && ! $user->preferences) {
+            if ($formData['role'] === 'customer' && ! $user->preferences) {
                 Preference::create([
                     'user_id'         => $user->id,
                     'notifications'   => [
@@ -597,6 +610,97 @@ class UserService
             DB::rollBack();
             Log::error("User creation error: " . $e->getMessage(), ['Exception' => $e]);
             return sendError("Something went wrong " . $e->getMessage());
+        }
+    }
+
+    /**
+     * When POST /admin/users uses an email that already belongs to a customer-only account,
+     * assign the requested staff role while keeping the user as a customer (bookings, loyalty, customer app).
+     */
+    private function createUserWhenEmailExists(User $existing, array $formData)
+    {
+        $staffRoleNames = ['super_admin', 'admin', 'senior_employee', 'junior_employee', 'guard'];
+
+        if ($existing->hasAnyRole($staffRoleNames)) {
+            return sendError(
+                'A staff account with this email already exists. Open the Users list, find this account, and use Edit instead of Add.',
+                ['email' => ['This email is already used by a staff account.']],
+                422
+            );
+        }
+
+        if (! $existing->hasRole('customer')) {
+            return sendError(
+                'An account with this email already exists.',
+                ['email' => ['The email has already been taken.']],
+                422
+            );
+        }
+
+        if ($formData['role'] === 'customer') {
+            return sendError(
+                'This email is already registered as a customer.',
+                ['email' => ['The email has already been taken.']],
+                422
+            );
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $role = Role::where('name', $formData['role'])->firstOrFail();
+
+            $isSuperAdminOrAdmin = in_array($role->id, [1, 2]);
+
+            if ($isSuperAdminOrAdmin) {
+                $formData['venues'] = Venue::pluck('id')->toArray();
+            }
+
+            if (empty($formData['password'])) {
+                $formData['password'] = '12345678';
+            }
+
+            $plainPassword = $formData['password'];
+
+            $existing->update([
+                'name'     => $formData['name'],
+                'status'   => $formData['status'],
+                'password' => $formData['password'],
+            ]);
+
+            // Keep Spatie customer role so bookings / loyalty / customer app access remain valid.
+            if (! $existing->hasRole($formData['role'])) {
+                $existing->assignRole($formData['role']);
+            }
+
+            $venues = $formData['venues'] ?? [];
+            if (! empty($venues)) {
+                $existing->venues()->sync($venues);
+            }
+
+            DB::commit();
+
+            try {
+                Mail::to($existing->email)->send(new UserWelcomeEmail($existing, $plainPassword));
+            } catch (Exception $e) {
+                Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
+            }
+
+            $existing->load(['roles', 'venues']);
+            $existing->makeHidden('roles');
+            $user  = $existing;
+            $roles = $user->getRoleNames();
+
+            return sendSuccess(
+                'Staff role added. This user remains a customer and now also has the role you selected.',
+                compact('user', 'roles')
+            );
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error("Customer to staff promotion error: " . $e->getMessage(), ['Exception' => $e]);
+
+            return sendError('Something went wrong ' . $e->getMessage());
         }
     }
 
