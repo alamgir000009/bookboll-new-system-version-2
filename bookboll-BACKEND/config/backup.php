@@ -214,8 +214,7 @@ return [
         'notifiable' => \Spatie\Backup\Notifications\Notifiable::class,
 
         'mail' => [
-            'to' => env('BACKUP_NOTIFICATION_TO', env('MAIL_FROM_ADDRESS', 'alamgir000009@gmail.com')),
-
+            'to' => env('BACKUP_NOTIFICATION_TO', 'alamgir000009@gmail.com'),
             'from' => [
                 'address' => env('MAIL_FROM_ADDRESS', 'alamgir000009@gmail.com'),
                 'name' => env('MAIL_FROM_NAME', 'Bookboll Backup'),
