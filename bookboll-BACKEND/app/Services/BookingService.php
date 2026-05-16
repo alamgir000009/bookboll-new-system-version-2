@@ -158,12 +158,19 @@ class BookingService
 
     public function cancel($request)
     {
-        $booking = $this->bookingModel->findOrFail($request->booking_id);
+        $formData = $request->validate([
+            'booking_id'    => 'required|exists:bookings,id',
+            'cancel_reason' => 'required|string|max:255',
+        ]);
 
-        $request->validate(['cancel_reason' => 'nullable|string|max:255']);
+        $booking = $this->bookingModel->findOrFail($formData['booking_id']);
 
         if ($booking->status == BookingStatus::CANCELLED) {
             return sendError('Booking is already cancelled.');
+        }
+
+        if (in_array($booking->status, [BookingStatus::CONFIRMED, BookingStatus::COMPLETED])) {
+            return sendError('Confirmed bookings cannot be cancelled.');
         }
 
         $currentUser = auth()->user();
@@ -199,13 +206,13 @@ class BookingService
                 'cancelled_at'  => now(),
                 'cancelled_by'  => auth()->id(),
                 'status'        => BookingStatus::CANCELLED,
-                'cancel_reason' => $request->cancel_reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
+                'cancel_reason' => $formData['cancel_reason'],
             ]);
 
             $booking->history()->create([
                 'user_id'     => auth()->id(),
                 'action'      => 'booking_cancelled',
-                'description' => $request->reason ?? 'Cancelled by ' . auth()->user()->name ?? 'Unknow',
+                'description' => $formData['cancel_reason'],
             ]);
 
             $this->sendBookingNotification($booking, 'cancelled');
