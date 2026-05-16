@@ -96,12 +96,12 @@ class BookingController extends Controller
 
     public function upcoming(Request $request)
     {
-        return $this->bookingService->upcoming($request);
+        return $this->bookingService->customerBookings($request, 'upcoming');
     }
 
     public function recent(Request $request)
     {
-        return $this->bookingService->recent($request);
+        return $this->bookingService->customerBookings($request, 'recent');
     }
 
     public function validateBooking(Request $request)

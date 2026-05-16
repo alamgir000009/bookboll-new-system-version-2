@@ -2406,26 +2406,74 @@ class BookingService
         }
     }
 
-    public function upcoming($request)
+    public function customerBookings($request, string $scope)
     {
-        $today = Carbon::today();
+        if (! in_array($scope, ['upcoming', 'recent'], true)) {
+            return sendError('Invalid bookings scope. Use upcoming or recent.', [], 422);
+        }
 
-        $bookings = $this->bookingModel::with($this->customerBookingsRelations())
-            ->where('user_id', auth()->id())->where('date', '>=', $today)
-            ->orderBy('date', 'asc')->orderBy('start_time', 'asc')->get();
+        $data = $request->validate([
+            'pagination'       => 'nullable|boolean',
+            'page'             => 'nullable|integer|min:1',
+            'records_per_page' => 'nullable|integer|min:1|max:100',
+            'date'             => 'nullable|date',
+            'date_from'        => 'nullable|date',
+            'date_to'          => 'nullable|date|after_or_equal:date_from',
+            'venue_id'         => 'nullable|integer|exists:venues,id',
+            'listing_id'       => 'nullable|integer|exists:listings,id',
+        ]);
 
-        return sendSuccess("My bookings fetched successfully", compact('bookings'));
-    }
+        $paginate       = $request->boolean('pagination');
+        $recordsPerPage = (int) $request->input('records_per_page', 10);
+        $today          = Carbon::today();
 
-    public function recent($request)
-    {
-        $today = Carbon::today();
+        $query = $this->bookingModel::with($this->customerBookingsRelations())
+            ->where('user_id', auth()->id());
 
-        $bookings = $this->bookingModel::with($this->customerBookingsRelations())
-            ->where('user_id', auth()->id())->where('date', '<', $today)
-            ->orderBy('date', 'desc')->orderBy('start_time', 'asc')->get();
+        if ($scope === 'upcoming') {
+            $query->where('date', '>=', $today)
+                ->orderBy('date', 'asc')
+                ->orderBy('start_time', 'asc');
+            $message = 'My bookings fetched successfully';
+        } else {
+            $query->where('date', '<', $today)
+                ->orderBy('date', 'desc')
+                ->orderBy('start_time', 'asc');
+            $message = 'Recent bookings fetched successfully';
+        }
 
-        return sendSuccess("Recent bookings fetched successfully", compact('bookings'));
+        if ($request->filled('venue_id')) {
+            $query->where('venue_id', $data['venue_id']);
+        }
+
+        if ($request->filled('listing_id')) {
+            $query->where('listing_id', $data['listing_id']);
+        }
+
+        if ($request->filled('date')) {
+            $query->whereDate('date', $data['date']);
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('date', '>=', $data['date_from']);
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('date', '<=', $data['date_to']);
+        }
+
+        if ($paginate) {
+            $paginated = $query->paginate($recordsPerPage);
+            $paginated->setCollection(
+                $this->enrichCustomerBookingsWithSport($paginated->getCollection())
+            );
+
+            return sendSuccess($message, $paginated->toArray());
+        }
+
+        $bookings = $this->enrichCustomerBookingsWithSport($query->get());
+
+        return sendSuccess($message, compact('bookings'));
     }
 
     public function mobileBookingsFilterOptions($request)
@@ -3144,6 +3192,25 @@ class BookingService
             'latestInvoice',
             'payments',
         ];
+    }
+
+    private function enrichCustomerBookingsWithSport($bookings)
+    {
+        return $bookings->map(function (Booking $booking) {
+            $category = $booking->listing?->sportsCategory;
+
+            $booking->setAttribute('sport', $category?->name);
+            $booking->setAttribute('sports_type', $category ? [
+                'id'    => $category->id,
+                'name'  => $category->name,
+                'label' => $category->name,
+                'slug'  => $category->slug,
+                'icon'  => $category->icon,
+                'image' => $category->image,
+            ] : null);
+
+            return $booking;
+        });
     }
 
 }
