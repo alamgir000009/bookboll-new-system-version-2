@@ -148,13 +148,13 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('my-reviews', [ReviewController::class, 'myReviews'])->name('customer.my-reviews');
         Route::patch('reviews/{review}/helpful', [ReviewController::class, 'helpful'])->name('reviews.helpful');
         Route::apiResource('reviews', ReviewController::class)->except(['show', 'index']);
-        Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings'])->name('bookings.reviewable');
 
         Route::get('gift-cards', [GiftCardController::class, 'fetchGiftCards'])->name('customer.gift-cards.index');
         Route::post('gift-cards/redeem', [GiftCardController::class, 'redeemGiftCard'])->name('gift-cards.redeem');
         Route::get('gift-cards/balance', [GiftCardController::class, 'getBalance'])->name('gift-cards.balance');
         Route::get('gift-cards/promocodes', [GiftCardController::class, 'getGiftCardPromocodes'])->name('gift-cards.promocodes');
 
+        Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings'])->name('bookings.reviewable');
         Route::post('bookings/validate', [BookingController::class, 'validateBooking'])->name('bookings.validate');
         Route::post('bookings/confirm', [BookingController::class, 'confirmBooking'])->name('bookings.confirmBooking');
         Route::get('bookings/upcoming', [BookingController::class, 'upcoming'])->name('bookings.upcoming');

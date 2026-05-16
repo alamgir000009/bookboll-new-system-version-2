@@ -200,7 +200,7 @@ class ReviewService
     public function bookingsForReview()
     {
         $bookings = $this->bookingModel::where('user_id', auth()->id())
-            ->where('status', BookingStatus::COMPLETED)
+            ->whereIn('status', [BookingStatus::COMPLETED, BookingStatus::CONFIRMED])
             ->whereDoesntHave('review')
             ->with(['listing:id,venue_id,name', 'listing.venue:id,name'])
             ->get(['id', 'listing_id', 'bookings.created_at']);
