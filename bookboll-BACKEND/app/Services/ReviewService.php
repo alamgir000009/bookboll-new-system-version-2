@@ -101,9 +101,8 @@ class ReviewService
         $bookingId = $formData['booking_id'];
         $userId    = auth()->id();
 
-        $booking = $this->bookingModel->where('id', $bookingId)
-            ->where('user_id', $userId)
-            ->where('status', BookingStatus::COMPLETED)->firstOrFail();
+        $booking = $this->bookingModel->where('id', $bookingId)->where('user_id', $userId)
+            ->whereIn('status', [BookingStatus::COMPLETED, BookingStatus::CONFIRMED])->firstOrFail();
 
         $review = $booking->review()->updateOrCreate([
             'user_id' => $userId,
