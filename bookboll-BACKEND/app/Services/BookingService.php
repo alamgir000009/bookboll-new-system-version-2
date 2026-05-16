@@ -3138,7 +3138,7 @@ class BookingService
         return [
             'user',
             'venue',
-            'listing.sportsCategory:id,name,slug,icon',
+            'listing.sportsCategory:id,name,slug,icon,image',
             'promocode',
             'addOns',
             'latestInvoice',
