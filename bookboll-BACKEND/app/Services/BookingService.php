@@ -2410,7 +2410,7 @@ class BookingService
     {
         $today = Carbon::today();
 
-        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice', 'payments'])
+        $bookings = $this->bookingModel::with($this->customerBookingsRelations())
             ->where('user_id', auth()->id())->where('date', '>=', $today)
             ->orderBy('date', 'asc')->orderBy('start_time', 'asc')->get();
 
@@ -2421,7 +2421,7 @@ class BookingService
     {
         $today = Carbon::today();
 
-        $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice', 'payments'])
+        $bookings = $this->bookingModel::with($this->customerBookingsRelations())
             ->where('user_id', auth()->id())->where('date', '<', $today)
             ->orderBy('date', 'desc')->orderBy('start_time', 'asc')->get();
 
@@ -3132,4 +3132,18 @@ class BookingService
             return sendError('Something went wrong while fetching payment methods');
         }
     }
+
+    private function customerBookingsRelations(): array
+    {
+        return [
+            'user',
+            'venue',
+            'listing.sportsCategory:id,name,slug,icon',
+            'promocode',
+            'addOns',
+            'latestInvoice',
+            'payments',
+        ];
+    }
+
 }
