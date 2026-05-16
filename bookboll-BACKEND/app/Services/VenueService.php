@@ -15,7 +15,7 @@ class VenueService
     {
         $search           = $request->search ?? null;
         $schedule         = $request->boolean('schedule', true);
-        $paginate         = $request->boolean('paginate', false);
+        $pagination         = $request->boolean('pagination', false);
         $records_per_page = $request->records_per_page ?? 20;
 
         $query = $this->venueModel::when($search, function ($query, $search) {
@@ -41,7 +41,7 @@ class VenueService
             $query->active();
         }
 
-        $venues = $paginate ? $query->paginate($records_per_page) : $query->get();
+        $venues = $pagination ? $query->paginate($records_per_page) : $query->get();
 
         return sendSuccess('Venues fetched successfully', compact('venues'));
     }
