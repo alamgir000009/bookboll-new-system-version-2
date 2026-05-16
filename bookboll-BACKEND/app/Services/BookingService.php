@@ -2405,7 +2405,7 @@ class BookingService
 
         $bookings = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user', 'latestInvoice', 'payments'])
             ->where('user_id', auth()->id())->where('date', '>=', $today)
-            ->orderBy('date', 'desc')->orderBy('start_time', 'asc')->get();
+            ->orderBy('date', 'asc')->orderBy('start_time', 'asc')->get();
 
         return sendSuccess("My bookings fetched successfully", compact('bookings'));
     }
