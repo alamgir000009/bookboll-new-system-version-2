@@ -9,6 +9,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\OnesignalSubscription;
 use App\Models\Preference;
 use App\Models\RegistrationRequest;
+use App\Models\SportsCategory;
 use App\Models\User;
 use App\Models\Venue;
 use Carbon\Carbon;
@@ -964,7 +965,22 @@ class UserService
     public function getPreferences()
     {
         $preferences = Preference::where('user_id', auth()->id())->first();
-        return sendSuccess('Preferences fetched successfully', compact('preferences'));
+        $sports_types = SportsCategory::active()
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get(['id', 'name', 'slug', 'icon'])
+            ->map(function (SportsCategory $category) {
+                $slug = $category->slug ?: Str::slug($category->name);
+                return [
+                    'id'    => $slug,
+                    'slug'  => $slug,
+                    'name'  => $category->name,
+                    'label' => $category->name,
+                    'icon'  => $category->icon,
+                ];
+            })
+            ->values();
+        return sendSuccess('Preferences fetched successfully', compact('preferences', 'sports_types'));
     }
 
     public function updatePreferences($request)
