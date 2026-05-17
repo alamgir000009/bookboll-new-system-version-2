@@ -84,15 +84,39 @@ class Booking extends Model
 
     public function getDueAmountAttribute()
     {
-        $dueAmount = 0;
         if ($this->is_free) {
-            return $dueAmount;
-        } elseif ($this->payment_status === \BookingPaymentStatus::DEPOSIT_PAID) {
-            $breakdown = $this->payment_breakdown;
-            $dueAmount = $breakdown['remaining_amount'] ?? 0;
-        } else {
-            $dueAmount = $this->total_price;
+            return 0;
         }
+
+        if (
+            $this->payment_status === \BookingPaymentStatus::FULLY_PAID
+            || $this->payment_status === \BookingPaymentStatus::PAYMENT_SKIPPED
+            || $this->full_payment_received
+        ) {
+            return 0;
+        }
+
+        $totalPrice = (float) $this->total_price;
+
+        $totalPaid = $this->relationLoaded('payments')
+            ? (float) $this->payments
+                ->where('status', PaymentStatus::PAID)
+                ->sum('amount')
+            : (float) $this->payments()
+                ->where('status', PaymentStatus::PAID)
+                ->sum('amount');
+
+        $dueAmount = $totalPrice - $totalPaid;
+
+        if ($dueAmount <= 0) {
+            return 0;
+        }
+
+        if ($this->payment_status === \BookingPaymentStatus::DEPOSIT_PAID && $totalPaid <= 0) {
+            $breakdown = $this->payment_breakdown;
+            return (float) ($breakdown['remaining_amount'] ?? $dueAmount);
+        }
+
         return $dueAmount;
     }
 
@@ -251,7 +275,10 @@ class Booking extends Model
 
         static::creating(function ($booking) {
 
-            $year       = now()->year;
+            $now        = now();
+            $year       = $now->format('Y');
+            $month      = $now->format('m');
+            $prefix     = "BKN_{$year}_{$month}_";
             $maxRetries = 5;
             $attempts   = 0;
 
@@ -260,7 +287,7 @@ class Booking extends Model
                 $attempts++;
 
                 $latestBooking = static::lockForUpdate()
-                    ->where('booking_id', 'like', "BKN_{$year}_%")
+                    ->where('booking_id', 'like', "{$prefix}%")
                     ->orderByDesc('id')
                     ->first();
 
@@ -268,7 +295,7 @@ class Booking extends Model
                     ? ((int) substr($latestBooking->booking_id, -5)) + 1
                     : 1;
 
-                $bookingId = sprintf('BKN_%s_%05d', $year, $nextNumber);
+                $bookingId = sprintf('%s%05d', $prefix, $nextNumber);
 
                 $exists = static::where('booking_id', $bookingId)->exists();
 

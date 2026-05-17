@@ -30,6 +30,11 @@ class PaymentController extends Controller
         return $this->paymentService->list($request);
     }
 
+    public function show($id)
+    {
+        return $this->paymentService->details($id);
+    }
+
     public function totals()
     {
         return response()->json($this->paymentService->getDashboardTotals());
@@ -600,5 +605,16 @@ class PaymentController extends Controller
         }
 
         return $this->paymentService->markBookingAsPaid($request);
+    }
+
+    public function markPaymentAsReceived(Request $request, $id)
+    {
+        $user = auth()->user();
+
+        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
+            return sendError('Unauthorized. You do not have permission to mark payments as received.', [], 403);
+        }
+
+        return $this->paymentService->markPaymentAsReceived($request, $id);
     }
 }

@@ -3,7 +3,6 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Models\Listing;
-use App\Models\Payment;
 use App\Models\Promocode;
 use App\Models\Venue;
 use BookingPaymentMethod;
@@ -40,7 +39,12 @@ class PromocodeService
                         ->orWhere('expires_at', 'LIKE', "%{$search}%")
                         ->orWhere('min_order_amount', 'LIKE', "%{$search}%")
                         ->orWhere('max_discount_amount', 'LIKE', "%{$search}%")
-                        ->orWhere('usage_limit', 'LIKE', "%{$search}%");
+                        ->orWhere('usage_limit', 'LIKE', "%{$search}%")
+                        ->orWhereHas('users', function ($sub) use ($search) {
+                            $sub->where('name', 'LIKE', "%{$search}%")
+                                ->orWhere('email', 'LIKE', "%{$search}%")
+                                ->orWhere('phone', 'LIKE', "%{$search}%");
+                        });
                 });
             })
             ->when($request->status ?? null, fn($q, $status) => $q->where('status', $status))

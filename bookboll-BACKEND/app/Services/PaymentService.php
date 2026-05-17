@@ -21,6 +21,47 @@ class PaymentService
     public function __construct(protected Payment $paymentModel, protected Booking $bookingModel)
     {}
 
+    public function details($id)
+    {
+        try {
+            $query = $this->paymentModel::with([
+                'user:id,name,email,phone',
+                'booking' => function ($q) {
+                    $q->with([
+                        'user:id,name,email,phone',
+                        'venue:id,name,maps_url',
+                        'listing:id,name,venue_id',
+                        'addOns',
+                        'promocode:id,code,discount,discount_type',
+                        'payments' => function ($q) {
+                            $q->orderBy('created_at', 'asc');
+                        },
+                        'history' => function ($q) {
+                            $q->with('user:id,name')->orderByDesc('id');
+                        },
+                        'latestInvoice',
+                    ]);
+                },
+            ]);
+
+            $query = applyVenueFilterToPayments($query);
+
+            $payment = $query->where('id', $id)->first();
+
+            if (! $payment) {
+                return sendError('Payment not found or you do not have access to it.', [], 404);
+            }
+
+            return sendSuccess('Payment details fetched successfully', compact('payment'));
+        } catch (Exception $e) {
+            Log::error('Failed to fetch payment details: ' . $e->getMessage(), [
+                'payment_id' => $id,
+                'exception'  => $e,
+            ]);
+            return sendError('Failed to fetch payment details.');
+        }
+    }
+
     public function list($request)
     {
         $search           = $request->search ?? null;
@@ -524,6 +565,148 @@ class PaymentService
         } catch (Exception $e) {
             Log::error('Get Payment Methods Error: ' . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong");
+        }
+    }
+
+    public function markPaymentAsReceived($request, $id)
+    {
+        $validated = $request->validate([
+            'method'               => 'required|in:cash,cheque,wire_transfer,credit_card,online',
+            'auto_confirm_booking' => 'nullable|boolean',
+            'note'                 => 'nullable|string|max:1000',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $payment = $this->paymentModel::with('booking')->lockForUpdate()->findOrFail($id);
+
+            if ($payment->status === PaymentStatus::PAID) {
+                DB::rollBack();
+                return sendError('This payment is already marked as paid.');
+            }
+
+            $methodMap = [
+                'cash'          => PaymentMethod::CASH,
+                'cheque'        => PaymentMethod::CHEQUE,
+                'wire_transfer' => PaymentMethod::WIRE_TRANSFER,
+                'credit_card'   => PaymentMethod::CREDIT_CARD,
+                'online'        => PaymentMethod::ONLINE,
+            ];
+
+            $methodLabel = ucwords(str_replace('_', ' ', $validated['method']));
+            $adminNote   = isset($validated['note']) ? trim($validated['note']) : '';
+
+            $existingNotes = $payment->notes ?? "Payment for booking #{$payment->booking_id}";
+            $updatedNotes  = str_replace('pending', "paid via {$methodLabel}", $existingNotes);
+            if ($updatedNotes === $existingNotes) {
+                $updatedNotes = $existingNotes . " — paid via {$methodLabel}";
+            }
+            if ($adminNote !== '') {
+                $updatedNotes .= " | Admin note: {$adminNote}";
+            }
+
+            $payment->update([
+                'status' => PaymentStatus::PAID,
+                'method' => $methodMap[$validated['method']],
+                'date'   => now()->format('Y-m-d'),
+                'notes'  => $updatedNotes,
+            ]);
+
+            $booking = $payment->booking;
+            if (! $booking) {
+                DB::rollBack();
+                return sendError('Booking not found for this payment.');
+            }
+
+            $booking = $this->bookingModel::lockForUpdate()->findOrFail($booking->id);
+
+            $hasPendingPayments = $booking->payments()->where('status', PaymentStatus::PENDING)->exists();
+            $totalPaid  = (float) $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
+            $totalPrice = (float) $booking->total_price;
+            $allPaid    = ! $hasPendingPayments && $totalPaid >= $totalPrice;
+
+            $hasDepositPayment = $booking->payments()
+                ->where('type', PaymentType::DEPOSIT)
+                ->where('status', PaymentStatus::PAID)
+                ->exists();
+
+            if ($allPaid) {
+                $finalPaymentStatus = BookingPaymentStatus::FULLY_PAID;
+            } elseif ($hasDepositPayment) {
+                $finalPaymentStatus = BookingPaymentStatus::DEPOSIT_PAID;
+            } else {
+                $finalPaymentStatus = $booking->payment_status;
+            }
+
+            $booking->update([
+                'payment_status'        => $finalPaymentStatus,
+                'full_payment_received' => $allPaid,
+            ]);
+
+            $autoConfirmRequested = (bool) ($validated['auto_confirm_booking'] ?? false);
+            $bookingConfirmed     = false;
+
+            if (
+                $autoConfirmRequested
+                && $allPaid
+                && $booking->status === BookingStatus::PENDING
+            ) {
+                autoConfirmBookingIfPaid($booking);
+                $booking->refresh();
+                $bookingConfirmed = $booking->status === BookingStatus::CONFIRMED;
+            }
+
+            $authUser    = auth()->user();
+            $description = "Payment #{$payment->payment_id} marked as received via {$methodLabel} by {$authUser->name}.";
+            if ($bookingConfirmed) {
+                $description .= ' Booking auto-confirmed.';
+            }
+            if ($adminNote !== '') {
+                $description .= " Note: {$adminNote}";
+            }
+
+            $booking->history()->create([
+                'user_id'     => $authUser->id,
+                'action'      => 'payment_received',
+                'description' => $description,
+            ]);
+
+            if ($allPaid) {
+                regenerateBookingInvoice($booking);
+            }
+
+            DB::commit();
+
+            notifyVenueStaffRefresh($booking->venue_id, [
+                'event'             => 'payment_received',
+                'payment_id'        => $payment->id,
+                'booking_id'        => $booking->id,
+                'venue_id'          => $booking->venue_id,
+                'all_paid'          => $allPaid,
+                'booking_confirmed' => $bookingConfirmed,
+            ]);
+
+            $booking->load([
+                'payments',
+                'venue:id,name',
+                'listing:id,name',
+                'user:id,name,email,phone',
+            ]);
+
+            return sendSuccess('Payment marked as received successfully.', [
+                'payment'           => $payment->fresh(),
+                'booking'           => $booking,
+                'all_paid'          => $allPaid,
+                'booking_confirmed' => $bookingConfirmed,
+            ]);
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Mark payment as received failed: ' . $e->getMessage(), [
+                'payment_id' => $id,
+                'exception'  => $e,
+            ]);
+            return sendError('Failed to mark payment as received.');
         }
     }
 

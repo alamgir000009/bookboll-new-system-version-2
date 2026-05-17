@@ -11,7 +11,6 @@ use App\Models\SlotLock;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\SportsType;
-use App\Models\Venue;
 use BookingStatus;
 use Carbon\Carbon;
 use Exception;
@@ -30,20 +29,19 @@ class ListingService
     public function all($request)
     {
         $search           = $request->search ?? null;
-        $schedule         = $request->schedule ?? true;
+        $schedule         = $request->boolean('schedule', true);
         $records_per_page = $request->records_per_page ?? 20;
-
-        $venuesQuery = Venue::active()->orderBy('sort_order', 'ASC');
-        $venuesQuery = applyVenueFilter($venuesQuery, 'id');
-        $venues      = $venuesQuery->get(['id', 'name']);
 
         $query = $this->listingModel::with([
             'addOns',
             'assets',
             'resources',
             'pricingGroups',
-            'venue' => function ($q) {
+            'venue'          => function ($q) {
                 $q->orderBy('sort_order', 'ASC');
+            },
+            'sportsCategory' => function ($q) {
+                $q->select('id', 'name', 'slug', 'icon', 'sports_type_id');
             },
         ])
             ->orderBy('sort_order', 'ASC')
@@ -76,7 +74,7 @@ class ListingService
 
         $listings = $query->paginate($records_per_page);
 
-        return sendSuccess('Listings fetched successfully', compact('listings', 'venues'));
+        return sendSuccess('Listings fetched successfully', compact('listings'));
     }
 
     public function create($request)

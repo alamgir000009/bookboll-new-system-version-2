@@ -193,10 +193,13 @@ class VenueService
         $updates  = $request->input('updates');
         $venueIds = collect($updates)->pluck('id')->toArray();
 
-        $sortOrders = collect($updates)->pluck('sort_order')->sort()->values()->toArray();
-        if (count(array_unique($sortOrders)) !== count($sortOrders) || $sortOrders[0] !== 1
-            || end($sortOrders) !== count($sortOrders)) {
-            return sendError('Sort orders must be unique, sequential integers starting from 1.');
+        if (count(array_unique($venueIds)) !== count($venueIds)) {
+            return sendError('Each venue can only appear once in the updates.');
+        }
+
+        $sortOrders = collect($updates)->pluck('sort_order')->toArray();
+        if (count(array_unique($sortOrders)) !== count($sortOrders)) {
+            return sendError('Sort orders must be unique within the request.');
         }
 
         DB::beginTransaction();
@@ -214,6 +217,60 @@ class VenueService
             DB::rollBack();
             Log::error('Failed to update venue sort order: ' . $e->getMessage(), ['Exception' => $e]);
             return sendError('Failed to update sort order: ' . $e->getMessage());
+        }
+    }
+
+    public function moveOnePosition($id, $request)
+    {
+        $request->validate([
+            'direction' => 'required|in:up,down',
+        ]);
+
+        $venue = $this->venueModel::find($id);
+        if (! $venue) {
+            return sendError('Venue not found.', [], 404);
+        }
+
+        $direction   = $request->input('direction');
+        $currentSort = (int) ($venue->sort_order ?? 0);
+
+        $neighborQuery = $this->venueModel::query();
+        if ($direction === 'up') {
+            $neighbor = $neighborQuery->where('sort_order', '<', $currentSort)
+                ->orderByDesc('sort_order')
+                ->orderByDesc('id')
+                ->first();
+        } else {
+            $neighbor = $neighborQuery->where('sort_order', '>', $currentSort)
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->first();
+        }
+
+        if (! $neighbor) {
+            return sendError('No adjacent venue to swap with.', [], 422);
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $neighborSort = (int) ($neighbor->sort_order ?? 0);
+
+            $venue->update(['sort_order' => $neighborSort]);
+            $neighbor->update(['sort_order' => $currentSort]);
+
+            DB::commit();
+
+            return sendSuccess('Venue moved successfully.', [
+                'data' => [
+                    'venue'    => ['id' => $venue->id, 'sort_order' => $neighborSort],
+                    'neighbor' => ['id' => $neighbor->id, 'sort_order' => $currentSort],
+                ],
+            ]);
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to move venue: ' . $e->getMessage(), ['Exception' => $e]);
+            return sendError('Failed to move venue: ' . $e->getMessage());
         }
     }
 

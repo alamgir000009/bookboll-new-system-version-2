@@ -358,6 +358,16 @@ class CustomerService
             'total'     => array_sum(array_map('intval', $rawStats)),
         ];
 
+        $totalSpent = (float) DB::table('payments')
+            ->where('user_id', $customer->id)
+            ->where('status', PaymentStatus::PAID)
+            ->sum('amount');
+
+        $totalDue = (float) DB::table('payments')
+            ->where('user_id', $customer->id)
+            ->where('status', '!=', PaymentStatus::PAID)
+            ->sum('amount');
+
         $statusLabelMap = [
             User::ACTIVE   => 'Active',
             User::INACTIVE => 'Inactive',
@@ -399,14 +409,18 @@ class CustomerService
         ];
 
         return sendSuccess('Customer profile fetched', [
-            'customer'       => $customerPayload,
-            'loyalty'        => [
+            'customer'        => $customerPayload,
+            'loyalty'         => [
                 'points_balance'      => $balance,
                 'tier'                => $loyaltyTier,
                 'points_to_next_tier' => (int) $customer->points_to_next_tier,
                 'loyalty_progress'    => (int) $customer->loyalty_progress,
             ],
-            'booking_stats' => $bookingStats,
+            'booking_stats'   => $bookingStats,
+            'financial'       => [
+                'total_spent' => round($totalSpent, 2),
+                'total_due'   => round($totalDue, 2),
+            ],
         ]);
     }
 

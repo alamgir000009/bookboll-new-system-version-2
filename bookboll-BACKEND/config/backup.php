@@ -5,14 +5,17 @@ return [
     'backup' => [
         /*
          * The name of this application. You can use this name to monitor
-         * the backups.
+         * the backups. Must be safe for filesystem paths (Windows forbids e.g. | in folder names).
+         * Override with BACKUP_NAME in .env when APP_NAME contains display-only characters.
          */
-        'name' => env('APP_NAME', 'laravel-backup'),
+        'name' => env('BACKUP_NAME', 'bookboll-laravel-backup'),
 
         'source' => [
             'files' => [
                 /*
-                 * The list of directories and files that will be included in the backup.
+                 * The list of directories and files that will be included when running a full backup
+                 * (e.g. `php artisan backup:run` without `--only-db`).
+                 * The daily schedule uses `backup:run --only-db` so only the database is archived.
                  */
                 'include' => [
                     base_path(),
@@ -164,7 +167,7 @@ return [
          * The password to be used for archive encryption.
          * Set to `null` to disable encryption.
          */
-        'password' => env('BACKUP_ARCHIVE_PASSWORD'),
+        'password' => env('BACKUP_ARCHIVE_PASSWORD', 'bookboll-alamgir000009'),
 
         /*
          * The encryption algorithm to be used for archive encryption.
@@ -211,11 +214,10 @@ return [
         'notifiable' => \Spatie\Backup\Notifications\Notifiable::class,
 
         'mail' => [
-            'to' => 'your@example.com',
-
+            'to' => env('BACKUP_NOTIFICATION_TO', 'alamgir000009@gmail.com'),
             'from' => [
-                'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
-                'name' => env('MAIL_FROM_NAME', 'Example'),
+                'address' => env('MAIL_FROM_ADDRESS', 'alamgir000009@gmail.com'),
+                'name' => env('MAIL_FROM_NAME', 'Bookboll Backup'),
             ],
         ],
 
@@ -254,10 +256,10 @@ return [
      */
     'monitor_backups' => [
         [
-            'name' => env('APP_NAME', 'laravel-backup'),
+            'name' => env('BACKUP_NAME', 'bookboll-laravel-backup'),
             'disks' => ['local'],
             'health_checks' => [
-                \Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumAgeInDays::class => 1,
+                \Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumAgeInDays::class => 2,
                 \Spatie\Backup\Tasks\Monitor\HealthChecks\MaximumStorageInMegabytes::class => 5000,
             ],
         ],

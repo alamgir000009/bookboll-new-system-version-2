@@ -48,6 +48,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('posts-tags', [PostController::class, 'postTagsList']);
 
         Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
+        Route::post('venues/{id}/move', [VenueController::class, 'move'])->name('venues.move');
         Route::get('fetch-venues', [VenueController::class, 'adminFetchVenues'])->name('fetch-venues');
         Route::apiResource('venues', VenueController::class);
 
@@ -125,6 +126,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('payments/confirm', [PaymentController::class, 'confirmPayment'])->name('payments.confirm');
         Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink'])->name('payments.generate-link');
         Route::post('payments/mark-booking-paid', [PaymentController::class, 'markBookingAsPaid'])->name('payments.mark-booking-paid');
+        Route::post('payments/{id}/mark-received', [PaymentController::class, 'markPaymentAsReceived'])->name('payments.mark-received');
         Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice'])->name('payments.invoice');
         Route::get('payments/export', [PaymentController::class, 'export'])->name('payments.export');
         Route::apiResource('payments', PaymentController::class);

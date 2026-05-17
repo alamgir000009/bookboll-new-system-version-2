@@ -11,6 +11,7 @@ use App\Notifications\BookingCreatedUserNotification;
 use App\Services\AuditLogService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 if (! class_exists('MobileApps')) {
     class MobileApps
@@ -874,6 +875,54 @@ if (! function_exists('autoConfirmBookingIfPaid')) {
     }
 }
 
+if (! function_exists('pusherTrigger')) {
+    /**
+     * Trigger a Pusher event. No-ops gracefully if the Pusher SDK isn't
+     * installed or credentials aren't configured. Failures are logged but
+     * never thrown — broadcasting must never break business flow.
+     */
+    function pusherTrigger(string $channel, string $event, array $data = []): bool
+    {
+        try {
+            if (! class_exists(\Pusher\Pusher::class)) {
+                Log::warning('Pusher SDK not installed; skipping broadcast.', [
+                    'channel' => $channel,
+                    'event'   => $event,
+                ]);
+                return false;
+            }
+
+            $appId   = config('pusher.app_id');
+            $key     = config('pusher.key');
+            $secret  = config('pusher.secret');
+            $cluster = config('pusher.cluster', 'ap2');
+
+            if (empty($appId) || empty($key) || empty($secret)) {
+                Log::warning('Pusher credentials missing; skipping broadcast.', [
+                    'channel' => $channel,
+                    'event'   => $event,
+                ]);
+                return false;
+            }
+
+            $pusher = new \Pusher\Pusher($key, $secret, $appId, [
+                'cluster' => $cluster,
+                'useTLS'  => (bool) config('pusher.use_tls', true),
+            ]);
+
+            $pusher->trigger($channel, $event, $data);
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('Pusher trigger failed: ' . $e->getMessage(), [
+                'channel'   => $channel,
+                'event'     => $event,
+                'exception' => $e,
+            ]);
+            return false;
+        }
+    }
+}
+
 if (! function_exists('applyVenueFilter')) {
     function applyVenueFilter($query, string $venueColumn = 'venue_id')
     {
@@ -925,6 +974,109 @@ if (! function_exists('applyVenueFilterToPayments')) {
         return $query->whereHas('booking', function ($q) use ($venueIds) {
             $q->whereIn('venue_id', $venueIds);
         });
+    }
+}
+
+if (! function_exists('venueNotificationRecipientIds')) {
+    /**
+     * Resolve the user IDs that should receive notifications/broadcasts for
+     * activity tied to a specific venue.
+     *
+     * The result includes:
+     *   - All ACTIVE super_admin and admin users (they manage everything,
+     *     not scoped to any single venue).
+     *   - All ACTIVE senior_employee and junior_employee users assigned to
+     *     the given venue via the `user_venue` pivot.
+     *
+     * Use this helper for ANY delivery channel — OneSignal push, Pusher
+     * broadcasting, email, in-app notifications, etc. It returns only
+     * user IDs so the caller picks the transport.
+     *
+     * Pass `$venueId = null` to get only the global admins (for events
+     * that aren't tied to a single venue).
+     *
+     * @return array<int>  De-duplicated list of recipient user IDs
+     */
+    function venueNotificationRecipientIds(?int $venueId): array
+    {
+        try {
+            $globalAdminIds = \App\Models\User::whereHas('roles', function ($q) {
+                $q->whereIn('name', ['super_admin', 'admin']);
+            })
+                ->active()
+                ->pluck('id')
+                ->toArray();
+
+            $venueStaffIds = [];
+
+            if ($venueId) {
+                $venueStaffIds = \App\Models\User::whereHas('roles', function ($q) {
+                    $q->whereIn('name', ['senior_employee', 'junior_employee']);
+                })
+                    ->whereHas('venues', function ($q) use ($venueId) {
+                        $q->where('venues.id', $venueId);
+                    })
+                    ->active()
+                    ->pluck('id')
+                    ->toArray();
+            }
+
+            return array_values(array_unique(array_map('intval', array_merge($globalAdminIds, $venueStaffIds))));
+        } catch (\Throwable $e) {
+            Log::error('venueNotificationRecipientIds failed: ' . $e->getMessage(), [
+                'venue_id'  => $venueId,
+                'exception' => $e,
+            ]);
+            return [];
+        }
+    }
+}
+
+if (! function_exists('notifyVenueStaffRefresh')) {
+    /**
+     * Broadcast a private "refresh" event to every staff member who has
+     * access to the given venue, plus all super_admins / admins.
+     *
+     * Each recipient gets their own private channel:
+     *      private-refresh.{userId}      event: refresh
+     *
+     * This is exactly the same scoping as `applyVenueFilter()` uses for data
+     * visibility, and the same targeting strategy as `OneSignalService::sendToUsers()`,
+     * so we never refresh a staff member who can't see the underlying record.
+     *
+     * Active users only. Falls back to log + returns 0 on misconfiguration —
+     * a broken broadcast must never break the underlying business action.
+     *
+     * @param  int|null  $venueId  Booking's venue id (nullable — global event with no venue)
+     * @param  array     $payload  Arbitrary payload sent to mobile clients
+     * @return int                 Number of users notified
+     */
+    function notifyVenueStaffRefresh(?int $venueId, array $payload = []): int
+    {
+        try {
+            $userIds = venueNotificationRecipientIds($venueId);
+
+            if (empty($userIds)) {
+                Log::info('notifyVenueStaffRefresh: no recipients resolved.', [
+                    'venue_id' => $venueId,
+                    'payload'  => $payload,
+                ]);
+                return 0;
+            }
+
+            foreach ($userIds as $userId) {
+                broadcast(new \App\Events\AdminAppRefresh($userId, $payload));
+            }
+
+            return count($userIds);
+        } catch (\Throwable $e) {
+            Log::error('notifyVenueStaffRefresh failed: ' . $e->getMessage(), [
+                'venue_id'  => $venueId,
+                'payload'   => $payload,
+                'exception' => $e,
+            ]);
+            return 0;
+        }
     }
 }
 
