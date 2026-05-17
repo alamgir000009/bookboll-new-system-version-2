@@ -4,7 +4,6 @@ namespace App\Console\Commands;
 use App\Models\Booking;
 use App\Models\Setting;
 use App\Models\StripeSession;
-use App\Notifications\BookingCancelledUserNotification;
 use App\Services\BookingService;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
@@ -102,7 +101,6 @@ class AutoCancelUnpaidDepositBookings extends Command
                             ]);
 
                             $lockedBooking->loadMissing(['user', 'venue:id,name,maps_url', 'listing:id,name']);
-                            $lockedBooking->user?->notify(new BookingCancelledUserNotification($lockedBooking));
                             app(BookingService::class)->sendBookingNotification($lockedBooking, 'cancelled');
 
                             $cancelledCount++;
