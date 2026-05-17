@@ -18,17 +18,20 @@ use Stripe\Stripe;
 
 class PaymentService
 {
-    public function __construct(protected Payment $paymentModel, protected Booking $bookingModel)
-    {}
+    public function __construct(
+        protected Payment $paymentModel,
+        protected Booking $bookingModel,
+        protected StripeService $stripeService
+    ) {}
 
     public function details($id)
     {
         try {
             $query = $this->paymentModel::with([
-                'user:id,name,email,phone',
+                'user:id,name,email,phone,stripe_id',
                 'booking' => function ($q) {
                     $q->with([
-                        'user:id,name,email,phone',
+                        'user:id,name,email,phone,stripe_id',
                         'venue:id,name,maps_url',
                         'listing:id,name,venue_id',
                         'addOns',
@@ -52,7 +55,9 @@ class PaymentService
                 return sendError('Payment not found or you do not have access to it.', [], 404);
             }
 
-            return sendSuccess('Payment details fetched successfully', compact('payment'));
+            $stripe = $this->stripeService->forPayment($payment);
+
+            return sendSuccess('Payment details fetched successfully', compact('payment', 'stripe'));
         } catch (Exception $e) {
             Log::error('Failed to fetch payment details: ' . $e->getMessage(), [
                 'payment_id' => $id,
