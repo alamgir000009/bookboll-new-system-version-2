@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\NewsletterController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 use Rap2hpoutre\LaravelLogViewer\LogViewerController;
@@ -11,7 +12,10 @@ use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 Route::get('newsletter/unsubscribe/{email}', [NewsletterController::class, 'unsubscribe'])->name('newsletter.unsubscribe');
 Route::get('logs-000009', [LogViewerController::class, 'index']);
 
+Route::post('/stripe/payment-webhook', [StripeWebhookController::class, 'handle'])->name('stripe.payment.webhook');
+
 Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentSuccess'])->name('payment.success');
+Route::get('/payment/status/{session_id}', [PaymentController::class, 'paymentStatus'])->name('payment.status');
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
 
 Route::get('/', function () {

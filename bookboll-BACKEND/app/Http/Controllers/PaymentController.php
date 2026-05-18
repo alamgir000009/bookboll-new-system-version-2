@@ -5,25 +5,21 @@ use App\Exports\PaymentsExport;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\PaymentMethod as PaymentMethodModel;
-use App\Models\StripeSession;
 use App\Services\PaymentService;
-use BookingPaymentMethod;
+use App\Services\StripeService;
 use Maatwebsite\Excel\Facades\Excel;
-use BookingPaymentStatus;
 use Exception;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use PaymentMethod;
-use PaymentStatus;
-use PaymentType;
 use Stripe\PaymentIntent;
 use Stripe\Stripe;
 
 class PaymentController extends Controller
 {
-    public function __construct(protected PaymentService $paymentService)
-    {}
+    public function __construct(
+        protected PaymentService $paymentService,
+        protected StripeService $stripeService
+    ) {}
 
     public function index(Request $request)
     {
@@ -211,281 +207,43 @@ class PaymentController extends Controller
 
     public function paymentSuccess($session_id)
     {
-        Stripe::setApiKey(config('services.stripe.secret'));
-
         try {
-            DB::beginTransaction();
-
-            $session = \Stripe\Checkout\Session::retrieve($session_id);
-            Log::info('Before main booking update');
-
-            $existingSession = StripeSession::where('session_id', $session_id)->first();
-            if ($existingSession && $existingSession->processed) {
-                $mainBookingId   = $session->metadata['booking_id'] ?? null;
-                $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
-                $dueIds          = json_decode($dueBookingsJson, true) ?? [];
-
-                // Get all booking IDs from metadata (for customer bookings with recurring)
-                $allBookingIdsJson = $session->metadata['all_booking_ids'] ?? null;
-                $allBookingIds = null;
-                if ($allBookingIdsJson) {
-                    $allBookingIds = json_decode($allBookingIdsJson, true) ?? [];
-                }
-
-                // Prioritize all_booking_ids if available
-                if ($allBookingIds && !empty($allBookingIds)) {
-                    $bookingIds = array_unique(array_filter($allBookingIds));
-                } else {
-                    $bookingIds = array_unique(array_filter(array_merge([$mainBookingId], $dueIds)));
-                }
-
-                $source = $session->metadata['source'] ?? 'customer';
-
-                // Check source and redirect accordingly
-                if ($source === 'admin') {
-                    // Admin QR code payment - show backend blade view
-                    $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
-                        ->whereIn('id', $bookingIds)
-                        ->get();
-                    return view('payment-success', compact('bookings'));
-                } else {
-                    // Customer booking from frontend - redirect to frontend
-                    $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-                    $bookingIdsParam = implode(',', $bookingIds);
-                    $redirectUrl = rtrim($frontendUrl, '/') . '/thank-you?booking_ids=' . $bookingIdsParam;
-                    return redirect($redirectUrl);
-                }
-            }
-
-            $stripeSession = $existingSession ?? StripeSession::create([
-                'session_id' => $session_id,
-                'processed'  => false,
-            ]);
-
-            $source = $session->metadata['source'] ?? 'customer';
-
-            if ($session->payment_status !== 'paid') {
-                DB::rollBack();
-                // Check source and redirect accordingly
-                if ($source === 'admin') {
-                    return view('payment-cancel', ['error' => 'Payment not completed. Please try again.']);
-                } else {
-                    $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-                    $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
-                    return redirect($redirectUrl);
-                }
-            }
-
-            $paymentIntentId = $session->payment_intent;
-            $intent          = PaymentIntent::retrieve($paymentIntentId);
-            $chargeId        = $intent->latest_charge;
-
-            if (! $chargeId) {
-                DB::rollBack();
-                Log::error('No charge ID found for payment intent', ['payment_intent_id' => $paymentIntentId]);
-                // Check source and redirect accordingly
-                if ($source === 'admin') {
-                    return view('payment-cancel', ['error' => 'Payment verification failed: No charge found.']);
-                } else {
-                    $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-                    $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
-                    return redirect($redirectUrl);
-                }
-            }
-
-            $mainBookingId   = $session->metadata['booking_id'] ?? null;
-            $userId          = $session->metadata['user_id'] ?? null;
-            $dueBookingsJson = $session->metadata['due_bookings'] ?? '[]';
-            $dueIds          = json_decode($dueBookingsJson, true) ?? [];
-
-            // Get all booking IDs from metadata (for customer bookings with recurring)
-            $allBookingIdsJson = $session->metadata['all_booking_ids'] ?? null;
-            $allBookingIds = null;
-            if ($allBookingIdsJson) {
-                $allBookingIds = json_decode($allBookingIdsJson, true) ?? [];
-            }
-
-            if (! $userId) {
-                DB::rollBack();
-                Log::error('No user ID found in session metadata', ['session_id' => $session_id]);
-                // Check source and redirect accordingly
-                if ($source === 'admin') {
-                    return view('payment-cancel', ['error' => 'Payment verification failed: No user found.']);
-                } else {
-                    $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-                    $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
-                    return redirect($redirectUrl);
-                }
-            }
-
-            // Prioritize all_booking_ids if available (for customer bookings with recurring)
-            // Otherwise fall back to main booking + due bookings (for admin payment links)
-            if ($allBookingIds && !empty($allBookingIds)) {
-                $bookingIds = array_unique(array_filter($allBookingIds));
-            } else {
-                $bookingIds = [];
-                if ($mainBookingId) {
-                    $bookingIds[] = $mainBookingId;
-                }
-                if (! empty($dueIds)) {
-                    $bookingIds = array_merge($bookingIds, $dueIds);
-                }
-                $bookingIds = array_unique(array_filter($bookingIds));
-            }
-
-            if (empty($bookingIds)) {
-                DB::rollBack();
-                Log::error('No booking IDs found in session metadata', ['session_id' => $session_id]);
-                // Check source and redirect accordingly
-                if ($source === 'admin') {
-                    return view('payment-cancel', ['error' => 'Payment verification failed: No bookings found.']);
-                } else {
-                    $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-                    $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
-                    return redirect($redirectUrl);
-                }
-            }
-
-            $paymentType = $session->metadata['payment_type'] ?? 'full'; // 'full' or 'deposit'
-
-            Log::info('Processing payment for bookings', [
-                'session_id' => $session_id,
-                'booking_ids' => $bookingIds,
-                'payment_type' => $paymentType,
-                'total_bookings' => count($bookingIds),
-            ]);
-
-            foreach ($bookingIds as $bookingId) {
-                $booking = Booking::find($bookingId);
-                if (! $booking) {
-                    Log::warning('Booking not found', ['booking_id' => $bookingId]);
-                    continue;
-                }
-
-                if ($paymentType === 'deposit') {
-                    // Handle deposit payment
-                    $depositPayment = $booking->payments()
-                        ->where('status', PaymentStatus::PENDING)
-                        ->where('type', PaymentType::DEPOSIT)
-                        ->first();
-
-                    if ($depositPayment) {
-                        $depositPayment->update([
-                            'notes'             => str_replace('pending', 'paid online via Stripe', $depositPayment->notes ?? 'Deposit payment for booking #' . $booking->booking_id),
-                            'charge_id'         => $chargeId,
-                            'payment_intent_id' => $paymentIntentId,
-                            'status'            => PaymentStatus::PAID,
-                            'method'            => PaymentMethod::ONLINE,
-                            'date'              => now()->format('Y-m-d'),
-                        ]);
-
-                        $booking->update([
-                            'payment_status' => BookingPaymentStatus::DEPOSIT_PAID,
-                            'payment_method' => BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL,
-                        ]);
-
-                        $booking->history()->create([
-                            'user_id'     => $userId,
-                            'action'      => 'payment_received',
-                            'description' => "Deposit payment #{$depositPayment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
-                        ]);
-                    }
-                } else {
-                    // Handle full payment - update all pending payments (FULL or REMAINING)
-                    $pendingPayments = $booking->payments()
-                        ->where('status', PaymentStatus::PENDING)
-                        ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
-                        ->get();
-
-                    if ($pendingPayments->isNotEmpty()) {
-                        foreach ($pendingPayments as $payment) {
-                            $notes = $payment->notes ?? "Full payment for booking #{$booking->id}";
-                            $notes = str_replace('pending', 'paid online via Stripe', $notes);
-
-                            $payment->update([
-                                'notes'             => $notes,
-                                'charge_id'         => $chargeId,
-                                'payment_intent_id' => $paymentIntentId,
-                                'status'            => PaymentStatus::PAID,
-                                'method'            => PaymentMethod::ONLINE,
-                                'date'              => now()->format('Y-m-d'),
-                            ]);
-                            $booking->history()->create([
-                                'user_id'     => $userId,
-                                'action'      => 'payment_received',
-                                'description' => "Payment #{$payment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
-                            ]);
-                        }
-                    }
-
-                    $booking->update([
-                        'full_payment_received' => true,
-                        'payment_status'        => BookingPaymentStatus::FULLY_PAID,
-                        'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
-                    ]);
-                }
-
-                // Auto-confirm booking if fully paid
-                if ($booking->payment_status === BookingPaymentStatus::FULLY_PAID) {
-                    autoConfirmBookingIfPaid($booking);
-                    regenerateBookingInvoice($booking);
-                }
-            }
-
-            foreach ($bookingIds as $bookingId) {
-                $booking = Booking::find($bookingId);
-                if ($booking) {
-                    autoConfirmBookingIfPaid($booking);
-                    regenerateBookingInvoice($booking);
-                }
-            }
-
-            $stripeSession->update(['processed' => true]);
-
-            DB::commit();
-
-            // Check source and redirect accordingly
-            if ($source === 'admin') {
-                // Admin QR code payment - show backend blade view
-                $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
-                    ->whereIn('id', $bookingIds)
-                    ->get();
-                return view('payment-success', compact('bookings'));
-            } else {
-                // Customer booking from frontend - redirect to frontend
-                $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-                $bookingIdsParam = implode(',', $bookingIds);
-
-                Log::info('Redirecting to frontend thank you page', [
-                    'booking_ids' => $bookingIds,
-                    'booking_ids_param' => $bookingIdsParam,
-                    'total_bookings' => count($bookingIds),
-                ]);
-
-                $redirectUrl = rtrim($frontendUrl, '/') . '/thank-you?booking_ids=' . $bookingIdsParam;
-                return redirect($redirectUrl);
-            }
-
+            $state = $this->stripeService->getSessionReturnState($session_id);
         } catch (Exception $e) {
-            DB::rollBack();
-            Log::error('Stripe success route error: ' . $e->getMessage(), ['session_id' => $session_id]);
+            Log::error('Stripe success return error: ' . $e->getMessage(), ['session_id' => $session_id]);
 
-            // Try to get source from session if available
-            try {
-                $session = \Stripe\Checkout\Session::retrieve($session_id);
-                $source = $session->metadata['source'] ?? 'customer';
-            } catch (Exception $ex) {
-                $source = 'customer';
-            }
+            return $this->renderPaymentReturnFailure('customer');
+        }
 
-            // Check source and redirect accordingly
-            if ($source === 'admin') {
-                return view('payment-cancel', ['error' => 'Payment verification failed. Please contact support if this issue persists.']);
-            } else {
-                $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-                $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
-                return redirect($redirectUrl);
-            }
+        if ($state['status'] === 'completed') {
+            return $this->renderPaymentReturnSuccess($state);
+        }
+
+        if ($state['status'] === 'processing') {
+            return view('payment-processing', ['session_id' => $session_id]);
+        }
+
+        return $this->renderPaymentReturnCancelled($state);
+    }
+
+    public function paymentStatus($session_id)
+    {
+        try {
+            $state = $this->stripeService->getSessionReturnState($session_id);
+
+            return response()->json([
+                'status'      => $state['status'],
+                'source'      => $state['source'],
+                'booking_ids' => $state['booking_ids'],
+                'message'     => $state['message'],
+            ]);
+        } catch (Exception $e) {
+            Log::error('Stripe payment status error: ' . $e->getMessage(), ['session_id' => $session_id]);
+
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Unable to verify payment status.',
+            ], 500);
         }
     }
 
@@ -540,40 +298,23 @@ class PaymentController extends Controller
 
         if ($sessionId) {
             try {
-                Stripe::setApiKey(config('services.stripe.secret'));
-                $session = \Stripe\Checkout\Session::retrieve($sessionId);
+                $state = $this->stripeService->getSessionReturnState($sessionId);
 
-                $source = $session->metadata['source'] ?? 'customer';
-                $bookingId = $session->metadata['booking_id'] ?? null;
+                if ($state['status'] === 'completed') {
+                    return $this->renderPaymentReturnSuccess($state);
+                }
 
-                if ($source === 'customer' && $bookingId) {
-                    DB::beginTransaction();
+                if ($state['status'] === 'processing') {
+                    return view('payment-processing', ['session_id' => $sessionId]);
+                }
 
-                    $booking = Booking::find($bookingId);
-                    if ($booking && in_array($booking->status, [\BookingStatus::PENDING, \BookingStatus::CONFIRMED])) {
-                        $booking->update([
-                            'cancelled_at' => now(),
-                            'cancelled_by' => $booking->user_id,
-                            'status' => \BookingStatus::CANCELLED,
-                            'cancel_reason' => "Payment cancelled by customer ({$booking->user?->name}, {$booking->user?->email})",
-                        ]);
+                $source = $state['source'] ?? 'customer';
 
-                        $booking->history()->create([
-                            'user_id' => $booking->user_id,
-                            'action' => 'booking_cancelled',
-                            'description' => 'Booking cancelled due to payment cancellation',
-                        ]);
-                    }
-
-                    DB::commit();
-                } elseif ($source === 'admin') {
-                    $paymentLinkUrl = $session->url ?? null;
+                if ($source === 'admin' && isset($state['session'])) {
+                    $paymentLinkUrl = $state['session']->url ?? null;
                 }
             } catch (Exception $e) {
-                if ($source === 'customer') {
-                    DB::rollBack();
-                }
-                Log::error('Payment cancellation error: ' . $e->getMessage(), [
+                Log::error('Payment cancel return error: ' . $e->getMessage(), [
                     'session_id' => $sessionId,
                 ]);
             }
@@ -581,14 +322,60 @@ class PaymentController extends Controller
 
         if ($source === 'admin') {
             return view('payment-cancel', [
-                'isAdminPayment' => true,
+                'isAdminPayment'  => true,
                 'paymentLinkUrl' => $paymentLinkUrl,
             ]);
-        } else {
-            $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-            $redirectUrl = rtrim($frontendUrl, '/') . '/payment/cancel';
-            return redirect($redirectUrl);
         }
+
+        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+
+        return redirect(rtrim($frontendUrl, '/') . '/payment/cancel');
+    }
+
+    protected function renderPaymentReturnSuccess(array $state)
+    {
+        $bookingIds = $state['booking_ids'] ?? [];
+        $source     = $state['source'] ?? 'customer';
+
+        if ($source === 'admin') {
+            $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
+                ->whereIn('id', $bookingIds)
+                ->get();
+
+            return view('payment-success', compact('bookings'));
+        }
+
+        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+        $redirectUrl = rtrim($frontendUrl, '/') . '/thank-you?booking_ids=' . implode(',', $bookingIds);
+
+        return redirect($redirectUrl);
+    }
+
+    protected function renderPaymentReturnCancelled(array $state)
+    {
+        $source  = $state['source'] ?? 'customer';
+        $message = $state['message'] ?? 'Payment was not completed.';
+
+        if ($source === 'admin') {
+            return view('payment-cancel', ['error' => $message]);
+        }
+
+        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+
+        return redirect(rtrim($frontendUrl, '/') . '/payment/cancel');
+    }
+
+    protected function renderPaymentReturnFailure(string $source = 'customer')
+    {
+        if ($source === 'admin') {
+            return view('payment-cancel', [
+                'error' => 'Payment verification failed. Please contact support if this issue persists.',
+            ]);
+        }
+
+        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+
+        return redirect(rtrim($frontendUrl, '/') . '/payment/cancel');
     }
 
     public function getPaymentMethods()

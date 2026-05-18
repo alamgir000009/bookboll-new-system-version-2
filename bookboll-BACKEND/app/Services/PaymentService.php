@@ -300,15 +300,14 @@ class PaymentService
                 throw new Exception('Failed to create Stripe customer');
             }
 
-            $successUrl = url('/payment/success/{CHECKOUT_SESSION_ID}');
-            $cancelUrl = url('/payment/cancel?session_id={CHECKOUT_SESSION_ID}');
+            $returnUrls = $this->stripeService->checkoutReturnUrls();
 
             $session = \Stripe\Checkout\Session::create([
                 'customer' => $user->stripe_id,
                 'payment_method_types' => ['card'],
                 'mode' => 'payment',
-                'success_url' => $successUrl,
-                'cancel_url' => $cancelUrl,
+                'success_url' => $returnUrls['success_url'],
+                'cancel_url' => $returnUrls['cancel_url'],
                 'metadata' => $metadata,
                 'line_items' => [[
                     'price_data' => [
@@ -1038,8 +1037,7 @@ class PaymentService
                 ]);
             }
 
-            $successUrl = url('/payment/success/{CHECKOUT_SESSION_ID}');
-            $cancelUrl = url('/payment/cancel?session_id={CHECKOUT_SESSION_ID}');
+            $returnUrls = $this->stripeService->checkoutReturnUrls();
 
             $mainBooking = Booking::with(['venue:id,name', 'listing:id,name'])->find($mainBookingId);
             $venueName = $mainBooking?->venue?->name ?? $listing->venue?->name ?? 'Venue';
@@ -1079,8 +1077,8 @@ class PaymentService
                 'customer' => $user->stripe_id,
                 'payment_method_types' => ['card'],
                 'mode' => 'payment',
-                'success_url' => $successUrl,
-                'cancel_url' => $cancelUrl,
+                'success_url' => $returnUrls['success_url'],
+                'cancel_url' => $returnUrls['cancel_url'],
                 'metadata' => [
                     'user_id' => (string) $user->id,
                     'user_email' => $user->email ?? '',

@@ -17,6 +17,10 @@ return Application::configure(basePath: dirname(__DIR__))
         ['prefix' => 'api', 'middleware' => ['auth:sanctum']],
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->validateCsrfTokens(except: [
+            'stripe/payment-webhook',
+        ]);
+
         // $middleware->api(prepend: [
         //     \App\Http\Middleware\RestrictApiOrigin::class,
         // ]);

@@ -1,16 +1,23 @@
 <?php
 namespace App\Services;
 
+use App\Models\Booking;
 use App\Models\Payment;
 use App\Models\Setting;
 use App\Models\StripeSession;
+use BookingPaymentMethod;
+use BookingPaymentStatus;
 use Exception;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use PaymentMethod;
+use PaymentStatus;
+use PaymentType;
 use Stripe\Charge;
 use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\PaymentIntent;
 use Stripe\Stripe;
+use Stripe\Webhook;
 
 class StripeService
 {
@@ -137,6 +144,409 @@ class StripeService
         }
 
         return $result;
+    }
+
+    public function constructWebhookEvent(string $payload, ?string $signatureHeader): \Stripe\Event
+    {
+        $secret = $this->resolveWebhookSecret();
+        if (! $secret) {
+            throw new Exception('Stripe webhook secret is not configured.');
+        }
+
+        if (! $signatureHeader) {
+            throw new Exception('Missing Stripe-Signature header.');
+        }
+
+        return Webhook::constructEvent($payload, $signatureHeader, $secret);
+    }
+
+    public function handleWebhookEvent(\Stripe\Event $event): void
+    {
+        $type = $event->type;
+
+        if ($type === 'checkout.session.completed') {
+            /** @var StripeCheckoutSession $session */
+            $session = $event->data->object;
+            if (($session->payment_status ?? null) === 'paid') {
+                $this->fulfillPaidCheckoutSession($session->id, $session);
+            }
+
+            return;
+        }
+
+        if ($type === 'checkout.session.async_payment_succeeded') {
+            /** @var StripeCheckoutSession $session */
+            $session = $event->data->object;
+            $this->fulfillPaidCheckoutSession($session->id, $session);
+
+            return;
+        }
+
+        if ($type === 'checkout.session.expired') {
+            Log::info('Stripe checkout session expired', [
+                'session_id' => $event->data->object->id ?? null,
+            ]);
+        }
+    }
+
+    /**
+     * @return array{processed:bool,already_processed:bool,booking_ids:array,source:string,error:?string}
+     */
+    public function fulfillPaidCheckoutSession(string $sessionId, ?StripeCheckoutSession $session = null): array
+    {
+        $secret = $this->resolveStripeSecret();
+        if (! $secret) {
+            return [
+                'processed'         => false,
+                'already_processed' => false,
+                'booking_ids'       => [],
+                'source'            => 'customer',
+                'error'             => 'Stripe secret key is not configured.',
+            ];
+        }
+
+        Stripe::setApiKey($secret);
+
+        $session = $session ?? StripeCheckoutSession::retrieve($sessionId);
+
+        if (($session->payment_status ?? null) !== 'paid') {
+            return [
+                'processed'         => false,
+                'already_processed' => false,
+                'booking_ids'       => [],
+                'source'            => $session->metadata['source'] ?? 'customer',
+                'error'             => 'Payment not completed.',
+            ];
+        }
+
+        $paymentIntentId = is_string($session->payment_intent)
+            ? $session->payment_intent
+            : ($session->payment_intent->id ?? null);
+
+        if (! $paymentIntentId) {
+            return [
+                'processed'         => false,
+                'already_processed' => false,
+                'booking_ids'       => [],
+                'source'            => $session->metadata['source'] ?? 'customer',
+                'error'             => 'No payment intent on checkout session.',
+            ];
+        }
+
+        $intent   = PaymentIntent::retrieve($paymentIntentId);
+        $chargeId = is_string($intent->latest_charge)
+            ? $intent->latest_charge
+            : ($intent->latest_charge->id ?? null);
+
+        if (! $chargeId) {
+            return [
+                'processed'         => false,
+                'already_processed' => false,
+                'booking_ids'       => [],
+                'source'            => $session->metadata['source'] ?? 'customer',
+                'error'             => 'No charge found for payment.',
+            ];
+        }
+
+        $userId = $session->metadata['user_id'] ?? null;
+        if (! $userId) {
+            return [
+                'processed'         => false,
+                'already_processed' => false,
+                'booking_ids'       => [],
+                'source'            => $session->metadata['source'] ?? 'customer',
+                'error'             => 'Missing user in session metadata.',
+            ];
+        }
+
+        $bookingIds  = $this->resolveBookingIdsFromSession($session);
+        $paymentType = $session->metadata['payment_type'] ?? 'full';
+        $source      = $session->metadata['source'] ?? 'customer';
+
+        if (empty($bookingIds)) {
+            return [
+                'processed'         => false,
+                'already_processed' => false,
+                'booking_ids'       => [],
+                'source'            => $source,
+                'error'             => 'No bookings linked to this checkout session.',
+            ];
+        }
+
+        try {
+            return DB::transaction(function () use (
+                $sessionId,
+                $bookingIds,
+                $paymentType,
+                $source,
+                $userId,
+                $chargeId,
+                $paymentIntentId
+            ) {
+                $stripeSession = StripeSession::where('session_id', $sessionId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $stripeSession) {
+                    $stripeSession = StripeSession::create([
+                        'session_id'  => $sessionId,
+                        'booking_id'  => $bookingIds[0] ?? null,
+                        'booking_ids' => $bookingIds,
+                        'source'      => $source,
+                        'processed'   => false,
+                    ]);
+                }
+
+                if ($stripeSession->processed) {
+                    return [
+                        'processed'         => true,
+                        'already_processed' => true,
+                        'booking_ids'       => $bookingIds,
+                        'source'            => $source,
+                        'error'             => null,
+                    ];
+                }
+
+                Log::info('Fulfilling Stripe checkout session', [
+                    'session_id'   => $sessionId,
+                    'booking_ids'  => $bookingIds,
+                    'payment_type' => $paymentType,
+                    'source'       => $source,
+                ]);
+
+                foreach ($bookingIds as $bookingId) {
+                    $this->applyPaymentToBooking(
+                        (int) $bookingId,
+                        (int) $userId,
+                        $paymentType,
+                        $chargeId,
+                        $paymentIntentId
+                    );
+                }
+
+                foreach ($bookingIds as $bookingId) {
+                    $booking = Booking::find($bookingId);
+                    if ($booking) {
+                        autoConfirmBookingIfPaid($booking);
+                        regenerateBookingInvoice($booking);
+                    }
+                }
+
+                $stripeSession->update([
+                    'processed'   => true,
+                    'booking_id'  => $stripeSession->booking_id ?? ($bookingIds[0] ?? null),
+                    'booking_ids' => $bookingIds,
+                    'source'      => $source,
+                ]);
+
+                return [
+                    'processed'         => true,
+                    'already_processed' => false,
+                    'booking_ids'       => $bookingIds,
+                    'source'            => $source,
+                    'error'             => null,
+                ];
+            });
+        } catch (Exception $e) {
+            Log::error('Stripe checkout fulfillment failed', [
+                'session_id' => $sessionId,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return [
+                'processed'         => false,
+                'already_processed' => false,
+                'booking_ids'       => $bookingIds,
+                'source'            => $source,
+                'error'             => $e->getMessage(),
+            ];
+        }
+    }
+
+    public function getSessionReturnState(string $sessionId): array
+    {
+        $secret = $this->resolveStripeSecret();
+        if (! $secret) {
+            throw new Exception('Stripe secret key is not configured.');
+        }
+
+        Stripe::setApiKey($secret);
+
+        $session = StripeCheckoutSession::retrieve($sessionId);
+        $source  = $session->metadata['source'] ?? 'customer';
+        $dbRow   = StripeSession::where('session_id', $sessionId)->first();
+
+        if ($dbRow?->processed) {
+            return [
+                'status'      => 'completed',
+                'source'      => $source,
+                'booking_ids' => $this->resolveBookingIdsFromSession($session),
+                'session'     => $session,
+                'message'     => null,
+            ];
+        }
+
+        if (($session->payment_status ?? null) === 'paid') {
+            $result = $this->fulfillPaidCheckoutSession($sessionId, $session);
+
+            if ($result['processed']) {
+                return [
+                    'status'      => 'completed',
+                    'source'      => $result['source'],
+                    'booking_ids' => $result['booking_ids'],
+                    'session'     => $session,
+                    'message'     => null,
+                ];
+            }
+
+            return [
+                'status'      => 'processing',
+                'source'      => $source,
+                'booking_ids' => $result['booking_ids'],
+                'session'     => $session,
+                'message'     => $result['error'],
+            ];
+        }
+
+        if (in_array($session->status ?? null, ['expired', 'open'], true) && ($session->payment_status ?? null) !== 'paid') {
+            return [
+                'status'      => 'cancelled',
+                'source'      => $source,
+                'booking_ids' => $this->resolveBookingIdsFromSession($session),
+                'session'     => $session,
+                'message'     => null,
+            ];
+        }
+
+        return [
+            'status'      => 'cancelled',
+            'source'      => $source,
+            'booking_ids' => [],
+            'session'     => $session,
+            'message'     => 'Payment was not completed.',
+        ];
+    }
+
+    public function checkoutReturnUrls(): array
+    {
+        return [
+            'success_url' => url('/payment/success/{CHECKOUT_SESSION_ID}'),
+            'cancel_url'  => url('/payment/cancel?session_id={CHECKOUT_SESSION_ID}'),
+        ];
+    }
+
+    protected function applyPaymentToBooking(
+        int $bookingId,
+        int $userId,
+        string $paymentType,
+        string $chargeId,
+        string $paymentIntentId
+    ): void {
+        $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+        if (! $booking) {
+            Log::warning('Booking not found during Stripe fulfillment', ['booking_id' => $bookingId]);
+
+            return;
+        }
+
+        if ($paymentType === 'deposit') {
+            $depositPayment = $booking->payments()
+                ->where('status', PaymentStatus::PENDING)
+                ->where('type', PaymentType::DEPOSIT)
+                ->first();
+
+            if ($depositPayment) {
+                $depositPayment->update([
+                    'notes'             => str_replace(
+                        'pending',
+                        'paid online via Stripe',
+                        $depositPayment->notes ?? 'Deposit payment for booking #' . $booking->booking_id
+                    ),
+                    'charge_id'         => $chargeId,
+                    'payment_intent_id' => $paymentIntentId,
+                    'status'            => PaymentStatus::PAID,
+                    'method'            => PaymentMethod::ONLINE,
+                    'date'              => now()->format('Y-m-d'),
+                ]);
+
+                $booking->update([
+                    'payment_status' => BookingPaymentStatus::DEPOSIT_PAID,
+                    'payment_method' => BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL,
+                ]);
+
+                $booking->history()->create([
+                    'user_id'     => $userId,
+                    'action'      => 'payment_received',
+                    'description' => "Deposit payment #{$depositPayment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
+                ]);
+            }
+
+            return;
+        }
+
+        $pendingPayments = $booking->payments()
+            ->where('status', PaymentStatus::PENDING)
+            ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
+            ->get();
+
+        foreach ($pendingPayments as $payment) {
+            $notes = $payment->notes ?? "Full payment for booking #{$booking->id}";
+            $notes = str_replace('pending', 'paid online via Stripe', $notes);
+
+            $payment->update([
+                'notes'             => $notes,
+                'charge_id'         => $chargeId,
+                'payment_intent_id' => $paymentIntentId,
+                'status'            => PaymentStatus::PAID,
+                'method'            => PaymentMethod::ONLINE,
+                'date'              => now()->format('Y-m-d'),
+            ]);
+
+            $booking->history()->create([
+                'user_id'     => $userId,
+                'action'      => 'payment_received',
+                'description' => "Payment #{$payment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
+            ]);
+        }
+
+        $booking->update([
+            'full_payment_received' => true,
+            'payment_status'        => BookingPaymentStatus::FULLY_PAID,
+            'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
+        ]);
+    }
+
+    protected function resolveBookingIdsFromSession(StripeCheckoutSession $session): array
+    {
+        $metadata = $session->metadata ?? [];
+
+        $allBookingIdsJson = $metadata['all_booking_ids'] ?? null;
+        if ($allBookingIdsJson) {
+            $ids = json_decode($allBookingIdsJson, true) ?? [];
+
+            return array_values(array_unique(array_filter(array_map('intval', $ids))));
+        }
+
+        $mainBookingId   = $metadata['booking_id'] ?? null;
+        $dueBookingsJson = $metadata['due_bookings'] ?? '[]';
+        $dueIds          = json_decode($dueBookingsJson, true) ?? [];
+
+        $bookingIds = [];
+        if ($mainBookingId) {
+            $bookingIds[] = (int) $mainBookingId;
+        }
+        if (! empty($dueIds)) {
+            $bookingIds = array_merge($bookingIds, array_map('intval', $dueIds));
+        }
+
+        $dbRow = StripeSession::where('session_id', $session->id)->first();
+        if ($dbRow && ! empty($dbRow->booking_ids)) {
+            $bookingIds = array_merge($bookingIds, array_map('intval', (array) $dbRow->booking_ids));
+        } elseif ($dbRow?->booking_id) {
+            $bookingIds[] = (int) $dbRow->booking_id;
+        }
+
+        return array_values(array_unique(array_filter($bookingIds)));
     }
 
     protected function resolveCheckoutSession(Payment $payment, ?PaymentIntent $paymentIntent): ?StripeCheckoutSession
@@ -305,6 +715,18 @@ class StripeService
         }
 
         $settingSecret = trim((string) Setting::where('key', 'stripe_secret_key')->value('value'));
+
+        return $settingSecret !== '' ? $settingSecret : null;
+    }
+
+    protected function resolveWebhookSecret(): ?string
+    {
+        $configSecret = trim((string) config('services.stripe.webhook_secret'));
+        if ($configSecret !== '') {
+            return $configSecret;
+        }
+
+        $settingSecret = trim((string) Setting::where('key', 'stripe_webhook_secret')->value('value'));
 
         return $settingSecret !== '' ? $settingSecret : null;
     }
