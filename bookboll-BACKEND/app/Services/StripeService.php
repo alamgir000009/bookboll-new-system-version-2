@@ -7,6 +7,7 @@ use App\Models\Setting;
 use App\Models\StripeSession;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
+use BookingStatus;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -274,7 +275,7 @@ class StripeService
         }
 
         try {
-            return DB::transaction(function () use (
+            $result = DB::transaction(function () use (
                 $sessionId,
                 $bookingIds,
                 $paymentType,
@@ -347,6 +348,16 @@ class StripeService
                     'error'             => null,
                 ];
             });
+
+            if ($result['processed'] && ! $result['already_processed']) {
+                $this->dispatchPaymentReceivedNotifications(
+                    $result['booking_ids'],
+                    $paymentType,
+                    $sessionId
+                );
+            }
+
+            return $result;
         } catch (Exception $e) {
             Log::error('Stripe checkout fulfillment failed', [
                 'session_id' => $sessionId,
@@ -360,6 +371,68 @@ class StripeService
                 'source'            => $source,
                 'error'             => $e->getMessage(),
             ];
+        }
+    }
+
+    protected function dispatchPaymentReceivedNotifications(
+        array $bookingIds,
+        string $paymentType,
+        string $sessionId
+    ): void {
+        if (empty($bookingIds)) {
+            return;
+        }
+
+        try {
+            $bookings = Booking::with(['user', 'venue', 'listing', 'payments'])
+                ->whereIn('id', $bookingIds)
+                ->get();
+
+            if ($bookings->isEmpty()) {
+                return;
+            }
+
+            $bookingService = app(BookingService::class);
+
+            foreach ($bookings->groupBy('venue_id') as $venueId => $venueBookings) {
+                if (! $venueId) {
+                    continue;
+                }
+
+                $primaryBooking = $venueBookings->first();
+                $paidPayment      = $primaryBooking->payments()
+                    ->where('status', PaymentStatus::PAID)
+                    ->where('method', PaymentMethod::ONLINE)
+                    ->latest('id')
+                    ->first();
+
+                notifyVenueStaffRefresh((int) $venueId, [
+                    'event'             => 'payment_received',
+                    'payment_id'        => $paidPayment?->id,
+                    'booking_id'        => $primaryBooking->id,
+                    'booking_ids'       => $venueBookings->pluck('id')->values()->all(),
+                    'venue_id'          => (int) $venueId,
+                    'session_id'        => $sessionId,
+                    'payment_type'      => $paymentType,
+                    'all_paid'          => $venueBookings->every(
+                        fn (Booking $b) => $b->payment_status === BookingPaymentStatus::FULLY_PAID
+                    ),
+                    'booking_confirmed' => $venueBookings->contains(
+                        fn (Booking $b) => $b->status === BookingStatus::CONFIRMED
+                    ),
+                    'source'            => 'stripe',
+                ]);
+            }
+
+            foreach ($bookings as $booking) {
+                $bookingService->sendBookingNotification($booking, 'payment_received');
+            }
+        } catch (Exception $e) {
+            Log::error('Stripe payment notifications failed', [
+                'session_id'  => $sessionId,
+                'booking_ids' => $bookingIds,
+                'error'       => $e->getMessage(),
+            ]);
         }
     }
 

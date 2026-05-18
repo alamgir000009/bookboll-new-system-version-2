@@ -15,7 +15,7 @@ return [
     |
     */
 
-    'paths'                    => ['api/*', 'sanctum/csrf-cookie'],
+    'paths'                    => ['api/*', 'sanctum/csrf-cookie', 'broadcasting/auth', 'api/broadcasting/auth'],
 
     'allowed_methods'          => ['*'],
 
@@ -33,7 +33,11 @@ return [
         'https://stagingadmin.bookboll.com',
     ],
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        '#^https?://([\w-]+\.)?bookboll\.com$#',
+        '#^http://localhost(:\d+)?$#',
+        '#^http://127\.0\.0\.1(:\d+)?$#',
+    ],
 
     'allowed_headers'          => ['*'],
 

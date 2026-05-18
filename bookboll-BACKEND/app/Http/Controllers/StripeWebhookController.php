@@ -20,7 +20,6 @@ class StripeWebhookController extends Controller
 
         try {
             $event = $this->stripeService->constructWebhookEvent($payload, $sigHeader);
-            Log::info('Stripe webhook event', ['event' => $event]);
         } catch (UnexpectedValueException $e) {
             Log::warning('Stripe webhook invalid payload', ['error' => $e->getMessage()]);
 

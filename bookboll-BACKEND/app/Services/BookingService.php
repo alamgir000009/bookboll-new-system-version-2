@@ -3055,12 +3055,21 @@ class BookingService
                     $title   = 'Booking Cancelled';
                     $message = "Booking #{$bookingId} by {$customerName} at {$venueName} has been cancelled";
                     break;
+                case 'payment_received':
+                    if ($booking->payment_status === BookingPaymentStatus::DEPOSIT_PAID) {
+                        $title   = 'Deposit Received';
+                        $message = "Online deposit received for booking #{$bookingId} by {$customerName} at {$venueName}";
+                    } else {
+                        $title   = 'Payment Received';
+                        $message = "Online payment received for booking #{$bookingId} by {$customerName} at {$venueName}";
+                    }
+                    break;
                 default:
                     return;
             }
 
             $data = [
-                'type'           => 'booking_' . $eventType,
+                'type'           => $eventType === 'payment_received' ? 'payment_received' : 'booking_' . $eventType,
                 'booking_id'     => $booking->id,
                 'booking_number' => $bookingId,
                 'venue_id'       => $booking->venue_id,
