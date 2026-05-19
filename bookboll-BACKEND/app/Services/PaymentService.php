@@ -82,22 +82,7 @@ class PaymentService
             'booking.venue:id,name',
         ])
             ->latest()
-            ->when($search, function ($query, $search) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('type', 'LIKE', "%{$search}%")
-                        ->orWhere('method', 'LIKE', "%{$search}%")
-                        ->orWhere('amount', 'LIKE', "%{$search}%")
-                        ->orWhere('booking_id', 'LIKE', "%{$search}%")
-                        ->orWhere('payment_id', 'LIKE', "%{$search}%")
-                        ->orWhereHas('booking.user', function ($sub) use ($search) {
-                            $sub->where('name', 'LIKE', "%{$search}%")
-                                ->orWhere('email', 'LIKE', "%{$search}%");
-                        })
-                        ->orWhereHas('booking.venue', function ($sub) use ($search) {
-                            $sub->where('name', 'LIKE', "%{$search}%");
-                        });
-                });
-            })
+            ->when($search, fn ($query) => $this->applyPaymentSearch($query, $search))
             ->when($method, function ($query, $method) {
                 $query->where('method', $method);
             })
@@ -138,22 +123,7 @@ class PaymentService
             'booking.listing:id,name',
         ])
             ->latest()
-            ->when($search, function ($query, $search) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('type', 'LIKE', "%{$search}%")
-                        ->orWhere('method', 'LIKE', "%{$search}%")
-                        ->orWhere('amount', 'LIKE', "%{$search}%")
-                        ->orWhere('booking_id', 'LIKE', "%{$search}%")
-                        ->orWhere('payment_id', 'LIKE', "%{$search}%")
-                        ->orWhereHas('booking.user', function ($sub) use ($search) {
-                            $sub->where('name', 'LIKE', "%{$search}%")
-                                ->orWhere('email', 'LIKE', "%{$search}%");
-                        })
-                        ->orWhereHas('booking.venue', function ($sub) use ($search) {
-                            $sub->where('name', 'LIKE', "%{$search}%");
-                        });
-                });
-            })
+            ->when($search, fn ($query) => $this->applyPaymentSearch($query, $search))
             ->when($method, function ($query, $method) {
                 $query->where('method', $method);
             })
@@ -1190,5 +1160,26 @@ class PaymentService
             }
             autoConfirmBookingIfPaid($booking);
         }
+    }
+
+    protected function applyPaymentSearch($query, string $search): void
+    {
+        $query->where(function ($q) use ($search) {
+            $q->where('type', 'LIKE', "%{$search}%")
+                ->orWhere('method', 'LIKE', "%{$search}%")
+                ->orWhere('amount', 'LIKE', "%{$search}%")
+                ->orWhere('booking_id', 'LIKE', "%{$search}%")
+                ->orWhere('payment_id', 'LIKE', "%{$search}%")
+                ->orWhereHas('booking', function ($sub) use ($search) {
+                    $sub->where('booking_id', 'LIKE', "%{$search}%");
+                })
+                ->orWhereHas('booking.user', function ($sub) use ($search) {
+                    $sub->where('name', 'LIKE', "%{$search}%")
+                        ->orWhere('email', 'LIKE', "%{$search}%");
+                })
+                ->orWhereHas('booking.venue', function ($sub) use ($search) {
+                    $sub->where('name', 'LIKE', "%{$search}%");
+                });
+        });
     }
 }
