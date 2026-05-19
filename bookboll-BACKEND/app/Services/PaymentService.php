@@ -258,6 +258,7 @@ class PaymentService
                 'booking_id'     => $booking->id,
                 'total_amount'   => $totalAmount,
                 'payment_method' => 'online_payment',
+                'booking_number' => $booking->booking_id,
                 'due_bookings'   => json_encode($dueBookings->pluck('id')),
                 'source'         => 'admin', // Admin-generated payment link (for QR codes, etc.)
             ];
@@ -284,7 +285,7 @@ class PaymentService
                         'currency' => 'qar',
                         'unit_amount' => $totalAmount * 100,
                         'product_data' => [
-                            'name' => "Payment for Booking #{$booking->id}",
+                            'name' => "Payment for Booking #{$booking->booking_id}",
                         ],
                     ],
                     'quantity' => 1,
@@ -748,7 +749,7 @@ class PaymentService
 
                 // Mark all pending payments as paid
                 foreach ($pendingPayments as $payment) {
-                    $notes = $payment->notes ?? "Payment for booking #{$booking->id}";
+                    $notes = $payment->notes ?? "Payment for booking #{$booking->booking_id}";
                     $notes = str_replace('pending', 'paid via ' . $paymentMethodName, $notes);
                     $notes = str_replace('Deposit payment pending', 'Deposit payment paid via ' . $paymentMethodName, $notes);
                     $notes = str_replace('Remaining payment pending', 'Remaining payment paid via ' . $paymentMethodName, $notes);

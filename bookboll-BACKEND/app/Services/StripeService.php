@@ -563,7 +563,7 @@ class StripeService
             ->get();
 
         foreach ($pendingPayments as $payment) {
-            $notes = $payment->notes ?? "Full payment for booking #{$booking->id}";
+            $notes = $payment->notes ?? "Full payment for booking #{$booking->booking_id}";
             $notes = str_replace('pending', 'paid online via Stripe', $notes);
 
             $payment->update([
