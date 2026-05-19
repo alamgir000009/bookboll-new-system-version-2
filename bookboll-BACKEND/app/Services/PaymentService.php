@@ -255,7 +255,7 @@ class PaymentService
 
             $metadata = [
                 'user_id'        => $user->id,
-                'booking_id'     => $booking->id,
+                'booking_id'     => $booking->booking_id,
                 'total_amount'   => $totalAmount,
                 'payment_method' => 'online_payment',
                 'due_bookings'   => json_encode($dueBookings->pluck('id')),
@@ -284,7 +284,7 @@ class PaymentService
                         'currency' => 'qar',
                         'unit_amount' => $totalAmount * 100,
                         'product_data' => [
-                            'name' => "Payment for Booking #{$booking->id}",
+                            'name' => "Payment for Booking #{$booking->booking_id}",
                         ],
                     ],
                     'quantity' => 1,
@@ -464,7 +464,7 @@ class PaymentService
                     ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
                     ->first();
 
-                $notes = ($paymentType == PaymentType::REMAINING ? 'Remaining' : 'Full') . " payment for booking #{$booking->id}";
+                $notes = ($paymentType == PaymentType::REMAINING ? 'Remaining' : 'Full') . " payment for booking #{$booking->booking_id}";
 
                 if ($pendingPayment) {
 
@@ -748,7 +748,7 @@ class PaymentService
 
                 // Mark all pending payments as paid
                 foreach ($pendingPayments as $payment) {
-                    $notes = $payment->notes ?? "Payment for booking #{$booking->id}";
+                    $notes = $payment->notes ?? "Payment for booking #{$booking->booking_id}";
                     $notes = str_replace('pending', 'paid via ' . $paymentMethodName, $notes);
                     $notes = str_replace('Deposit payment pending', 'Deposit payment paid via ' . $paymentMethodName, $notes);
                     $notes = str_replace('Remaining payment pending', 'Remaining payment paid via ' . $paymentMethodName, $notes);
