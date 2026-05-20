@@ -55,6 +55,7 @@ class BookingService
                         ->orWhere('notes', 'LIKE', "%{$search}%")
                         ->orWhere('date', 'LIKE', "%{$search}%")
                         ->orWhere('created_at', 'LIKE', "%{$search}%")
+                        ->orWhere('id', 'LIKE', "%{$search}%")
                         ->orWhere('booking_id', 'LIKE', "%{$search}%")
                         ->orWhere('subtotal', 'LIKE', "%{$search}%");
                 });
