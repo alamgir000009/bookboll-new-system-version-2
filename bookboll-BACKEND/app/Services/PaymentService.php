@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\Log;
 use PaymentMethod;
 use PaymentStatus;
 use PaymentType;
+use Stripe\Charge;
+use Stripe\PaymentIntent;
 use Stripe\Stripe;
 
 class PaymentService
@@ -546,9 +548,11 @@ class PaymentService
     public function markPaymentAsReceived($request, $id)
     {
         $validated = $request->validate([
-            'method'               => 'required|in:cash,cheque,wire_transfer,credit_card,online',
-            'auto_confirm_booking' => 'nullable|boolean',
-            'note'                 => 'nullable|string|max:1000',
+            'method'                    => 'required|in:cash,cheque,wire_transfer,credit_card,online',
+            'auto_confirm_booking'      => 'nullable|boolean',
+            'note'                      => 'nullable|string|max:1000',
+            'stripe_charge_id'          => 'nullable|string|max:255',
+            'stripe_payment_intent_id'  => 'nullable|string|max:255',
         ]);
 
         try {
@@ -581,12 +585,45 @@ class PaymentService
                 $updatedNotes .= " | Admin note: {$adminNote}";
             }
 
-            $payment->update([
+            [$stripeChargeId, $stripePaymentIntentId, $stripeLinkError] = $this->resolveStripeIdsForMarkReceived(
+                $validated['stripe_charge_id'] ?? null,
+                $validated['stripe_payment_intent_id'] ?? null
+            );
+
+            if ($stripeLinkError) {
+                DB::rollBack();
+
+                return sendError($stripeLinkError);
+            }
+
+            $paymentUpdates = [
                 'status' => PaymentStatus::PAID,
                 'method' => $methodMap[$validated['method']],
                 'date'   => now()->format('Y-m-d'),
                 'notes'  => $updatedNotes,
-            ]);
+            ];
+
+            if ($stripeChargeId) {
+                $paymentUpdates['charge_id'] = $stripeChargeId;
+            }
+            if ($stripePaymentIntentId) {
+                $paymentUpdates['payment_intent_id'] = $stripePaymentIntentId;
+            }
+
+            if ($stripeChargeId || $stripePaymentIntentId) {
+                $paymentUpdates['method'] = PaymentMethod::ONLINE;
+                $stripeNote = 'Stripe linked by admin';
+                if ($stripeChargeId) {
+                    $stripeNote .= " | Charge: {$stripeChargeId}";
+                }
+                if ($stripePaymentIntentId) {
+                    $stripeNote .= " | Payment intent: {$stripePaymentIntentId}";
+                }
+                $updatedNotes .= " | {$stripeNote}";
+                $paymentUpdates['notes'] = $updatedNotes;
+            }
+
+            $payment->update($paymentUpdates);
 
             $booking = $payment->booking;
             if (! $booking) {
@@ -639,6 +676,15 @@ class PaymentService
             }
             if ($adminNote !== '') {
                 $description .= " Note: {$adminNote}";
+            }
+            if ($stripeChargeId || $stripePaymentIntentId) {
+                $description .= ' Stripe record linked.';
+                if ($stripeChargeId) {
+                    $description .= " Charge: {$stripeChargeId}.";
+                }
+                if ($stripePaymentIntentId) {
+                    $description .= " Payment intent: {$stripePaymentIntentId}.";
+                }
             }
 
             $booking->history()->create([
@@ -1161,6 +1207,65 @@ class PaymentService
             }
             autoConfirmBookingIfPaid($booking);
         }
+    }
+
+    /**
+     * @return array{0: ?string, 1: ?string, 2: ?string} [chargeId, paymentIntentId, errorMessage]
+     */
+    protected function resolveStripeIdsForMarkReceived(?string $chargeId, ?string $paymentIntentId): array
+    {
+        $chargeId        = $chargeId ? trim($chargeId) : null;
+        $paymentIntentId = $paymentIntentId ? trim($paymentIntentId) : null;
+
+        if (! $chargeId && ! $paymentIntentId) {
+            return [null, null, null];
+        }
+
+        if ($chargeId && ! preg_match('/^(ch_|py_)/', $chargeId)) {
+            return [null, null, 'Stripe Charge ID must start with ch_ or py_ (e.g. ch_3ABC...).'];
+        }
+
+        if ($paymentIntentId && ! str_starts_with($paymentIntentId, 'pi_')) {
+            return [null, null, 'Stripe Payment Intent ID must start with pi_ (e.g. pi_3ABC...).'];
+        }
+
+        if ($chargeId && ! $paymentIntentId) {
+            $secret = config('services.stripe.secret') ?: \App\Models\Setting::where('key', 'stripe_secret_key')->value('value');
+            if ($secret) {
+                try {
+                    Stripe::setApiKey($secret);
+                    $charge = Charge::retrieve($chargeId);
+                    $paymentIntentId = is_string($charge->payment_intent)
+                        ? $charge->payment_intent
+                        : ($charge->payment_intent->id ?? null);
+                } catch (Exception $e) {
+                    Log::warning('Could not resolve payment intent from Stripe charge', [
+                        'charge_id' => $chargeId,
+                        'error'     => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
+        if ($paymentIntentId && ! $chargeId) {
+            $secret = config('services.stripe.secret') ?: \App\Models\Setting::where('key', 'stripe_secret_key')->value('value');
+            if ($secret) {
+                try {
+                    Stripe::setApiKey($secret);
+                    $intent   = PaymentIntent::retrieve($paymentIntentId);
+                    $chargeId = is_string($intent->latest_charge)
+                        ? $intent->latest_charge
+                        : ($intent->latest_charge->id ?? null);
+                } catch (Exception $e) {
+                    Log::warning('Could not resolve charge from Stripe payment intent', [
+                        'payment_intent_id' => $paymentIntentId,
+                        'error'             => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
+        return [$chargeId, $paymentIntentId, null];
     }
 
     protected function applyPaymentSearch($query, string $search): void
