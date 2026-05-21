@@ -161,8 +161,10 @@ class BookingService
     {
         $formData = $request->validate([
             'booking_id'    => 'required|exists:bookings,id',
-            'cancel_reason' => 'required|string|max:255',
+            'cancel_reason' => 'nullable|string|max:255',
         ]);
+
+        $cancelReason = $formData['cancel_reason'] ?? null;
 
         $booking = $this->bookingModel->findOrFail($formData['booking_id']);
 
@@ -207,13 +209,13 @@ class BookingService
                 'cancelled_at'  => now(),
                 'cancelled_by'  => auth()->id(),
                 'status'        => BookingStatus::CANCELLED,
-                'cancel_reason' => $formData['cancel_reason'],
+                'cancel_reason' => $cancelReason,
             ]);
 
             $booking->history()->create([
                 'user_id'     => auth()->id(),
                 'action'      => 'booking_cancelled',
-                'description' => $formData['cancel_reason'],
+                'description' => $cancelReason ?? 'Booking cancelled',
             ]);
 
             $this->sendBookingNotification($booking, 'cancelled');
