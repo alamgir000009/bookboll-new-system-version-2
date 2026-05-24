@@ -27,94 +27,94 @@ Route::get('/', function () {
  * Test OneSignal push for a specific user (must have an active onesignal_subscriptions row).
  * GET /test-onesignal-000009?user_id=1&booking_id=1
  */
-Route::get('test-onesignal-000009', function (OneSignalService $oneSignal) {
-    $userId    = (int) request('user_id', 37128);
-    $bookingId = (int) request('booking_id', 7416);
+// Route::get('test-onesignal-000009', function (OneSignalService $oneSignal) {
+//     $userId    = (int) request('user_id', 37128);
+//     $bookingId = (int) request('booking_id', 7416);
 
-    $user = User::find($userId);
-    if (! $user) {
-        return response()->json([
-            'success' => false,
-            'message' => "User #{$userId} not found.",
-        ], 404);
-    }
+//     $user = User::find($userId);
+//     if (! $user) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => "User #{$userId} not found.",
+//         ], 404);
+//     }
 
-    $subscriptions = OnesignalSubscription::where('user_id', $userId)->active()->get();
+//     $subscriptions = OnesignalSubscription::where('user_id', $userId)->active()->get();
 
-    $title   = 'Test notification';
-    $message = "OneSignal test for {$user->name} (user #{$userId})";
-    $data    = [
-        'type'       => 'booking_updated',
-        'booking_id' => $bookingId,
-    ];
+//     $title   = 'Test notification';
+//     $message = "OneSignal test for {$user->name} (user #{$userId})";
+//     $data    = [
+//         'type'       => 'booking_updated',
+//         'booking_id' => $bookingId,
+//     ];
 
-    if (method_exists($oneSignal, 'sendToUsersWithDetails')) {
-        $result = $oneSignal->sendToUsersWithDetails([$userId], $title, $message, $data);
-    } else {
-        $success = $oneSignal->sendToUsers([$userId], $title, $message, $data);
-        $result  = [
-            'success' => $success,
-            'message' => $success
-                ? 'Notification sent (legacy sendToUsers). Deploy latest OneSignalService for detailed API response.'
-                : 'sendToUsers returned false. Check logs and OneSignal config.',
-        ];
-    }
+//     if (method_exists($oneSignal, 'sendToUsersWithDetails')) {
+//         $result = $oneSignal->sendToUsersWithDetails([$userId], $title, $message, $data);
+//     } else {
+//         $success = $oneSignal->sendToUsers([$userId], $title, $message, $data);
+//         $result  = [
+//             'success' => $success,
+//             'message' => $success
+//                 ? 'Notification sent (legacy sendToUsers). Deploy latest OneSignalService for detailed API response.'
+//                 : 'sendToUsers returned false. Check logs and OneSignal config.',
+//         ];
+//     }
 
-    return response()->json([
-        'success'              => $result['success'],
-        'user_id'              => $userId,
-        'user_name'            => $user->name,
-        'active_subscriptions' => $subscriptions->pluck('onesignal_id'),
-        'targeting'            => $result['targeting'] ?? null,
-        'onesignal_status'     => $result['status'] ?? null,
-        'onesignal_response'   => $result['body'] ?? null,
-        'message'              => $result['message'],
-        'hint'                 => $result['success']
-            ? null
-            : 'Ensure the app called OneSignal.login(userId) after login, notification permission is granted, and ONESIGNAL_APP_ID matches the mobile app.',
-    ]);
-});
+//     return response()->json([
+//         'success'              => $result['success'],
+//         'user_id'              => $userId,
+//         'user_name'            => $user->name,
+//         'active_subscriptions' => $subscriptions->pluck('onesignal_id'),
+//         'targeting'            => $result['targeting'] ?? null,
+//         'onesignal_status'     => $result['status'] ?? null,
+//         'onesignal_response'   => $result['body'] ?? null,
+//         'message'              => $result['message'],
+//         'hint'                 => $result['success']
+//             ? null
+//             : 'Ensure the app called OneSignal.login(userId) after login, notification permission is granted, and ONESIGNAL_APP_ID matches the mobile app.',
+//     ]);
+// });
 
 /**
  * Test Pusher realtime refresh for a specific user (private channel: private-refresh.{userId}).
  * GET /test-pusher-000009?user_id=1
  */
-Route::get('test-pusher-000009', function () {
-    $userId = (int) request('user_id', 37128);
+// Route::get('test-pusher-000009', function () {
+//     $userId = (int) request('user_id', 37128);
 
-    $user = User::find($userId);
-    if (! $user) {
-        return response()->json([
-            'success' => false,
-            'message' => "User #{$userId} not found.",
-        ], 404);
-    }
+//     $user = User::find($userId);
+//     if (! $user) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => "User #{$userId} not found.",
+//         ], 404);
+//     }
 
-    $payload = [
-        'event'   => 'test_refresh',
-        'user_id' => $userId,
-        'message' => "Pusher test for {$user->name}",
-        'booking_id' => (int) request('booking_id', 7416),
-        'sent_at'    => now()->toIso8601String(),
-    ];
+//     $payload = [
+//         'event'   => 'test_refresh',
+//         'user_id' => $userId,
+//         'message' => "Pusher test for {$user->name}",
+//         'booking_id' => (int) request('booking_id', 7416),
+//         'sent_at'    => now()->toIso8601String(),
+//     ];
 
-    broadcast(new AdminAppRefresh($userId, $payload));
+//     broadcast(new AdminAppRefresh($userId, $payload));
 
-    return response()->json([
-        'success' => true,
-        'user_id' => $userId,
-        'channel' => "private-refresh.{$userId}",
-        'event'   => 'refresh',
-        'payload' => $payload,
-        'message' => 'AdminAppRefresh broadcast dispatched.',
-    ]);
-});
+//     return response()->json([
+//         'success' => true,
+//         'user_id' => $userId,
+//         'channel' => "private-refresh.{$userId}",
+//         'event'   => 'refresh',
+//         'payload' => $payload,
+//         'message' => 'AdminAppRefresh broadcast dispatched.',
+//     ]);
+// });
 
 // temporary route for checking mail configuration
 // Route::get('test-mail-000009', function () {
 //     $to = request('to', 'alamgir000009@gmail.com');
 //     try {
-//         \Illuminate\Support\Facades\Mail::to($to)->send(new \App\Mail\GenericTestMail());
+//         \Illuminate\Support\Facades\Mail::to($to)->queue(new \App\Mail\GenericTestMail());
 //         return "Mail sent to {$to}";
 //     } catch (\Exception $e) {
 //         return "Mail failed: " . $e->getMessage();
