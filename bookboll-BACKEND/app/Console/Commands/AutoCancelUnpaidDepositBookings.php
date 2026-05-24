@@ -87,6 +87,11 @@ class AutoCancelUnpaidDepositBookings extends Command
                                 return;
                             }
 
+                            $previousStatus        = $lockedBooking->status;
+                            $previousPaymentStatus = $lockedBooking->payment_status;
+
+                            expireOpenStripeCheckoutSessionsForBooking($lockedBooking);
+
                             $lockedBooking->update([
                                 'cancelled_by'  => null,
                                 'cancelled_at'  => now(),
@@ -94,11 +99,14 @@ class AutoCancelUnpaidDepositBookings extends Command
                                 'status'        => BookingStatus::CANCELLED,
                             ]);
 
-                            $lockedBooking->history()->create([
-                                'description' => $reason,
-                                'action'      => 'booking_cancelled',
-                                'user_id'     => $lockedBooking->user_id,
-                            ]);
+                            processBookingCancellation(
+                                $lockedBooking,
+                                $lockedBooking->user_id,
+                                $reason,
+                                true,
+                                $previousStatus,
+                                $previousPaymentStatus
+                            );
 
                             $lockedBooking->loadMissing(['user', 'venue:id,name,maps_url', 'listing:id,name']);
                             app(BookingService::class)->sendBookingNotification($lockedBooking, 'cancelled');

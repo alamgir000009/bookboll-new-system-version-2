@@ -52,11 +52,24 @@ if (! class_exists('BookingStatus')) {
 if (! class_exists('PaymentStatus')) {
     class PaymentStatus
     {
-        public const PAID    = 'paid';
-        public const PENDING = 'pending';
-        public const UNPAID  = 'unpaid';
+        public const PAID       = 'paid';
+        public const UNPAID     = 'unpaid';
+        public const PENDING    = 'pending';
+        public const REFUNDED   = 'refunded';
+        public const CANCELLED  = 'cancelled';
 
         public static function list(): array
+        {
+            return [
+                self::PAID,
+                self::PENDING,
+                self::UNPAID,
+                self::CANCELLED,
+                self::REFUNDED,
+            ];
+        }
+
+        public static function activeForRevenue(): array
         {
             return [
                 self::PAID,
@@ -71,6 +84,7 @@ if (! class_exists('BookingPaymentStatus')) {
     class BookingPaymentStatus
     {
         public const PENDING         = 'pending';
+        public const CANCELLED       = 'cancelled';
         public const FULLY_PAID      = 'fully_paid';
         public const DEPOSIT_PAID    = 'deposit_paid';
         public const PAYMENT_SKIPPED = 'payment_skipped';
@@ -79,6 +93,7 @@ if (! class_exists('BookingPaymentStatus')) {
         {
             return [
                 self::PENDING,
+                self::CANCELLED,
                 self::FULLY_PAID,
                 self::DEPOSIT_PAID,
                 self::PAYMENT_SKIPPED,
@@ -1106,5 +1121,195 @@ if (! function_exists('isDateAvailableForBooking')) {
         }
 
         return false;
+    }
+}
+
+if (! function_exists('processBookingCancellation')) {
+    /**
+     * Apply cancellation side-effects: payments, gift card, loyalty, promocode, history.
+     * Caller must run inside a DB transaction and set booking status/cancel fields.
+     *
+     * @return array{cancelled_payments: int, refunded_payments: int, paid_total: float, history_notes: string[]}
+     */
+    function processBookingCancellation(
+        \App\Models\Booking $booking,
+        ?int $cancelledByUserId,
+        ?string $cancelReason = null,
+        bool $isSystemCancel = false,
+        ?string $previousStatus = null,
+        ?string $previousPaymentStatus = null
+    ): array {
+        $booking->loadMissing(['user', 'payments', 'promocode', 'listing']);
+
+        $user                    = $booking->user;
+        $previousStatus          = $previousStatus ?? $booking->status;
+        $previousPaymentStatus   = $previousPaymentStatus ?? $booking->payment_status;
+        $cancelledByUserId = $cancelledByUserId ?? ($isSystemCancel ? null : auth()->id());
+        $historyNotes      = [];
+        $cancelledCount    = 0;
+        $refundedCount     = 0;
+        $paidTotal         = 0.0;
+
+        $giftCardAmount = (float) ($booking->gift_card_amount ?? 0);
+        if ($giftCardAmount > 0 && $user) {
+            $existingRefund = \App\Models\Transaction::where('booking_id', $booking->id)
+                ->where('type', 'credit')
+                ->where('reason', 'LIKE', '%Gift card balance refunded%')
+                ->exists();
+
+            if (! $existingRefund) {
+                $user->transactions()->create([
+                    'type'       => 'credit',
+                    'booking_id' => $booking->id,
+                    'amount'     => $giftCardAmount,
+                    'reason'     => "Gift card balance refunded for cancelled booking #{$booking->booking_id}",
+                ]);
+                $historyNotes[] = 'Gift card balance refunded.';
+            }
+        }
+
+        foreach ($booking->payments as $payment) {
+            $suffix = " Cancelled with booking #{$booking->booking_id}.";
+            $notes  = trim(($payment->notes ?? '') . $suffix);
+
+            if (in_array($payment->status, [PaymentStatus::PENDING, PaymentStatus::UNPAID], true)) {
+                $payment->update([
+                    'status' => PaymentStatus::CANCELLED,
+                    'notes'  => $notes,
+                ]);
+                $cancelledCount++;
+            } elseif ($payment->status === PaymentStatus::PAID) {
+                $paidTotal += (float) $payment->amount;
+                $payment->update([
+                    'status' => PaymentStatus::REFUNDED,
+                    'notes'  => $notes,
+                ]);
+                $refundedCount++;
+            }
+        }
+
+        $booking->update([
+            'payment_status'        => BookingPaymentStatus::CANCELLED,
+            'full_payment_received' => false,
+            'refunded_amount'       => $paidTotal > 0 ? $paidTotal : $booking->refunded_amount,
+            'refunded_at'           => $paidTotal > 0 ? now() : $booking->refunded_at,
+        ]);
+
+        if ($booking->promocode_id && $booking->promocode) {
+            $booking->promocode->decrementUsage($booking->user_id);
+            $historyNotes[] = 'Promocode usage reversed.';
+        }
+
+        $loyaltyCredit = \App\Models\LoyaltyPoint::where('booking_id', $booking->id)
+            ->where('type', 'credit')
+            ->first();
+
+        if ($loyaltyCredit && $user) {
+            $alreadyReversed = \App\Models\LoyaltyPoint::where('booking_id', $booking->id)
+                ->where('type', 'debit')
+                ->where('reason', 'LIKE', '%cancelled booking%')
+                ->exists();
+
+            if (! $alreadyReversed) {
+                $user->loyaltyPoints()->create([
+                    'points'     => $loyaltyCredit->points,
+                    'type'       => 'debit',
+                    'booking_id' => $booking->id,
+                    'reason'     => "Loyalty points reversed for cancelled booking #{$booking->booking_id}",
+                ]);
+                $user->updateLoyaltyTier();
+                $historyNotes[] = "{$loyaltyCredit->points} loyalty points reversed.";
+            }
+        }
+
+        $paymentSummary = [];
+        if ($cancelledCount > 0) {
+            $paymentSummary[] = "{$cancelledCount} pending payment(s) cancelled";
+        }
+        if ($refundedCount > 0) {
+            $paymentSummary[] = "{$refundedCount} paid payment(s) marked refunded (QAR " . number_format($paidTotal, 2) . ')';
+        }
+        if (empty($paymentSummary)) {
+            $paymentSummary[] = 'no payment records updated';
+        }
+
+        $actorName = $isSystemCancel
+            ? 'System'
+            : (($cancelledByUserId && ($actor = \App\Models\User::find($cancelledByUserId))) ? $actor->name : 'Unknown');
+
+        $description = sprintf(
+            'Booking cancelled from %s to %s by %s. Previous payment status: %s. %s. %s',
+            $previousStatus,
+            BookingStatus::CANCELLED,
+            $actorName,
+            $previousPaymentStatus ?? 'n/a',
+            implode('; ', $paymentSummary),
+            $cancelReason ? "Reason: {$cancelReason}" : ''
+        );
+
+        $booking->history()->create([
+            'user_id'     => $cancelledByUserId ?? $booking->user_id,
+            'action'      => 'booking_cancelled',
+            'description' => trim($description),
+        ]);
+
+        if (! empty($historyNotes)) {
+            $booking->history()->create([
+                'user_id'     => $cancelledByUserId ?? $booking->user_id,
+                'action'      => 'cancellation_adjustments',
+                'description' => implode(' ', $historyNotes),
+            ]);
+        }
+
+        return [
+            'cancelled_payments' => $cancelledCount,
+            'refunded_payments'  => $refundedCount,
+            'paid_total'         => $paidTotal,
+            'history_notes'      => $historyNotes,
+        ];
+    }
+}
+
+if (! function_exists('expireOpenStripeCheckoutSessionsForBooking')) {
+    function expireOpenStripeCheckoutSessionsForBooking(\App\Models\Booking $booking): void
+    {
+        $stripeSecret = trim((string) config('services.stripe.secret'));
+        if ($stripeSecret === '') {
+            $stripeSecret = trim((string) Setting::where('key', 'stripe_secret_key')->value('value'));
+        }
+
+        if ($stripeSecret === '') {
+            return;
+        }
+
+        try {
+            $stripeClient = new \Stripe\StripeClient($stripeSecret);
+            $sessions     = \App\Models\StripeSession::where('processed', false)
+                ->where(function ($query) use ($booking) {
+                    $query->where('booking_id', $booking->id)
+                        ->orWhereJsonContains('booking_ids', $booking->id);
+                })
+                ->get();
+
+            foreach ($sessions as $stripeSession) {
+                try {
+                    $session = $stripeClient->checkout->sessions->retrieve($stripeSession->session_id);
+                    if (($session->status ?? null) === 'open') {
+                        $stripeClient->checkout->sessions->expire($stripeSession->session_id);
+                    }
+                } catch (\Throwable $e) {
+                    Log::error('Failed to expire Stripe checkout session', [
+                        'booking_id' => $booking->id,
+                        'session_id' => $stripeSession->session_id,
+                        'error'      => $e->getMessage(),
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error('Failed to expire Stripe sessions for booking', [
+                'booking_id' => $booking->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
     }
 }

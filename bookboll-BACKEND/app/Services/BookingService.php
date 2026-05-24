@@ -152,9 +152,51 @@ class BookingService
 
     public function delete($id)
     {
-        $booking = $this->bookingModel->findOrFail($id);
-        $booking->delete();
-        return sendSuccess('Booking delete successfully');
+        $currentUser = auth()->user();
+
+        if (! $currentUser->hasAnyRole(['super_admin', 'admin'])) {
+            return sendError('Only administrators can permanently delete bookings.');
+        }
+
+        $booking = $this->bookingModel->with('payments')->findOrFail($id);
+
+        try {
+            DB::beginTransaction();
+
+            if ($booking->status !== BookingStatus::CANCELLED) {
+                $previousStatus        = $booking->status;
+                $previousPaymentStatus = $booking->payment_status;
+
+                expireOpenStripeCheckoutSessionsForBooking($booking);
+
+                $booking->update([
+                    'cancelled_at'  => now(),
+                    'cancelled_by'  => auth()->id(),
+                    'status'        => BookingStatus::CANCELLED,
+                    'cancel_reason' => 'Permanently deleted by administrator',
+                ]);
+
+                processBookingCancellation(
+                    $booking,
+                    auth()->id(),
+                    'Permanently deleted by administrator',
+                    false,
+                    $previousStatus,
+                    $previousPaymentStatus
+                );
+            }
+
+            $booking->delete();
+
+            DB::commit();
+
+            return sendSuccess('Booking deleted successfully');
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Booking deletion error: ' . $e->getMessage(), ['exception' => $e]);
+
+            return sendError('Something went wrong: ' . $e->getMessage());
+        }
     }
 
     public function cancel($request)
@@ -166,44 +208,42 @@ class BookingService
 
         $cancelReason = $formData['cancel_reason'] ?? null;
 
-        $booking = $this->bookingModel->findOrFail($formData['booking_id']);
+        $booking = $this->bookingModel->with(['user', 'payments', 'promocode'])->findOrFail($formData['booking_id']);
 
-        if ($booking->status == BookingStatus::CANCELLED) {
+        if ($booking->status === BookingStatus::CANCELLED) {
             return sendError('Booking is already cancelled.');
         }
 
-        if (in_array($booking->status, [BookingStatus::CONFIRMED, BookingStatus::COMPLETED])) {
-            return sendError('Confirmed bookings cannot be cancelled.');
-        }
-
-        $currentUser = auth()->user();
-        $isBookingOwner = (int) $currentUser->id === (int) $booking->user_id;
-        $hasCancelPermission = $currentUser->hasAnyRole(['super_admin', 'admin', 'senior_employee', 'junior_employee', 'guard']);
+        $currentUser         = auth()->user();
+        $isBookingOwner      = (int) $currentUser->id === (int) $booking->user_id;
+        $isAdmin             = $currentUser->hasAnyRole(['super_admin', 'admin']);
+        $isStaff             = $currentUser->hasAnyRole(['senior_employee', 'junior_employee', 'guard']);
+        $hasCancelPermission = $isAdmin || $isStaff;
 
         if (! $isBookingOwner && ! $hasCancelPermission) {
             return sendError('You are not allowed to cancel this booking. Only the booking creator or staff can cancel.');
         }
 
+        if ($booking->status === BookingStatus::COMPLETED && ! $isAdmin) {
+            return sendError('Completed bookings can only be cancelled by an administrator.');
+        }
+
+        if (in_array($booking->status, [BookingStatus::CONFIRMED, BookingStatus::COMPLETED], true) && ! ($isAdmin || $isStaff)) {
+            return sendError('Confirmed or completed bookings cannot be cancelled by customers. Please contact support.');
+        }
+
+        if ($booking->status !== BookingStatus::PENDING && $isBookingOwner && ! $hasCancelPermission) {
+            return sendError('You can only cancel pending bookings.');
+        }
+
         try {
             DB::beginTransaction();
 
-            $giftCardAmount = $booking->gift_card_amount ?? 0;
-            $user           = $booking->user;
-            if ($giftCardAmount > 0) {
-                $existingRefund = Transaction::where('booking_id', $booking->id)
-                    ->where('type', 'credit')
-                    ->where('reason', 'LIKE', '%Gift card balance refunded%')
-                    ->first();
+            $previousStatus        = $booking->status;
+            $previousPaymentStatus = $booking->payment_status;
+            $user                  = $booking->user;
 
-                if (! $existingRefund) {
-                    $user->transactions()->create([
-                        'type'       => 'credit',
-                        'booking_id' => $booking->id,
-                        'amount'     => $giftCardAmount,
-                        'reason'     => "Gift card balance refunded for cancelled booking #{$booking->booking_id}",
-                    ]);
-                }
-            }
+            expireOpenStripeCheckoutSessionsForBooking($booking);
 
             $booking->update([
                 'cancelled_at'  => now(),
@@ -212,29 +252,36 @@ class BookingService
                 'cancel_reason' => $cancelReason,
             ]);
 
-            $booking->history()->create([
-                'user_id'     => auth()->id(),
-                'action'      => 'booking_cancelled',
-                'description' => $cancelReason ?? 'Booking cancelled',
-            ]);
+            processBookingCancellation(
+                $booking,
+                auth()->id(),
+                $cancelReason,
+                false,
+                $previousStatus,
+                $previousPaymentStatus
+            );
 
             $this->sendBookingNotification($booking, 'cancelled');
 
             DB::commit();
 
-            $booking->load('venue:id,name,maps_url');
-            try {
-                $user->notify(new BookingCancelledUserNotification($booking));
-            } catch (Exception $e) {
-                Log::error("Booking cancellation email error: " . $e->getMessage(), ["Exception" => $e]);
+            $booking->refresh()->load(['venue:id,name,maps_url', 'payments', 'history.user:id,name']);
+
+            if ($user) {
+                try {
+                    $user->notify(new BookingCancelledUserNotification($booking));
+                } catch (Exception $e) {
+                    Log::error('Booking cancellation email error: ' . $e->getMessage(), ['exception' => $e]);
+                }
             }
 
             return sendSuccess('Booking cancelled successfully.', compact('booking'));
 
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error("Booking cancellation error: " . $e->getMessage(), ["Exception" => $e]);
-            return sendError("Something went wrong: " . $e->getMessage());
+            Log::error('Booking cancellation error: ' . $e->getMessage(), ['exception' => $e]);
+
+            return sendError('Something went wrong: ' . $e->getMessage());
         }
     }
 
@@ -251,7 +298,7 @@ class BookingService
         $totalCollectedQuery = applyVenueFilterToPayments($totalCollectedQuery);
         $totalCollected      = $totalCollectedQuery->sum('amount');
 
-        $totalPendingQuery = $this->paymentModel->where('status', PaymentStatus::PENDING);
+        $totalPendingQuery = $this->paymentModel->whereIn('status', [PaymentStatus::PENDING, PaymentStatus::UNPAID]);
         $totalPendingQuery = applyVenueFilterToPayments($totalPendingQuery);
         $totalPending      = $totalPendingQuery->sum('amount');
 

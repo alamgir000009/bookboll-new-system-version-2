@@ -89,6 +89,13 @@ class Booking extends Model
         }
 
         if (
+            $this->status === BookingStatus::CANCELLED
+            || $this->payment_status === \BookingPaymentStatus::CANCELLED
+        ) {
+            return 0;
+        }
+
+        if (
             $this->payment_status === \BookingPaymentStatus::FULLY_PAID
             || $this->payment_status === \BookingPaymentStatus::PAYMENT_SKIPPED
             || $this->full_payment_received
