@@ -88,10 +88,7 @@ class Booking extends Model
             return 0;
         }
 
-        if (
-            $this->status === BookingStatus::CANCELLED
-            || $this->payment_status === \BookingPaymentStatus::CANCELLED
-        ) {
+        if ($this->status === BookingStatus::CANCELLED) {
             return 0;
         }
 

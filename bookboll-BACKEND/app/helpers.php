@@ -1126,10 +1126,11 @@ if (! function_exists('isDateAvailableForBooking')) {
 
 if (! function_exists('processBookingCancellation')) {
     /**
-     * Apply cancellation side-effects: payments, gift card, loyalty, promocode, history.
+     * Apply cancellation side-effects: gift card, loyalty, promocode, history.
+     * Payment records and booking payment_status are left unchanged (statuses reserved for future use).
      * Caller must run inside a DB transaction and set booking status/cancel fields.
      *
-     * @return array{cancelled_payments: int, refunded_payments: int, paid_total: float, history_notes: string[]}
+     * @return array{history_notes: string[]}
      */
     function processBookingCancellation(
         \App\Models\Booking $booking,
@@ -1141,14 +1142,11 @@ if (! function_exists('processBookingCancellation')) {
     ): array {
         $booking->loadMissing(['user', 'payments', 'promocode', 'listing']);
 
-        $user                    = $booking->user;
-        $previousStatus          = $previousStatus ?? $booking->status;
-        $previousPaymentStatus   = $previousPaymentStatus ?? $booking->payment_status;
-        $cancelledByUserId = $cancelledByUserId ?? ($isSystemCancel ? null : auth()->id());
-        $historyNotes      = [];
-        $cancelledCount    = 0;
-        $refundedCount     = 0;
-        $paidTotal         = 0.0;
+        $user                  = $booking->user;
+        $previousStatus        = $previousStatus ?? $booking->status;
+        $previousPaymentStatus = $previousPaymentStatus ?? $booking->payment_status;
+        $cancelledByUserId     = $cancelledByUserId ?? ($isSystemCancel ? null : auth()->id());
+        $historyNotes          = [];
 
         $giftCardAmount = (float) ($booking->gift_card_amount ?? 0);
         if ($giftCardAmount > 0 && $user) {
@@ -1167,33 +1165,6 @@ if (! function_exists('processBookingCancellation')) {
                 $historyNotes[] = 'Gift card balance refunded.';
             }
         }
-
-        foreach ($booking->payments as $payment) {
-            $suffix = " Cancelled with booking #{$booking->booking_id}.";
-            $notes  = trim(($payment->notes ?? '') . $suffix);
-
-            if (in_array($payment->status, [PaymentStatus::PENDING, PaymentStatus::UNPAID], true)) {
-                $payment->update([
-                    'status' => PaymentStatus::CANCELLED,
-                    'notes'  => $notes,
-                ]);
-                $cancelledCount++;
-            } elseif ($payment->status === PaymentStatus::PAID) {
-                $paidTotal += (float) $payment->amount;
-                $payment->update([
-                    'status' => PaymentStatus::REFUNDED,
-                    'notes'  => $notes,
-                ]);
-                $refundedCount++;
-            }
-        }
-
-        $booking->update([
-            'payment_status'        => BookingPaymentStatus::CANCELLED,
-            'full_payment_received' => false,
-            'refunded_amount'       => $paidTotal > 0 ? $paidTotal : $booking->refunded_amount,
-            'refunded_at'           => $paidTotal > 0 ? now() : $booking->refunded_at,
-        ]);
 
         if ($booking->promocode_id && $booking->promocode) {
             $booking->promocode->decrementUsage($booking->user_id);
@@ -1222,28 +1193,20 @@ if (! function_exists('processBookingCancellation')) {
             }
         }
 
-        $paymentSummary = [];
-        if ($cancelledCount > 0) {
-            $paymentSummary[] = "{$cancelledCount} pending payment(s) cancelled";
-        }
-        if ($refundedCount > 0) {
-            $paymentSummary[] = "{$refundedCount} paid payment(s) marked refunded (QAR " . number_format($paidTotal, 2) . ')';
-        }
-        if (empty($paymentSummary)) {
-            $paymentSummary[] = 'no payment records updated';
-        }
+        $paymentCount = $booking->payments->count();
 
         $actorName = $isSystemCancel
             ? 'System'
             : (($cancelledByUserId && ($actor = \App\Models\User::find($cancelledByUserId))) ? $actor->name : 'Unknown');
 
+        // 'Booking cancelled from %s to %s by %s. Payment status unchanged (%s). %d payment record(s) left as-is. %s',
         $description = sprintf(
-            'Booking cancelled from %s to %s by %s. Previous payment status: %s. %s. %s',
+            'Booking cancelled from %s to %s by %s.',
             $previousStatus,
             BookingStatus::CANCELLED,
             $actorName,
             $previousPaymentStatus ?? 'n/a',
-            implode('; ', $paymentSummary),
+            $paymentCount,
             $cancelReason ? "Reason: {$cancelReason}" : ''
         );
 
@@ -1262,10 +1225,7 @@ if (! function_exists('processBookingCancellation')) {
         }
 
         return [
-            'cancelled_payments' => $cancelledCount,
-            'refunded_payments'  => $refundedCount,
-            'paid_total'         => $paidTotal,
-            'history_notes'      => $historyNotes,
+            'history_notes' => $historyNotes,
         ];
     }
 }
