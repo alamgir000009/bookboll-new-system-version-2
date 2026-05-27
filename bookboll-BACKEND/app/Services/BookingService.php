@@ -2094,23 +2094,24 @@ class BookingService
 
     public function confirm($request)
     {
-        $booking = $this->bookingModel::with('user')->findOrFail($request->booking_id);
+        $validated = $request->validate([
+            'booking_id'              => 'required|exists:bookings,id',
+            'send_confirmation_email' => 'sometimes|boolean',
+        ]);
+
+        $sendConfirmationEmail = $request->boolean('send_confirmation_email', true);
+
+        $booking = $this->bookingModel::with('user')->findOrFail($validated['booking_id']);
 
         try {
-
             DB::beginTransaction();
 
             if ($booking->status !== BookingStatus::PENDING) {
+                DB::rollBack();
                 return sendError('Booking cannot be confirmed (not pending)');
             }
 
             $booking->update(['status' => BookingStatus::CONFIRMED]);
-
-            $booking->history()->create([
-                'user_id'     => auth()->id(),
-                'action'      => 'booking_confirmed',
-                'description' => 'Booking confirmed by ' . auth()->user()->name,
-            ]);
 
             if ($booking->loyalty_points_earned > 0) {
                 $pointsAlreadyAdded = LoyaltyPoint::where('booking_id', $booking->id)
@@ -2128,13 +2129,31 @@ class BookingService
                 }
             }
 
-            try {
-                $booking->load('venue:id,name,maps_url');
-                $user = $booking->user;
-                $user->notify(new BookingConfirmedUserNotification($booking));
-            } catch (Exception $e) {
-                Log::error("Booking confirmation notification failed: " . $e->getMessage(), ['booking_id' => $booking->id]);
+            $emailSent = false;
+            if ($sendConfirmationEmail && $booking->user) {
+                try {
+                    $booking->load('venue:id,name,maps_url');
+                    $booking->user->notify(new BookingConfirmedUserNotification($booking));
+                    $emailSent = true;
+                } catch (Exception $e) {
+                    Log::error("Booking confirmation notification failed: " . $e->getMessage(), ['booking_id' => $booking->id]);
+                }
             }
+
+            $historyDescription = 'Booking confirmed by ' . auth()->user()->name;
+            if ($sendConfirmationEmail) {
+                $historyDescription .= $emailSent
+                    ? '. Confirmation email sent to customer.'
+                    : '. Confirmation email could not be sent.';
+            } else {
+                $historyDescription .= '. No confirmation email sent.';
+            }
+
+            $booking->history()->create([
+                'user_id'     => auth()->id(),
+                'action'      => 'booking_confirmed',
+                'description' => $historyDescription,
+            ]);
 
             DB::commit();
 
@@ -2151,7 +2170,14 @@ class BookingService
                 'history.user:id,name',
             ]);
 
-            return sendSuccess('Booking confirmed and email sent successfully', compact('booking'));
+            $message = 'Booking confirmed successfully';
+            if ($sendConfirmationEmail) {
+                $message .= $emailSent
+                    ? ' and confirmation email sent.'
+                    : ' but confirmation email could not be sent.';
+            }
+
+            return sendSuccess($message, compact('booking', 'emailSent'));
 
         } catch (Exception $e) {
             DB::rollBack();
