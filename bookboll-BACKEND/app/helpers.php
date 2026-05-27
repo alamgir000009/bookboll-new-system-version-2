@@ -840,46 +840,53 @@ if (! function_exists('autoConfirmBookingIfPaid')) {
                 return;
             }
 
-            $isFullyPaid = $booking->payment_status === BookingPaymentStatus::FULLY_PAID;
+            $totalPaid  = (float) $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
+            $totalPrice = (float) $booking->total_price;
 
-            $totalPaid  = $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
-            $totalPrice = $booking->total_price;
+            if ($totalPrice <= 0 || $totalPaid < $totalPrice) {
+                return;
+            }
 
-            if ($isFullyPaid && $totalPaid >= $totalPrice) {
-                $booking->update(['status' => BookingStatus::CONFIRMED]);
-
-                $booking->history()->create([
-                    'user_id'     => $booking->user_id,
-                    'action'      => 'booking_confirmed',
-                    'description' => 'Booking automatically confirmed after payment completion.',
+            if ($booking->payment_status !== BookingPaymentStatus::FULLY_PAID) {
+                $booking->update([
+                    'payment_status'        => BookingPaymentStatus::FULLY_PAID,
+                    'full_payment_received' => true,
                 ]);
+            }
 
-                if ($booking->loyalty_points_earned > 0) {
-                    $pointsAlreadyAdded = LoyaltyPoint::where('booking_id', $booking->id)
-                        ->where('type', 'credit')
-                        ->exists();
+            $booking->update(['status' => BookingStatus::CONFIRMED]);
 
-                    if (! $pointsAlreadyAdded) {
-                        $user = $booking->user;
-                        $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id, "Loyalty points earned for booking auto-confirmation");
-                        $booking->history()->create([
-                            'user_id'     => auth()->id() ?? $booking->user_id,
-                            'action'      => 'loyalty_points_earned',
-                            'description' => "{$booking->loyalty_points_earned} loyalty points added to user #{$user->id} ({$user->name}) for booking auto-confirmation.",
-                        ]);
-                    }
-                }
+            $booking->history()->create([
+                'user_id'     => $booking->user_id,
+                'action'      => 'booking_confirmed',
+                'description' => 'Booking automatically confirmed after payment completion.',
+            ]);
 
-                try {
-                    $booking->load('venue:id,name,maps_url');
+            if ($booking->loyalty_points_earned > 0) {
+                $pointsAlreadyAdded = LoyaltyPoint::where('booking_id', $booking->id)
+                    ->where('type', 'credit')
+                    ->exists();
+
+                if (! $pointsAlreadyAdded) {
                     $user = $booking->user;
-                    $user->notify(new BookingConfirmedUserNotification($booking));
-                } catch (Exception $e) {
-                    Log::error("Booking confirmation notification failed: " . $e->getMessage(), [
-                        'booking_id' => $booking->id,
-                        'exception'  => $e,
+                    $user->addLoyaltyPoints($booking->loyalty_points_earned, $booking->id, "Loyalty points earned for booking auto-confirmation");
+                    $booking->history()->create([
+                        'user_id'     => auth()->id() ?? $booking->user_id,
+                        'action'      => 'loyalty_points_earned',
+                        'description' => "{$booking->loyalty_points_earned} loyalty points added to user #{$user->id} ({$user->name}) for booking auto-confirmation.",
                     ]);
                 }
+            }
+
+            try {
+                $booking->load('venue:id,name,maps_url');
+                $user = $booking->user;
+                $user->notify(new BookingConfirmedUserNotification($booking));
+            } catch (Exception $e) {
+                Log::error("Booking confirmation notification failed: " . $e->getMessage(), [
+                    'booking_id' => $booking->id,
+                    'exception'  => $e,
+                ]);
             }
         } catch (Exception $e) {
             Log::error("Failed to auto-confirm booking #{$booking->id}: " . $e->getMessage(), [

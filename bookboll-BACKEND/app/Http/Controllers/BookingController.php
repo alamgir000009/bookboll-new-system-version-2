@@ -121,7 +121,7 @@ class BookingController extends Controller
 
     public function mobileUpdateBooking(Request $request, $booking_id)
     {
-        return $this->bookingService->mobileUpdateBooking($request, $booking_id);
+        return $this->bookingService->update($request, $booking_id, true);
     }
 
     public function export(Request $request)

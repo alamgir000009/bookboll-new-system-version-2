@@ -814,27 +814,37 @@ class PaymentService
                     ->where('status', PaymentStatus::PAID)
                     ->exists();
 
-                $hasRemainingPayment = $booking->payments()
-                    ->where('type', PaymentType::REMAINING)
-                    ->exists();
+                $totalPaid  = (float) $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
+                $totalPrice = (float) $booking->total_price;
+                $amountDue  = max(0, round($totalPrice - $totalPaid, 2));
 
-                $hasFullPayment = $booking->payments()
-                    ->where('type', PaymentType::FULL)
-                    ->where('status', PaymentStatus::PAID)
-                    ->exists();
-
-                $finalPaymentStatus = BookingPaymentStatus::FULLY_PAID;
-                if ($hasDepositPayment && $hasRemainingPayment) {
-                    // Check if remaining is also paid
-                    $remainingPaid = $booking->payments()
-                        ->where('type', PaymentType::REMAINING)
-                        ->where('status', PaymentStatus::PAID)
+                if ($amountDue > 0 && ! $booking->is_free) {
+                    $hasPendingShortfall = $booking->payments()
+                        ->where('status', PaymentStatus::PENDING)
                         ->exists();
 
-                    if (!$remainingPaid) {
-                        $finalPaymentStatus = BookingPaymentStatus::DEPOSIT_PAID;
+                    if (! $hasPendingShortfall) {
+                        $booking->payments()->create([
+                            'date'       => null,
+                            'user_id'    => $booking->user_id,
+                            'amount'     => $amountDue,
+                            'type'       => PaymentType::FULL,
+                            'method'     => PaymentMethod::CASH,
+                            'status'     => PaymentStatus::PENDING,
+                            'notes'      => "Additional payment required for booking #{$booking->booking_id} (outstanding balance)",
+                            'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                        ]);
                     }
                 }
+
+                $totalPaid  = (float) $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
+                $amountDue  = max(0, round((float) $booking->total_price - $totalPaid, 2));
+
+                $finalPaymentStatus = ($amountDue <= 0 && $totalPaid > 0)
+                    ? BookingPaymentStatus::FULLY_PAID
+                    : ($hasDepositPayment
+                        ? BookingPaymentStatus::DEPOSIT_PAID
+                        : BookingPaymentStatus::PENDING);
 
                 $bookingUpdates = [
                     'full_payment_received' => ($finalPaymentStatus === BookingPaymentStatus::FULLY_PAID),
