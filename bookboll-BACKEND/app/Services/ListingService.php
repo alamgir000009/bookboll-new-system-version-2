@@ -1103,9 +1103,12 @@ class ListingService
 
         $isHoliday = $specialDay?->type === 'holiday';
 
+        $depositPaymentTimeoutMinutes = (int) (Setting::where('key', 'deposit_payment_timeout_minutes')->value('value') ?: 10);
+
         $listing = [
-            'is_holiday'              => $isHoliday,
-            'id'                      => $listing->id,
+            'is_holiday'                      => $isHoliday,
+            'deposit_payment_timeout_minutes' => $depositPaymentTimeoutMinutes,
+            'id'                              => $listing->id,
             'name'                    => $listing->name,
             'venue_id'                => $listing->venue_id,
             'capacity'                => $listing->capacity,
