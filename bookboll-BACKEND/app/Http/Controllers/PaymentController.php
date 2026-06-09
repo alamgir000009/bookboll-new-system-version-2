@@ -308,6 +308,10 @@ class PaymentController extends Controller
                     return view('payment-processing', ['session_id' => $sessionId]);
                 }
 
+                // Customer left Stripe checkout — expire session and cancel unpaid bookings
+                // so browser "back" cannot complete payment on a dead session.
+                $state = $this->stripeService->abandonCheckoutSession($sessionId);
+
                 $source = $state['source'] ?? 'customer';
 
                 if ($source === 'admin' && isset($state['session'])) {

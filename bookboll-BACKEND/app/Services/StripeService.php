@@ -184,10 +184,87 @@ class StripeService
         }
 
         if ($type === 'checkout.session.expired') {
-            Log::info('Stripe checkout session expired', [
-                'session_id' => $event->data->object->id ?? null,
-            ]);
+            /** @var StripeCheckoutSession $session */
+            $session = $event->data->object;
+            $this->abandonCheckoutSession($session->id, cancelPendingBookings: true, expireStripeSession: false);
+
+            return;
         }
+    }
+
+    /**
+     * Expire an open Stripe Checkout session and optionally cancel linked unpaid customer bookings.
+     * Idempotent — safe to call from cancel URL, webhooks, and auto-cancel flows.
+     *
+     * @return array{status:string,source:string,booking_ids:array,session:?StripeCheckoutSession,message:?string}
+     */
+    public function abandonCheckoutSession(
+        string $sessionId,
+        bool $cancelPendingBookings = true,
+        bool $expireStripeSession = true
+    ): array {
+        $secret = $this->resolveStripeSecret();
+        if (! $secret) {
+            throw new Exception('Stripe secret key is not configured.');
+        }
+
+        Stripe::setApiKey($secret);
+
+        $session = StripeCheckoutSession::retrieve($sessionId);
+        $source  = $session->metadata['source'] ?? 'customer';
+        $dbRow   = StripeSession::where('session_id', $sessionId)->first();
+
+        if ($dbRow?->processed || ($session->payment_status ?? null) === 'paid') {
+            return [
+                'status'      => 'completed',
+                'source'      => $source,
+                'booking_ids' => $this->resolveBookingIdsFromSession($session),
+                'session'     => $session,
+                'message'     => null,
+            ];
+        }
+
+        $bookingIds = $this->resolveBookingIdsFromSession($session);
+
+        try {
+            DB::transaction(function () use (
+                $sessionId,
+                $session,
+                $source,
+                $bookingIds,
+                $cancelPendingBookings,
+                $expireStripeSession
+            ) {
+                StripeSession::where('session_id', $sessionId)->lockForUpdate()->first();
+
+                if ($expireStripeSession && ($session->status ?? null) === 'open') {
+                    StripeCheckoutSession::expire($sessionId);
+                    Log::info('Expired Stripe checkout session on abandonment', [
+                        'session_id' => $sessionId,
+                        'source'     => $source,
+                    ]);
+                }
+
+                if ($cancelPendingBookings && $source === 'customer' && ! empty($bookingIds)) {
+                    $this->cancelUnpaidBookingsForCheckout($bookingIds, 'Payment was not completed.');
+                }
+            });
+        } catch (Exception $e) {
+            Log::error('Failed to abandon Stripe checkout session', [
+                'session_id' => $sessionId,
+                'error'      => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
+
+        return [
+            'status'      => 'cancelled',
+            'source'      => $source,
+            'booking_ids' => $bookingIds,
+            'session'     => $session,
+            'message'     => 'Payment was not completed.',
+        ];
     }
 
     /**
@@ -316,6 +393,18 @@ class StripeService
                 ]);
 
                 foreach ($bookingIds as $bookingId) {
+                    $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
+                    if (! $booking) {
+                        throw new Exception("Booking #{$bookingId} not found during Stripe fulfillment.");
+                    }
+
+                    if ($booking->status === BookingStatus::CANCELLED) {
+                        throw new Exception(
+                            "Booking #{$booking->booking_id} is cancelled; refusing Stripe payment fulfillment."
+                        );
+                    }
+
                     $this->applyPaymentToBooking(
                         (int) $bookingId,
                         (int) $userId,
@@ -508,6 +597,59 @@ class StripeService
         ];
     }
 
+    protected function cancelUnpaidBookingsForCheckout(array $bookingIds, string $reason): void
+    {
+        foreach (array_unique(array_map('intval', $bookingIds)) as $bookingId) {
+            if ($bookingId <= 0) {
+                continue;
+            }
+
+            $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+            if (! $booking) {
+                continue;
+            }
+
+            if ($booking->status === BookingStatus::CANCELLED) {
+                continue;
+            }
+
+            if (
+                ! in_array($booking->payment_method, [
+                    BookingPaymentMethod::ONLINE_PAYMENT,
+                    BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL,
+                ], true)
+                || $booking->payment_status !== BookingPaymentStatus::PENDING
+            ) {
+                continue;
+            }
+
+            $previousStatus        = $booking->status;
+            $previousPaymentStatus = $booking->payment_status;
+
+            $booking->update([
+                'cancelled_by'  => null,
+                'cancelled_at'  => now(),
+                'cancel_reason' => $reason,
+                'status'        => BookingStatus::CANCELLED,
+            ]);
+
+            processBookingCancellation(
+                $booking,
+                $booking->user_id,
+                $reason,
+                true,
+                $previousStatus,
+                $previousPaymentStatus
+            );
+
+            Log::info('Cancelled unpaid booking after checkout abandonment', [
+                'booking_id'  => $booking->id,
+                'booking_ref' => $booking->booking_id,
+                'reason'      => $reason,
+            ]);
+        }
+    }
+
     protected function applyPaymentToBooking(
         int $bookingId,
         int $userId,
@@ -520,6 +662,12 @@ class StripeService
             Log::warning('Booking not found during Stripe fulfillment', ['booking_id' => $bookingId]);
 
             return;
+        }
+
+        if ($booking->status === BookingStatus::CANCELLED) {
+            throw new Exception(
+                "Booking #{$booking->booking_id} is cancelled; refusing Stripe payment fulfillment."
+            );
         }
 
         if ($paymentType === 'deposit') {
