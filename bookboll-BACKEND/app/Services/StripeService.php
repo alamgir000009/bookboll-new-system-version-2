@@ -18,6 +18,7 @@ use Stripe\Charge;
 use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\PaymentIntent;
 use Stripe\Stripe;
+use Stripe\StripeClient;
 use Stripe\Webhook;
 
 class StripeService
@@ -209,6 +210,7 @@ class StripeService
         }
 
         Stripe::setApiKey($secret);
+        $stripeClient = new StripeClient($secret);
 
         $session = StripeCheckoutSession::retrieve($sessionId);
         $source  = $session->metadata['source'] ?? 'customer';
@@ -233,12 +235,13 @@ class StripeService
                 $source,
                 $bookingIds,
                 $cancelPendingBookings,
-                $expireStripeSession
+                $expireStripeSession,
+                $stripeClient
             ) {
                 StripeSession::where('session_id', $sessionId)->lockForUpdate()->first();
 
                 if ($expireStripeSession && ($session->status ?? null) === 'open') {
-                    StripeCheckoutSession::expire($sessionId);
+                    $stripeClient->checkout->sessions->expire($sessionId);
                     Log::info('Expired Stripe checkout session on abandonment', [
                         'session_id' => $sessionId,
                         'source'     => $source,
