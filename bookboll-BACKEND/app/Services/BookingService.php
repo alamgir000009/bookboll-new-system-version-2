@@ -1742,8 +1742,7 @@ class BookingService
                     })
                     ->whereDate('date', $date)->active()->first();
 
-                $pricePerHour = determineSlotPrice($listing, $weekday, $startTime, $endTime, $specialDay);
-                $basePrice    = round($pricePerHour * $updateData['duration'], 2);
+                $basePrice = round(determineSlotPrice($listing, $weekday, $startTime, $endTime, $specialDay), 2);
 
                 $addOnIds  = $formData['selected_add_ons'] ?? $oldAddOns;
                 $addOnCost = ! empty($addOnIds)
