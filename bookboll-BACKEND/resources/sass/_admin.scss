@@ -1,0 +1,499 @@
+// Bookboll Admin Portal styles
+
+$bb-primary: #2563eb;
+$bb-primary-dark: #1d4ed8;
+$bb-primary-light: #3b82f6;
+$bb-slate-900: #0f172a;
+$bb-slate-800: #1e293b;
+$bb-slate-700: #334155;
+$bb-slate-500: #64748b;
+$bb-slate-200: #e2e8f0;
+$bb-slate-100: #f1f5f9;
+$bb-radius: 16px;
+$bb-radius-sm: 10px;
+
+// Auth layout
+.auth-page {
+    min-height: 100vh;
+    display: flex;
+    background: $bb-slate-900;
+
+    @media (max-width: 991.98px) {
+        flex-direction: column;
+    }
+}
+
+.auth-panel--brand {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+    background:
+        radial-gradient(circle at 20% 80%, rgba(37, 99, 235, 0.35) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(59, 130, 246, 0.2) 0%, transparent 45%),
+        linear-gradient(135deg, $bb-slate-900 0%, #172554 50%, $bb-slate-800 100%);
+    overflow: hidden;
+
+    &::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+        opacity: 0.6;
+    }
+
+    @media (max-width: 991.98px) {
+        padding: 2.5rem 1.5rem;
+        min-height: 220px;
+    }
+}
+
+.auth-brand-content {
+    position: relative;
+    z-index: 1;
+    max-width: 420px;
+    color: #fff;
+}
+
+.auth-logo {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+}
+
+.auth-logo-mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, $bb-primary-light, $bb-primary-dark);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 1.25rem;
+    box-shadow: 0 8px 24px rgba(37, 99, 235, 0.4);
+}
+
+.auth-logo-text {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.auth-brand-title {
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 1rem;
+    letter-spacing: -0.03em;
+}
+
+.auth-brand-subtitle {
+    font-size: 1.05rem;
+    color: rgba(255, 255, 255, 0.72);
+    line-height: 1.6;
+    margin-bottom: 2rem;
+}
+
+.auth-features {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+
+    li {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.5rem 0;
+        color: rgba(255, 255, 255, 0.85);
+        font-size: 0.95rem;
+    }
+}
+
+.auth-feature-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.auth-panel--form {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: $bb-slate-100;
+
+    @media (min-width: 992px) {
+        max-width: 520px;
+    }
+
+    @media (max-width: 991.98px) {
+        flex: none;
+        padding: 2rem 1.25rem 3rem;
+    }
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 400px;
+    background: #fff;
+    border-radius: $bb-radius;
+    padding: 2rem;
+    box-shadow:
+        0 4px 6px -1px rgba(0, 0, 0, 0.06),
+        0 20px 40px -12px rgba(15, 23, 42, 0.12);
+    border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.auth-card-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: $bb-slate-900;
+    margin-bottom: 0.35rem;
+    letter-spacing: -0.02em;
+}
+
+.auth-card-subtitle {
+    color: $bb-slate-500;
+    font-size: 0.95rem;
+    margin-bottom: 1.75rem;
+}
+
+.bb-form-group {
+    margin-bottom: 1.25rem;
+}
+
+.bb-form-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: $bb-slate-700;
+    margin-bottom: 0.5rem;
+}
+
+.bb-form-input {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 0.95rem;
+    border: 1.5px solid $bb-slate-200;
+    border-radius: $bb-radius-sm;
+    background: #fff;
+    color: $bb-slate-900;
+    transition: border-color 0.2s, box-shadow 0.2s;
+
+    &:focus {
+        outline: none;
+        border-color: $bb-primary;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+
+    &.is-invalid {
+        border-color: #ef4444;
+
+        &:focus {
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+        }
+    }
+}
+
+.bb-form-error {
+    color: #ef4444;
+    font-size: 0.8rem;
+    margin-top: 0.35rem;
+    display: block;
+}
+
+.bb-form-check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+
+    input[type='checkbox'] {
+        width: 18px;
+        height: 18px;
+        accent-color: $bb-primary;
+        cursor: pointer;
+    }
+
+    label {
+        font-size: 0.9rem;
+        color: $bb-slate-700;
+        cursor: pointer;
+    }
+}
+
+.bb-btn-primary {
+    width: 100%;
+    padding: 0.8rem 1.25rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, $bb-primary-light, $bb-primary-dark);
+    border: none;
+    border-radius: $bb-radius-sm;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.2s;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+
+    &:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.45);
+    }
+
+    &:active {
+        transform: translateY(0);
+    }
+}
+
+// Dashboard layout
+.bb-admin-body {
+    min-height: 100vh;
+    background: $bb-slate-100;
+}
+
+.bb-admin-nav {
+    background: #fff;
+    border-bottom: 1px solid $bb-slate-200;
+    padding: 0.75rem 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(8px);
+    background: rgba(255, 255, 255, 0.95);
+}
+
+.bb-admin-nav-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.bb-admin-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    text-decoration: none;
+    color: $bb-slate-900;
+
+    &:hover {
+        color: $bb-primary;
+    }
+}
+
+.bb-admin-brand-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, $bb-primary-light, $bb-primary-dark);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 800;
+    font-size: 1rem;
+}
+
+.bb-admin-brand-text {
+    font-weight: 700;
+    font-size: 1.1rem;
+    letter-spacing: -0.02em;
+}
+
+.bb-admin-user {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.bb-admin-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, $bb-primary-light, $bb-primary-dark);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.bb-admin-user-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: $bb-slate-900;
+    line-height: 1.2;
+}
+
+.bb-admin-user-role {
+    font-size: 0.75rem;
+    color: $bb-slate-500;
+}
+
+.bb-admin-main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 3rem;
+}
+
+.dashboard-hero {
+    background: linear-gradient(135deg, $bb-slate-900 0%, #1e3a8a 60%, $bb-primary-dark 100%);
+    border-radius: $bb-radius;
+    padding: 2rem 2rem 2.25rem;
+    color: #fff;
+    margin-bottom: 1.75rem;
+    position: relative;
+    overflow: hidden;
+
+    &::after {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -10%;
+        width: 280px;
+        height: 280px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.06);
+    }
+}
+
+.dashboard-hero-greeting {
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 0.35rem;
+}
+
+.dashboard-hero-title {
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: 0.5rem;
+}
+
+.dashboard-hero-subtitle {
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.95rem;
+}
+
+.dashboard-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+}
+
+.dashboard-badge {
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(4px);
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1.25rem;
+}
+
+.dashboard-card {
+    background: #fff;
+    border-radius: $bb-radius;
+    padding: 1.5rem;
+    border: 1px solid $bb-slate-200;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+
+    &:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+        border-color: rgba(37, 99, 235, 0.25);
+        color: inherit;
+    }
+
+    &--static {
+        cursor: default;
+
+        &:hover {
+            transform: none;
+            box-shadow: none;
+            border-color: $bb-slate-200;
+        }
+    }
+}
+
+.dashboard-card-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1rem;
+
+    &--blue {
+        background: rgba(37, 99, 235, 0.1);
+        color: $bb-primary;
+    }
+
+    &--slate {
+        background: $bb-slate-100;
+        color: $bb-slate-700;
+    }
+
+    &--red {
+        background: rgba(239, 68, 68, 0.1);
+        color: #ef4444;
+    }
+}
+
+.dashboard-card-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: $bb-slate-900;
+    margin-bottom: 0.35rem;
+}
+
+.dashboard-card-desc {
+    font-size: 0.875rem;
+    color: $bb-slate-500;
+    line-height: 1.5;
+    margin: 0;
+}
+
+.dashboard-alert {
+    padding: 0.85rem 1rem;
+    border-radius: $bb-radius-sm;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+
+    &--success {
+        background: rgba(34, 197, 94, 0.1);
+        color: #15803d;
+        border: 1px solid rgba(34, 197, 94, 0.25);
+    }
+}
+
+.bb-admin-footer {
+    text-align: center;
+    padding: 1.5rem;
+    font-size: 0.8rem;
+    color: $bb-slate-500;
+}

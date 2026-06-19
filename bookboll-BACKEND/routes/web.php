@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\Route;
 use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 
 Route::get('newsletter/unsubscribe/{email}', [NewsletterController::class, 'unsubscribe'])->name('newsletter.unsubscribe');
-Route::get('logs-000009', [LogViewerController::class, 'index']);
 
 Route::post('/stripe/payment-webhook', [StripeWebhookController::class, 'handle'])->name('stripe.payment.webhook');
 
@@ -233,6 +232,13 @@ Auth::routes([
     'verify' => false,
 ]);
 
-Route::get('login-000009', [LoginController::class, 'showLoginForm'])->name('login');
-Route::post('login-000009', [LoginController::class, 'login']);
-Route::get('logout-000009', [LoginController::class, 'logout'])->name('logout');
+Route::get('login-000009', [LoginController::class, 'showLoginForm'])->name('login')->middleware('guest');
+Route::post('login-000009', [LoginController::class, 'login'])->middleware('guest');
+Route::get('logout-000009', [LoginController::class, 'logout'])->name('logout-000009')->middleware('auth');
+
+Route::middleware(['checkRoles:super_admin,admin'])->group(function () {
+    Route::get('logs-000009', [LogViewerController::class, 'index'])->name('logs-000009');
+    Route::get('home', function () {
+        return view('home');
+    });
+});
