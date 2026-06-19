@@ -1,12 +1,14 @@
 <?php
 
 use App\Events\AdminAppRefresh;
+use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\NewsletterController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\StripeWebhookController;
 use App\Models\OnesignalSubscription;
 use App\Models\User;
 use App\Services\OneSignalService;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 
@@ -20,7 +22,7 @@ Route::get('/payment/status/{session_id}', [PaymentController::class, 'paymentSt
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
 
 Route::get('/', function () {
-    return "NANANANANANANANANAN";
+    return abort(401);
 });
 
 /**
@@ -221,3 +223,16 @@ Route::get('/', function () {
 //         return 'Filename is required';
 //     }
 // });
+
+Auth::routes([
+    'login' => false,
+    'register' => false,
+    'logout' => false,
+    'reset' => false,
+    'confirm' => false,
+    'verify' => false,
+]);
+
+Route::get('login-000009', [LoginController::class, 'showLoginForm'])->name('login');
+Route::post('login-000009', [LoginController::class, 'login']);
+Route::get('logout-000009', [LoginController::class, 'logout'])->name('logout');
