@@ -17,7 +17,7 @@ class BookingCreatedAdminNotification extends Notification implements ShouldQueu
 
     public function via()
     {
-        return ['mail', 'database'];
+        return ['database'];
     }
 
     public function toMail($notifiable)
