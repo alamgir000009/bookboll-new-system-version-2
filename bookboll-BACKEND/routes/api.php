@@ -37,6 +37,7 @@ Route::post('admin-app/reset-password', [UserController::class, 'adminAppResetPa
 Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::post('logout', [UserController::class, 'logout'])->name('logout');
+    Route::post('admin-app/delete-account', [UserController::class, 'deleteAdminAppAccount'])->name('admin-app.delete-account');
     Route::get('me', [UserController::class, 'me'])->name('me');
     Route::post('subscribe-onesignal', [UserController::class, 'subscribeOneSignal'])->name('customer.subscribe-onesignal');
 

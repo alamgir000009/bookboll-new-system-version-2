@@ -5,6 +5,7 @@ use App\Mail\CustomerForgotPasswordOtpEmail;
 use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserRejectionEmail;
 use App\Mail\UserWelcomeEmail;
+use App\Models\DeletedAccount;
 use App\Models\LoyaltyPoint;
 use App\Models\OnesignalSubscription;
 use App\Models\Preference;
@@ -1246,6 +1247,116 @@ class UserService
             ]);
             return sendError("Failed to import users: " . $e->getMessage());
         }
+    }
+
+    public function deleteAdminAppAccount($request)
+    {
+        $request->validate(['password' => 'required|current_password']);
+
+        $user = auth()->user();
+
+        if ($user->id === 1) {
+            return sendError('This account cannot be deleted.');
+        }
+
+        if ($user->hasRole('super_admin')) {
+            return sendError('Super admin accounts cannot be deleted from the app.');
+        }
+
+        $staffRoles = ['admin', 'senior_employee', 'junior_employee', 'guard'];
+
+        if (! $user->hasAnyRole($staffRoles)) {
+            return sendError('This account is not eligible for deletion from the admin app.');
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $remainingRoles = $user->getRoleNames()->diff($staffRoles);
+            $hasNonStaffRoles = $remainingRoles->isNotEmpty();
+            $deletionType = $hasNonStaffRoles
+                ? DeletedAccount::TYPE_ACCESS_REMOVED
+                : DeletedAccount::TYPE_ACCOUNT_DELETED;
+
+            $this->recordDeletedAccount($user, $request, $deletionType, $staffRoles);
+
+            $user->tokens()
+                ->whereIn('name', ['bookboll-admin-mobile-app-api-token', 'bookboll-admin-web-api-token'])
+                ->delete();
+
+            $user->onesignalSubscriptions()->delete();
+            $user->venues()->detach();
+
+            foreach ($staffRoles as $role) {
+                if ($user->hasRole($role)) {
+                    $user->removeRole($role);
+                }
+            }
+
+            if ($hasNonStaffRoles) {
+                DB::commit();
+
+                return sendSuccess('Your admin app account has been removed successfully.');
+            }
+
+            $user->tokens()->delete();
+            $user->delete();
+
+            DB::commit();
+
+            return sendSuccess('Your account has been deleted successfully.', [], 200, false);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Admin app account deletion error: '.$e->getMessage(), [
+                'user_id'   => $user->id,
+                'Exception' => $e,
+            ]);
+
+            return sendError('Failed to delete account. Please try again later.');
+        }
+    }
+
+    protected function recordDeletedAccount(User $user, $request, string $deletionType, array $staffRoles): DeletedAccount
+    {
+        $user->loadMissing('venues');
+
+        $removedRoles = $user->getRoleNames()->intersect($staffRoles)->values()->all();
+
+        return DeletedAccount::create([
+            'user_id'          => $user->id,
+            'name'             => $user->name,
+            'email'            => $user->email,
+            'phone'            => $user->phone,
+            'deletion_type'    => $deletionType,
+            'source'           => DeletedAccount::SOURCE_ADMIN_MOBILE_APP,
+            'roles'            => $removedRoles,
+            'assigned_venues'  => $user->venues->map(fn ($venue) => [
+                'id'     => $venue->id,
+                'name'   => $venue->name,
+                'status' => $venue->status,
+            ])->values()->all(),
+            'user_snapshot'    => [
+                'id'                => $user->id,
+                'name'              => $user->name,
+                'email'             => $user->email,
+                'phone'             => $user->phone,
+                'status'            => $user->status,
+                'gender'            => $user->gender,
+                'nationality'       => $user->nationality,
+                'address'           => $user->address,
+                'image'             => $user->image,
+                'date_of_birth'     => $user->date_of_birth,
+                'loyalty_tier_id'   => $user->loyalty_tier_id,
+                'email_verified_at' => $user->email_verified_at,
+                'created_at'        => $user->created_at,
+                'updated_at'        => $user->updated_at,
+                'all_roles'         => $user->getRoleNames()->values()->all(),
+            ],
+            'ip_address'       => $request->ip(),
+            'user_agent'       => $request->userAgent(),
+            'deleted_at'       => now(),
+        ]);
     }
 
     public function registerAdminAppUser($request)
