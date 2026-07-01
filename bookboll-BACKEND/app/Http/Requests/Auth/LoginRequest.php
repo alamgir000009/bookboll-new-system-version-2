@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Auth;
 
 use App\Models\User;
+use App\Rules\VerifyTurnstileToken;
 use Illuminate\Auth\Events\Lockout;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
@@ -23,10 +24,36 @@ class LoginRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
+        $rules = [
             'email' => ['required', 'string', 'email'],
             'password' => ['required', 'string'],
         ];
+
+        if ($this->turnstileEnabled()) {
+            $rules['cf-turnstile-response'] = [
+                'required',
+                'string',
+                new VerifyTurnstileToken($this->ip()),
+            ];
+        }
+
+        return $rules;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'cf-turnstile-response.required' => 'Please complete the security verification.',
+        ];
+    }
+
+    protected function turnstileEnabled(): bool
+    {
+        return filled(config('services.turnstile.secret_key'))
+            && filled(config('services.turnstile.site_key'));
     }
 
     /**

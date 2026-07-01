@@ -55,6 +55,13 @@
             </label>
         </div>
 
+        @if (config('services.turnstile.site_key'))
+            <div>
+                <div class="cf-turnstile" data-sitekey="{{ config('services.turnstile.site_key') }}" data-theme="light"></div>
+                <x-input-error :messages="$errors->get('cf-turnstile-response')" class="mt-2" />
+            </div>
+        @endif
+
         <button type="submit" class="btn-brand">
             <svg class="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
@@ -62,4 +69,10 @@
             {{ __('Sign in') }}
         </button>
     </form>
+
+    @if (config('services.turnstile.site_key'))
+        @push('scripts')
+            <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+        @endpush
+    @endif
 </x-guest-layout>
