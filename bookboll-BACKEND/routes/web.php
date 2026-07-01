@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\BackupController;
+use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\NewsletterController;
@@ -8,7 +9,6 @@ use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Route;
-use Laravel\Telescope\Http\Controllers\HomeController;
 use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 
 Route::get('newsletter/unsubscribe/{email}', [NewsletterController::class, 'unsubscribe'])->name('newsletter.unsubscribe');
@@ -20,7 +20,7 @@ Route::get('/payment/status/{session_id}', [PaymentController::class, 'paymentSt
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
 
 Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin,admin'])->group(function () {
-    Route::get('/dashboard-000009', [HomeController::class, 'dashboard'])->name('dashboard');
+    Route::get('/dashboard-000009', [DashboardController::class, 'index'])->name('dashboard');
 
     Route::get('/profile-000009', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile-000009', [ProfileController::class, 'update'])->name('profile.update');
