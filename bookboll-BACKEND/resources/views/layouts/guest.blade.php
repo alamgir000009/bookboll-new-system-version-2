@@ -15,45 +15,49 @@
         @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
     <body class="font-sans text-gray-900 antialiased">
-        <div class="min-h-screen lg:grid lg:grid-cols-2">
-            <div class="sidebar-panel relative hidden lg:flex flex-col justify-between p-10 text-white">
-                <div class="flex items-center gap-4">
-                    <x-brand-logo class="h-14 w-14 rounded-xl shadow-lg ring-2 ring-white/20" />
+        <div class="flex min-h-dvh flex-col lg:grid lg:h-dvh lg:grid-cols-2 lg:overflow-hidden">
+            {{-- Brand panel --}}
+            <div class="login-brand-panel relative hidden lg:flex lg:h-full lg:min-h-0 flex-col justify-between p-10 xl:p-12 text-white">
+                <div class="login-brand-glow -left-20 -top-20 h-72 w-72"></div>
+                <div class="login-brand-glow bottom-10 right-0 h-56 w-56 bg-blue-300/20"></div>
+
+                <div class="relative z-10 flex items-center gap-4">
+                    <div class="rounded-2xl bg-white p-2 shadow-xl ring-1 ring-white/20">
+                        <x-brand-logo class="h-12 w-12 rounded-xl" />
+                    </div>
                     <div>
-                        <span class="block text-xl font-bold tracking-tight">{{ config('app.name', 'Bookboll') }}</span>
-                        <span class="block text-sm text-white/70">Admin Portal</span>
+                        <span class="block text-2xl font-bold tracking-tight">{{ config('app.name', 'Bookboll') }}</span>
+                        <span class="block text-sm font-medium text-white/70">Admin Portal</span>
                     </div>
                 </div>
 
-                <div class="space-y-4 max-w-sm">
-                    <p class="text-xs font-semibold uppercase tracking-widest text-white/50">Admin Access</p>
-                    <h1 class="text-3xl font-bold leading-snug">
-                        Sign in to manage your platform
-                    </h1>
-                    <p class="text-white/75 leading-relaxed">
-                        Access logs, debugging tools, and system monitoring from one secure dashboard.
-                    </p>
+                <div class="relative z-10 max-w-md space-y-8">
+                    <div class="space-y-4">
+                        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">Secure access</p>
+                        <h1 class="text-4xl font-bold leading-tight tracking-tight">
+                            Manage your platform with confidence
+                        </h1>
+                        <p class="text-base leading-relaxed text-white/75">
+                            Sign in to access system tools, logs, debugging, and backups from one secure dashboard.
+                        </p>
+                    </div>
+
                 </div>
 
-                <p class="text-sm text-white/50">
-                    &copy; {{ date('Y') }} {{ config('app.name', 'Bookboll') }}
+                <p class="relative z-10 text-sm text-white/45">
+                    &copy; {{ date('Y') }} {{ config('app.name', 'Bookboll') }}. All rights reserved.
                 </p>
             </div>
 
-            <div class="flex min-h-screen flex-col justify-center bg-surface px-6 py-12 sm:px-12">
-                <div class="mx-auto w-full max-w-md">
-                    <div class="mb-8 flex flex-col items-center lg:items-start">
-                        <div class="mb-5 flex items-center gap-3 lg:hidden">
-                            <x-brand-logo class="h-11 w-11 rounded-lg" />
-                            <span class="text-lg font-bold text-gray-800">{{ config('app.name', 'Bookboll') }}</span>
-                        </div>
-                        <h2 class="text-2xl font-bold text-gray-900">Welcome back</h2>
-                        <p class="mt-1 text-sm text-gray-500">Enter your credentials to continue</p>
-                    </div>
+            {{-- Login form --}}
+            <div class="relative flex min-h-0 flex-1 flex-col justify-center bg-surface px-6 py-8 sm:px-12 lg:h-full lg:overflow-y-auto lg:py-6">
+                <div class="pointer-events-none absolute inset-0 overflow-hidden">
+                    <div class="absolute -right-24 -top-24 h-64 w-64 rounded-full bg-sidebar/5 blur-3xl"></div>
+                    <div class="absolute -bottom-24 -left-24 h-64 w-64 rounded-full bg-sidebar/5 blur-3xl"></div>
+                </div>
 
-                    <div class="content-card !p-8">
-                        {{ $slot }}
-                    </div>
+                <div class="relative mx-auto w-full max-w-[420px]">
+                    {{ $slot }}
                 </div>
             </div>
         </div>

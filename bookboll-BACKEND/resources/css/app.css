@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+[x-cloak] {
+    display: none !important;
+}
+
 @layer components {
     .sidebar-panel {
         @apply bg-sidebar;
@@ -93,5 +97,37 @@
 
     .activities-pagination a:hover {
         @apply text-sidebar-dark;
+    }
+
+    .login-brand-panel {
+        @apply relative overflow-hidden bg-gradient-to-br from-sidebar via-sidebar to-sidebar-dark;
+    }
+
+    .login-brand-glow {
+        @apply pointer-events-none absolute rounded-full bg-white/10 blur-3xl;
+    }
+
+    .login-form-card {
+        @apply rounded-2xl border border-gray-200/80 bg-white p-6 shadow-card sm:p-7;
+    }
+
+    .login-input-wrap {
+        @apply relative mt-2;
+    }
+
+    .login-input-icon {
+        @apply pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400;
+    }
+
+    .login-input {
+        @apply block w-full rounded-xl border border-gray-200 bg-gray-50/80 py-3 pl-11 pr-4 text-sm text-gray-900 shadow-sm transition placeholder:text-gray-400 focus:border-sidebar focus:bg-white focus:outline-none focus:ring-2 focus:ring-sidebar/20;
+    }
+
+    .login-feature-pill {
+        @apply inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-medium text-white/90 backdrop-blur-sm;
+    }
+
+    .login-submit-btn {
+        @apply inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sidebar to-sidebar-light px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-sidebar/25 transition hover:from-sidebar-dark hover:to-sidebar focus:outline-none focus:ring-2 focus:ring-sidebar focus:ring-offset-2 active:scale-[0.99];
     }
 }
