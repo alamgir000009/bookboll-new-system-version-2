@@ -4,6 +4,7 @@ namespace App\Services;
 use App\Models\SportsCategory;
 use App\Models\SportsType;
 use Exception;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -12,7 +13,6 @@ class SportsCategoryService
 {
     public function __construct(protected SportsCategory $sportCategoryModel, protected SportsType $sportsTypeModel)
     {}
-
     public function all()
     {
         $types      = $this->sportsTypeModel::orderBy('sort_order', 'ASC')->get();
@@ -132,6 +132,7 @@ class SportsCategoryService
             }
 
             $category->delete();
+
             return sendSuccess('Sports category deleted successfully');
 
         } catch (Exception $e) {
@@ -142,20 +143,42 @@ class SportsCategoryService
 
     public function sportsCategories()
     {
-        $sports_type = request()->get('sports_type', null);
+        $sportsType = request()->get('sports_type');
 
-        $sportsTypes = $this->sportsTypeModel::with(['sportsCategories:id,name,sports_type_id'])
-            ->orderBy('sort_order', 'ASC')
-            ->get(['id', 'icon', 'image', 'color', 'title', 'slug', 'sub_title']);
+        $payload = Cache::remember(
+            'sports_categories:public',
+            now()->addHours(1),
+            function () {
+                $sportsTypes = $this->sportsTypeModel::select(['id', 'icon', 'image', 'color', 'title', 'slug', 'sub_title', 'sort_order'])
+                    ->with([
+                        'sportsCategories' => fn ($query) => $query
+                            ->select('id', 'name', 'sports_type_id')
+                            ->active()
+                            ->orderBy('sort_order'),
+                    ])
+                    ->orderBy('sort_order')
+                    ->get();
 
-        $sportsCategories = $this->sportCategoryModel::with('sportsType:id,title,slug,sub_title')->active()
-            ->when($sports_type, function ($query, $sports_type) {
-                $query->whereRelation('sportsType', 'slug', $sports_type);
-            })
-            ->orderBy('sort_order', 'ASC')
-            ->get();
+                $sportsCategories = $this->sportCategoryModel::with(['sportsType:id,title,slug,sub_title'])
+                    ->active()
+                    ->orderBy('sort_order')
+                    ->get();
 
-        return sendSuccess('Sports categories retrieved successfully', compact('sportsTypes', 'sportsCategories'));
+                return [
+                    'sportsTypes' => $sportsTypes->toArray(),
+                    'sportsCategories' => $sportsCategories->toArray(),
+                ];
+            }
+        );
+
+        if ($sportsType) {
+            $payload['sportsCategories'] = array_values(array_filter(
+                $payload['sportsCategories'],
+                fn (array $category) => ($category['sports_type']['slug'] ?? null) === $sportsType
+            ));
+        }
+
+        return sendSuccess('Sports categories retrieved successfully', $payload);
     }
 
     public function updateSortOrder($request)
