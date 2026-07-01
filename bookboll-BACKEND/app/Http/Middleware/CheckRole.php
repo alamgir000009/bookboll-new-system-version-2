@@ -29,7 +29,10 @@ class CheckRole
                 return response()->json(['message' => 'Forbidden. You do not have the required role.'], 403);
             }
 
-            abort(403, 'You do not have permission to access this resource.');
+            auth()->logout();
+            $request->session()->regenerateToken();
+
+            return redirect()->route('login')->withErrors(['email' => 'Access denied. Admin privileges required.']);
         }
 
         return $next($request);

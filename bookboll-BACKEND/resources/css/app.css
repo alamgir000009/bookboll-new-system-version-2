@@ -1,11 +1,97 @@
-@import 'tailwindcss';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
-@source '../../storage/framework/views/*.php';
-@source '../**/*.blade.php';
-@source '../**/*.js';
+@layer components {
+    .sidebar-panel {
+        @apply bg-sidebar;
+    }
 
-@theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+    .sidebar-section {
+        @apply px-5 pb-1.5 pt-4 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/45;
+    }
+
+    .sidebar-link {
+        @apply flex items-center gap-3 px-5 py-2.5 text-[13px] font-medium text-white/85 transition-colors hover:bg-white/10 hover:text-white;
+    }
+
+    .sidebar-link-active {
+        @apply bg-white/15 text-white border-l-[3px] border-white pl-[17px];
+    }
+
+    .content-card {
+        @apply rounded-lg border border-gray-200 bg-white p-6 shadow-sm;
+    }
+
+    .btn-brand {
+        @apply inline-flex w-full items-center justify-center rounded-lg bg-sidebar px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-sidebar-dark focus:outline-none focus:ring-2 focus:ring-sidebar focus:ring-offset-2;
+    }
+
+    .input-brand {
+        @apply block w-full rounded-lg border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm transition placeholder:text-gray-400 focus:border-sidebar focus:ring-sidebar;
+    }
+
+    .activities-table-wrap {
+        @apply overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm;
+    }
+
+    .activities-table {
+        @apply min-w-full;
+    }
+
+    .activities-table thead {
+        @apply bg-gradient-to-r from-sidebar/10 via-sidebar/5 to-transparent;
+    }
+
+    .activities-table thead th {
+        @apply px-5 py-3.5 text-left text-[11px] font-bold uppercase tracking-wider text-sidebar-dark;
+    }
+
+    .activities-table tbody tr {
+        @apply border-b border-gray-100 transition-colors duration-150 last:border-0;
+    }
+
+    .activities-table tbody tr:hover {
+        @apply bg-sidebar/[0.04];
+    }
+
+    .activities-table tbody td {
+        @apply px-5 py-4 align-middle;
+    }
+
+    .activities-id {
+        @apply inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-lg bg-gray-100 px-2 text-xs font-semibold tabular-nums text-gray-600;
+    }
+
+    .activities-log-badge {
+        @apply inline-flex items-center rounded-full border border-sidebar/20 bg-sidebar/10 px-2.5 py-1 text-xs font-semibold capitalize text-sidebar-dark;
+    }
+
+    .activities-subject {
+        @apply inline-flex max-w-[10rem] items-center rounded-md bg-gray-100 px-2 py-1 font-mono text-[11px] text-gray-600 truncate;
+    }
+
+    .activities-causer {
+        @apply flex items-center gap-2.5 min-w-0;
+    }
+
+    .activities-causer-avatar {
+        @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sidebar/20 to-sidebar/5 text-[11px] font-bold text-sidebar-dark ring-2 ring-white;
+    }
+
+    .activities-view-btn {
+        @apply inline-flex items-center gap-1.5 rounded-lg border border-sidebar/25 bg-white px-3 py-1.5 text-xs font-semibold text-sidebar-dark shadow-sm transition hover:border-sidebar hover:bg-sidebar hover:text-white;
+    }
+
+    .activities-empty {
+        @apply flex flex-col items-center justify-center px-6 py-16 text-center;
+    }
+
+    .activities-pagination span[aria-current="page"] > span {
+        @apply bg-sidebar text-white border-sidebar;
+    }
+
+    .activities-pagination a:hover {
+        @apply text-sidebar-dark;
+    }
 }

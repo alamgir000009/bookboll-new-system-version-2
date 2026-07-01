@@ -57,4 +57,13 @@ class TelescopeServiceProvider extends TelescopeApplicationServiceProvider
             return $user->hasAnyRole(['super_admin', 'admin']);
         });
     }
+
+    protected function authorization(): void
+    {
+        $this->gate();
+
+        Telescope::auth(function ($request) {
+            return $request->user() && Gate::check('viewTelescope', [$request->user()]);
+        });
+    }
 }

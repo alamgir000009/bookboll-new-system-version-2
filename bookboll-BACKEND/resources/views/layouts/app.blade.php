@@ -1,45 +1,48 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ config('app.name', 'Bookboll') }} Admin</title>
-    <link rel="dns-prefetch" href="//fonts.bunny.net">
-    <link href="https://fonts.bunny.net/css?family=plus-jakarta-sans:400,500,600,700,800" rel="stylesheet">
-    @vite(['resources/sass/app.scss', 'resources/js/app.js'])
-    <style>
-        body { font-family: 'Plus Jakarta Sans', 'Nunito', sans-serif; }
-    </style>
-</head>
-<body class="bb-admin-body">
-    <header class="bb-admin-nav">
-        <div class="bb-admin-nav-inner">
-            <a href="{{ url('/home') }}" class="bb-admin-brand">
-                <span class="bb-admin-brand-mark">B</span>
-                <span class="bb-admin-brand-text">{{ config('app.name', 'Bookboll') }}</span>
-            </a>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="csrf-token" content="{{ csrf_token() }}">
 
-            @auth
-                <div class="bb-admin-user">
-                    <div class="text-end">
-                        <div class="bb-admin-user-name">{{ Auth::user()->name }}</div>
-                        <div class="bb-admin-user-role">{{ Auth::user()->getRoleNames()->first() ?? 'Admin' }}</div>
-                    </div>
-                    <div class="bb-admin-avatar">
-                        {{ strtoupper(substr(Auth::user()->name, 0, 1)) }}
+        <title>{{ config('app.name', 'Bookboll') }} — Admin</title>
+
+        <link rel="icon" type="image/jpeg" href="{{ asset('bookboll-logo.jpeg') }}">
+
+        <link rel="preconnect" href="https://fonts.bunny.net">
+        <link href="https://fonts.bunny.net/css?family=figtree:400,500,600,700&display=swap" rel="stylesheet" />
+
+        @vite(['resources/css/app.css', 'resources/js/app.js'])
+    </head>
+    <body class="font-sans antialiased">
+        <div x-data="{ sidebarOpen: false }" class="min-h-screen bg-surface">
+            @include('layouts.sidebar')
+
+            <div class="lg:pl-64">
+                <div class="sticky top-0 z-30 flex items-center gap-4 border-b border-gray-200 bg-white px-4 py-3 lg:hidden">
+                    <button @click="sidebarOpen = true" class="rounded-lg p-2 text-gray-600 hover:bg-gray-100">
+                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                    <div class="flex items-center gap-2.5">
+                        <x-brand-icon class="h-9 w-9" />
+                        <span class="text-sm font-bold text-gray-800">{{ config('app.name', 'Bookboll') }}</span>
                     </div>
                 </div>
-            @endauth
+
+                @isset($header)
+                    <header class="border-b border-gray-200 bg-white">
+                        <div class="px-6 py-5 sm:px-8">
+                            {{ $header }}
+                        </div>
+                    </header>
+                @endisset
+
+                <main class="px-4 py-6 sm:px-8 sm:py-8">
+                    {{ $slot }}
+                </main>
+            </div>
         </div>
-    </header>
-
-    <main class="bb-admin-main">
-        @yield('content')
-    </main>
-
-    <footer class="bb-admin-footer">
-        &copy; {{ date('Y') }} {{ config('app.name', 'Bookboll') }}. Admin portal.
-    </footer>
-</body>
+    </body>
 </html>

@@ -42,7 +42,7 @@ return [
     |
     */
 
-    'path' => env('TELESCOPE_PATH', 'telescope-000009'),
+    'path' => env('TELESCOPE_PATH', 'admin/telescope-000009'),
 
     /*
     |--------------------------------------------------------------------------
@@ -94,8 +94,6 @@ return [
 
     'middleware' => [
         'web',
-        'auth',
-        'checkRoles:super_admin,admin',
         Authorize::class,
     ],
 

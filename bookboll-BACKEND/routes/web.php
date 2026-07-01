@@ -1,15 +1,14 @@
 <?php
 
-use App\Events\AdminAppRefresh;
-use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Admin\BackupController;
+use App\Http\Controllers\Auth\AuthenticatedSessionController;
+use App\Http\Controllers\Auth\PasswordController;
 use App\Http\Controllers\NewsletterController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\StripeWebhookController;
-use App\Models\OnesignalSubscription;
-use App\Models\User;
-use App\Services\OneSignalService;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
+use Laravel\Telescope\Http\Controllers\HomeController;
 use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 
 Route::get('newsletter/unsubscribe/{email}', [NewsletterController::class, 'unsubscribe'])->name('newsletter.unsubscribe');
@@ -20,8 +19,28 @@ Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentS
 Route::get('/payment/status/{session_id}', [PaymentController::class, 'paymentStatus'])->name('payment.status');
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
 
-Route::get('/', function () {
-    return abort(401);
+Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin,admin'])->group(function () {
+    Route::get('/dashboard-000009', [HomeController::class, 'dashboard'])->name('dashboard');
+
+    Route::get('/profile-000009', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('/profile-000009', [ProfileController::class, 'update'])->name('profile.update');
+
+    Route::get('logs-000009', [LogViewerController::class, 'index'])->name('logs.viewer');
+
+    Route::get('backups-000009', [BackupController::class, 'index'])->name('backups.index');
+    Route::post('backups-000009/run', [BackupController::class, 'run'])->name('backups.run');
+    Route::get('backups-000009/{filename}/download', [BackupController::class, 'download'])->name('backups.download')->where('filename', '[\w\-\.]+');
+    Route::delete('backups-000009/bulk', [BackupController::class, 'destroyMany'])->name('backups.bulk-destroy');
+    Route::delete('backups-000009/{filename}', [BackupController::class, 'destroy'])->name('backups.destroy')->where('filename', '[\w\-\.]+');
+
+    Route::post('logout-000009', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
+    Route::put('password-000009', [PasswordController::class, 'update'])->name('password.update');
+});
+
+Route::middleware('guest')->group(function () {
+    Route::get('login-000009', [AuthenticatedSessionController::class, 'create'])->name('login');
+
+    Route::post('login-000009', [AuthenticatedSessionController::class, 'store']);
 });
 
 /**
@@ -223,22 +242,3 @@ Route::get('/', function () {
 //     }
 // });
 
-Auth::routes([
-    'login' => false,
-    'register' => false,
-    'logout' => false,
-    'reset' => false,
-    'confirm' => false,
-    'verify' => false,
-]);
-
-Route::get('login-000009', [LoginController::class, 'showLoginForm'])->name('login')->middleware('guest');
-Route::post('login-000009', [LoginController::class, 'login'])->middleware('guest');
-Route::get('logout-000009', [LoginController::class, 'logout'])->name('logout-000009')->middleware('auth');
-
-Route::middleware(['checkRoles:super_admin,admin'])->group(function () {
-    Route::get('logs-000009', [LogViewerController::class, 'index'])->name('logs-000009');
-    Route::get('home', function () {
-        return view('home');
-    });
-});

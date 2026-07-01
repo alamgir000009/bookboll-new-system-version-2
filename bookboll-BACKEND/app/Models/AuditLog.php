@@ -23,7 +23,7 @@ class AuditLog extends Model
 
     public function actor()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'actor_id');
     }
 
     public function scopeRecent($query, $days = 30)
