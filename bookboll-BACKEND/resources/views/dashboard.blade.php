@@ -25,7 +25,19 @@
 
         <div>
             <h3 class="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Quick Access</h3>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <a href="{{ route('activities.index') }}" class="content-card group flex items-start gap-4 hover:border-sidebar/40 transition-colors">
+                    <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sidebar/10 text-sidebar">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </span>
+                    <div class="min-w-0">
+                        <h4 class="font-semibold text-gray-900 group-hover:text-sidebar transition-colors">Activities</h4>
+                        <p class="mt-0.5 text-sm text-gray-500">View system activity log &amp; changes</p>
+                    </div>
+                </a>
+
                 <a href="{{ route('logs.viewer') }}" class="content-card group flex items-start gap-4 hover:border-sidebar/40 transition-colors">
                     <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sidebar/10 text-sidebar">
                         <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">

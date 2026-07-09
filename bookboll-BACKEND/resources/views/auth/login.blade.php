@@ -14,9 +14,13 @@
 
     <x-auth-session-status class="mb-5 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800" :status="session('status')" />
 
-    @if ($errors->has('email') && ! $errors->has('password') && ! $errors->has('cf-turnstile-response'))
+    @if ($errors->any())
         <div class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {{ $errors->first('email') }}
+            <ul class="list-inside list-disc space-y-1">
+                @foreach ($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
         </div>
     @endif
 
@@ -41,9 +45,6 @@
                        placeholder="admin@bookboll.com"
                        class="login-input" />
             </div>
-            @if ($errors->has('email') && ($errors->has('password') || $errors->has('cf-turnstile-response')))
-                <p class="mt-2 text-sm text-red-600">{{ $errors->first('email') }}</p>
-            @endif
         </div>
 
         <div>
@@ -75,9 +76,6 @@
                     </svg>
                 </button>
             </div>
-            @if ($errors->has('password'))
-                <p class="mt-2 text-sm text-red-600">{{ $errors->first('password') }}</p>
-            @endif
         </div>
 
         <div class="flex items-center justify-between pt-1">
@@ -91,12 +89,10 @@
             </label>
         </div>
 
-        @if (config('services.turnstile.site_key'))
+        @if (\App\Support\TurnstileValidation::enabled())
             <div class="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
                 <div class="cf-turnstile flex justify-center" data-sitekey="{{ config('services.turnstile.site_key') }}" data-theme="light"></div>
-                @if ($errors->has('cf-turnstile-response'))
-                    <p class="mt-2 text-center text-sm text-red-600">{{ $errors->first('cf-turnstile-response') }}</p>
-                @endif
             </div>
         @endif
 
@@ -111,10 +107,4 @@
     <p class="mt-5 text-center text-xs text-gray-400 lg:mt-4 lg:text-left">
         Protected area. Authorized administrators only.
     </p>
-
-    @if (config('services.turnstile.site_key'))
-        @push('scripts')
-            <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-        @endpush
-    @endif
 </x-guest-layout>

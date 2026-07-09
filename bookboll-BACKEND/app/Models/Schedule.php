@@ -1,13 +1,15 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Schedule extends Model
 {
-    use HasFactory;
+    use LogsModelActivity, HasFactory;
 
     protected $fillable = [
         'day',
@@ -56,4 +58,21 @@ class Schedule extends Model
 
         return $checkTime->between($startTime, $endTime);
     }
+    protected function activityLogName(): string
+    {
+        return 'schedule';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'day',
+            'is_open',
+            'end_time',
+            'venue_id',
+            'start_time',
+            'listing_id',
+        ];
+    }
+
 }

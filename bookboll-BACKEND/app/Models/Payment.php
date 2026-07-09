@@ -1,11 +1,15 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Payment extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'type',
         'date',
@@ -49,4 +53,26 @@ class Payment extends Model
         return $query->when($from, fn($q) => $q->where('date', '>=', $from))
             ->when($to, fn($q) => $q->where('date', '<=', $to));
     }
+    protected function activityLogName(): string
+    {
+        return 'payment';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'type',
+            'date',
+            'notes',
+            'amount',
+            'method',
+            'status',
+            'user_id',
+            'charge_id',
+            'payment_id',
+            'booking_id',
+            'payment_intent_id',
+        ];
+    }
+
 }

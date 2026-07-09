@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class SportsCategory extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'name',
         'slug',
@@ -56,4 +60,23 @@ class SportsCategory extends Model
             '🏏'  => 'Cricket',
         ];
     }
+    protected function activityLogName(): string
+    {
+        return 'sports_category';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'name',
+            'slug',
+            'icon',
+            'image',
+            'status',
+            'sort_order',
+            'description',
+            'sports_type_id',
+        ];
+    }
+
 }

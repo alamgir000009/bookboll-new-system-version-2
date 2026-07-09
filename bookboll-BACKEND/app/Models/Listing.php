@@ -1,13 +1,15 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Listing extends Model
 {
-    use HasFactory;
+    use LogsModelActivity, HasFactory;
 
     protected $fillable = [
         'name',
@@ -247,4 +249,34 @@ class Listing extends Model
         list($hours, $minutes) = explode(':', $time);
         return (int) $hours * 60 + (int) $minutes;
     }
+    protected function activityLogName(): string
+    {
+        return 'listing';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'name',
+            'status',
+            'venue_id',
+            'capacity',
+            'amenities',
+            'tags',
+            'sort_order',
+            'base_price',
+            'images_urls',
+            'description',
+            'slot_duration',
+            'online_payment',
+            'loyalty_points',
+            'calendar_color',
+            'payment_options',
+            'sports_category_id',
+            'max_bookings_per_slot',
+            'max_multiple_bookings',
+            'allow_multiple_bookings',
+        ];
+    }
+
 }

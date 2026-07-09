@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class SlotLock extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'date',
         'user_id',
@@ -35,4 +39,23 @@ class SlotLock extends Model
     {
         return $this->belongsTo(Listing::class);
     }
+    protected function activityLogName(): string
+    {
+        return 'slot_lock';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'date',
+            'user_id',
+            'end_time',
+            'listing_id',
+            'start_time',
+            'session_id',
+            'ip_address',
+            'locked_until',
+        ];
+    }
+
 }

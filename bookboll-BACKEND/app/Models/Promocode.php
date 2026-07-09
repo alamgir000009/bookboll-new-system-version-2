@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Promocode extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'code',
         'status',
@@ -222,4 +226,32 @@ class Promocode extends Model
         }
         return $this->users->contains('id', $userId);
     }
+    protected function activityLogName(): string
+    {
+        return 'promocode';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'code',
+            'status',
+            'valid_from',
+            'expires_at',
+            'used_count',
+            'usage_limit',
+            'description',
+            'discount_type',
+            'used_by_users',
+            'discount_value',
+            'per_user_limit',
+            'payment_methods',
+            'min_order_amount',
+            'max_discount_amount',
+            'is_reminder_promocode',
+            'is_gift_card_promocode',
+            'gift_card_id',
+        ];
+    }
+
 }

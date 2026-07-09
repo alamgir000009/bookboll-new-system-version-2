@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Tag extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'name',
         'slug',
@@ -15,4 +19,18 @@ class Tag extends Model
     {
         return $this->belongsToMany(Post::class);
     }
+    protected function activityLogName(): string
+    {
+        return 'tag';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'name',
+            'slug',
+            'color',
+        ];
+    }
+
 }

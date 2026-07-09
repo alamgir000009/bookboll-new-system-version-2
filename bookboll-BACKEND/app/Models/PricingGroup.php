@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class PricingGroup extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'name',
         'days',
@@ -33,4 +37,21 @@ class PricingGroup extends Model
     {
         return $this->belongsTo(Listing::class);
     }
+    protected function activityLogName(): string
+    {
+        return 'pricing_group';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'name',
+            'days',
+            'end_time',
+            'start_time',
+            'listing_id',
+            'price_per_hour',
+        ];
+    }
+
 }

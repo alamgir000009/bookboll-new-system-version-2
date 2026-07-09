@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class LoyaltyPoint extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'type',
         'points',
@@ -36,4 +40,21 @@ class LoyaltyPoint extends Model
     {
         return $this->where("type", $type);
     }
+    protected function activityLogName(): string
+    {
+        return 'loyalty_point';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'type',
+            'points',
+            'reason',
+            'user_id',
+            'booking_id',
+            'order_id',
+        ];
+    }
+
 }

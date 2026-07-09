@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Post extends Model
 {
+    use LogsModelActivity;
+
     public const DRAFT     = 'draft';
     public const PUBLISHED = 'published';
     protected $fillable    = [
@@ -77,4 +81,29 @@ class Post extends Model
             });
         });
     }
+    protected function activityLogName(): string
+    {
+        return 'post';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'slug',
+            'tags',
+            'title',
+            'status',
+            'excerpt',
+            'content',
+            'user_id',
+            'featured',
+            'seo_title',
+            'read_time',
+            'published_at',
+            'featured_image',
+            'seo_description',
+            'post_category_id',
+        ];
+    }
+
 }
