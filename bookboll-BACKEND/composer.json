@@ -17,6 +17,7 @@
         "laravel/sanctum": "^4.0",
         "laravel/telescope": "^5.16",
         "laravel/tinker": "^2.10.1",
+        "livewire/livewire": "^4.3",
         "maatwebsite/excel": "^3.1",
         "nnjeim/world": "^1.1",
         "pusher/pusher-php-server": "*",
