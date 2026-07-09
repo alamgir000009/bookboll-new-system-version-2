@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class AddOn extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'name',
         'image',
@@ -30,4 +34,23 @@ class AddOn extends Model
     {
         return $image ? url("storage/{$image}") : null;
     }
+    protected function activityLogName(): string
+    {
+        return 'add_on';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'name',
+            'image',
+            'price',
+            'status',
+            'currency',
+            'sort_order',
+            'description',
+            'hours_extension',
+        ];
+    }
+
 }

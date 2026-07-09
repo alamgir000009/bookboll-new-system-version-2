@@ -6,11 +6,13 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
+use App\Traits\LogsModelActivity;
+use Spatie\Activitylog\Traits\CausesActivity;
 use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, HasRoles, HasApiTokens, Billable;
+    use Billable, CausesActivity, HasApiTokens, HasFactory, HasRoles, LogsModelActivity, Notifiable;
 
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
@@ -278,4 +280,28 @@ class User extends Authenticatable
 
         return $colors[$name] ?? 'bg-gray-100 text-gray-800';
     }
+    protected function activityLogName(): string
+    {
+        return 'user';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'name',
+            'image',
+            'phone',
+            'email',
+            'status',
+            'gender',
+            'address',
+            'provider',
+            'provider_id',
+            'nationality',
+            'date_of_birth',
+            'blocking_reason',
+            'loyalty_tier_id',
+        ];
+    }
+
 }

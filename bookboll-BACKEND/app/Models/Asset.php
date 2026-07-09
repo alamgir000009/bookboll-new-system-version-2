@@ -1,12 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Asset extends Model
 {
-    use HasFactory;
+    use LogsModelActivity, HasFactory;
 
     protected $fillable = [
         'listing_id',
@@ -28,5 +30,19 @@ class Asset extends Model
     {
         return url("storage/{$this->path}");
     }
-}
+    protected function activityLogName(): string
+    {
+        return 'asset';
+    }
 
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'listing_id',
+            'path',
+            'type',
+            'sort_order',
+        ];
+    }
+
+}

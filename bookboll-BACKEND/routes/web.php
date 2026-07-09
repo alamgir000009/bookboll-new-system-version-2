@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\ActivityLogController;
 use App\Http\Controllers\Admin\BackupController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
@@ -24,6 +25,9 @@ Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin,admin'])->gr
 
     Route::get('/profile-000009', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile-000009', [ProfileController::class, 'update'])->name('profile.update');
+
+    Route::get('activities-000009', [ActivityLogController::class, 'index'])->name('activities.index');
+    Route::get('activities-000009/{activity}', [ActivityLogController::class, 'show'])->name('activities.show');
 
     Route::get('logs-000009', [LogViewerController::class, 'index'])->name('logs.viewer');
 

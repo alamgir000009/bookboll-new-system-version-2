@@ -1,11 +1,15 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 
 class SpecialDay extends Model
 {
+    use LogsModelActivity;
+
 
     protected $fillable = [
         'date',
@@ -82,4 +86,22 @@ class SpecialDay extends Model
             'total_days' => $end->daysInMonth,
         ];
     }
+    protected function activityLogName(): string
+    {
+        return 'special_day';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'date',
+            'type',
+            'price',
+            'status',
+            'venue_id',
+            'listing_id',
+            'description',
+        ];
+    }
+
 }

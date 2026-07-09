@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class PaymentMethod extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'brand',
         'user_id',
@@ -19,4 +23,22 @@ class PaymentMethod extends Model
     {
         return $this->belongsTo(User::class);
     }
+    protected function activityLogName(): string
+    {
+        return 'payment_method';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'brand',
+            'user_id',
+            'default',
+            'exp_year',
+            'last_four',
+            'exp_month',
+            'stripe_payment_method_id',
+        ];
+    }
+
 }

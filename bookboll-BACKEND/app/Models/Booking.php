@@ -1,6 +1,8 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
@@ -10,6 +12,8 @@ use PaymentType;
 
 class Booking extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'date',
         'notes',
@@ -312,4 +316,42 @@ class Booking extends Model
             $booking->booking_id = $bookingId;
         });
     }
+    protected function activityLogName(): string
+    {
+        return 'booking';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'date',
+            'notes',
+            'status',
+            'user_id',
+            'is_free',
+            'end_time',
+            'duration',
+            'subtotal',
+            'venue_id',
+            'created_by',
+            'listing_id',
+            'start_time',
+            'booking_id',
+            'total_price',
+            'refunded_at',
+            'promocode_id',
+            'cancelled_by',
+            'cancelled_at',
+            'cancel_reason',
+            'payment_status',
+            'payment_method',
+            'refunded_amount',
+            'discount_amount',
+            'gift_card_amount',
+            'payment_breakdown',
+            'full_payment_received',
+            'loyalty_points_earned',
+        ];
+    }
+
 }

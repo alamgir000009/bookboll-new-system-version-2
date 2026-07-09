@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class DeletedAccount extends Model
 {
+    use LogsModelActivity;
+
     public const TYPE_ACCOUNT_DELETED = 'account_deleted';
     public const TYPE_ACCESS_REMOVED = 'access_removed';
 
@@ -50,4 +53,27 @@ class DeletedAccount extends Model
     {
         return $query->where('deletion_type', self::TYPE_ACCESS_REMOVED);
     }
+    protected function activityLogName(): string
+    {
+        return 'deleted_account';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'user_id',
+            'name',
+            'email',
+            'phone',
+            'deletion_type',
+            'source',
+            'roles',
+            'assigned_venues',
+            'user_snapshot',
+            'ip_address',
+            'user_agent',
+            'deleted_at',
+        ];
+    }
+
 }

@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Venue extends Model
 {
+    use LogsModelActivity;
+
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
 
@@ -37,4 +41,22 @@ class Venue extends Model
     {
         return $this->hasMany(Listing::class);
     }
+    protected function activityLogName(): string
+    {
+        return 'venue';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'name',
+            'status',
+            'maps_url',
+            'sort_order',
+            'description',
+            'min_advance_booking',
+            'max_bookings_per_slot',
+        ];
+    }
+
 }

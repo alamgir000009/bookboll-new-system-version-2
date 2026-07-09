@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Review extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'user_id',
         'comment',
@@ -53,4 +57,27 @@ class Review extends Model
     {
         return $this->helpfulUsers()->count();
     }
+    protected function activityLogName(): string
+    {
+        return 'review';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'user_id',
+            'comment',
+            'booking_id',
+            'listing_id',
+            'review_text',
+            'recommended',
+            'staff_rating',
+            'value_rating',
+            'helpful_count',
+            'overall_rating',
+            'facilities_rating',
+            'cleanliness_rating',
+        ];
+    }
+
 }

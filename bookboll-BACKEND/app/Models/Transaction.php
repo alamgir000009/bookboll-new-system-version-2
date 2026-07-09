@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Transaction extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'type',
         'amount',
@@ -40,4 +44,21 @@ class Transaction extends Model
     {
         return $this->belongsTo(GiftCard::class);
     }
+    protected function activityLogName(): string
+    {
+        return 'transaction';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'type',
+            'amount',
+            'reason',
+            'user_id',
+            'booking_id',
+            'gift_card_id',
+        ];
+    }
+
 }

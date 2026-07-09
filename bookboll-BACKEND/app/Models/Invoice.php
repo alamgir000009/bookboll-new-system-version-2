@@ -1,12 +1,16 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class Invoice extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'path',
         'status',
@@ -37,4 +41,21 @@ class Invoice extends Model
     {
         return $this->path ? url("storage/{$this->path}") : null;
     }
+    protected function activityLogName(): string
+    {
+        return 'invoice';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'path',
+            'status',
+            'user_id',
+            'payment_id',
+            'booking_id',
+            'invoice_number',
+        ];
+    }
+
 }

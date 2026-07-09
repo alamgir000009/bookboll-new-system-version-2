@@ -1,10 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 
 class LoyaltyTier extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'name',
         'slug',
@@ -36,4 +40,23 @@ class LoyaltyTier extends Model
         $max = $this->max_points === 2147483647 ? PHP_INT_MAX : $this->max_points;
         return $points >= $this->min_points && $points <= $max;
     }
+    protected function activityLogName(): string
+    {
+        return 'loyalty_tier';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'name',
+            'slug',
+            'color',
+            'order',
+            'is_active',
+            'min_points',
+            'max_points',
+            'description',
+        ];
+    }
+
 }

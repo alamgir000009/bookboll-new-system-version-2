@@ -2,11 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class OnesignalSubscription extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'user_id',
         'onesignal_id',
@@ -28,5 +32,20 @@ class OnesignalSubscription extends Model
     {
         return $query->where('is_active', true);
     }
-}
+    protected function activityLogName(): string
+    {
+        return 'onesignal_subscription';
+    }
 
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'user_id',
+            'onesignal_id',
+            'device_type',
+            'device_info',
+            'is_active',
+        ];
+    }
+
+}
