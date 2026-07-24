@@ -894,6 +894,135 @@ class BookingService
         $booking->save();
     }
 
+    /**
+     * Coerce a schedule/time-block time field to an 'H:i' string. Handles
+     * strings ('09:00', '09:00:00'), Carbon/DateTime instances (from the
+     * `datetime:H:i` cast), and null.
+     */
+    private function timeStringFromField($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('H:i');
+        }
+        if (is_string($value)) {
+            return substr($value, 0, 5);
+        }
+        return null;
+    }
+
+    /**
+     * Does a booking window [$bookingStart, $bookingEnd] on $bookingDate fit
+     * within ANY of the given schedule rows? Handles:
+     *   - Cross-midnight bookings (end <= start).
+     *   - Cross-midnight schedule blocks (end <= start).
+     *   - Schedule blocks that end exactly at midnight ('00:00'). Per the read
+     *     side's slot generator, these allow the last slot to spill past
+     *     midnight, so we allow bookings whose start is within the block even
+     *     if their end runs past midnight.
+     *
+     * $schedules can be any iterable of objects/arrays exposing start_time and
+     * end_time (Schedule rows, SpecialDay time blocks, etc.).
+     */
+    private function bookingFitsInSchedules(iterable $schedules, string $bookingDate, string $bookingStart, string $bookingEnd): bool
+    {
+        try {
+            $bStartAbs = Carbon::createFromFormat('Y-m-d H:i', $bookingDate . ' ' . $bookingStart);
+            $bEndAbs   = Carbon::createFromFormat('Y-m-d H:i', $bookingDate . ' ' . $bookingEnd);
+        } catch (\Throwable $e) {
+            return false;
+        }
+        if ($bEndAbs->lte($bStartAbs)) {
+            $bEndAbs->addDay();
+        }
+
+        // Turn every schedule row into an absolute [start, end) interval on
+        // $bookingDate so we can then merge adjacent rows (venues often store
+        // schedules as many contiguous small blocks).
+        $blocks = [];
+        foreach ($schedules as $schedule) {
+            $rawStart = is_array($schedule) ? ($schedule['start_time'] ?? null) : ($schedule->start_time ?? null);
+            $rawEnd   = is_array($schedule) ? ($schedule['end_time'] ?? null) : ($schedule->end_time ?? null);
+
+            $sStart = $this->timeStringFromField($rawStart);
+            $sEnd   = $this->timeStringFromField($rawEnd);
+            if ($sStart === null || $sEnd === null) {
+                continue;
+            }
+
+            try {
+                $sStartAbs = Carbon::createFromFormat('Y-m-d H:i', $bookingDate . ' ' . $sStart);
+                $sEndAbs   = Carbon::createFromFormat('Y-m-d H:i', $bookingDate . ' ' . $sEnd);
+            } catch (\Throwable $e) {
+                continue;
+            }
+
+            $endsAtMidnight = ($sEnd === '00:00');
+            if ($sEndAbs->lte($sStartAbs)) {
+                $sEndAbs->addDay();
+            }
+
+            $blocks[] = [
+                'start'            => $sStartAbs,
+                'end'              => $sEndAbs,
+                'ends_at_midnight' => $endsAtMidnight,
+            ];
+        }
+
+        if (empty($blocks)) {
+            return false;
+        }
+
+        usort($blocks, fn($a, $b) => $a['start']->getTimestamp() <=> $b['start']->getTimestamp());
+
+        $merged = [$blocks[0]];
+        for ($i = 1; $i < count($blocks); $i++) {
+            $last = &$merged[count($merged) - 1];
+            $next = $blocks[$i];
+            if ($next['start']->lte($last['end'])) {
+                if ($next['end']->gt($last['end'])) {
+                    $last['end']              = $next['end'];
+                    $last['ends_at_midnight'] = $next['ends_at_midnight'];
+                }
+            } else {
+                $merged[] = $next;
+            }
+            unset($last);
+        }
+
+        foreach ($merged as $block) {
+            if ($this->windowFitsBlock($bStartAbs, $bEndAbs, $block['start'], $block['end'], $block['ends_at_midnight'])) {
+                return true;
+            }
+        }
+
+        // Cross-midnight schedules also produce post-midnight slots whose
+        // start_time is numerically < the schedule's start_time. Try shifting
+        // the booking by one day to resolve those wall-clock tails.
+        $bStartShifted = $bStartAbs->copy()->addDay();
+        $bEndShifted   = $bEndAbs->copy()->addDay();
+        foreach ($merged as $block) {
+            if ($block['start']->format('Y-m-d') === $block['end']->format('Y-m-d')) {
+                continue;
+            }
+            if ($this->windowFitsBlock($bStartShifted, $bEndShifted, $block['start'], $block['end'], $block['ends_at_midnight'])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function windowFitsBlock(Carbon $bStart, Carbon $bEnd, Carbon $sStart, Carbon $sEnd, bool $endsAtMidnight): bool
+    {
+        if ($bStart->lt($sStart) || $bStart->gte($sEnd)) {
+            return false;
+        }
+        return $endsAtMidnight || $bEnd->lte($sEnd);
+    }
+
     private function validateBooking(array $data, $editingId = null)
     {
         $errors = [];
@@ -910,62 +1039,43 @@ class BookingService
             $errors['listing_id'] = 'Listing not found';
             return $errors;
         }
-
-        $dataStartCarbon = Carbon::createFromFormat('H:i', $data['start_time']);
-        $dataEndCarbon   = Carbon::createFromFormat('H:i', $data['end_time']);
-
-        $venueSchedule = $venue->schedules()->where('day', $dayOfWeek)->first();
-        if (! $venueSchedule) {
-            $errors['date'] = "No venue schedule for {$dayOfWeek}s";
-        } elseif (! $venueSchedule->is_open) {
-            $errors['date'] = "Venue closed on {$dayOfWeek}s";
-        } else {
-            $venueFromCarbon = Carbon::createFromFormat('H:i', $venueSchedule->start_time ?? '00:00');
-            $venueToCarbon   = Carbon::createFromFormat('H:i', $venueSchedule->end_time ?? '23:59');
-            if ($dataStartCarbon->lt($venueFromCarbon) || $dataEndCarbon->gt($venueToCarbon)) {
-                $errors['start_time'] = "Outside venue hours: {$venueSchedule->start_time} - {$venueSchedule->end_time}";
-            }
+        if (! $venue) {
+            $errors['venue_id'] = 'Venue not found';
+            return $errors;
         }
 
-        $listingSchedule = $listing->schedules()->where('day', $dayOfWeek)->first();
-        if (! $listingSchedule) {
-            $errors['date'] = "No listing schedule for {$dayOfWeek}s";
-        } elseif (! $listingSchedule->is_open) {
-            $errors['date'] = "Listing closed on {$dayOfWeek}s";
-        } else {
-            $listingFromCarbon = Carbon::createFromFormat('H:i', $listingSchedule->start_time ?? '00:00');
-            $listingToCarbon   = Carbon::createFromFormat('H:i', $listingSchedule->end_time ?? '23:59');
-            if ($dataStartCarbon->lt($listingFromCarbon) || $dataEndCarbon->gt($listingToCarbon)) {
-                $errors['start_time'] = "Outside listing hours: {$listingSchedule->start_time} - {$listingSchedule->end_time}";
-            }
-        }
+        $bookingDate  = $data['date'];
+        $bookingStart = $data['start_time'];
+        $bookingEnd   = $data['end_time'];
 
-        $specialDay = $this->specialDayModel::where('date', $data['date'])
+        $specialDay = $this->specialDayModel::where('date', $bookingDate)
             ->where('venue_id', $data['venue_id'])
             ->whereNull('listing_id')
+            ->with('timeBlocks')
             ->first();
+
         if ($specialDay && $specialDay->type == 'holiday') {
             $errors['date'] = 'Holiday - closed';
-        } elseif ($specialDay && $specialDay->time_blocks) {
-            $validBlock = collect($specialDay->time_blocks)->first(function ($b) use ($dataStartCarbon, $dataEndCarbon) {
-                $blockStart = Carbon::createFromFormat('H:i', $b->start_time);
-                $blockEnd   = Carbon::createFromFormat('H:i', $b->end_time);
-
-                // Treat 00:00 end time as midnight end-of-day (next day)
-                if ($b->end_time === '00:00') {
-                    $blockEnd->addDay();
-                }
-
-                // Also handle booking end time of 00:00
-                $bookingEnd = $dataEndCarbon->copy();
-                if ($bookingEnd->format('H:i') === '00:00' && $bookingEnd->lte($dataStartCarbon)) {
-                    $bookingEnd->addDay();
-                }
-
-                return $dataStartCarbon->gte($blockStart) && $bookingEnd->lte($blockEnd);
-            });
-            if (! $validBlock) {
+        } elseif ($specialDay && $specialDay->timeBlocks && $specialDay->timeBlocks->isNotEmpty()) {
+            // When a special day defines time blocks, they REPLACE the regular
+            // venue + listing schedules for that date (matches the read side).
+            if (! $this->bookingFitsInSchedules($specialDay->timeBlocks, $bookingDate, $bookingStart, $bookingEnd)) {
                 $errors['start_time'] = 'Outside special day blocks';
+            }
+        } else {
+            $venueSchedulesForDay = $venue->schedules()->where('day', $dayOfWeek)->where('is_open', true)->get();
+            if ($venueSchedulesForDay->isEmpty()) {
+                $errors['date'] = "Venue closed on {$dayOfWeek}s";
+            } elseif (! $this->bookingFitsInSchedules($venueSchedulesForDay, $bookingDate, $bookingStart, $bookingEnd)) {
+                $errors['start_time'] = 'Outside venue hours';
+            }
+
+            $listingSchedulesForDay = $listing->schedules()->where('day', $dayOfWeek)->where('is_open', true)->get();
+            if ($listingSchedulesForDay->isEmpty()) {
+                $errors['date'] = "Listing closed on {$dayOfWeek}s";
+            } elseif (! isset($errors['start_time'])
+                && ! $this->bookingFitsInSchedules($listingSchedulesForDay, $bookingDate, $bookingStart, $bookingEnd)) {
+                $errors['start_time'] = 'Outside listing hours';
             }
         }
 
