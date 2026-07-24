@@ -36,14 +36,15 @@ class BookingService
     public function __construct(
         protected Booking $bookingModel,
         protected Payment $paymentModel,
+        protected SpecialDay $specialDayModel,
         protected OneSignalService $oneSignalService
     ) {}
 
     public function all($request)
     {
-        $records_per_page = $request->records_per_page ?? 10;
         $search           = $request->search ?? null;
         $user_id          = $request->user_id ?? null;
+        $records_per_page = $request->records_per_page ?? 10;
 
         $query = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns', 'user'])
             ->when($search, function ($q) use ($search) {
@@ -83,13 +84,13 @@ class BookingService
 
     public function getBookingsForExport($request)
     {
+        $user      = $request->user ?? null;
+        $venue     = $request->venue ?? null;
         $search    = $request->search ?? null;
         $status    = $request->status ?? null;
-        $venue     = $request->venue ?? null;
-        $user      = $request->user ?? null;
         $user_id   = $request->user_id ?? null;
-        $from_date = $request->from_date ?? null;
         $to_date   = $request->to_date ?? null;
+        $from_date = $request->from_date ?? null;
         $exportAll = $request->export_all == 1 || $request->export_all === '1';
 
         $query = $this->bookingModel::with(['user', 'venue', 'listing', 'promocode', 'addOns'])
@@ -553,7 +554,7 @@ class BookingService
         $customers   = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))->active()->get(['id', 'name', 'email']);
         $resources   = Resource::active()->get();
         $addOns      = AddOn::active()->get();
-        $specialDays = SpecialDay::with(['timeBlocks'])->get();
+        $specialDays = $this->specialDayModel::with(['timeBlocks'])->get();
 
         return sendSuccess('Form data fetched', compact('venues', 'listings', 'customers', 'resources', 'addOns', 'specialDays'));
     }
@@ -571,7 +572,7 @@ class BookingService
         $dueBookings = $this->bookingModel::with(['listing', 'user'])
             ->where('user_id', $validated['customer_id'])
             ->where('venue_id', $validated['venue_id'])
-            ->whereRaw("STR_TO_DATE(CONCAT(date, ' ', end_time), '%Y-%m-%d %H:%i:%s') < ?", [$now])
+            ->whereRaw(bookingEffectiveEndDatetimeSql() . ' < ?', [$now])
             ->whereIn('payment_status', [BookingPaymentStatus::PENDING, BookingPaymentStatus::DEPOSIT_PAID])
             ->where('status', '!=', BookingStatus::CANCELLED)
             ->when(! empty($validated['editing_booking_id']), function ($q) use ($validated) {
@@ -919,10 +920,10 @@ class BookingService
         } elseif (! $venueSchedule->is_open) {
             $errors['date'] = "Venue closed on {$dayOfWeek}s";
         } else {
-            $venueFromCarbon = Carbon::createFromFormat('H:i', $venueSchedule->from_time ?? '00:00');
-            $venueToCarbon   = Carbon::createFromFormat('H:i', $venueSchedule->to_time ?? '23:59');
+            $venueFromCarbon = Carbon::createFromFormat('H:i', $venueSchedule->start_time ?? '00:00');
+            $venueToCarbon   = Carbon::createFromFormat('H:i', $venueSchedule->end_time ?? '23:59');
             if ($dataStartCarbon->lt($venueFromCarbon) || $dataEndCarbon->gt($venueToCarbon)) {
-                $errors['start_time'] = "Outside venue hours: {$venueSchedule->from_time} - {$venueSchedule->to_time}";
+                $errors['start_time'] = "Outside venue hours: {$venueSchedule->start_time} - {$venueSchedule->end_time}";
             }
         }
 
@@ -932,14 +933,14 @@ class BookingService
         } elseif (! $listingSchedule->is_open) {
             $errors['date'] = "Listing closed on {$dayOfWeek}s";
         } else {
-            $listingFromCarbon = Carbon::createFromFormat('H:i', $listingSchedule->from_time ?? '00:00');
-            $listingToCarbon   = Carbon::createFromFormat('H:i', $listingSchedule->to_time ?? '23:59');
+            $listingFromCarbon = Carbon::createFromFormat('H:i', $listingSchedule->start_time ?? '00:00');
+            $listingToCarbon   = Carbon::createFromFormat('H:i', $listingSchedule->end_time ?? '23:59');
             if ($dataStartCarbon->lt($listingFromCarbon) || $dataEndCarbon->gt($listingToCarbon)) {
-                $errors['start_time'] = "Outside listing hours: {$listingSchedule->from_time} - {$listingSchedule->to_time}";
+                $errors['start_time'] = "Outside listing hours: {$listingSchedule->start_time} - {$listingSchedule->end_time}";
             }
         }
 
-        $specialDay = SpecialDay::where('date', $data['date'])
+        $specialDay = $this->specialDayModel::where('date', $data['date'])
             ->where('venue_id', $data['venue_id'])
             ->whereNull('listing_id')
             ->first();
@@ -972,13 +973,20 @@ class BookingService
         foreach ($listing->resourceRequirements ?? [] as $resource) {
             $currentUsage = DB::table('booking_resource')
                 ->join('bookings', 'booking_resource.booking_id', '=', 'bookings.id')
-                ->where('bookings.date', $data['date'])
                 ->where('bookings.status', '!=', BookingStatus::CANCELLED)
                 ->where('bookings.id', '!=', $editingId)
                 ->where('booking_resource.resource_id', $resource->id)
                 ->where(function ($q) use ($data) {
-                    $q->whereRaw('TIME(bookings.start_time) < ?', [$data['end_time']])
-                        ->whereRaw('TIME(bookings.end_time) > ?', [$data['start_time']]);
+                    applyBookingOverlapWhere(
+                        $q,
+                        $data['date'],
+                        $data['start_time'],
+                        $data['end_time'],
+                        'start_time',
+                        'end_time',
+                        'date',
+                        'bookings'
+                    );
                 })
                 ->sum('booking_resource.quantity');
 
@@ -995,16 +1003,12 @@ class BookingService
             $errors['resources'] = implode(', ', $resourceConflicts);
         }
 
-        $overlaps = $this->bookingModel::where('date', $data['date'])
-            ->where('listing_id', $data['listing_id'])
+        $overlaps = $this->bookingModel::where('listing_id', $data['listing_id'])
             ->where('id', '!=', $editingId)
-            ->where(function ($q) use ($data) {
-                $q->where(function ($query) use ($data) {
-                    $query->whereRaw('TIME(start_time) < ?', [$data['end_time']])
-                        ->whereRaw('TIME(end_time) > ?', [$data['start_time']]);
-                });
-            })
             ->where('status', '!=', BookingStatus::CANCELLED)
+            ->where(function ($q) use ($data) {
+                applyBookingOverlapWhere($q, $data['date'], $data['start_time'], $data['end_time']);
+            })
             ->count();
 
         $bookingQuantity = $data['quantity'] ?? 1;
@@ -1327,7 +1331,7 @@ class BookingService
 
             $weekday = strtolower(Carbon::parse($request->date)->format('l'));
 
-            $specialDay = SpecialDay::with('timeBlocks')
+            $specialDay = $this->specialDayModel::with('timeBlocks')
                 ->where('venue_id', $listing->venue_id)
                 ->where(function ($q) use ($listing) {
                     $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
@@ -1735,7 +1739,7 @@ class BookingService
 
                 $weekday = strtolower(Carbon::parse($date)->format('l'));
 
-                $specialDay = SpecialDay::with('timeBlocks')
+                $specialDay = $this->specialDayModel::with('timeBlocks')
                     ->where('venue_id', $venueId)
                     ->where(function ($q) use ($listing) {
                         $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);

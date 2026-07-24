@@ -1324,6 +1324,36 @@ class ListingService
     }
 
     /**
+     * Turn a booking/lock row into an absolute [start, end) datetime interval,
+     * adding a day to the end when end_time <= start_time (cross-midnight or
+     * ends exactly at 00:00). Returns null on unparseable input.
+     *
+     * @return array{start: Carbon, end: Carbon}|null
+     */
+    protected function rowAbsoluteInterval($date, $startTime, $endTime): ?array
+    {
+        try {
+            $dateStr = $date instanceof Carbon
+                ? $date->format('Y-m-d')
+                : Carbon::parse($date)->format('Y-m-d');
+
+            $startStr = substr((string) $startTime, 0, 5);
+            $endStr   = substr((string) $endTime, 0, 5);
+
+            $start = Carbon::createFromFormat('Y-m-d H:i', $dateStr . ' ' . $startStr);
+            $end   = Carbon::createFromFormat('Y-m-d H:i', $dateStr . ' ' . $endStr);
+
+            if ($end->lte($start)) {
+                $end->addDay();
+            }
+
+            return ['start' => $start, 'end' => $end];
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
      * How many minutes past midnight of $date are occupied by a slot generated
      * from the previous day's schedule (a "cross-midnight tail"). Returns 0
      * when no prev-day slot spills into $date.
@@ -1756,39 +1786,42 @@ class ListingService
             $startDate = $startDate->lt($date) ? $date : $startDate;
             $endDate   = $endDate->lt($date) ? $date : $endDate;
 
+            // Widen the fetch by one day on each side so cross-midnight rows
+            // from the day before startDate can be attributed to startDate, and
+            // rows on endDate that spill past midnight (e.g. cross-midnight
+            // request windows) are also considered against endDate.
+            $fetchFrom = $startDate->copy()->subDay()->toDateString();
+            $fetchTo   = $endDate->copy()->addDay()->toDateString();
+
             $bookings = Booking::where('listing_id', $listingId)
-                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->whereBetween('date', [$fetchFrom, $fetchTo])
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
-                ->where(function ($q) use ($startTime, $endTime) {
-                    $q->whereRaw('TIME(start_time) < ?', [$endTime])
-                        ->whereRaw('TIME(end_time) > ?', [$startTime]);
-                })
                 ->get(['id', 'date', 'start_time', 'end_time']);
 
-            $bookedDates = [];
-            foreach ($bookings as $booking) {
-                $dateStr = Carbon::parse($booking->date)->format('Y-m-d');
-                if (! isset($bookedDates[$dateStr])) {
-                    $bookedDates[$dateStr] = 0;
-                }
-                $bookedDates[$dateStr]++;
-            }
-
             $locks = SlotLock::where('listing_id', $listingId)
-                ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
-                ->where('start_time', $startTime)
-                ->where('end_time', $endTime)
+                ->whereBetween('date', [$fetchFrom, $fetchTo])
                 ->active()
-                ->get(['id', 'date']);
+                ->get(['id', 'date', 'start_time', 'end_time']);
 
-            $lockedDates = [];
-            foreach ($locks as $lock) {
-                $dateStr = Carbon::parse($lock->date)->format('Y-m-d');
-                if (! isset($lockedDates[$dateStr])) {
-                    $lockedDates[$dateStr] = 0;
+            // Precompute absolute [start, end) datetimes for every row so we
+            // can do fast overlap checks per recurrence date below.
+            $bookingIntervals = $bookings->map(function ($b) {
+                return $this->rowAbsoluteInterval($b->date, $b->start_time, $b->end_time);
+            })->filter()->values();
+
+            $lockIntervals = $locks->map(function ($l) {
+                return $this->rowAbsoluteInterval($l->date, $l->start_time, $l->end_time);
+            })->filter()->values();
+
+            $countOverlaps = function ($intervals, $windowStart, $windowEnd) {
+                $count = 0;
+                foreach ($intervals as $iv) {
+                    if ($iv['start']->lt($windowEnd) && $iv['end']->gt($windowStart)) {
+                        $count++;
+                    }
                 }
-                $lockedDates[$dateStr]++;
-            }
+                return $count;
+            };
 
             $specialDays = SpecialDay::with('timeBlocks')
                 ->where('venue_id', $listing->venue_id)
@@ -1817,9 +1850,18 @@ class ListingService
                     continue;
                 }
 
-                $dateStr       = $currentDate->format('Y-m-d');
-                $bookedCount   = $bookedDates[$dateStr] ?? 0;
-                $lockedCount   = $lockedDates[$dateStr] ?? 0;
+                $dateStr = $currentDate->format('Y-m-d');
+
+                // Absolute window for the recurring slot on this date, honouring
+                // cross-midnight (endTime <= startTime).
+                $windowStart = Carbon::createFromFormat('Y-m-d H:i', $dateStr . ' ' . $startTime);
+                $windowEnd   = Carbon::createFromFormat('Y-m-d H:i', $dateStr . ' ' . $endTime);
+                if ($windowEnd->lte($windowStart)) {
+                    $windowEnd->addDay();
+                }
+
+                $bookedCount   = $countOverlaps($bookingIntervals, $windowStart, $windowEnd);
+                $lockedCount   = $countOverlaps($lockIntervals, $windowStart, $windowEnd);
                 $occupiedSpots = $bookedCount + $lockedCount;
                 $weekday       = strtolower($currentDate->format('l'));
 
@@ -2024,20 +2066,18 @@ class ListingService
             $maxBookingsPerSlot = (int) $listing->max_bookings_per_slot;
 
             $existingBookingCount = Booking::where('listing_id', $listingId)
-                ->whereDate('date', $date)
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
-                ->where(function ($q) use ($startTime, $endTime) {
-                    $q->whereRaw('TIME(start_time) < ?', [$endTime])
-                        ->whereRaw('TIME(end_time) > ?', [$startTime]);
+                ->where(function ($q) use ($date, $startTime, $endTime) {
+                    applyBookingOverlapWhere($q, $date->toDateString(), $startTime, $endTime);
                 })
                 ->count();
 
             $existingLockCount = SlotLock::where('listing_id', $listingId)
-                ->where('date', $date->toDateString())
-                ->where('start_time', $startTime)
-                ->where('end_time', $endTime)
                 ->where('session_id', '!=', $sessionId)
                 ->active()
+                ->where(function ($q) use ($date, $startTime, $endTime) {
+                    applyBookingOverlapWhere($q, $date->toDateString(), $startTime, $endTime);
+                })
                 ->count();
 
             $occupiedSpots = $existingBookingCount + $existingLockCount;
@@ -2230,7 +2270,7 @@ class ListingService
             'listing_id' => 'required|numeric|exists:listings,id',
             'date'       => 'required|date|after_or_equal:today',
             'start_time' => 'required|date_format:H:i',
-            'end_time'   => 'required|date_format:H:i|after:start_time',
+            'end_time'   => 'required|date_format:H:i',
         ]);
 
         try {
@@ -2240,6 +2280,10 @@ class ListingService
             $startTime = $request->start_time;
             $endTime   = $request->end_time;
             $sessionId = getSessionId();
+
+            if ($startTime === $endTime) {
+                return sendError('Start time and end time cannot be the same');
+            }
 
             $requestFrom = $request->header('from');
             if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
@@ -2261,20 +2305,18 @@ class ListingService
             $maxBookingsPerSlot = (int) $listing->max_bookings_per_slot;
 
             $existingBookingCount = Booking::where('listing_id', $listingId)
-                ->whereDate('date', $date)
                 ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
-                ->where(function ($q) use ($startTime, $endTime) {
-                    $q->whereRaw('TIME(start_time) < ?', [$endTime])
-                        ->whereRaw('TIME(end_time) > ?', [$startTime]);
+                ->where(function ($q) use ($date, $startTime, $endTime) {
+                    applyBookingOverlapWhere($q, $date->toDateString(), $startTime, $endTime);
                 })
                 ->count();
 
             $existingLockCount = SlotLock::where('listing_id', $listingId)
-                ->where('date', $date->toDateString())
-                ->where('start_time', $startTime)
-                ->where('end_time', $endTime)
                 ->where('session_id', '!=', $sessionId)
                 ->active()
+                ->where(function ($q) use ($date, $startTime, $endTime) {
+                    applyBookingOverlapWhere($q, $date->toDateString(), $startTime, $endTime);
+                })
                 ->count();
 
             $occupiedSpots  = $existingBookingCount + $existingLockCount;

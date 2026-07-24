@@ -1280,3 +1280,92 @@ if (! function_exists('expireOpenStripeCheckoutSessionsForBooking')) {
         }
     }
 }
+
+if (! function_exists('applyBookingOverlapWhere')) {
+    /**
+     * Add a cross-midnight-aware "does this row overlap [$requestStart,
+     * $requestEnd] on $requestDate" filter to a query builder.
+     *
+     * Handles four cases correctly:
+     *   1. Normal request window (end > start) vs normal row (end > start).
+     *   2. Normal request window vs cross-midnight row on the previous day
+     *      whose tail spills into $requestDate.
+     *   3. Cross-midnight request window (end <= start) vs any row on
+     *      $requestDate that overlaps its late-night portion.
+     *   4. Cross-midnight request window vs any row on the next day that
+     *      overlaps its early-morning portion.
+     *
+     * The caller must apply venue/listing/status filters BEFORE calling this
+     * helper. The helper adds its own whereIn(date, ...) so callers should
+     * NOT also apply a where('date', ...) filter.
+     */
+    function applyBookingOverlapWhere(
+        $query,
+        string $requestDate,
+        string $requestStart,
+        string $requestEnd,
+        string $startCol = 'start_time',
+        string $endCol = 'end_time',
+        string $dateCol = 'date',
+        ?string $tablePrefix = null
+    ): void {
+        $prefix = $tablePrefix ? $tablePrefix . '.' : '';
+        $qStart = $prefix . $startCol;
+        $qEnd   = $prefix . $endCol;
+        $qDate  = $prefix . $dateCol;
+
+        $reqStartCarbon = \Carbon\Carbon::createFromFormat('Y-m-d H:i', $requestDate . ' ' . $requestStart);
+        $reqEndCarbon   = \Carbon\Carbon::createFromFormat('Y-m-d H:i', $requestDate . ' ' . $requestEnd);
+        if ($reqEndCarbon->lte($reqStartCarbon)) {
+            $reqEndCarbon->addDay();
+        }
+        $reqStartDt = $reqStartCarbon->format('Y-m-d H:i:s');
+        $reqEndDt   = $reqEndCarbon->format('Y-m-d H:i:s');
+
+        $prevDate = \Carbon\Carbon::parse($requestDate)->subDay()->format('Y-m-d');
+        $nextDate = \Carbon\Carbon::parse($requestDate)->addDay()->format('Y-m-d');
+
+        $candidateDates = [$prevDate, $requestDate];
+        if ($reqEndCarbon->format('Y-m-d') !== $requestDate) {
+            $candidateDates[] = $nextDate;
+        }
+
+        $endDatetimeSql = 'STR_TO_DATE(CONCAT(
+            CASE WHEN TIME(' . $qEnd . ') <= TIME(' . $qStart . ')
+                 THEN DATE_ADD(' . $qDate . ', INTERVAL 1 DAY)
+                 ELSE ' . $qDate . '
+            END, " ", ' . $qEnd . '
+        ), "%Y-%m-%d %H:%i:%s")';
+
+        $startDatetimeSql = 'STR_TO_DATE(CONCAT(' . $qDate . ', " ", ' . $qStart . '), "%Y-%m-%d %H:%i:%s")';
+
+        $query->whereIn($qDate, $candidateDates)
+            ->whereRaw($startDatetimeSql . ' < ? AND ' . $endDatetimeSql . ' > ?', [$reqEndDt, $reqStartDt]);
+    }
+}
+
+if (! function_exists('bookingEffectiveEndDatetimeSql')) {
+    /**
+     * SQL expression that returns a booking's effective end datetime, adding a
+     * day when end_time <= start_time (i.e. the booking spans midnight, or
+     * ends exactly at midnight stored as '00:00'). Handy for expiry checks.
+     */
+    function bookingEffectiveEndDatetimeSql(
+        string $startCol = 'start_time',
+        string $endCol = 'end_time',
+        string $dateCol = 'date',
+        ?string $tablePrefix = null
+    ): string {
+        $prefix = $tablePrefix ? $tablePrefix . '.' : '';
+        $qStart = $prefix . $startCol;
+        $qEnd   = $prefix . $endCol;
+        $qDate  = $prefix . $dateCol;
+
+        return 'STR_TO_DATE(CONCAT(
+            CASE WHEN TIME(' . $qEnd . ') <= TIME(' . $qStart . ')
+                 THEN DATE_ADD(' . $qDate . ', INTERVAL 1 DAY)
+                 ELSE ' . $qDate . '
+            END, " ", ' . $qEnd . '
+        ), "%Y-%m-%d %H:%i:%s")';
+    }
+}
