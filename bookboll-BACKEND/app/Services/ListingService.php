@@ -1231,6 +1231,20 @@ class ListingService
             return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
         }
 
+        // If the previous day's schedule generated any slot that crosses
+        // midnight into today (e.g. yesterday's 23:00 -> 01:00 slot spilling
+        // into today 00:00-01:00), advance today's first block past that
+        // spillover so today's slots never physically overlap yesterday's tail.
+        $prevSpilloverMinutes = $this->computePrevDaySpilloverMinutes($listing, $date, $slotMinutes);
+        if ($prevSpilloverMinutes > 0) {
+            $availableBlocks = $this->trimBlocksByLeadingMinutes($availableBlocks, $prevSpilloverMinutes);
+            if ($availableBlocks->isEmpty()) {
+                return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
+            }
+        }
+
+        $prevDate = $date->copy()->subDay()->toDateString();
+
         $venueBookings = Booking::where('venue_id', $listing->venue_id)
             ->where('date', $date)
             ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
@@ -1238,6 +1252,25 @@ class ListingService
                 $q->with('resources');
             }])
             ->get(['id', 'listing_id', 'start_time', 'end_time', 'status']);
+
+        // Bookings from the previous day that cross midnight spill into today's
+        // early-morning slots. Load them and virtualize their start to 00:00 so
+        // the same slotsOverlap logic can detect them against today's slots.
+        $prevDayCrossMidnightBookings = Booking::where('venue_id', $listing->venue_id)
+            ->where('date', $prevDate)
+            ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
+            ->whereRaw('TIME(end_time) < TIME(start_time)')
+            ->whereRaw("TIME(end_time) > '00:00:00'")
+            ->with(['resourcesAllocated', 'listing' => function ($q) {
+                $q->with('resources');
+            }])
+            ->get(['id', 'listing_id', 'start_time', 'end_time', 'status']);
+
+        $prevDayCrossMidnightBookings->each(function ($b) {
+            $b->start_time = '00:00';
+        });
+
+        $venueBookings = $venueBookings->concat($prevDayCrossMidnightBookings);
 
         $venueLocks = SlotLock::whereHas('listing', function ($query) use ($listing) {
             $query->where('venue_id', $listing->venue_id);
@@ -1248,6 +1281,24 @@ class ListingService
                 $q->with('resources');
             }])
             ->get();
+
+        $prevDayCrossMidnightLocks = SlotLock::whereHas('listing', function ($query) use ($listing) {
+            $query->where('venue_id', $listing->venue_id);
+        })
+            ->where('date', $prevDate)
+            ->active()
+            ->whereRaw('TIME(end_time) < TIME(start_time)')
+            ->whereRaw("TIME(end_time) > '00:00:00'")
+            ->with(['listing' => function ($q) {
+                $q->with('resources');
+            }])
+            ->get();
+
+        $prevDayCrossMidnightLocks->each(function ($lock) {
+            $lock->start_time = '00:00';
+        });
+
+        $venueLocks = $venueLocks->concat($prevDayCrossMidnightLocks);
 
         $timeSlots = collect();
         foreach ($availableBlocks as $block) {
@@ -1270,6 +1321,154 @@ class ListingService
         $timeSlots = $timeSlots->sortBy('start_time')->values();
 
         return sendSuccess('Listing slots fetched successfully', compact('timeSlots'));
+    }
+
+    /**
+     * How many minutes past midnight of $date are occupied by a slot generated
+     * from the previous day's schedule (a "cross-midnight tail"). Returns 0
+     * when no prev-day slot spills into $date.
+     */
+    protected function computePrevDaySpilloverMinutes(Listing $listing, Carbon $date, int $slotMinutes): int
+    {
+        if ($slotMinutes <= 0) {
+            return 0;
+        }
+
+        $prevDate    = $date->copy()->subDay();
+        $prevWeekday = strtolower($prevDate->format('l'));
+
+        $prevVenueSchedules = $listing->venue?->schedules
+            ?->where('day', $prevWeekday)
+            ->where('is_open', true)
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->sortBy('start_time')
+            ->values();
+
+        $prevListingSchedules = $listing->schedules
+            ->where('day', $prevWeekday)
+            ->where('is_open', true)
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->sortBy('start_time')
+            ->values();
+
+        if (! $prevVenueSchedules || $prevVenueSchedules->isEmpty() || $prevListingSchedules->isEmpty()) {
+            return 0;
+        }
+
+        $prevSpecialDay = SpecialDay::with('timeBlocks')
+            ->where('venue_id', $listing->venue_id)
+            ->where(function ($q) use ($listing) {
+                $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+            })
+            ->whereDate('date', $prevDate)
+            ->active()
+            ->first();
+
+        if ($prevSpecialDay && $prevSpecialDay->type === 'holiday') {
+            return 0;
+        }
+
+        if ($prevSpecialDay && $prevSpecialDay->timeBlocks->isNotEmpty()) {
+            $prevBlocks = $prevSpecialDay->timeBlocks
+                ->sortBy('start_time')
+                ->map(function ($b) {
+                    return ['start_time' => $b->start_time, 'end_time' => $b->end_time];
+                })
+                ->values();
+        } else {
+            $prevBlocks = $this->findOverlappingScheduleBlocks($prevListingSchedules, $prevVenueSchedules);
+        }
+
+        $max = 0;
+        foreach ($prevBlocks as $block) {
+            $spill = $this->computeBlockSpilloverMinutes($block, $slotMinutes);
+            if ($spill > $max) {
+                $max = $spill;
+            }
+        }
+
+        return $max;
+    }
+
+    /**
+     * Mirrors generateTimeSlots() enough to figure out how far past midnight
+     * the block's last generated slot would extend into the following day.
+     */
+    protected function computeBlockSpilloverMinutes(array $block, int $slotMinutes): int
+    {
+        $startMin = $this->timeToMinutes($block['start_time']);
+        $endTime  = $block['end_time'];
+
+        if ($endTime === '00:00') {
+            // Midnight-ending block: generateTimeSlots emits while start < end
+            // (early break is disabled for this case), so a slot may spill.
+            $effectiveEnd  = 24 * 60;
+            $endIsMidnight = true;
+        } else {
+            $endMin = $this->timeToMinutes($endTime);
+            if ($endMin <= $startMin) {
+                // Block explicitly crosses midnight (special-day style).
+                $effectiveEnd  = $endMin + 24 * 60;
+                $endIsMidnight = false;
+            } else {
+                return 0;
+            }
+        }
+
+        if ($effectiveEnd <= $startMin) {
+            return 0;
+        }
+
+        if ($endIsMidnight) {
+            $numSlots = intdiv($effectiveEnd - $startMin - 1, $slotMinutes) + 1;
+        } else {
+            $numSlots = intdiv($effectiveEnd - $startMin, $slotMinutes);
+        }
+
+        if ($numSlots <= 0) {
+            return 0;
+        }
+
+        $lastSlotEnd = $startMin + $numSlots * $slotMinutes;
+        return $lastSlotEnd > 24 * 60 ? $lastSlotEnd - 24 * 60 : 0;
+    }
+
+    /**
+     * Advance the start of every block past $leadingMinutes and drop blocks
+     * that are entirely before the cutoff. $leadingMinutes is measured from
+     * midnight of the block's own day.
+     */
+    protected function trimBlocksByLeadingMinutes($blocks, int $leadingMinutes)
+    {
+        if ($leadingMinutes <= 0 || $blocks->isEmpty()) {
+            return $blocks;
+        }
+
+        return $blocks->map(function ($block) use ($leadingMinutes) {
+            $startMin = $this->timeToMinutes($block['start_time']);
+            $endTime  = $block['end_time'];
+
+            if ($endTime === '00:00') {
+                $effectiveEnd = 24 * 60;
+            } else {
+                $endMin       = $this->timeToMinutes($endTime);
+                $effectiveEnd = $endMin <= $startMin ? $endMin + 24 * 60 : $endMin;
+            }
+
+            if ($effectiveEnd <= $leadingMinutes) {
+                return null;
+            }
+
+            if ($startMin < $leadingMinutes) {
+                $hours              = intdiv($leadingMinutes, 60);
+                $mins               = $leadingMinutes % 60;
+                $block['start_time'] = sprintf('%02d:%02d', $hours, $mins);
+            }
+
+            return $block;
+        })->filter()->values();
     }
 
     protected function findOverlappingScheduleBlocks($listingSchedules, $venueSchedules)
@@ -1386,13 +1585,9 @@ class ListingService
             $slotStart     = $start->format('H:i');
             $slotEndCarbon = $start->copy()->addMinutes($slotMinutes);
 
-            if ($slotEndCarbon->day > $start->day) {
-                $slotEnd = '00:00';
-            } else {
-                $slotEnd = $slotEndCarbon->format('H:i');
-            }
+            $slotEnd = $slotEndCarbon->format('H:i');
 
-            if ($slotEndCarbon->gt($end)) {
+            if ($endTime !== '00:00' && $slotEndCarbon->gt($end)) {
                 break;
             }
 
@@ -2122,11 +2317,18 @@ class ListingService
         $start2Minutes = $this->timeToMinutes($start2);
         $end2Minutes   = $this->timeToMinutes($end2);
 
+        // Any interval whose end lands at 00:00, or clock-wraps back to a
+        // smaller time than its start (e.g. 23:00 -> 01:00), is spanning
+        // midnight and its "real" end is 24h later.
         if ($end1 === '00:00') {
             $end1Minutes = 24 * 60;
+        } elseif ($end1Minutes < $start1Minutes) {
+            $end1Minutes += 24 * 60;
         }
         if ($end2 === '00:00') {
             $end2Minutes = 24 * 60;
+        } elseif ($end2Minutes < $start2Minutes) {
+            $end2Minutes += 24 * 60;
         }
 
         return $start1Minutes < $end2Minutes && $start2Minutes < $end1Minutes;
