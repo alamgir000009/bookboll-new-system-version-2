@@ -1213,29 +1213,12 @@ class BookingService
         return sendSuccess('Customer booking history fetched', compact('bookings'));
     }
 
-    public function validateBookingRequest($request)
+    /**
+     * Collect schedule/capacity/resource validation errors for a create-booking payload.
+     * Shared by createBooking and the legacy validate endpoint.
+     */
+    private function collectCreateBookingValidationErrors(array $formData): array
     {
-        $formData = $request->validate([
-            'venue_id'                        => 'required|exists:venues,id',
-            'listing_id'                      => 'required|exists:listings,id',
-            'promocode'                       => 'nullable|string',
-            'date'                            => 'required|date|after_or_equal:today',
-            'start_time'                      => 'required|date_format:H:i',
-            'end_time'                        => 'required|date_format:H:i',
-            'phone'                           => 'nullable|string|min:5',
-            'add_ons'                         => 'nullable|array',
-            'add_ons.*'                       => 'exists:add_ons,id',
-            'quantity'                        => 'required|numeric|min:1',
-            'recurring_bookings'              => 'nullable|array',
-            'recurring_bookings.*.date'       => 'required|date|after:today',
-            'recurring_bookings.*.start_time' => 'required|date_format:H:i',
-            'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
-            'recurring_bookings.*.price'      => 'required|numeric|min:0',
-            'recurring_bookings.*.quantity'   => 'required|numeric|min:1',
-            'recurring_bookings.*.add_ons'    => 'nullable|array',
-            'recurring_bookings.*.add_ons.*'  => 'exists:add_ons,id',
-        ]);
-
         $errors = [];
 
         $baseValidationErrors = $this->validateBooking($formData);
@@ -1277,6 +1260,34 @@ class BookingService
             }
         }
 
+        return $errors;
+    }
+
+    public function validateBookingRequest($request)
+    {
+        $formData = $request->validate([
+            'venue_id'                        => 'required|exists:venues,id',
+            'listing_id'                      => 'required|exists:listings,id',
+            'promocode'                       => 'nullable|string',
+            'date'                            => 'required|date|after_or_equal:today',
+            'start_time'                      => 'required|date_format:H:i',
+            'end_time'                        => 'required|date_format:H:i',
+            'phone'                           => 'nullable|string|min:5',
+            'add_ons'                         => 'nullable|array',
+            'add_ons.*'                       => 'exists:add_ons,id',
+            'quantity'                        => 'required|numeric|min:1',
+            'recurring_bookings'              => 'nullable|array',
+            'recurring_bookings.*.date'       => 'required|date|after:today',
+            'recurring_bookings.*.start_time' => 'required|date_format:H:i',
+            'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
+            'recurring_bookings.*.price'      => 'required|numeric|min:0',
+            'recurring_bookings.*.quantity'   => 'required|numeric|min:1',
+            'recurring_bookings.*.add_ons'    => 'nullable|array',
+            'recurring_bookings.*.add_ons.*'  => 'exists:add_ons,id',
+        ]);
+
+        $errors = $this->collectCreateBookingValidationErrors($formData);
+
         if (! empty($errors)) {
             Log::error("Booking validation errors", ["Errors" => $errors]);
             return sendError('Validation failed', $errors, 422);
@@ -1306,7 +1317,7 @@ class BookingService
             'add_ons.*'                       => 'exists:add_ons,id',
             'phone'                           => 'nullable|string|min:5',
             'payment_method_id'               => 'nullable|string',
-            'payment_intent_id'               => 'nullable', // Made nullable - will be set after Stripe checkout completion
+            'payment_intent_id'               => 'nullable',
             'save_payment_details'            => 'nullable|boolean',
             'quantity'                        => 'required|numeric|min:1',
             'recurring_bookings'              => 'nullable|array',
@@ -1320,6 +1331,12 @@ class BookingService
             'use_gift_card_balance'           => 'nullable|boolean',
             'gift_card_balance_used'          => 'nullable|numeric|min:0',
         ]);
+
+        $validationErrors = $this->collectCreateBookingValidationErrors($formData);
+        if (! empty($validationErrors)) {
+            Log::error("Booking validation errors", ["Errors" => $validationErrors]);
+            return sendError('Validation failed', $validationErrors, 422);
+        }
 
         if (isset($formData['notes'])) {
             $formData['notes'] = strip_tags($formData['notes']);
@@ -1626,7 +1643,10 @@ class BookingService
                     return sendError('Recurring booking dates must be after the base booking date');
                 }
 
-                $recurringValidationData = array_merge($formData, ['date' => $recurring['date']]);
+                $recurringValidationData = array_merge($formData, [
+                    'date'     => $recurring['date'],
+                    'quantity' => $recurring['quantity'] ?? 1,
+                ]);
 
                 $validationErrors = $this->validateBooking($recurringValidationData);
                 if (! empty($validationErrors)) {

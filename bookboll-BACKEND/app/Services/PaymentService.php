@@ -1031,9 +1031,11 @@ class PaymentService
             });
 
             $bookingResult = $bookingService->createBooking($bookingRequest);
+            $bookingResultData = $bookingResult->getData();
 
-            if (!$bookingResult->getData()->success) {
-                throw new Exception($bookingResult->getData()->message ?? 'Failed to create booking');
+            if (! $bookingResultData->success) {
+                DB::rollBack();
+                return $bookingResult;
             }
 
             $createdBookings = $bookingResult->getData()->data->bookings ?? [];
