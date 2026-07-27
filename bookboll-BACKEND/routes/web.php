@@ -22,7 +22,7 @@ Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentS
 Route::get('/payment/status/{session_id}', [PaymentController::class, 'paymentStatus'])->name('payment.status');
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
 
-Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin,admin'])->group(function () {
+Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin'])->group(function () {
     Route::get('/dashboard-000009', Dashboard::class)->name('dashboard');
 
     Route::get('/profile-000009', ProfileEdit::class)->name('profile.edit');
