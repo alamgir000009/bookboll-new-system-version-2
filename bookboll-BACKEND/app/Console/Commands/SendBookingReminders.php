@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Console\Commands;
 
 use App\Models\Promocode;
@@ -86,6 +87,14 @@ class SendBookingReminders extends Command
                                 continue;
                             }
 
+                            if (! filter_var($user->email, FILTER_VALIDATE_EMAIL)) {
+                                Log::warning('Skipping booking reminder — invalid email address', [
+                                    'user_id' => $user->id,
+                                    'email'   => $user->email,
+                                ]);
+                                continue;
+                            }
+
                             try {
                                 DB::beginTransaction();
 
@@ -120,7 +129,6 @@ class SendBookingReminders extends Command
                                 Log::info("Reminder #{$reminderNumber} sent to {$user->name} ({$user->email}) — {$daysSinceBooking} days inactive. Promocode: {$promocodeCode}");
 
                                 $sentCount++;
-
                             } catch (\Exception $e) {
                                 DB::rollBack();
                                 Log::error('Failed to send booking reminder', [
