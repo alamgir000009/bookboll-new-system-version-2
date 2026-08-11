@@ -6,14 +6,14 @@ use Illuminate\Foundation\Configuration\Middleware;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
-        web: __DIR__.'/../routes/web.php',
-        api: __DIR__.'/../routes/api.php',
-        commands: __DIR__.'/../routes/console.php',
-        channels: __DIR__.'/../routes/channels.php',
+        web: __DIR__ . '/../routes/web.php',
+        api: __DIR__ . '/../routes/api.php',
+        commands: __DIR__ . '/../routes/console.php',
+        channels: __DIR__ . '/../routes/channels.php',
         health: '/up',
     )
     ->withBroadcasting(
-        __DIR__.'/../routes/channels.php',
+        __DIR__ . '/../routes/channels.php',
         ['prefix' => 'api', 'middleware' => ['auth:sanctum']],
     )
     ->withMiddleware(function (Middleware $middleware): void {
@@ -38,7 +38,6 @@ return Application::configure(basePath: dirname(__DIR__))
                     ->send(new \App\Mail\ExceptionNotificationEmail($e, [
                         'user_id' => auth()->id(),
                         'request_data' => request()->all(),
-                        'server' => $_SERVER ?? [],
                     ]));
             } catch (\Exception $mailException) {
                 \Illuminate\Support\Facades\Log::error('Failed to send exception notification email: ' . $mailException->getMessage());
