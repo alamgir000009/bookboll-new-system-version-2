@@ -22,8 +22,7 @@ class RolePermissionService
         $pivotTable = config('permission.table_names.model_has_roles', 'model_has_roles');
         $rolePivot  = config('permission.column_names.role_pivot_key') ?? 'role_id';
 
-        $roles = Role::query()
-            ->with('permissions:id,name')
+        $roles = Role::with('permissions:id,name')
             ->select('roles.*')
             ->selectSub(function ($query) use ($pivotTable, $rolePivot) {
                 $query->from($pivotTable)
@@ -33,7 +32,7 @@ class RolePermissionService
             }, 'users_count')
             ->when(
                 $request->boolean('staff_only', true),
-                fn ($query) => $query->whereIn('name', config('roles.staff_roles', []))
+                fn($query) => $query->whereIn('name', config('roles.staff_roles', []))
             )
             ->orderBy('name')
             ->get();
@@ -68,7 +67,7 @@ class RolePermissionService
 
             app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
-            $role = Role::query()->create([
+            $role = Role::create([
                 'name'       => $data['name'],
                 'guard_name' => $this->permissionGuard(),
             ]);
@@ -136,8 +135,7 @@ class RolePermissionService
 
     protected function findRole(string $roleName): Role
     {
-        return Role::query()
-            ->where('name', $roleName)
+        return Role::where('name', $roleName)
             ->where('guard_name', $this->permissionGuard())
             ->with('permissions:id,name')
             ->firstOrFail();

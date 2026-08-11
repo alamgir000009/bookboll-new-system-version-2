@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Models\AuditLog;
@@ -8,8 +9,7 @@ use Illuminate\Http\Request;
 
 class AuditLogService
 {
-    public function __construct(protected AuditLog $auditLogModel)
-    {}
+    public function __construct(protected AuditLog $auditLogModel) {}
 
     public function logActivity(string $action, string $resource, string $resourceId, string $details, ?User $user = null)
     {
@@ -71,17 +71,17 @@ class AuditLogService
 
     public function exportCsv(Request $request)
     {
-        $query = AuditLog::query();
-
-        if ($request->filled('date_from')) {
-            $query->whereDate('timestamp', '>=', $request->date_from);
-        }
-
-        if ($request->filled('date_to')) {
-            $query->whereDate('timestamp', '<=', $request->date_to);
-        }
-
-        $logs = $query->latest()->get();
+        $logs = AuditLog::latest()
+            ->when($request->filled('date_from'), function ($query) use ($request) {
+                $query->whereDate('timestamp', '>=', $request->date_from);
+            })
+            ->when($request->filled('date_to'), function ($query) use ($request) {
+                $query->whereDate('timestamp', '<=', $request->date_to);
+            })
+            ->when($request->filled('action'), function ($query) use ($request) {
+                $query->where('action', 'like', '%' . $request->action . '%');
+            })
+            ->get();
 
         $filename = 'audit-logs-' . now()->format('Y-m-d-His') . '.csv';
         $filePath = storage_path("app/public/exports/{$filename}");

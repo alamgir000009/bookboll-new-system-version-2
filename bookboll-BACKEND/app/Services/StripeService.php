@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Models\Booking;
@@ -47,7 +48,7 @@ class StripeService
             'error'           => null,
             'payment_intent'  => null,
             'charge'          => null,
-            'checkout_session'=> null,
+            'checkout_session' => null,
             'card'            => null,
             'billing'         => null,
             'customer'        => null,
@@ -507,10 +508,10 @@ class StripeService
                     'session_id'        => $sessionId,
                     'payment_type'      => $paymentType,
                     'all_paid'          => $venueBookings->every(
-                        fn (Booking $b) => $b->payment_status === BookingPaymentStatus::FULLY_PAID
+                        fn(Booking $b) => $b->payment_status === BookingPaymentStatus::FULLY_PAID
                     ),
                     'booking_confirmed' => $venueBookings->contains(
-                        fn (Booking $b) => $b->status === BookingStatus::CONFIRMED
+                        fn(Booking $b) => $b->status === BookingStatus::CONFIRMED
                     ),
                     'source'            => 'stripe',
                 ]);
@@ -775,8 +776,7 @@ class StripeService
 
     protected function resolveCheckoutSession(Payment $payment, ?PaymentIntent $paymentIntent): ?StripeCheckoutSession
     {
-        $dbSession = StripeSession::query()
-            ->where('booking_id', $payment->booking_id)
+        $dbSession = StripeSession::where('booking_id', $payment->booking_id)
             ->orWhereJsonContains('booking_ids', $payment->booking_id)
             ->latest('id')
             ->first();
@@ -847,7 +847,7 @@ class StripeService
             'failure_code'     => $charge->failure_code,
             'failure_message'  => $charge->failure_message,
             'receipt_url'      => $charge->receipt_url,
-            'payment_intent_id'=> is_string($charge->payment_intent) ? $charge->payment_intent : ($charge->payment_intent->id ?? null),
+            'payment_intent_id' => is_string($charge->payment_intent) ? $charge->payment_intent : ($charge->payment_intent->id ?? null),
             'metadata'         => $this->metadataToArray($charge->metadata),
         ];
     }

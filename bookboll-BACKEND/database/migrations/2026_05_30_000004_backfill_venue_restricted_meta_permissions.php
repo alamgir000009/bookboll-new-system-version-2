@@ -20,7 +20,7 @@ return new class extends Migration
                 continue;
             }
 
-            $role = Role::query()->where('name', $roleName)->first();
+            $role = Role::where('name', $roleName)->first();
 
             if ($role && ! $role->hasPermissionTo($metaPermission)) {
                 $role->givePermissionTo($metaPermission);
@@ -32,7 +32,7 @@ return new class extends Migration
     {
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
-        $metaPermission = Permission::query()->where(
+        $metaPermission = Permission::where(
             'name',
             config('roles.meta_permissions.venue_restricted', 'meta.venue_restricted')
         )->first();
@@ -46,7 +46,7 @@ return new class extends Migration
                 continue;
             }
 
-            $role = Role::query()->where('name', $roleName)->first();
+            $role = Role::where('name', $roleName)->first();
 
             if ($role) {
                 $role->revokePermissionTo($metaPermission);

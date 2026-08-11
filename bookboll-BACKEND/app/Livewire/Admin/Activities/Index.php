@@ -45,7 +45,7 @@ class Index extends Component
     {
         $recordsPerPage = min(100, max(1, $this->records_per_page));
 
-        $query = Activity::query()->latest('created_at');
+        $query = Activity::latest('created_at');
 
         if ($this->q !== '') {
             $search = addcslashes($this->q, '%_\\');
@@ -66,15 +66,13 @@ class Index extends Component
             $query->where('event', $this->event);
         }
 
-        $logNames = Activity::query()
-            ->select('log_name')
+        $logNames = Activity::select('log_name')
             ->whereNotNull('log_name')
             ->distinct()
             ->orderBy('log_name')
             ->pluck('log_name');
 
-        $events = Activity::query()
-            ->select('event')
+        $events = Activity::select('event')
             ->whereNotNull('event')
             ->distinct()
             ->orderBy('event')

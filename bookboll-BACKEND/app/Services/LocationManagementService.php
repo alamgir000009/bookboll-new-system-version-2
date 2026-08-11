@@ -15,15 +15,14 @@ class LocationManagementService
         $search           = $request->search ?? null;
         $recordsPerPage   = $request->records_per_page ?? 20;
 
-        $query = Country::query()
-            ->when($search, function ($query, $search) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('name', 'LIKE', "%{$search}%")
-                        ->orWhere('iso2', 'LIKE', "%{$search}%")
-                        ->orWhere('iso3', 'LIKE', "%{$search}%")
-                        ->orWhere('region', 'LIKE', "%{$search}%");
-                });
-            })
+        $query = Country::when($search, function ($query, $search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'LIKE', "%{$search}%")
+                    ->orWhere('iso2', 'LIKE', "%{$search}%")
+                    ->orWhere('iso3', 'LIKE', "%{$search}%")
+                    ->orWhere('region', 'LIKE', "%{$search}%");
+            });
+        })
             ->withCount(['states', 'cities'])
             ->orderBy('name');
 
@@ -36,9 +35,7 @@ class LocationManagementService
 
     public function showCountry(int $id)
     {
-        $country = Country::query()
-            ->withCount(['states', 'cities'])
-            ->findOrFail($id);
+        $country = Country::withCount(['states', 'cities'])->findOrFail($id);
 
         return sendSuccess('Country fetched successfully', compact('country'));
     }
@@ -113,7 +110,7 @@ class LocationManagementService
 
         $query = State::with('country:id,name,iso2')
             ->withCount('cities')
-            ->when($countryId, fn ($q) => $q->where('country_id', $countryId))
+            ->when($countryId, fn($q) => $q->where('country_id', $countryId))
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
@@ -197,17 +194,15 @@ class LocationManagementService
     public function listCities(Request $request)
     {
         $search         = $request->search ?? null;
-        $countryId      = $request->country_id ?? null;
         $stateId        = $request->state_id ?? null;
+        $countryId      = $request->country_id ?? null;
         $recordsPerPage = $request->records_per_page ?? 20;
 
-        $query = City::query()
-            ->with([
-                'country:id,name,iso2',
-                'state:id,name,country_id',
-            ])
-            ->when($countryId, fn ($q) => $q->where('country_id', $countryId))
-            ->when($stateId, fn ($q) => $q->where('state_id', $stateId))
+        $query = City::with([
+            'country:id,name,iso2',
+            'state:id,name,country_id',
+        ])->when($countryId, fn($q) => $q->where('country_id', $countryId))
+            ->when($stateId, fn($q) => $q->where('state_id', $stateId))
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
@@ -225,12 +220,10 @@ class LocationManagementService
 
     public function showCity(int $id)
     {
-        $city = City::query()
-            ->with([
-                'country:id,name,iso2',
-                'state:id,name,country_id',
-            ])
-            ->findOrFail($id);
+        $city = City::with([
+            'country:id,name,iso2',
+            'state:id,name,country_id',
+        ])->findOrFail($id);
 
         return sendSuccess('City fetched successfully', compact('city'));
     }
@@ -309,7 +302,7 @@ class LocationManagementService
 
         $optionalFields = config("world.migrations.{$entity}.optional_fields", []);
         $enabledColumns = collect($optionalFields)
-            ->filter(fn (array $field) => ($field['required'] ?? false) === true)
+            ->filter(fn(array $field) => ($field['required'] ?? false) === true)
             ->keys()
             ->all();
 

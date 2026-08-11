@@ -20,7 +20,7 @@ return new class extends Migration
     {
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
-        $role = Role::query()->where('name', 'super_admin')->first();
+        $role = Role::where('name', 'super_admin')->first();
 
         if (! $role) {
             return;
@@ -39,10 +39,10 @@ return new class extends Migration
     {
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
-        $role = Role::query()->where('name', 'super_admin')->first();
+        $role = Role::where('name', 'super_admin')->first();
 
         foreach ($this->permissionNames as $permissionName) {
-            $permission = Permission::query()->where('name', $permissionName)->first();
+            $permission = Permission::where('name', $permissionName)->first();
 
             if (! $permission) {
                 continue;

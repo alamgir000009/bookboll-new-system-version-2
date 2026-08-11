@@ -20,7 +20,7 @@ class ActivityLogController extends Controller
 
         $recordsPerPage = min(100, max(1, (int) $request->input('records_per_page', 10)));
 
-        $query = Activity::query()->latest('created_at');
+        $query = Activity::latest('created_at');
 
         if ($filters['q'] !== '') {
             $search = addcslashes($filters['q'], '%_\\');
@@ -49,7 +49,7 @@ class ActivityLogController extends Controller
                 'log_name' => $filters['log_name'] !== '' ? $filters['log_name'] : null,
                 'event' => $filters['event'] !== '' ? $filters['event'] : null,
                 'records_per_page' => $recordsPerPage,
-            ], fn ($value) => $value !== null && $value !== ''));
+            ], fn($value) => $value !== null && $value !== ''));
 
         if ($activities->isEmpty() && $activities->currentPage() > 1) {
             return redirect()->route('activities.index', array_merge(
@@ -58,15 +58,13 @@ class ActivityLogController extends Controller
             ));
         }
 
-        $logNames = Activity::query()
-            ->select('log_name')
+        $logNames = Activity::select('log_name')
             ->whereNotNull('log_name')
             ->distinct()
             ->orderBy('log_name')
             ->pluck('log_name');
 
-        $events = Activity::query()
-            ->select('event')
+        $events = Activity::select('event')
             ->whereNotNull('event')
             ->distinct()
             ->orderBy('event')
