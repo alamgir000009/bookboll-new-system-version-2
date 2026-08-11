@@ -21,7 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'checkRoles' => \App\Http\Middleware\CheckRole::class,
         ]);
 
-        $middleware->validateCsrfTokens(except: [
+        $middleware->preventRequestForgery(except: [
             'stripe/payment-webhook',
             'broadcasting/auth',
             'api/broadcasting/auth',
