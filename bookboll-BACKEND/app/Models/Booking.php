@@ -2,6 +2,7 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use BookingStatus;
 use Carbon\Carbon;
@@ -12,7 +13,7 @@ use PaymentType;
 
 class Booking extends Model
 {
-    use LogsModelActivity;
+    use LogsModelActivity, TracksCreator;
 
     protected $fillable = [
         'date',

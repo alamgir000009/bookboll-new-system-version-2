@@ -2,16 +2,18 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Illuminate\Database\Eloquent\Model;
 
 class Post extends Model
 {
-    use LogsModelActivity;
+    use LogsModelActivity, TracksCreator;
 
     public const DRAFT     = 'draft';
     public const PUBLISHED = 'published';
     protected $fillable    = [
+        'created_by',
         'slug',
         'tags',
         'title',

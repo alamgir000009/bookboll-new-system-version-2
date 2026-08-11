@@ -2,15 +2,17 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Asset extends Model
 {
-    use LogsModelActivity, HasFactory;
+    use LogsModelActivity, HasFactory, TracksCreator;
 
     protected $fillable = [
+        'created_by',
         'listing_id',
         'path',
         'type',

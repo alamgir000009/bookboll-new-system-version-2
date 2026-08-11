@@ -2,6 +2,7 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -9,9 +10,10 @@ use Illuminate\Support\Facades\Storage;
 
 class Invoice extends Model
 {
-    use LogsModelActivity;
+    use LogsModelActivity, TracksCreator;
 
     protected $fillable = [
+        'created_by',
         'path',
         'status',
         'user_id',

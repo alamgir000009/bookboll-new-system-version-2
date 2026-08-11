@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -10,13 +11,14 @@ use Illuminate\Support\Facades\Hash;
 
 class RegistrationRequest extends Model
 {
-    use LogsModelActivity, HasFactory;
+    use LogsModelActivity, HasFactory, TracksCreator;
 
     public const PENDING = 'pending';
     public const APPROVED = 'approved';
     public const REJECTED = 'rejected';
 
     protected $fillable = [
+        'created_by',
         'name',
         'email',
         'phone',

@@ -2,6 +2,7 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -9,9 +10,10 @@ use Illuminate\Database\Eloquent\Model;
 
 class Schedule extends Model
 {
-    use LogsModelActivity, HasFactory;
+    use LogsModelActivity, HasFactory, TracksCreator;
 
     protected $fillable = [
+        'created_by',
         'day',
         'is_open',
         'end_time',

@@ -2,14 +2,16 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Illuminate\Database\Eloquent\Model;
 
 class Review extends Model
 {
-    use LogsModelActivity;
+    use LogsModelActivity, TracksCreator;
 
     protected $fillable = [
+        'created_by',
         'user_id',
         'comment',
         'booking_id',

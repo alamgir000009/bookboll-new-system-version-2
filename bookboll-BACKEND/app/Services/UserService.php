@@ -243,16 +243,20 @@ class UserService
 
             $roles = $user->getRoleNames();
 
+            $user->load('venues');
             $permissions = $user->getAllPermissions()->pluck('name');
 
             $user->makeHidden(['roles']);
+
+            $permissionNames = $permissions->values()->all();
 
             $response = [
                 'user'            => $user,
                 'token'           => $token,
                 'roles'           => $roles,
-                'permissions'     => $permissions,
+                'permissions'     => $permissionNames,
                 'assigned_venues' => $user->venues,
+                'access'          => \App\Support\RolePermissionMatrix::accessFromPermissionNames($permissionNames),
             ];
 
             return sendSuccess('Login successful', $response);
@@ -400,13 +404,21 @@ class UserService
     public function loginUser()
     {
         $user = auth()->user();
+        $user->load('venues');
         $user->makeHidden(['roles']);
-        $roles    = $user->getRoleNames();
+
+        $roles           = $user->getRoleNames();
+        $permissionNames = $user->getAllPermissions()->pluck('name')->values()->all();
+
         $response = [
-            'user'  => $user,
-            'roles' => $roles,
+            'user'            => $user,
+            'roles'           => $roles,
+            'permissions'     => $permissionNames,
+            'assigned_venues' => $user->venues,
+            'access'          => \App\Support\RolePermissionMatrix::accessFromPermissionNames($permissionNames),
         ];
-        return sendSuccess("Logged in user fetched susccessfully", $response);
+
+        return sendSuccess('Logged in user fetched susccessfully', $response);
     }
 
     public function updateProfile($request, $id)

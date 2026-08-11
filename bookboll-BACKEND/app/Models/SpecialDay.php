@@ -2,16 +2,18 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 
 class SpecialDay extends Model
 {
-    use LogsModelActivity;
+    use LogsModelActivity, TracksCreator;
 
 
     protected $fillable = [
+        'created_by',
         'date',
         'type',
         'price',

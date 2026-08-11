@@ -2,17 +2,19 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 
 class Setting extends Model
 {
-    use LogsModelActivity;
+    use LogsModelActivity, TracksCreator;
 
     protected $table = 'settings';
 
     protected $fillable = [
+        'created_by',
         'key',
         'type',
         'value',

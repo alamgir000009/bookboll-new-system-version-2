@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\Log;
 
 class VenueService
 {
-    public function __construct(protected Venue $venueModel)
-    {}
+    public function __construct(
+        protected Venue $venueModel,
+        protected LocationService $locationService,
+    ) {}
 
     public function all($request, $applyVenueFilter = true)
     {
@@ -17,6 +19,9 @@ class VenueService
         $schedule         = $request->boolean('schedule', true);
         $pagination         = $request->boolean('pagination', false);
         $records_per_page = $request->records_per_page ?? 20;
+        $countryId        = $request->country_id ?? null;
+        $stateId          = $request->state_id ?? null;
+        $cityId           = $request->city_id ?? null;
 
         $query = $this->venueModel::when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -24,9 +29,16 @@ class VenueService
                         ->orWhere('status', 'LIKE', "%{$search}%")
                         ->orWhere('description', 'LIKE', "%{$search}%")
                         ->orWhere('min_advance_booking', 'LIKE', "%{$search}%")
-                        ->orWhere('max_bookings_per_slot', 'LIKE', "%{$search}%");
+                        ->orWhere('max_bookings_per_slot', 'LIKE', "%{$search}%")
+                        ->orWhereHas('country', fn ($countryQuery) => $countryQuery->where('name', 'LIKE', "%{$search}%"))
+                        ->orWhereHas('state', fn ($stateQuery) => $stateQuery->where('name', 'LIKE', "%{$search}%"))
+                        ->orWhereHas('city', fn ($cityQuery) => $cityQuery->where('name', 'LIKE', "%{$search}%"));
                 });
             })
+            ->when($countryId, fn ($query) => $query->where('country_id', $countryId))
+            ->when($stateId, fn ($query) => $query->where('state_id', $stateId))
+            ->when($cityId, fn ($query) => $query->where('city_id', $cityId))
+            ->with(['country:id,name,iso2', 'state:id,name', 'city:id,name'])
             ->orderBy('sort_order', 'ASC');
 
         if ($schedule) {
@@ -52,6 +64,9 @@ class VenueService
             'name'                  => ['required', 'string', 'max:255'],
             'status'                => ['required', 'in:active,inactive'],
             'maps_url'              => ['required', 'url'],
+            'country_id'            => ['required', 'integer', 'exists:countries,id'],
+            'state_id'              => ['nullable', 'integer', 'exists:states,id'],
+            'city_id'               => ['required', 'integer', 'exists:cities,id'],
             'description'           => ['nullable', 'string'],
             'min_advance_booking'   => ['required', 'integer', 'min:0'],
             'max_bookings_per_slot' => ['required', 'integer', 'min:1'],
@@ -61,6 +76,8 @@ class VenueService
             'schedule.*.start_time' => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/'],
             'schedule.*.end_time'   => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/'],
         ]);
+
+        $this->locationService->validateVenueLocation($formData);
 
         $schedules = $formData['schedule'];
         unset($formData['schedule']);
@@ -104,7 +121,7 @@ class VenueService
             ];
             $venue->schedules()->create($scheduleData);
         }
-        $venue->load('schedules');
+        $venue->load(['schedules', 'country:id,name,iso2', 'state:id,name', 'city:id,name']);
 
         return sendSuccess('Venue added successfully', compact('venue'));
     }
@@ -116,6 +133,9 @@ class VenueService
             'name'                  => ['required', 'string', 'max:255'],
             'status'                => ['required', 'in:active,inactive'],
             'maps_url'              => ['required', 'url'],
+            'country_id'            => ['required', 'integer', 'exists:countries,id'],
+            'state_id'              => ['nullable', 'integer', 'exists:states,id'],
+            'city_id'               => ['required', 'integer', 'exists:cities,id'],
             'description'           => ['nullable', 'string'],
             'min_advance_booking'   => ['required', 'integer', 'min:0'],
             'max_bookings_per_slot' => ['required', 'integer', 'min:1'],
@@ -125,6 +145,8 @@ class VenueService
             'schedule.*.start_time' => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/'],
             'schedule.*.end_time'   => ['nullable', 'required_if:schedule.*.is_open,true', 'string', 'regex:/^([0-1][0-9]|2[0-3]):[0-5][0-9]$|^24:00$/'],
         ]);
+
+        $this->locationService->validateVenueLocation($formData);
 
         $schedules = $formData['schedule'];
         unset($formData['schedule']);
@@ -159,14 +181,21 @@ class VenueService
 
         $this->syncSchedules($venue, $schedules);
 
-        $venue->load('schedules');
+        $venue->load(['schedules', 'country:id,name,iso2', 'state:id,name', 'city:id,name']);
 
         return sendSuccess('Venue updated successfully', compact('venue'));
     }
 
     public function getVenue($id)
     {
-        $venue = $this->venueModel::with(['schedules', 'users', 'listings'])->findOrFail($id);
+        $venue = $this->venueModel::with([
+            'schedules',
+            'users',
+            'listings',
+            'country:id,name,iso2',
+            'state:id,name',
+            'city:id,name',
+        ])->findOrFail($id);
 
         $user = auth()->user();
         if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {

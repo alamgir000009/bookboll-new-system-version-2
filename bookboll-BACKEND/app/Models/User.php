@@ -7,12 +7,13 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 use Spatie\Activitylog\Traits\CausesActivity;
 use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use Billable, CausesActivity, HasApiTokens, HasFactory, HasRoles, LogsModelActivity, Notifiable;
+    use Billable, CausesActivity, HasApiTokens, HasFactory, HasRoles, LogsModelActivity, Notifiable, TracksCreator;
 
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
@@ -29,6 +30,7 @@ class User extends Authenticatable
         'address',
         'password',
         'provider',
+        'created_by',
         'provider_id',
         'nationality',
         'date_of_birth',

@@ -2,14 +2,16 @@
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
+use App\Traits\TracksCreator;
 
 use Illuminate\Database\Eloquent\Model;
 
 class SportsType extends Model
 {
-    use LogsModelActivity;
+    use LogsModelActivity, TracksCreator;
 
     protected $fillable = [
+        'created_by',
         'slug',
         'icon',
         'image',

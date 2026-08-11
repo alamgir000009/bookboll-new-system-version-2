@@ -11,6 +11,7 @@ use App\Models\SlotLock;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\SportsType;
+use App\Models\Venue;
 use BookingStatus;
 use Carbon\Carbon;
 use Exception;
@@ -811,7 +812,15 @@ class ListingService
         $exclude_id       = $request->exclude_id ?? null;
         $records_per_page = $request->records_per_page ?? null;
 
-        $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns', 'assets'])
+        $query = $this->listingModel::with([
+            'venue.country:id,name,iso2',
+            'venue.state:id,name',
+            'venue.city:id,name',
+            'schedules',
+            'sportsCategory.sportsType',
+            'addOns',
+            'assets',
+        ])
             ->active()
             ->whereRelation('venue', 'status', 'active')
             ->whereHas('schedules', function ($q) {
@@ -879,6 +888,7 @@ class ListingService
                 'tags'                    => $listing->tags ?? [],
                 'description'             => $listing->description,
                 'venue'                   => $listing->venue?->name,
+                'venue_location'          => $this->formatVenueLocationPayload($listing->venue),
                 'slot_duration'           => $listing->slot_duration,
                 'loyalty_points'          => $listing->loyalty_points,
                 'payment_options'         => $listing->payment_options,
@@ -904,7 +914,13 @@ class ListingService
 
         $categoryIds = SportsCategory::where("sports_type_id", $sportsType->id ?? null)->pluck('id')->toArray();
 
-        $listings = $this->listingModel::with(['venue', 'sportsCategory', 'assets'])
+        $listings = $this->listingModel::with([
+            'venue.country:id,name,iso2',
+            'venue.state:id,name',
+            'venue.city:id,name',
+            'sportsCategory',
+            'assets',
+        ])
             ->when($categoryIds, function ($query, $categoryIds) {
                 $query->whereNotIn('sports_category_id', $categoryIds);
             })
@@ -920,6 +936,7 @@ class ListingService
                     'tags'                    => $listing->tags ?? [],
                     'description'             => $listing->description,
                     'venue'                   => $listing->venue?->name,
+                    'venue_location'          => $this->formatVenueLocationPayload($listing->venue),
                     'loyaltyPoints'           => $listing->loyalty_points,
                     'payment_options'         => $listing->payment_options,
                     'map_address'             => $listing->venue?->maps_url,
@@ -977,7 +994,14 @@ class ListingService
         $sportsCategoryId = $data['sports_category_id'] ?? null;
 
         $query = $this->listingModel::with([
-            'venue:id,name,maps_url,description',
+            'venue' => function ($query) {
+                $query->select('id', 'name', 'maps_url', 'description', 'country_id', 'state_id', 'city_id')
+                    ->with([
+                        'country:id,name,iso2',
+                        'state:id,name',
+                        'city:id,name',
+                    ]);
+            },
             'addOns' => function ($query) {
                 $query->active()->orderBy('sort_order', 'ASC');
             },
@@ -1051,6 +1075,7 @@ class ListingService
                     'name'        => $listing->venue?->name,
                     'maps_url'    => $listing->venue?->maps_url,
                     'description' => $listing->venue?->description,
+                    'location'    => $this->formatVenueLocationPayload($listing->venue),
                 ],
                 'addons'                  => $listing->addOns->map(function ($addon) {
                     return [
@@ -1087,7 +1112,14 @@ class ListingService
         $date = request('date', now()->toDateString());
 
         $listing = $this->listingModel::with([
-            'venue:id,name,maps_url',
+            'venue' => function ($query) {
+                $query->select('id', 'name', 'maps_url', 'description', 'country_id', 'state_id', 'city_id')
+                    ->with([
+                        'country:id,name,iso2',
+                        'state:id,name',
+                        'city:id,name',
+                    ]);
+            },
             'sportsCategory:id,name',
             'assets',
         ])
@@ -1115,6 +1147,7 @@ class ListingService
             'price'                   => $listing->base_price,
             'description'             => $listing->description,
             'venue'                   => $listing->venue?->name,
+            'venue_location'          => $this->formatVenueLocationPayload($listing->venue),
             'addons'                  => $listing->addons ?? [],
             'duration'                => $listing->slot_duration,
             'loyalty_points'          => $listing->loyalty_points,
@@ -2405,5 +2438,22 @@ class ListingService
         }
 
         return $slotStartMinutes < $groupEndMinutes && $slotEndMinutes > $groupStartMinutes;
+    }
+
+    protected function formatVenueLocationPayload(?Venue $venue): ?array
+    {
+        if (! $venue) {
+            return null;
+        }
+
+        return [
+            'country_id'     => $venue->country_id,
+            'state_id'       => $venue->state_id,
+            'city_id'        => $venue->city_id,
+            'country'        => $venue->country?->name,
+            'state'          => $venue->state?->name,
+            'city'           => $venue->city?->name,
+            'location_label' => $venue->location_label,
+        ];
     }
 }

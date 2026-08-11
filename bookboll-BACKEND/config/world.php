@@ -62,12 +62,12 @@ return [
 	*/
 
 	'modules' => [
-		'states' => true,
-		'cities' => true,
-		'timezones' => true,
+		'states' 	 => true,
+		'cities' 	 => true,
+		'timezones'  => true,
 		'currencies' => true,
-		'languages' => true,
-		'geolocate' => true,
+		'languages'  => true,
+		'geolocate'  => true,
 	],
 
 	/*

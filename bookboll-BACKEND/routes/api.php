@@ -7,6 +7,10 @@ use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
+use App\Http\Controllers\LocationCityController;
+use App\Http\Controllers\LocationController;
+use App\Http\Controllers\LocationCountryController;
+use App\Http\Controllers\LocationStateController;
 use App\Http\Controllers\LoyaltyPointController;
 use App\Http\Controllers\NewsletterController;
 use App\Http\Controllers\PaymentController;
@@ -15,6 +19,7 @@ use App\Http\Controllers\PostController;
 use App\Http\Controllers\PromocodeController;
 use App\Http\Controllers\ResourceController;
 use App\Http\Controllers\ReviewController;
+use App\Http\Controllers\RolePermissionController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\SpecialDayController;
 use App\Http\Controllers\SportsCategoryController;
@@ -47,6 +52,25 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('posts', PostController::class);
         Route::post('posts/change-status', [PostController::class, 'changeStatus']);
         Route::get('posts-tags', [PostController::class, 'postTagsList']);
+
+        Route::get('locations/countries', [LocationController::class, 'countries'])->name('locations.countries');
+        Route::get('locations/states', [LocationController::class, 'states'])->name('locations.states');
+        Route::get('locations/cities', [LocationController::class, 'cities'])->name('locations.cities');
+
+        Route::prefix('location-management')->name('location-management.')->middleware('role:super_admin')->group(function () {
+            Route::apiResource('countries', LocationCountryController::class);
+            Route::apiResource('states', LocationStateController::class);
+            Route::apiResource('cities', LocationCityController::class);
+        });
+
+        Route::prefix('roles')->name('roles.')->middleware('role:super_admin')->group(function () {
+            Route::get('catalog', [RolePermissionController::class, 'catalog'])->name('catalog');
+            Route::get('/', [RolePermissionController::class, 'index'])->name('index');
+            Route::post('/', [RolePermissionController::class, 'store'])->name('store');
+            Route::get('{role}', [RolePermissionController::class, 'show'])->name('show');
+            Route::put('{role}/permissions', [RolePermissionController::class, 'updatePermissions'])->name('permissions.update');
+            Route::delete('{role}', [RolePermissionController::class, 'destroy'])->name('destroy');
+        });
 
         Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
         Route::post('venues/{id}/move', [VenueController::class, 'move'])->name('venues.move');

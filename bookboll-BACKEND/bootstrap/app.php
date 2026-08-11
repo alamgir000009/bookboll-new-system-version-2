@@ -19,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'checkRoles' => \App\Http\Middleware\CheckRole::class,
+            'role' => \App\Http\Middleware\CheckRole::class,
         ]);
 
         $middleware->preventRequestForgery(except: [
