@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
@@ -12,10 +13,19 @@ class Post extends Model
 
     public const DRAFT     = 'draft';
     public const PUBLISHED = 'published';
+
+    public const TYPE_MAIN     = 'main';
+    public const TYPE_BUSINESS = 'business';
+
+    public const TYPES = [
+        self::TYPE_MAIN,
+        self::TYPE_BUSINESS,
+    ];
+
     protected $fillable    = [
-        'created_by',
         'slug',
         'tags',
+        'type',
         'title',
         'status',
         'excerpt',
@@ -24,6 +34,7 @@ class Post extends Model
         'featured',
         'seo_title',
         'read_time',
+        'created_by',
         'published_at',
         'featured_image',
         'seo_description',
@@ -33,6 +44,11 @@ class Post extends Model
     public function scopePublished($query)
     {
         return $query->where('status', self::PUBLISHED);
+    }
+
+    public function scopeFeatured($query)
+    {
+        return $query->where('featured', 1);
     }
 
     public function getFeaturedImageAttribute($image)
@@ -93,6 +109,7 @@ class Post extends Model
         return [
             'slug',
             'tags',
+            'type',
             'title',
             'status',
             'excerpt',
@@ -107,5 +124,4 @@ class Post extends Model
             'post_category_id',
         ];
     }
-
 }

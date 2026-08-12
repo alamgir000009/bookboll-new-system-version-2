@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Models;
 
 use App\Traits\LogsModelActivity;
@@ -10,17 +11,25 @@ class Resource extends Model
 {
     use LogsModelActivity, TracksCreator;
 
+    public const ACTIVE = 'active';
+    public const INACTIVE = 'inactive';
+
+    public const STATUSES = [
+        self::ACTIVE,
+        self::INACTIVE,
+    ];
+
     protected $fillable = [
-        'created_by',
         'name',
         'status',
         'unit_type',
+        'created_by',
         'total_quantity',
     ];
 
     public function scopeActive($query)
     {
-        return $query->where('status', 'active');
+        return $query->where('status', self::ACTIVE);
     }
     protected function activityLogName(): string
     {
@@ -36,5 +45,4 @@ class Resource extends Model
             'total_quantity',
         ];
     }
-
 }

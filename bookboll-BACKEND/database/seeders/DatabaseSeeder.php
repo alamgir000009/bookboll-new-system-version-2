@@ -23,7 +23,7 @@ class DatabaseSeeder extends Seeder
             // SpecialDayTableSeeder::class,
             // BookingTableSeeder::class,
             TagTableSeeder::class,
-            // BlogTableSeeder::class,
+            BlogTableSeeder::class,
             // ReviewTableSeeder::class,
             // LoyaltyPointTableSeeder::class,
             // TransactionTableSeeder::class,

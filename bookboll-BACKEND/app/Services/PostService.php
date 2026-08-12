@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Models\Post;
@@ -12,8 +13,7 @@ use Illuminate\Validation\Rules\File;
 
 class PostService
 {
-    public function __construct(protected Post $postModel, protected PostCategory $postCategoryModel, protected Tag $tagModel)
-    {}
+    public function __construct(protected Post $postModel, protected PostCategory $postCategoryModel, protected Tag $tagModel) {}
 
     public function list($request)
     {
@@ -45,6 +45,9 @@ class PostService
                     $q->where('name', 'LIKE', $author);
                 });
             })
+            ->when($request->type ?? null, function ($query, $type) {
+                $query->where('type', $type);
+            })
             ->paginate($records_per_page);
 
         return sendSuccess('Posts fetched successfully', compact('posts'));
@@ -65,6 +68,7 @@ class PostService
             'content'          => 'nullable|string',
             'read_time'        => 'required|string',
             'status'           => 'required|in:draft,published',
+            'type'             => 'nullable|in:' . implode(',', Post::TYPES),
             'post_category_id' => 'nullable|exists:post_categories,id',
             'featured_image'   => [
                 'nullable',
@@ -89,14 +93,15 @@ class PostService
         try {
             DB::beginTransaction();
 
+            $formData['type'] = $formData['type'] ?? Post::TYPE_MAIN;
+
             if ($formData['status'] == $this->postModel::PUBLISHED) {
                 $formData['published_at'] = now();
             }
 
             if (! empty($formData['featured'])) {
                 $formData['featured'] = true;
-                $this->postModel->update(['featured' => false]);
-
+                $this->postModel->where('type', $formData['type'])->update(['featured' => false]);
             } else {
                 $formData['featured'] = false;
             }
@@ -159,6 +164,7 @@ class PostService
             'content'          => 'nullable|string',
             'read_time'        => 'required|string',
             'status'           => 'required|in:draft,published',
+            'type'             => 'nullable|in:' . implode(',', Post::TYPES),
             'post_category_id' => 'nullable|exists:post_categories,id',
             'featured_image'   => [
                 'nullable',
@@ -182,14 +188,15 @@ class PostService
         try {
             DB::beginTransaction();
 
+            $formData['type'] = $formData['type'] ?? $post->type ?? Post::TYPE_MAIN;
+
             if ($formData['status'] == $this->postModel::PUBLISHED && $post->published_at == null) {
                 $formData['published_at'] = now();
             }
 
             if (! empty($formData['featured'])) {
                 $formData['featured'] = true;
-                $this->postModel->update(['featured' => false]);
-
+                $this->postModel->where('type', $formData['type'])->where('id', '!=', $post->id)->update(['featured' => false]);
             } else {
                 $formData['featured'] = false;
             }
@@ -226,7 +233,6 @@ class PostService
             DB::commit();
 
             return sendSuccess('Post updated successfully', compact('post'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error("Updating Blog Post Error: " . $e->getMessage(), ["Exception" => $e]);
@@ -268,8 +274,10 @@ class PostService
         $search           = $request->search ?? null;
         $category         = $request->category ?? null;
         $records_per_page = $request->records_per_page ?? 10;
+        $type             = $this->resolvePostType($request->type);
 
-        $blogArticles = $this->postModel->where('status', Post::PUBLISHED)
+        $blogArticles = $this->postModel->published()
+            ->where('type', $type)
             ->with(['author', 'category', 'tags'])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -284,18 +292,25 @@ class PostService
             ->when($category, function ($query, $category) {
                 $query->whereRelation('category', 'name', 'LIKE', $category);
             })
+            ->latest('published_at')
             ->simplePaginate($records_per_page);
 
         $featuredArticle = $this->postModel::with(['author', 'category', 'tags'])
-            ->where('featured', 1)->first();
+            ->published()
+            ->where('type', $type)
+            ->featured()
+            ->first();
 
         return sendSuccess('Blog articles fetched successfully', compact('blogArticles', 'featuredArticle'));
     }
 
-    public function getPostBySlug($slug)
+    public function getPostBySlug($slug, $request = null)
     {
+        $type = $this->resolvePostType($request?->type);
+
         $post = $this->postModel->where('slug', $slug)
-            ->where('status', Post::PUBLISHED)
+            ->published()
+            ->where('type', $type)
             ->with(['author', 'category', 'tags'])
             ->first();
 
@@ -304,5 +319,10 @@ class PostService
         }
 
         return sendSuccess('Post fetched successfully', compact('post'));
+    }
+
+    protected function resolvePostType(?string $type): string
+    {
+        return in_array($type, Post::TYPES, true) ? $type : Post::TYPE_MAIN;
     }
 }

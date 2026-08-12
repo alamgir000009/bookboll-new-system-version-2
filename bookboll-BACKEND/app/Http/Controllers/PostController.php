@@ -51,8 +51,8 @@ class PostController extends Controller
         return $this->postService->blogArticles($request);
     }
 
-    public function blogPostDetails($slug)
+    public function blogPostDetails(Request $request, $slug)
     {
-        return $this->postService->getPostBySlug($slug);
+        return $this->postService->getPostBySlug($slug, $request);
     }
 }

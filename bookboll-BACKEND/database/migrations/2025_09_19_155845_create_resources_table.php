@@ -17,9 +17,9 @@ return new class extends Migration
             $table->string('name')->unique();
             $table->integer('total_quantity')->nullable();
             $table->string('unit_type')->nullable();
-            $table->enum('status', Resource::statuses())->default(Resource::ACTIVE)->index();
+            $table->enum('status', Resource::STATUSES)->default(Resource::ACTIVE)->index();
             $table->timestamps();
-            
+
             $table->index(['name', 'total_quantity', 'status']);
         });
     }
