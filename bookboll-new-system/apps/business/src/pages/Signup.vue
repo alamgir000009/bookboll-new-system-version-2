@@ -3,20 +3,17 @@
  * Signup.vue — provider onboarding wizard.
  *
  * Three simple steps:
- *   1. Business details  → creates the Supabase Auth account + admin_users row
- *      (signUpProvider), then signs the provider in so currentUser is hydrated.
- *   2. Set up website    → writes the white-label brand columns on their own row
- *      (subdomain, name, tagline, logo, colour). Skippable — finish later in My Website.
- *   3. Done              → welcome + the live website link → lands on /admin.
+ *   1. Business details  → POST /api/business/register (Laravel) creates user +
+ *      businesses row + provider_admin + Sanctum token (stored in localStorage).
+ *   2. Set up website    → UI-only for now (brand fields not persisted to Laravel yet).
+ *      Skippable — finish later in My Website once that API exists.
+ *   3. Done              → welcome + the live website link → admin login (email prefilled).
  *
  * Kept deliberately light: only step 1 is required; step 2 pre-fills smart defaults
- * (brand name = business name, subdomain suggested from the business name, teal theme).
+ * (brand name = business name, subdomain = username, teal theme).
  */
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { signUpProvider, signIn, authError } from '../lib/auth.js'
-import { currentUser } from '../lib/currentUser.js'
-import { supabase } from '../lib/supabase.js'
+import { registerBusiness, checkUsername as apiCheckUsername, loadCountries, firstApiError } from '../lib/businessAuth.js'
 import { uploadImage } from '../lib/imageUpload.js'
 import { brandPreviewUrl, brandHost, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
 import { Eye, EyeOff, Loader, Check, ArrowRight, ArrowLeft, Globe, Upload, X, Rocket, Copy, ExternalLink, RotateCcw, Home, Dumbbell, GraduationCap, Search, Sparkles, Lock } from 'lucide-vue-next'
@@ -24,9 +21,8 @@ import BrandMark from '../components/BrandMark.vue'
 import { adminBrand, adminLogoSquareStyle } from '../lib/adminBrand.js'
 import MultiSelect from '../components/MultiSelect.vue'
 import { BUSINESS_TYPES } from '../lib/businessTypes.js'
-import { adminAuthCallbackUrl, adminLoginUrl } from '../lib/crossApp.js'
+import { adminLoginUrl } from '../lib/crossApp.js'
 
-const router = useRouter()
 const step = ref(1)   // 1 = business · 2 = website · 3 = done
 
 // ── Step 1: business details ──────────────────────────────────────────────────
@@ -41,8 +37,8 @@ const creating     = ref(false)
 const err1         = ref('')
 
 onMounted(async () => {
-  const { data } = await supabase.from('countries').select('id, name').eq('status', 'active').order('name')
-  countries.value = data || []
+  const res = await loadCountries()
+  countries.value = res.success ? (res.data?.countries || []) : []
 })
 
 // ── Business username = the PERMANENT web address (username.bookboll.com) ─────
@@ -67,11 +63,9 @@ watch(username, (v) => {
 async function checkUsername() {
   const slug = username.value
   if (!slug || userStatus.value === 'invalid') return
-  // Taken if ANY business already uses it as a username OR a web address.
-  const { data, error } = await supabase.from('admin_users').select('id')
-    .or(`username.ilike.${slug},brand_subdomain.ilike.${slug}`)
-  if (error) { userStatus.value = 'ok'; return }   // can't check → don't block (DB enforces uniqueness)
-  userStatus.value = (data || []).length ? 'taken' : 'ok'
+  const res = await apiCheckUsername(slug)
+  if (!res.success) { userStatus.value = 'ok'; return } // don't block signup if probe fails
+  userStatus.value = res.data?.available ? 'ok' : 'taken'
 }
 
 async function createAccount() {
@@ -87,20 +81,21 @@ async function createAccount() {
   if (password.value.length < 8)  { err1.value = 'Password must be at least 8 characters.'; return }
 
   creating.value = true
-  const ok = await signUpProvider({
+  const res = await registerBusiness({
+    name: fullName.value.trim(),
+    business_name: businessName.value.trim(),
+    username: username.value.trim(),
+    business_types: [...businessTypes.value],
     email: email.value.trim(),
     password: password.value,
-    fullName: fullName.value.trim(),
-    businessName: businessName.value.trim(),
-    countryId: countryId.value || null,
-    username: username.value.trim(),
-    businessTypes: [...businessTypes.value],
+    password_confirmation: password.value,
+    country_id: countryId.value ? Number(countryId.value) : null,
   })
-  if (!ok) { creating.value = false; err1.value = authError.value || 'Sign up failed — please try again.'; return }
-
-  // Hydrate currentUser (loads the new admin_users row) so step 2 can update it.
-  await signIn(email.value.trim(), password.value)
   creating.value = false
+  if (!res.success) {
+    err1.value = firstApiError(res, 'Sign up failed — please try again.')
+    return
+  }
 
   // Pre-fill the website step. The web address IS the username — locked from here on.
   brandName.value = businessName.value.trim()
@@ -154,27 +149,11 @@ async function onLogo(e) {
 function removeLogo() { logoUrl.value = ''; if (logoInput.value) logoInput.value.value = '' }
 
 async function finishWebsite() {
+  // Brand/website persist to Laravel is a later step — advance the wizard only.
   err2.value = ''
   saving.value = true
-  const payload = {
-    brand_enabled: true,
-    brand_subdomain: subdomain.value || null,
-    brand_name: (brandName.value || businessName.value).trim(),
-    brand_tagline: tagline.value.trim() || null,
-    brand_logo_url: logoUrl.value || null,
-    brand_primary: brandColor.value || DEFAULT_PRIMARY,
-    brand_accent: accentColor.value || DEFAULT_ACCENT,
-    brand_meta_title: metaTitle.value.trim() || null,
-    brand_meta_description: metaDesc.value.trim() || null,
-  }
-  const id = currentUser.value?.id
-  let q = supabase.from('admin_users').update(payload)
-  q = id ? q.eq('id', id) : q.eq('email', email.value.trim())
-  const { error } = await q
+  await Promise.resolve()
   saving.value = false
-  if (error) { err2.value = 'Could not save your website right now — you can finish this later in My Website. Continue?'; return }
-
-  if (currentUser.value) currentUser.value = { ...currentUser.value, ...payload }
   step.value = 3
 }
 
@@ -188,15 +167,8 @@ async function copyUrl() {
 }
 function openUrl() { if (finalUrl.value) window.open(finalUrl.value, '_blank', 'noopener') }
 async function goDashboard() {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (session?.access_token && session?.refresh_token) {
-    window.location.href = adminAuthCallbackUrl({
-      accessToken: session.access_token,
-      refreshToken: session.refresh_token,
-      welcome: true,
-    })
-    return
-  }
+  // Sanctum token is already in localStorage (bb_api_token). Admin login is still
+  // Supabase-based — next integration step will accept Sanctum. Prefill email for now.
   window.location.href = adminLoginUrl(email.value ? `email=${encodeURIComponent(email.value)}` : '')
 }
 </script>
