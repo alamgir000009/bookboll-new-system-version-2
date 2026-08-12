@@ -1,0 +1,722 @@
+<script setup>
+/**
+ * Signup.vue — provider onboarding wizard.
+ *
+ * Three simple steps:
+ *   1. Business details  → creates the Supabase Auth account + admin_users row
+ *      (signUpProvider), then signs the provider in so currentUser is hydrated.
+ *   2. Set up website    → writes the white-label brand columns on their own row
+ *      (subdomain, name, tagline, logo, colour). Skippable — finish later in My Website.
+ *   3. Done              → welcome + the live website link → lands on /admin.
+ *
+ * Kept deliberately light: only step 1 is required; step 2 pre-fills smart defaults
+ * (brand name = business name, subdomain suggested from the business name, teal theme).
+ */
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { signUpProvider, signIn, authError } from '../lib/auth.js'
+import { currentUser } from '../lib/currentUser.js'
+import { supabase } from '../lib/supabase.js'
+import { uploadImage } from '../lib/imageUpload.js'
+import { brandPreviewUrl, brandHost, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
+import { Eye, EyeOff, Loader, Check, ArrowRight, ArrowLeft, Globe, Upload, X, Rocket, Copy, ExternalLink, RotateCcw, Home, Dumbbell, GraduationCap, Search, Sparkles, Lock } from 'lucide-vue-next'
+import BrandMark from '../components/BrandMark.vue'
+import { adminBrand, adminLogoSquareStyle } from '../lib/adminBrand.js'
+import MultiSelect from '../components/MultiSelect.vue'
+import { BUSINESS_TYPES } from '../lib/businessTypes.js'
+import { adminAuthCallbackUrl, adminLoginUrl } from '../lib/crossApp.js'
+
+const router = useRouter()
+const step = ref(1)   // 1 = business · 2 = website · 3 = done
+
+// ── Step 1: business details ──────────────────────────────────────────────────
+const fullName     = ref('')
+const businessName = ref('')
+const email        = ref('')
+const password     = ref('')
+const countryId    = ref('')
+const showPw       = ref(false)
+const countries    = ref([])
+const creating     = ref(false)
+const err1         = ref('')
+
+onMounted(async () => {
+  const { data } = await supabase.from('countries').select('id, name').eq('status', 'active').order('name')
+  countries.value = data || []
+})
+
+// ── Business username = the PERMANENT web address (username.bookboll.com) ─────
+// Picked once here; locked afterwards (wizard step 2 + My Website show it read-only).
+const username     = ref('')
+const userStatus   = ref('')   // '' | 'checking' | 'ok' | 'taken' | 'invalid'
+const businessTypes = ref([])  // multi-select — what kind of business this is
+const typeOptions = BUSINESS_TYPES.map(t => ({ value: t.key, label: t.label }))
+
+function normUser() {
+  username.value = (username.value || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 30)
+}
+let userTimer
+watch(username, (v) => {
+  userStatus.value = ''
+  clearTimeout(userTimer)
+  if (!v) return
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(v)) { userStatus.value = 'invalid'; return }
+  userStatus.value = 'checking'
+  userTimer = setTimeout(checkUsername, 400)
+})
+async function checkUsername() {
+  const slug = username.value
+  if (!slug || userStatus.value === 'invalid') return
+  // Taken if ANY business already uses it as a username OR a web address.
+  const { data, error } = await supabase.from('admin_users').select('id')
+    .or(`username.ilike.${slug},brand_subdomain.ilike.${slug}`)
+  if (error) { userStatus.value = 'ok'; return }   // can't check → don't block (DB enforces uniqueness)
+  userStatus.value = (data || []).length ? 'taken' : 'ok'
+}
+
+async function createAccount() {
+  err1.value = ''
+  if (!fullName.value.trim())     { err1.value = 'Please enter your full name.'; return }
+  if (!businessName.value.trim()) { err1.value = 'Please enter your business name.'; return }
+  if (!username.value.trim())     { err1.value = 'Pick your business username — it becomes your web address.'; return }
+  if (userStatus.value === 'invalid') { err1.value = 'Usernames can only use letters, numbers and hyphens.'; return }
+  if (userStatus.value === 'taken')   { err1.value = 'That username is already taken — try another.'; return }
+  if (userStatus.value === 'checking') { err1.value = 'Still checking your username — one second, then try again.'; return }
+  if (!businessTypes.value.length) { err1.value = 'Select what kind of business you run (you can pick several).'; return }
+  if (!email.value.trim())        { err1.value = 'Please enter your email address.'; return }
+  if (password.value.length < 8)  { err1.value = 'Password must be at least 8 characters.'; return }
+
+  creating.value = true
+  const ok = await signUpProvider({
+    email: email.value.trim(),
+    password: password.value,
+    fullName: fullName.value.trim(),
+    businessName: businessName.value.trim(),
+    countryId: countryId.value || null,
+    username: username.value.trim(),
+    businessTypes: [...businessTypes.value],
+  })
+  if (!ok) { creating.value = false; err1.value = authError.value || 'Sign up failed — please try again.'; return }
+
+  // Hydrate currentUser (loads the new admin_users row) so step 2 can update it.
+  await signIn(email.value.trim(), password.value)
+  creating.value = false
+
+  // Pre-fill the website step. The web address IS the username — locked from here on.
+  brandName.value = businessName.value.trim()
+  subdomain.value = username.value.trim()
+  step.value = 2
+}
+
+// ── Step 2: website setup ─────────────────────────────────────────────────────
+const brandName   = ref('')
+const subdomain   = ref('')   // = the business username; LOCKED (shown read-only in step 2)
+const brandColor  = ref(DEFAULT_PRIMARY)   // primary
+const accentColor = ref(DEFAULT_ACCENT)    // accent (gradient + nav highlight)
+const tagline     = ref('')
+const metaTitle   = ref('')
+const metaDesc    = ref('')
+const logoUrl    = ref('')
+const logoBusy   = ref(false)
+const logoInput  = ref(null)
+const saving     = ref(false)
+const err2       = ref('')
+
+function resetColors() { brandColor.value = DEFAULT_PRIMARY; accentColor.value = DEFAULT_ACCENT }
+
+// Preview nav — illustrative. The real site shows ONLY the modules the provider has
+// content for (venues if they add listings, memberships if they add programs); events
+// and loyalty/profile features never appear on a white-label site.
+const previewNav = [
+  { icon: Home, label: 'Home' },
+  { icon: Dumbbell, label: 'Venues' },
+  { icon: GraduationCap, label: 'Memberships' },
+]
+
+// SEO snippet preview (mirrors Brand.vue): falls back to name + tagline.
+const seoTitle = computed(() => (metaTitle.value || '').trim() || (brandName.value || 'Your business').trim())
+const seoDesc  = computed(() => (metaDesc.value || '').trim() || (tagline.value || '').trim() || 'Book courts, classes and events near you.')
+
+const liveHost   = computed(() => brandHost(subdomain.value || 'yourbusiness'))
+const previewUrl = computed(() => brandPreviewUrl(subdomain.value || 'yourbusiness'))
+
+function pickLogo() { logoInput.value?.click() }
+async function onLogo(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  err2.value = ''
+  logoBusy.value = true
+  const r = await uploadImage(file)
+  logoBusy.value = false
+  if (r.error) { err2.value = r.error; return }
+  logoUrl.value = r.url
+}
+function removeLogo() { logoUrl.value = ''; if (logoInput.value) logoInput.value.value = '' }
+
+async function finishWebsite() {
+  err2.value = ''
+  saving.value = true
+  const payload = {
+    brand_enabled: true,
+    brand_subdomain: subdomain.value || null,
+    brand_name: (brandName.value || businessName.value).trim(),
+    brand_tagline: tagline.value.trim() || null,
+    brand_logo_url: logoUrl.value || null,
+    brand_primary: brandColor.value || DEFAULT_PRIMARY,
+    brand_accent: accentColor.value || DEFAULT_ACCENT,
+    brand_meta_title: metaTitle.value.trim() || null,
+    brand_meta_description: metaDesc.value.trim() || null,
+  }
+  const id = currentUser.value?.id
+  let q = supabase.from('admin_users').update(payload)
+  q = id ? q.eq('id', id) : q.eq('email', email.value.trim())
+  const { error } = await q
+  saving.value = false
+  if (error) { err2.value = 'Could not save your website right now — you can finish this later in My Website. Continue?'; return }
+
+  if (currentUser.value) currentUser.value = { ...currentUser.value, ...payload }
+  step.value = 3
+}
+
+function skipWebsite() { step.value = 3 }
+
+// ── Step 3: done ──────────────────────────────────────────────────────────────
+const finalUrl = computed(() => subdomain.value ? brandPreviewUrl(subdomain.value) : '')
+async function copyUrl() {
+  if (!finalUrl.value) return
+  try { await navigator.clipboard.writeText(finalUrl.value) } catch { /* ignore */ }
+}
+function openUrl() { if (finalUrl.value) window.open(finalUrl.value, '_blank', 'noopener') }
+async function goDashboard() {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session?.access_token && session?.refresh_token) {
+    window.location.href = adminAuthCallbackUrl({
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token,
+      welcome: true,
+    })
+    return
+  }
+  window.location.href = adminLoginUrl(email.value ? `email=${encodeURIComponent(email.value)}` : '')
+}
+</script>
+
+<template>
+  <div class="auth-shell">
+    <div class="auth-card" :class="{ wide: step === 2 }">
+      <!-- Brand -->
+      <div class="auth-brand">
+        <div class="auth-logo" :style="adminBrand.logo ? { backgroundImage: `url(${adminBrand.logo})`, backgroundSize: 'cover', backgroundPosition: 'center' } : adminLogoSquareStyle"><BrandMark v-if="!adminBrand.logo" /></div>
+        <div>
+          <div class="auth-brand-name">Bookboll</div>
+          <div class="auth-brand-sub">Get your business online</div>
+        </div>
+      </div>
+
+      <!-- Progress (hidden on the done screen) -->
+      <div v-if="step < 3" class="ob-steps">
+        <div class="ob-step" :class="{ on: step === 1, done: step > 1 }">
+          <span class="ob-dot"><Check v-if="step > 1" :size="13" /><span v-else>1</span></span>
+          <span class="ob-step-l">Your business</span>
+        </div>
+        <div class="ob-line" :class="{ done: step > 1 }"></div>
+        <div class="ob-step" :class="{ on: step === 2 }">
+          <span class="ob-dot"><span>2</span></span>
+          <span class="ob-step-l">Your website</span>
+        </div>
+      </div>
+
+      <!-- ── STEP 1 — business details ─────────────────────────────────── -->
+      <template v-if="step === 1">
+        <h1 class="auth-heading">Create your business account</h1>
+        <p class="auth-sub">Tell us about your business — it takes a minute.</p>
+
+        <form @submit.prevent="createAccount" class="auth-form">
+          <div class="auth-row">
+            <div class="auth-field">
+              <label class="auth-label">Your full name</label>
+              <input v-model="fullName" type="text" class="auth-input" placeholder="e.g. Ahmed Al Mansouri" />
+            </div>
+            <div class="auth-field">
+              <label class="auth-label">Business name</label>
+              <input v-model="businessName" type="text" class="auth-input" placeholder="e.g. Dubai Sports City" />
+            </div>
+          </div>
+
+          <div class="auth-field">
+            <label class="auth-label">Business username <span class="auth-opt">— becomes your web address</span></label>
+            <div class="ob-sub">
+              <input v-model="username" @input="normUser" type="text" class="auth-input ob-sub-in" placeholder="yourclub" spellcheck="false" autocomplete="off" />
+              <span class="ob-sub-suffix">.bookboll.com</span>
+            </div>
+            <div class="ob-sub-status">
+              <span v-if="userStatus === 'checking'" class="ob-muted">Checking…</span>
+              <span v-else-if="userStatus === 'ok'" class="ob-ok"><Check :size="13" /> {{ username }}.bookboll.com is yours</span>
+              <span v-else-if="userStatus === 'taken'" class="ob-bad">Already taken — try another</span>
+              <span v-else-if="userStatus === 'invalid'" class="ob-bad">Letters, numbers and hyphens only</span>
+              <span v-else class="ob-muted">Short and memorable — this can't be changed later</span>
+            </div>
+          </div>
+
+          <div class="auth-field">
+            <label class="auth-label">What kind of business? <span class="auth-opt">— pick all that apply</span></label>
+            <MultiSelect v-model="businessTypes" :options="typeOptions" placeholder="Select business type(s)" :max-display="2" />
+          </div>
+
+          <div class="auth-field">
+            <label class="auth-label">Email</label>
+            <input v-model="email" type="email" class="auth-input" placeholder="you@yourbusiness.com" autocomplete="email" />
+          </div>
+
+          <div class="auth-row">
+            <div class="auth-field">
+              <label class="auth-label">Country <span class="auth-opt">(optional)</span></label>
+              <select v-model="countryId" class="auth-input auth-select">
+                <option value="">Select country</option>
+                <option v-for="c in countries" :key="c.id" :value="c.id">{{ c.name }}</option>
+              </select>
+            </div>
+            <div class="auth-field">
+              <label class="auth-label">Password</label>
+              <div class="auth-pw-wrap">
+                <input v-model="password" :type="showPw ? 'text' : 'password'" class="auth-input" placeholder="Min 8 characters" autocomplete="new-password" />
+                <button type="button" class="auth-pw-eye" @click="showPw = !showPw"><component :is="showPw ? EyeOff : Eye" :size="16" /></button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="err1" class="auth-error">{{ err1 }}</div>
+
+          <p class="auth-terms">By continuing you agree to the <router-link to="/terms" class="auth-link">Provider Terms &amp; Conditions</router-link>.</p>
+
+          <button type="submit" class="auth-btn" :disabled="creating">
+            <Loader v-if="creating" :size="16" class="auth-spin" />
+            {{ creating ? 'Creating account…' : 'Continue' }}
+            <ArrowRight v-if="!creating" :size="16" />
+          </button>
+        </form>
+
+        <div class="auth-footer">
+          Already have an account? <a :href="adminLoginUrl()" class="auth-link">Sign in</a>
+        </div>
+      </template>
+
+      <!-- ── STEP 2 — website setup ────────────────────────────────────── -->
+      <template v-else-if="step === 2">
+        <h1 class="auth-heading">Set up your website</h1>
+        <p class="auth-sub">Your own branded booking site — customers book you directly. You can change all of this later.</p>
+
+        <div class="ob-grid">
+          <!-- Form side -->
+          <div class="ob-form">
+            <!-- Logo & name -->
+            <div class="ob-logo-row">
+              <div class="ob-logo-prev" :class="{ img: logoUrl }" :style="logoUrl ? { backgroundImage: `url(${logoUrl})` } : { background: `linear-gradient(135deg, ${accentColor}, ${brandColor})` }">
+                <span v-if="!logoUrl">{{ (brandName || 'Y').trim().charAt(0).toUpperCase() }}</span>
+              </div>
+              <div class="ob-logo-actions">
+                <input ref="logoInput" type="file" accept="image/*" class="ob-file" @change="onLogo" />
+                <button type="button" class="ob-logo-btn" @click="pickLogo" :disabled="logoBusy">
+                  <Loader v-if="logoBusy" :size="15" class="auth-spin" /><Upload v-else :size="15" />
+                  {{ logoBusy ? 'Uploading…' : (logoUrl ? 'Replace logo' : 'Upload logo') }}
+                </button>
+                <button v-if="logoUrl" type="button" class="ob-logo-x" @click="removeLogo"><X :size="13" /> Remove</button>
+              </div>
+            </div>
+
+            <div class="auth-field">
+              <label class="auth-label">Website name</label>
+              <input v-model="brandName" type="text" class="auth-input" placeholder="Your business name" maxlength="60" />
+            </div>
+
+            <div class="auth-field">
+              <label class="auth-label">Web address</label>
+              <div class="ob-sub">
+                <span class="ob-sub-locked"><Lock :size="13" /> {{ subdomain || 'yourbusiness' }}</span>
+                <span class="ob-sub-suffix">.bookboll.com</span>
+              </div>
+              <div class="ob-sub-status">
+                <span class="ob-muted"><Check :size="13" class="ob-lock-ok" /> Locked to your business username. Want your own domain? Connect one later in <b>My Website</b>.</span>
+              </div>
+            </div>
+
+            <div class="auth-field">
+              <label class="auth-label">Tagline <span class="auth-opt">(optional)</span></label>
+              <input v-model="tagline" type="text" class="auth-input" placeholder="e.g. Book courts & academies in seconds" maxlength="90" />
+            </div>
+
+            <!-- Brand colours -->
+            <div class="auth-field">
+              <label class="auth-label">Brand colours</label>
+              <div class="ob-colors">
+                <div class="ob-color">
+                  <input type="color" class="ob-swatch" v-model="brandColor" />
+                  <div class="ob-color-meta"><span>Primary</span><input class="auth-input ob-hex" v-model="brandColor" spellcheck="false" maxlength="7" /></div>
+                </div>
+                <div class="ob-color">
+                  <input type="color" class="ob-swatch" v-model="accentColor" />
+                  <div class="ob-color-meta"><span>Accent</span><input class="auth-input ob-hex" v-model="accentColor" spellcheck="false" maxlength="7" /></div>
+                </div>
+              </div>
+              <button type="button" class="ob-reset" @click="resetColors"><RotateCcw :size="12" /> Reset to Bookboll teal</button>
+            </div>
+
+            <!-- Your site automatically shows only what you list — add venues to enable
+                 venue booking, add membership programs to enable memberships. -->
+            <div class="ob-auto"><Sparkles :size="14" /> Your site shows venue booking and/or memberships automatically based on what you add — nothing to configure.</div>
+
+            <!-- SEO (optional) -->
+            <details class="ob-seo">
+              <summary><Search :size="13" /> Search engine listing <span class="auth-opt">(optional)</span></summary>
+              <div class="auth-field">
+                <label class="auth-label">Meta title <span class="auth-opt">{{ metaTitle.length }}/60</span></label>
+                <input v-model="metaTitle" type="text" class="auth-input" maxlength="60" placeholder="How your site shows in Google" />
+              </div>
+              <div class="auth-field">
+                <label class="auth-label">Meta description <span class="auth-opt">{{ metaDesc.length }}/160</span></label>
+                <textarea v-model="metaDesc" class="auth-input ob-textarea" maxlength="160" rows="2" placeholder="A short sentence describing your site for search results."></textarea>
+              </div>
+            </details>
+          </div>
+
+          <!-- Live preview side — a storefront mock reflecting every choice -->
+          <div class="ob-preview" :style="{ '--pv': brandColor || DEFAULT_PRIMARY, '--pa': accentColor || DEFAULT_ACCENT }">
+            <div class="ob-pv-label">Live preview</div>
+            <div class="ob-pv-card">
+              <div class="ob-pv-chrome"><span></span><span></span><span></span><div class="ob-pv-addr"><Globe :size="10" /> {{ liveHost }}</div></div>
+              <div class="ob-pv-bar">
+                <div class="ob-pv-logo">
+                  <img v-if="logoUrl" :src="logoUrl" alt="" />
+                  <span v-else>{{ (brandName || 'Y').trim().charAt(0).toUpperCase() }}</span>
+                </div>
+                <span class="ob-pv-name">{{ brandName || 'Your business' }}</span>
+                <span class="ob-pv-signin">Sign in</span>
+              </div>
+              <div class="ob-pv-nav">
+                <span v-for="n in previewNav" :key="n.label" class="ob-pv-navlink" :class="{ active: n.label === 'Home' }"><component :is="n.icon" :size="11" /> {{ n.label }}</span>
+              </div>
+              <div class="ob-pv-hero">
+                <div class="ob-pv-h1">{{ tagline || 'Book with ' + (brandName || 'us') }}</div>
+                <div class="ob-pv-cta">Book now</div>
+              </div>
+              <div class="ob-pv-cards">
+                <div class="ob-pv-tile"><div class="ob-pv-tile-img"></div><div class="ob-pv-tile-l"></div><div class="ob-pv-tile-s"></div></div>
+                <div class="ob-pv-tile"><div class="ob-pv-tile-img"></div><div class="ob-pv-tile-l"></div><div class="ob-pv-tile-s"></div></div>
+              </div>
+            </div>
+            <!-- SEO snippet -->
+            <div class="ob-pv-seo">
+              <div class="ob-pv-seo-url">{{ liveHost }}</div>
+              <div class="ob-pv-seo-title">{{ seoTitle }}</div>
+              <div class="ob-pv-seo-desc">{{ seoDesc }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="err2" class="auth-error">{{ err2 }}</div>
+
+        <div class="ob-actions">
+          <button type="button" class="auth-btn-ghost" @click="skipWebsite">Skip for now</button>
+          <button type="button" class="auth-btn" :disabled="saving" @click="finishWebsite">
+            <Loader v-if="saving" :size="16" class="auth-spin" />
+            {{ saving ? 'Saving…' : 'Finish & go to dashboard' }}
+            <ArrowRight v-if="!saving" :size="16" />
+          </button>
+        </div>
+      </template>
+
+      <!-- ── STEP 3 — done ─────────────────────────────────────────────── -->
+      <template v-else>
+        <div class="success-state">
+          <div class="success-icon"><Rocket :size="28" /></div>
+          <h2 class="success-title">You're all set, {{ (fullName || '').split(' ')[0] || 'welcome' }}!</h2>
+          <p class="success-body">
+            Your business account is ready. Your dashboard will walk you through the rest:
+            add your <b>location &amp; first listing</b>, connect a <b>payout method</b>, and go live.
+          </p>
+
+          <div v-if="finalUrl" class="ob-done-site">
+            <div class="ob-done-site-l"><Globe :size="16" /> <span>{{ finalUrl }}</span></div>
+            <div class="ob-done-site-actions">
+              <button type="button" class="auth-btn-ghost sm" @click="copyUrl"><Copy :size="14" /> Copy</button>
+              <button type="button" class="auth-btn-ghost sm" @click="openUrl"><ExternalLink :size="14" /> Open</button>
+            </div>
+          </div>
+
+          <button type="button" class="auth-btn" @click="goDashboard">
+            Go to my dashboard <ArrowRight :size="16" />
+          </button>
+        </div>
+      </template>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.auth-shell {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #0f766e22 100%);
+  padding: 24px;
+}
+.auth-card {
+  width: 100%; max-width: 520px; background: var(--surface, #ffffff); border-radius: 20px;
+  padding: 32px 36px 28px; box-shadow: 0 24px 60px rgba(0,0,0,.35);
+  transition: max-width .2s;
+}
+.auth-card.wide { max-width: 960px; }
+.auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.auth-logo {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: linear-gradient(135deg, #14b8a6, #0f766e);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 16px;
+}
+.auth-brand-name { font-size: 18px; font-weight: 700; color: #0f172a; }
+.auth-brand-sub  { font-size: 12px; color: var(--text-muted, #64748b); }
+
+/* Progress */
+.ob-steps { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+.ob-step { display: flex; align-items: center; gap: 8px; }
+.ob-dot {
+  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 800; background: var(--border, #e2e8f0); color: var(--text-light, #94a3b8);
+}
+.ob-step.on .ob-dot { background: #0f766e; color: #fff; }
+.ob-step.done .ob-dot { background: #14b8a6; color: #fff; }
+.ob-step-l { font-size: 13px; font-weight: 700; color: var(--text-light, #94a3b8); }
+.ob-step.on .ob-step-l, .ob-step.done .ob-step-l { color: #0f172a; }
+.ob-line { flex: 1; height: 2px; background: var(--border, #e2e8f0); border-radius: 2px; }
+.ob-line.done { background: #14b8a6; }
+
+.auth-heading { font-size: 22px; font-weight: 800; color: #0f172a; margin: 0 0 4px; }
+.auth-sub { font-size: 14px; color: var(--text-muted, #64748b); margin: 0 0 22px; line-height: 1.5; }
+
+.auth-form { display: flex; flex-direction: column; gap: 14px; }
+.auth-row  { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .auth-row { grid-template-columns: 1fr; } }
+
+.auth-field { display: flex; flex-direction: column; gap: 6px; }
+.auth-label { font-size: 13px; font-weight: 600; color: #374151; }
+.auth-opt { font-weight: 500; color: var(--text-light, #94a3b8); }
+.auth-input {
+  width: 100%; padding: 10px 14px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px;
+  font-size: 14px; color: #0f172a; background: var(--surface, #ffffff); box-sizing: border-box;
+  transition: border-color .15s, box-shadow .15s;
+}
+.auth-input:focus { outline: none; border-color: #14b8a6; box-shadow: 0 0 0 3px rgba(20,184,166,.12); }
+.auth-select { cursor: pointer; }
+
+.auth-pw-wrap { position: relative; }
+.auth-pw-wrap .auth-input { padding-right: 42px; }
+.auth-pw-eye {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer; color: var(--text-light, #94a3b8); display: flex;
+}
+.auth-pw-eye:hover { color: #0f172a; }
+
+.auth-error { font-size: 13px; color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 12px; margin-top: 14px; }
+
+.auth-btn {
+  padding: 12px 18px; border: none; border-radius: 10px;
+  background: linear-gradient(135deg, #14b8a6, #0f766e); color: #fff;
+  font-size: 15px; font-weight: 700; cursor: pointer; display: flex;
+  align-items: center; justify-content: center; gap: 8px; transition: opacity .15s;
+}
+.auth-form .auth-btn { width: 100%; margin-top: 4px; }
+.auth-btn:hover:not(:disabled) { opacity: .92; }
+.auth-btn:disabled { opacity: .6; cursor: not-allowed; }
+.auth-btn-ghost {
+  padding: 12px 18px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; background: var(--surface, #ffffff);
+  color: #475569; font-size: 14.5px; font-weight: 700; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+}
+.auth-btn-ghost:hover { border-color: #cbd5e1; color: #0f172a; }
+.auth-btn-ghost.sm { padding: 8px 12px; font-size: 13px; }
+.auth-spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.auth-footer { margin-top: 20px; text-align: center; font-size: 13.5px; color: var(--text-muted, #64748b); }
+.auth-terms { margin: 12px 0 0; text-align: center; font-size: 12px; color: var(--text-light, #94a3b8); line-height: 1.5; }
+.auth-link { color: #0f766e; font-weight: 600; text-decoration: none; }
+.auth-link:hover { text-decoration: underline; }
+
+/* ── Step 2 layout ── */
+.ob-grid { display: grid; grid-template-columns: 1fr 380px; gap: 28px; align-items: start; }
+@media (max-width: 720px) {
+  .ob-grid { grid-template-columns: 1fr; }
+  .ob-preview { position: static; }
+}
+.ob-form { display: flex; flex-direction: column; gap: 14px; }
+
+.ob-sub { display: flex; align-items: stretch; }
+/* Locked web-address display (the address = the business username, fixed at signup) */
+.ob-sub-locked { flex: 1; display: flex; align-items: center; gap: 7px; padding: 10px 14px; background: #f8fafc; border: 1.5px solid var(--border, #e2e8f0); border-right: none; border-radius: 10px 0 0 10px; font-size: 14px; font-weight: 700; color: #0f172a; }
+.ob-sub-locked svg { color: var(--text-light, #94a3b8); flex-shrink: 0; }
+.ob-lock-ok { color: #16a34a; vertical-align: -2px; }
+.ob-sub-in { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.ob-sub-suffix {
+  display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600;
+  color: var(--text-muted, #64748b); background: #f1f5f9; border: 1.5px solid var(--border, #e2e8f0); border-left: none;
+  border-top-right-radius: 10px; border-bottom-right-radius: 10px; white-space: nowrap;
+}
+.ob-sub-status { font-size: 12.5px; min-height: 16px; }
+.ob-muted { color: var(--text-light, #94a3b8); }
+.ob-ok { color: #16a34a; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
+.ob-bad { color: #dc2626; font-weight: 700; }
+
+/* Logo & name */
+.ob-logo-row { display: flex; align-items: center; gap: 14px; }
+.ob-logo-prev { width: 56px; height: 56px; border-radius: 13px; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 18px; flex-shrink: 0; background-size: cover; background-position: center; }
+.ob-logo-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ob-file { display: none; }
+.ob-logo-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 38px; padding: 0 14px; border: 1.5px solid #99f6e4; border-radius: 10px; background: #f0fdfa;
+  color: #0f766e; font-size: 13.5px; font-weight: 700; cursor: pointer;
+}
+.ob-logo-btn:hover:not(:disabled) { background: #ccfbf1; }
+.ob-logo-btn:disabled { opacity: .6; cursor: default; }
+.ob-logo-x { background: none; border: none; color: #dc2626; font-size: 12.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+
+/* Brand colours */
+/* Collapse-proof (same recipe as My Website's Brand colors card): minmax(0,1fr)
+   tracks + min-width:0 so the hex inputs can never blow the grid wider than
+   the signup column; swatches hard-locked square with UA chrome stripped. */
+.ob-colors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ob-color { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.ob-swatch { width: 40px; min-width: 40px; max-width: 40px; height: 40px; flex: 0 0 40px; padding: 0; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; background: none; cursor: pointer; appearance: none; -webkit-appearance: none; }
+.ob-swatch::-webkit-color-swatch-wrapper { padding: 3px; }
+.ob-swatch::-webkit-color-swatch { border: none; border-radius: 6px; }
+.ob-swatch::-moz-color-swatch { border: none; border-radius: 6px; }
+.ob-color-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 0; }
+.ob-color-meta > span { font-size: 11px; font-weight: 700; color: var(--text-light, #94a3b8); text-transform: uppercase; letter-spacing: .03em; }
+.ob-hex { text-transform: lowercase; padding: 6px 8px; font-size: 12.5px; width: 100%; min-width: 0; box-sizing: border-box; }
+.ob-reset { margin-top: 8px; background: none; border: none; color: #0f766e; font-size: 12px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 0; }
+.ob-reset:hover { text-decoration: underline; }
+
+/* Auto-modules note */
+.ob-auto { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: #0f766e; background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 10px; padding: 10px 12px; line-height: 1.5; }
+.ob-auto svg { flex-shrink: 0; margin-top: 1px; }
+
+/* Sections to show (legacy, unused) */
+.ob-mods { display: flex; flex-direction: column; gap: 8px; }
+.ob-mod { display: flex; align-items: center; gap: 11px; padding: 9px 12px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; }
+.ob-mod-ico { width: 30px; height: 30px; border-radius: 8px; background: #f0fdfa; color: #0f766e; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ob-mod-t { flex: 1; min-width: 0; }
+.ob-mod-name { font-size: 13px; font-weight: 700; color: #0f172a; }
+.ob-mod-desc { font-size: 11.5px; color: var(--text-light, #94a3b8); }
+.ob-switch { position: relative; display: inline-block; width: 40px; height: 23px; flex-shrink: 0; }
+.ob-switch input { opacity: 0; width: 0; height: 0; }
+.ob-slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 999px; transition: .2s; }
+.ob-slider::before { content: ''; position: absolute; height: 17px; width: 17px; left: 3px; top: 3px; background: var(--surface, #ffffff); border-radius: 50%; transition: .2s; }
+.ob-switch input:checked + .ob-slider { background: #0f766e; }
+.ob-switch input:checked + .ob-slider::before { transform: translateX(17px); }
+
+/* SEO (collapsible) */
+.ob-seo { border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 0 12px; }
+.ob-seo > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 7px; padding: 11px 0; font-size: 13px; font-weight: 700; color: #374151; }
+.ob-seo > summary::-webkit-details-marker { display: none; }
+.ob-seo[open] > summary { border-bottom: 1px solid #f1f5f9; margin-bottom: 12px; }
+.ob-seo .auth-field { margin-bottom: 12px; }
+.ob-textarea { resize: vertical; line-height: 1.45; font-family: inherit; }
+
+/* Live preview — storefront mock */
+.ob-preview { background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 14px; position: sticky; top: 14px; }
+.ob-pv-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-light, #94a3b8); margin-bottom: 10px; }
+.ob-pv-card { border: 1px solid var(--border, #e2e8f0); border-radius: 12px; overflow: hidden; background: var(--surface, #ffffff); box-shadow: 0 8px 20px rgba(15,23,42,.06); }
+.ob-pv-chrome { display: flex; align-items: center; gap: 5px; padding: 7px 10px; background: #f1f5f9; border-bottom: 1px solid #e8edf2; }
+.ob-pv-chrome > span { width: 7px; height: 7px; border-radius: 50%; background: #cbd5e1; }
+.ob-pv-addr { flex: 1; display: flex; align-items: center; gap: 4px; margin-left: 6px; background: var(--surface, #ffffff); border-radius: 5px; padding: 3px 8px; font-size: 9.5px; color: var(--text-light, #94a3b8); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ob-pv-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+.ob-pv-logo { width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(135deg, var(--pa), var(--pv)); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; overflow: hidden; flex-shrink: 0; }
+.ob-pv-logo img { width: 100%; height: 100%; object-fit: cover; }
+.ob-pv-name { font-size: 13.5px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.ob-pv-signin { font-size: 10px; font-weight: 800; color: #fff; background: var(--pv); border-radius: 999px; padding: 3px 9px; flex-shrink: 0; }
+.ob-pv-nav { display: flex; gap: 3px; padding: 0 8px; border-bottom: 1px solid #f1f5f9; flex-wrap: wrap; }
+.ob-pv-navlink { display: inline-flex; align-items: center; gap: 3px; padding: 7px 7px; font-size: 10px; font-weight: 700; color: var(--text-light, #94a3b8); border-bottom: 2px solid transparent; }
+.ob-pv-navlink.active { color: var(--pv); border-bottom-color: var(--pa); }
+.ob-pv-hero { padding: 20px 14px; background: linear-gradient(135deg, var(--pv), var(--pa)); text-align: center; }
+.ob-pv-h1 { font-size: 14px; font-weight: 800; color: #fff; margin-bottom: 10px; line-height: 1.35; }
+.ob-pv-cta { display: inline-block; background: var(--surface, #ffffff); color: var(--pv); font-size: 12px; font-weight: 800; padding: 7px 16px; border-radius: 8px; }
+.ob-pv-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
+.ob-pv-tile { border: 1px solid #eef2f6; border-radius: 9px; padding: 8px; }
+.ob-pv-tile-img { height: 34px; border-radius: 6px; background: color-mix(in srgb, var(--pv) 13%, white); margin-bottom: 7px; }
+.ob-pv-tile-l { height: 7px; width: 80%; border-radius: 4px; background: var(--border, #e2e8f0); margin-bottom: 5px; }
+.ob-pv-tile-s { height: 6px; width: 50%; border-radius: 4px; background: #eef2f6; }
+.ob-pv-seo { margin-top: 12px; padding: 11px 12px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 10px; }
+.ob-pv-seo-url { font-size: 11px; color: #3c4043; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ob-pv-seo-title { font-size: 13.5px; color: #1a0dab; font-weight: 500; margin-top: 2px; line-height: 1.3; }
+.ob-pv-seo-desc { font-size: 11.5px; color: #4d5156; margin-top: 3px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.ob-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
+@media (max-width: 560px) {
+  /* Docked flush to the viewport bottom — standalone page, no shell nav below */
+  .ob-actions {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; margin: 0;
+    background: var(--surface, #ffffff); border-top: 1px solid var(--border, #e2e8f0);
+    box-shadow: 0 -8px 24px rgba(15,23,42,.10);
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    flex-direction: row; border-radius: 0;
+  }
+  .ob-actions .auth-btn { flex: 1; }
+  .ob-actions .auth-btn-ghost { flex: 0 0 auto; }
+}
+
+/* ── Step 3 done ── */
+.success-state { text-align: center; padding: 8px 0 6px; }
+.success-icon {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: linear-gradient(135deg, #14b8a6, #0f766e);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 16px;
+}
+.success-title { font-size: 21px; font-weight: 800; color: #0f172a; margin: 0 0 10px; }
+.success-body  { font-size: 14px; color: #475569; line-height: 1.7; margin: 0 0 18px; }
+.ob-done-site {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 12px; padding: 12px 14px; margin-bottom: 18px;
+}
+.ob-done-site-l { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700; color: #0f766e; word-break: break-all; min-width: 0; }
+.ob-done-site-actions { display: flex; gap: 8px; }
+.success-state .auth-btn { width: 100%; }
+
+/* ── Phone (≤560px) — 360px-wide friendly ── */
+@media (max-width: 560px) {
+  /* iOS focus-zoom guard: all controls share .auth-input (select/textarea/hex too) */
+  .auth-input { font-size: 16px; }
+
+  /* Reclaim content width: 24+36px chrome left only ~240px at 360px wide */
+  .auth-shell { padding: 12px; }
+  .auth-card { padding: 22px 18px 20px; border-radius: 16px; }
+
+  /* Standalone page (no shell) — the card itself reserves room for the docked CTAs */
+  .auth-card { padding-bottom: 96px; }
+
+  /* Step 1: dock the Continue submit flush to the true viewport bottom */
+  .auth-form > .auth-btn {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    margin: 0; border-radius: 0;
+    padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -8px 24px rgba(15,23,42,.10);
+  }
+
+  /* Username row: let the input shrink, slim the .bookboll.com suffix */
+  .ob-sub-in { min-width: 0; flex: 1; }
+  .ob-sub-suffix { padding: 0 8px; font-size: 12px; }
+  .ob-sub-locked { padding: 10px 10px; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Primary/Accent colour pickers stack — keeps the hex inputs typable */
+  .ob-colors { grid-template-columns: 1fr; }
+
+  /* Storefront-mock text up to the legibility floor */
+  .ob-pv-addr { font-size: 10.5px; }
+  .ob-pv-navlink, .ob-pv-signin { font-size: 11px; }
+
+  /* Done-step site row: URL on top, Copy/Open as a 2-up grid of tappable buttons */
+  .ob-done-site { flex-direction: column; align-items: stretch; }
+  .ob-done-site-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .auth-btn-ghost.sm { padding: 11px 12px; }
+}
+</style>
+

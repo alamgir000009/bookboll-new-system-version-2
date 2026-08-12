@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "Home",
+    "venues": "Sedi",
+    "events": "Eventi",
+    "memberships": "Abbonamenti"
+  },
+  "account": {
+    "myProfile": "Il mio profilo",
+    "myRewards": "I miei premi",
+    "myBookings": "Le mie prenotazioni",
+    "myEvents": "I miei eventi",
+    "settings": "Account e foto",
+    "signOut": "Esci",
+    "signIn": "Accedi"
+  },
+  "header": {
+    "setLocation": "Scegli posizione",
+    "changeLocation": "Cambia posizione"
+  },
+  "footer": {
+    "poweredBy": "con tecnologia Bookboll",
+    "adminLogin": "Accesso aziende / admin"
+  },
+  "common": {
+    "language": "Lingua"
+  }
+}

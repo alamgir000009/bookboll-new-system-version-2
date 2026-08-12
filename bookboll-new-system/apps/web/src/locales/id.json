@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "Beranda",
+    "venues": "Tempat",
+    "events": "Acara",
+    "memberships": "Keanggotaan"
+  },
+  "account": {
+    "myProfile": "Profil saya",
+    "myRewards": "Hadiah saya",
+    "myBookings": "Pesanan saya",
+    "myEvents": "Acara saya",
+    "settings": "Akun & foto",
+    "signOut": "Keluar",
+    "signIn": "Masuk"
+  },
+  "header": {
+    "setLocation": "Pilih lokasi",
+    "changeLocation": "Ubah lokasi"
+  },
+  "footer": {
+    "poweredBy": "didukung oleh Bookboll",
+    "adminLogin": "Login bisnis / admin"
+  },
+  "common": {
+    "language": "Bahasa"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "Home",
+    "venues": "Locaties",
+    "events": "Evenementen",
+    "memberships": "Lidmaatschappen"
+  },
+  "account": {
+    "myProfile": "Mijn profiel",
+    "myRewards": "Mijn beloningen",
+    "myBookings": "Mijn boekingen",
+    "myEvents": "Mijn evenementen",
+    "settings": "Account & foto's",
+    "signOut": "Uitloggen",
+    "signIn": "Inloggen"
+  },
+  "header": {
+    "setLocation": "Locatie kiezen",
+    "changeLocation": "Locatie wijzigen"
+  },
+  "footer": {
+    "poweredBy": "mogelijk gemaakt door Bookboll",
+    "adminLogin": "Zakelijk / beheerder login"
+  },
+  "common": {
+    "language": "Taal"
+  }
+}

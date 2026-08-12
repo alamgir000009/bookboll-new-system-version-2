@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "首页",
+    "venues": "场地",
+    "events": "活动",
+    "memberships": "会员"
+  },
+  "account": {
+    "myProfile": "我的资料",
+    "myRewards": "我的奖励",
+    "myBookings": "我的预订",
+    "myEvents": "我的活动",
+    "settings": "账户和照片",
+    "signOut": "退出登录",
+    "signIn": "登录"
+  },
+  "header": {
+    "setLocation": "选择位置",
+    "changeLocation": "更改位置"
+  },
+  "footer": {
+    "poweredBy": "由 Bookboll 提供支持",
+    "adminLogin": "商家 / 管理员登录"
+  },
+  "common": {
+    "language": "语言"
+  }
+}

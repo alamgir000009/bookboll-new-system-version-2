@@ -1,0 +1,33 @@
+# Bookboll — public storefront is crawlable; admin & private pages are not.
+User-agent: *
+Allow: /
+
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /login
+Disallow: /signup
+Disallow: /account
+Disallow: /my-bookings
+Disallow: /my-games
+Disallow: /wallet
+Disallow: /bookings
+Disallow: /customers
+Disallow: /payments
+Disallow: /promocodes
+Disallow: /special-days
+Disallow: /team
+Disallow: /countries
+Disallow: /approvals
+Disallow: /moderation
+Disallow: /brand
+Disallow: /audit-logs
+Disallow: /settings
+Disallow: /subscriptions
+Disallow: /messages
+Disallow: /my-memberships
+Disallow: /pass
+Disallow: /rewards
+Disallow: /checkin
+Disallow: /my-team
+
+Sitemap: https://bookboll.com/sitemap.xml

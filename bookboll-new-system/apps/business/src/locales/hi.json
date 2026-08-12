@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "होम",
+    "venues": "स्थान",
+    "events": "इवेंट",
+    "memberships": "सदस्यताएँ"
+  },
+  "account": {
+    "myProfile": "मेरी प्रोफ़ाइल",
+    "myRewards": "मेरे रिवॉर्ड",
+    "myBookings": "मेरी बुकिंग",
+    "myEvents": "मेरे इवेंट",
+    "settings": "खाता और फ़ोटो",
+    "signOut": "साइन आउट",
+    "signIn": "साइन इन"
+  },
+  "header": {
+    "setLocation": "स्थान चुनें",
+    "changeLocation": "स्थान बदलें"
+  },
+  "footer": {
+    "poweredBy": "Bookboll द्वारा संचालित",
+    "adminLogin": "व्यवसाय / एडमिन लॉगिन"
+  },
+  "common": {
+    "language": "भाषा"
+  }
+}

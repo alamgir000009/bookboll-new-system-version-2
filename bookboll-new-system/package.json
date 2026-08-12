@@ -1,0 +1,15 @@
+{
+  "name": "bookboll-root",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Convenience root. apps/web, apps/business, apps/admin are fully standalone.",
+  "scripts": {
+    "install:all": "npm --prefix apps/web install && npm --prefix apps/business install && npm --prefix apps/admin install",
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:business": "npm --prefix apps/business run dev",
+    "dev:admin": "npm --prefix apps/admin run dev",
+    "build:web": "npm --prefix apps/web run build",
+    "build:business": "npm --prefix apps/business run build",
+    "build:admin": "npm --prefix apps/admin run build"
+  }
+}

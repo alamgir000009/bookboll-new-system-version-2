@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "الرئيسية",
+    "venues": "الأماكن",
+    "events": "الفعاليات",
+    "memberships": "العضويات"
+  },
+  "account": {
+    "myProfile": "ملفي الشخصي",
+    "myRewards": "مكافآتي",
+    "myBookings": "حجوزاتي",
+    "myEvents": "فعالياتي",
+    "settings": "الحساب والصور",
+    "signOut": "تسجيل الخروج",
+    "signIn": "تسجيل الدخول"
+  },
+  "header": {
+    "setLocation": "تحديد الموقع",
+    "changeLocation": "تغيير الموقع"
+  },
+  "footer": {
+    "poweredBy": "مدعوم من Bookboll",
+    "adminLogin": "دخول الأعمال / المشرف"
+  },
+  "common": {
+    "language": "اللغة"
+  }
+}
