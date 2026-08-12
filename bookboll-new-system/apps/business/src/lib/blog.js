@@ -1,15 +1,12 @@
 /**
- * blog.js — data + helpers for the marketplace blog.
+ * blog.js — Bookboll for Business blog helpers.
  *
- * Public storefront uses the read helpers (published posts only, enforced by RLS).
- * The super-admin dashboard uses the CRUD helpers. Body is markdown, rendered by a small
- * XSS-safe subset renderer (no dependency): the source is HTML-escaped first, then a fixed
- * set of inline/block transforms are applied, so authored content can never inject tags.
- *
- * Best-effort: if the `blog_posts` table isn't migrated yet, reads return [] / null and the
- * pages render an empty state instead of throwing.
+ * Public reads use the Laravel API (`type=main|business`). CRUD helpers below still
+ * talk to Supabase for legacy admin use; the business app only uses the read path.
+ * Body rendering is an XSS-safe markdown/HTML subset (no dependency).
  */
 import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 // ── Slug ─────────────────────────────────────────────────────────────────────
 export function slugify(s) {
@@ -19,6 +16,35 @@ export function slugify(s) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80)
+}
+
+/** Map legacy audience label → Laravel posts.type */
+function audienceToType(audience) {
+  return audience === 'business' ? 'business' : 'main'
+}
+
+/** Normalize a Laravel Post into the shape the Vue pages expect. */
+function mapLaravelPost(post) {
+  if (!post) return null
+  const tags = Array.isArray(post.tags)
+    ? post.tags.map((t) => (typeof t === 'string' ? t : t?.name)).filter(Boolean)
+    : []
+  return {
+    id: post.id,
+    title: post.title,
+    slug: post.slug,
+    excerpt: post.excerpt || '',
+    cover_image: post.featured_image || '',
+    author_name: post.author?.name || 'Bookboll',
+    tags,
+    published_at: post.published_at,
+    updated_at: post.updated_at,
+    body: post.content || '',
+    meta_title: post.seo_title || '',
+    meta_description: post.seo_description || '',
+    status: post.status,
+    type: post.type,
+  }
 }
 
 // Scope a query to the right blog: a provider's posts (ownerId set) or the Bookboll
@@ -51,34 +77,62 @@ function audienceColMissing(error) {
 }
 
 // ── Reads (public) ───────────────────────────────────────────────────────────
-// `ownerId` = a provider's id for their white-label blog, else null = a Bookboll blog,
-// picked by `audience` ('marketplace' default, or 'business' for /for-business/blog).
+// Bookboll posts: Laravel API filtered by type (main | business).
+// `ownerId` set still uses Supabase (provider white-label blogs — unused by this app).
 export async function loadPublishedPosts({ limit = 50, ownerId = null, audience = 'marketplace' } = {}) {
+  if (!ownerId) {
+    try {
+      const res = await apiFetch('/blog-articles', {
+        query: {
+          type: audienceToType(audience),
+          records_per_page: limit,
+        },
+      })
+      if (!res.success) return []
+      const rows = res.data?.blogArticles?.data || []
+      return rows.map(mapLaravelPost).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
   const base = () => supabase.from('blog_posts')
     .select('id, title, slug, excerpt, cover_image, author_name, tags, published_at')
     .eq('status', 'published')
   const order = (q) => q.order('published_at', { ascending: false, nullsFirst: false }).limit(limit)
   try {
     let { data, error } = await order(scopeAudience(scopeOwner(base(), ownerId), ownerId, audience))
-    if (error && !ownerId && audienceColMissing(error)) {
-      if (audience === 'business') return []                       // no business blog before the SQL
+    if (error && audienceColMissing(error)) {
+      if (audience === 'business') return []
       ;({ data, error } = await order(scopeOwner(base(), ownerId)))
     }
-    if (error && !ownerId && ownerColMissing(error)) ({ data, error } = await order(base()))
+    if (error && ownerColMissing(error)) ({ data, error } = await order(base()))
     if (error) return []
     return data || []
   } catch { return [] }
 }
 
 export async function loadPostBySlug(slug, ownerId = null, audience = 'marketplace') {
+  if (!ownerId) {
+    try {
+      const res = await apiFetch(`/blog-articles/${encodeURIComponent(slug)}`, {
+        query: { type: audienceToType(audience) },
+      })
+      if (!res.success) return null
+      return mapLaravelPost(res.data?.post)
+    } catch {
+      return null
+    }
+  }
+
   const base = () => supabase.from('blog_posts').select('*').eq('slug', slug).eq('status', 'published')
   try {
     let { data, error } = await scopeAudience(scopeOwner(base(), ownerId), ownerId, audience).maybeSingle()
-    if (error && !ownerId && audienceColMissing(error)) {
+    if (error && audienceColMissing(error)) {
       if (audience === 'business') return null
       ;({ data, error } = await scopeOwner(base(), ownerId).maybeSingle())
     }
-    if (error && !ownerId && ownerColMissing(error)) ({ data, error } = await base().maybeSingle())
+    if (error && ownerColMissing(error)) ({ data, error } = await base().maybeSingle())
     return data || null
   } catch { return null }
 }
