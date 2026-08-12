@@ -3,6 +3,7 @@
 use App\Http\Controllers\AddOnController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\BookingController;
+use App\Http\Controllers\BusinessController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
@@ -38,6 +39,13 @@ Route::post('reset-password', [UserController::class, 'reset'])->name('reset-pas
 Route::post('admin-app/register', [UserController::class, 'registerAdminAppUser'])->name('admin-app.register');
 Route::post('admin-app/forgot-password', [UserController::class, 'adminAppForgotPassword'])->name('admin-app.forgot-password');
 Route::post('admin-app/reset-password', [UserController::class, 'adminAppResetPassword'])->name('admin-app.reset-password');
+
+// Bookboll for Business — public provider signup
+Route::prefix('business')->name('business.')->group(function () {
+    Route::post('register', [BusinessController::class, 'register'])->name('register');
+    Route::get('username-available', [BusinessController::class, 'usernameAvailable'])->name('username-available');
+    Route::get('countries', [BusinessController::class, 'countries'])->name('countries');
+});
 
 Route::middleware(['auth:sanctum'])->group(function () {
 

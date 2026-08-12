@@ -12,9 +12,15 @@ return [
         'guard',
     ],
 
+    /** Provider / business-owner roles (Bookboll for Business). */
+    'provider_roles' => [
+        'provider_admin',
+    ],
+
     'protected_roles' => [
         'super_admin',
         'customer',
+        'provider_admin',
     ],
 
     'modules' => [
@@ -377,6 +383,28 @@ return [
                 'bookings' => 'verification_view_only',
                 'calendar' => 'read_only',
             ],
+        ],
+
+        /** Business owner — ops for their own business (not platform admin modules). */
+        'provider_admin' => [
+            'permissions' => [
+                'dashboard'    => ['view'],
+                'calendar'     => ['view'],
+                'bookings'     => ['view', 'create', 'update', 'delete', 'cancel', 'confirm', 'reschedule', 'complete', 'export', 'generate_invoice'],
+                'payments'     => ['view', 'create', 'update', 'confirm', 'export', 'mark_received', 'mark_paid', 'generate_link', 'download_invoice'],
+                'venues'       => ['view', 'create', 'update', 'delete', 'sort', 'reorder'],
+                'listings'     => ['view', 'create', 'update', 'delete', 'publish', 'sort', 'manage_images'],
+                'special-days' => ['view', 'create', 'update', 'delete', 'bulk_create'],
+                'resources'    => ['view', 'create', 'update', 'delete'],
+                'add-ons'      => ['view', 'create', 'update', 'delete', 'sort'],
+                'promocodes'   => ['view', 'create', 'update', 'delete', 'validate', 'apply', 'remove'],
+                'customers'    => ['view', 'create', 'update', 'export', 'manage_tags', 'manage_status'],
+                'invoices'     => ['view', 'create', 'export', 'download'],
+                'settings'     => ['view', 'update'],
+                'locations'    => ['view', 'create', 'update', 'delete'],
+            ],
+            'venue_restricted' => true,
+            'restrictions'     => [],
         ],
     ],
 

@@ -23,11 +23,14 @@ return [
         'http://localhost:8081',
         'http://localhost:5173',
         'http://localhost:5174',
+        'http://localhost:5175',
 
         'https://bookboll.com',
         'https://www.bookboll.com',
         'https://admin.bookboll.com',
         'https://www.admin.bookboll.com',
+        'https://business.bookboll.com',
+        'https://www.business.bookboll.com',
 
         'https://staging.bookboll.com',
         'https://stagingadmin.bookboll.com',
