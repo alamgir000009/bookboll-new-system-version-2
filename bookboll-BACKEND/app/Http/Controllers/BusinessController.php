@@ -24,4 +24,9 @@ class BusinessController extends Controller
     {
         return $this->businessService->countries($request);
     }
+
+    public function updateBrand(Request $request)
+    {
+        return $this->businessService->updateBrand($request);
+    }
 }

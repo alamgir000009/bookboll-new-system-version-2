@@ -6,9 +6,7 @@ use App\Models\Business;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use Nnjeim\World\World;
 
 class BusinessService
@@ -19,7 +17,6 @@ class BusinessService
         private Business $business,
     ) {}
 
-    /** Normalize a username slug: lowercase, a-z0-9- only, max 30. */
     public static function normalizeUsername(?string $username): string
     {
         $u = strtolower(trim((string) $username));
@@ -81,7 +78,7 @@ class BusinessService
 
     public function register(Request $request)
     {
-        $validator = Validator::make($request->all(), [
+        $data = $request->validate([
             'name'                  => 'required|string|max:100',
             'business_name'         => 'required|string|max:150',
             'username'              => 'required|string|min:3|max:30',
@@ -92,11 +89,6 @@ class BusinessService
             'country_id'            => 'nullable|integer|exists:countries,id',
         ]);
 
-        if ($validator->fails()) {
-            throw new ValidationException($validator);
-        }
-
-        $data     = $validator->validated();
         $username = self::normalizeUsername($data['username']);
 
         if (strlen($username) < 3 || ! preg_match('/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/', $username)) {
@@ -154,5 +146,41 @@ class BusinessService
             'roles'    => $user->getRoleNames()->values(),
             'token'    => $token,
         ], 201);
+    }
+
+    public function updateBrand(Request $request)
+    {
+        $business = $request->user()?->ownedBusiness();
+
+        if (! $business) {
+            return sendError('No business found for this account.', [], 404);
+        }
+
+        $hex = ['nullable', 'string', 'regex:/^#([A-Fa-f0-9]{3}|[A-Fa-f0-9]{6})$/'];
+
+        $data = $request->validate([
+            'brand_name'             => 'required|string|max:150',
+            'brand_tagline'          => 'nullable|string|max:255',
+            'brand_logo_url'         => 'nullable|url|max:2048',
+            'brand_primary'          => $hex,
+            'brand_accent'           => $hex,
+            'brand_meta_title'       => 'nullable|string|max:150',
+            'brand_meta_description' => 'nullable|string|max:500',
+        ]);
+
+        $business->update([
+            'brand_name'             => $data['brand_name'],
+            'brand_tagline'          => $data['brand_tagline'] ?? null,
+            'brand_logo_url'         => $data['brand_logo_url'] ?? null,
+            'brand_primary'          => $data['brand_primary'] ?? null,
+            'brand_accent'           => $data['brand_accent'] ?? null,
+            'brand_meta_title'       => $data['brand_meta_title'] ?? null,
+            'brand_meta_description' => $data['brand_meta_description'] ?? null,
+            'brand_enabled'          => true,
+        ]);
+
+        return sendSuccess('Business brand updated successfully', [
+            'business' => $business->fresh(),
+        ]);
     }
 }

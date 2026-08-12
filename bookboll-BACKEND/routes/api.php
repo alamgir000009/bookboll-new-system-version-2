@@ -54,6 +54,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('me', [UserController::class, 'me'])->name('me');
     Route::post('subscribe-onesignal', [UserController::class, 'subscribeOneSignal'])->name('customer.subscribe-onesignal');
 
+    Route::put('business/brand', [BusinessController::class, 'updateBrand'])->name('business.brand.update');
+
     Route::prefix('admin')->middleware(['checkRoles:super_admin,admin,senior_employee,junior_employee,guard'])->group(function () {
 
         Route::apiResource('post-categories', PostCategoryController::class);
