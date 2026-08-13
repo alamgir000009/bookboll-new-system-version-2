@@ -5,15 +5,15 @@
  * Three simple steps:
  *   1. Business details  → POST /api/business/register (Laravel) creates user +
  *      businesses row + provider_admin + Sanctum token (stored in localStorage).
- *   2. Set up website    → UI-only for now (brand fields not persisted to Laravel yet).
- *      Skippable — finish later in My Website once that API exists.
+ *   2. Set up website    → PUT /api/business/brand (Laravel) saves brand_* fields.
+ *      Skippable — Skip advances without writing; finish later in My Website.
  *   3. Done              → welcome + the live website link → admin login (email prefilled).
  *
  * Kept deliberately light: only step 1 is required; step 2 pre-fills smart defaults
  * (brand name = business name, subdomain = username, teal theme).
  */
 import { ref, computed, watch, onMounted } from 'vue'
-import { registerBusiness, checkUsername as apiCheckUsername, loadCountries, firstApiError } from '../lib/businessAuth.js'
+import { registerBusiness, checkUsername as apiCheckUsername, loadCountries, updateBusinessBrand, firstApiError, getApiToken } from '../lib/businessAuth.js'
 import { uploadImage } from '../lib/imageUpload.js'
 import { brandPreviewUrl, brandHost, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
 import { Eye, EyeOff, Loader, Check, ArrowRight, ArrowLeft, Globe, Upload, X, Rocket, Copy, ExternalLink, RotateCcw, Home, Dumbbell, GraduationCap, Search, Sparkles, Lock } from 'lucide-vue-next'
@@ -149,11 +149,33 @@ async function onLogo(e) {
 function removeLogo() { logoUrl.value = ''; if (logoInput.value) logoInput.value.value = '' }
 
 async function finishWebsite() {
-  // Brand/website persist to Laravel is a later step — advance the wizard only.
   err2.value = ''
+  if (!brandName.value.trim()) {
+    err2.value = 'Please enter a website / brand name.'
+    return
+  }
+  if (!getApiToken()) {
+    err2.value = 'Your session expired — go back and create your account again.'
+    return
+  }
+
   saving.value = true
-  await Promise.resolve()
+  const res = await updateBusinessBrand({
+    brand_name: brandName.value.trim(),
+    brand_tagline: tagline.value.trim() || null,
+    brand_logo_url: logoUrl.value.trim() || null,
+    brand_primary: brandColor.value || null,
+    brand_accent: accentColor.value || null,
+    brand_meta_title: metaTitle.value.trim() || null,
+    brand_meta_description: metaDesc.value.trim() || null,
+  })
   saving.value = false
+
+  if (!res.success) {
+    err2.value = firstApiError(res, 'Could not save your website settings — please try again.')
+    return
+  }
+
   step.value = 3
 }
 

@@ -1,23 +1,88 @@
 import { ref, computed } from 'vue'
-import { supabase } from './supabase.js'
 import { can as roleCan } from './permissions.js'
 
 const STORAGE_KEY = 'bb_active_user'
 
+const STAFF_ROLE_PRIORITY = [
+  'super_admin',
+  'admin',
+  'senior_employee',
+  'junior_employee',
+  'guard',
+]
+
+export const ALLOWED_PORTAL_ROLES = new Set([
+  ...STAFF_ROLE_PRIORITY,
+  'provider_admin',
+])
+
 export const activeUserId = ref(localStorage.getItem(STORAGE_KEY) || '')
 export const currentUser = ref(null)
 export const allUsers = ref([])
-// The REAL signed-in account's email (set by lib/auth.js from the Supabase session).
-// Impersonation is anchored to this — the active identity can never out-rank it.
+// The REAL signed-in account's email (set by lib/auth.js from the Sanctum session).
 export const realAuthEmail = ref('')
 
+/** Pick the best Spatie role name for the admin shell. */
+export function pickPrimaryRole(roles = []) {
+  const list = (Array.isArray(roles) ? roles : []).map(String)
+  for (const r of STAFF_ROLE_PRIORITY) {
+    if (list.includes(r)) return r
+  }
+  if (list.includes('provider_admin')) return 'provider_admin'
+  return list[0] || 'provider_admin'
+}
+
+/**
+ * Map a Laravel User + Spatie roles into the shape App.vue / permissions expect
+ * (previously an admin_users row from Supabase).
+ */
+export function mapLaravelUserToAdmin(user, roles = []) {
+  if (!user) return null
+  const role = pickPrimaryRole(roles)
+  return {
+    id: String(user.id),
+    source: 'laravel',
+    full_name: user.name || user.email || 'User',
+    email: user.email || '',
+    role,
+    status: user.status || 'active',
+    business_name: null,
+    business_status: null,
+    username: null,
+    country_id: null,
+    owner_user_id: null,
+    custom_permissions: null,
+    assigned_country_ids: [],
+    assigned_location_ids: [],
+    assigned_listing_ids: [],
+    assigned_program_ids: [],
+  }
+}
+
+/** Apply a Laravel session user into currentUser / allUsers for the shell. */
+export function applyLaravelUser(user, roles = []) {
+  const mapped = mapLaravelUserToAdmin(user, roles)
+  if (!mapped) {
+    clearLaravelUser()
+    return null
+  }
+  currentUser.value = mapped
+  allUsers.value = [mapped]
+  activeUserId.value = mapped.id
+  realAuthEmail.value = (mapped.email || '').toLowerCase()
+  try { localStorage.setItem(STORAGE_KEY, mapped.id) } catch { /* ignore */ }
+  return mapped
+}
+
+export function clearLaravelUser() {
+  currentUser.value = null
+  allUsers.value = []
+  activeUserId.value = ''
+  realAuthEmail.value = ''
+  try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+}
+
 // May the real signed-in account act as `row`?
-//   • your own identities (email match)      → always
-//   • real super admin                        → anyone (the HQ act-as feature)
-//   • real country admin / platform staff     → anyone EXCEPT a super admin
-//   • real provider or below                  → own identities only
-// This single rule backs the topbar switcher list, setActiveUser, and the boot
-// fallback — so a provider session can never escalate to (or default into) super admin.
 export function canActAs(row) {
   if (!row) return false
   const email = realAuthEmail.value
@@ -28,36 +93,20 @@ export function canActAs(row) {
   if (own.some(u => u.role === 'country_admin' || u.role === 'platform_staff')) return row.role !== 'super_admin'
   return false
 }
-// The identities offered in the topbar switcher (only what the real account may use).
+
 export const switchableUsers = computed(() => allUsers.value.filter(u => canActAs(u)))
 
+/**
+ * Hydrate shell context after auth. Sanctum path already sets currentUser via
+ * applyLaravelUser — do not reload from Supabase.
+ */
 export async function loadUserContext() {
-  const { data } = await supabase.from('admin_users').select('*').order('role')
-  allUsers.value = data || []
-
-  let cur = activeUserId.value ? (allUsers.value.find(x => x.id === activeUserId.value) || null) : null
-  // A stored selection the real account isn't allowed to use (stale, or an attempted
-  // escalation via localStorage) is discarded instead of honoured.
-  if (cur && !canActAs(cur)) cur = null
-  if (!cur) {
-    // Default to the signed-in account's OWN identity — never to the super-admin row.
-    const email = realAuthEmail.value
-    const own = email ? allUsers.value.filter(u => (u.email || '').toLowerCase() === email) : []
-    cur = own.find(u => u.role === 'super_admin') || own[0] || null
-  }
-  currentUser.value = cur
-  if (cur) {
-    activeUserId.value = cur.id
-    localStorage.setItem(STORAGE_KEY, cur.id)
-  } else {
-    activeUserId.value = ''
-    localStorage.removeItem(STORAGE_KEY)
-  }
+  if (currentUser.value?.source === 'laravel') return
 }
 
 export function setActiveUser(id) {
   const row = allUsers.value.find(x => x.id === id) || null
-  if (!canActAs(row)) return   // silently refuse identities above the real account's rank
+  if (!canActAs(row)) return
   activeUserId.value = id
   currentUser.value = row
   localStorage.setItem(STORAGE_KEY, id || '')
@@ -67,9 +116,6 @@ export const role = computed(() => currentUser.value?.role || 'super_admin')
 export const isSuperAdmin = computed(() => role.value === 'super_admin')
 export const isCountryAdmin = computed(() => role.value === 'country_admin')
 export const isProviderScoped = computed(() =>
-  // provider_supervisor / provider_viewer belong here too — leaving them out made
-  // isProviderScoped-gated pages (Calendar, Check-in, Payments) treat them as
-  // platform users and show them EVERY business's data.
   ['provider_admin', 'facility_admin', 'provider_supervisor', 'provider_viewer', 'senior_employee', 'junior_employee', 'guard', 'staff'].includes(role.value)
 )
 export const currentOwnerUserId = computed(() => {
@@ -83,12 +129,6 @@ export const allBusinessOwners = computed(() =>
   allUsers.value.filter(u => u.role === 'provider_admin')
 )
 
-// ── Per-user scope (location / listing / program restriction) ─────────────────
-// Owners (provider_admin) and platform admins (super/country) see their whole
-// business / the whole platform. Managers (facility_admin) and Staff can be
-// pinned to specific locations / listings / programs via these arrays; empty =
-// no restriction (all within their business). Columns added by the roles
-// migration; absent → treated as empty.
 export const assignedCountryIds  = computed(() => currentUser.value?.assigned_country_ids || [])
 export const assignedLocationIds = computed(() => currentUser.value?.assigned_location_ids || [])
 export const assignedListingIds  = computed(() => currentUser.value?.assigned_listing_ids || [])
@@ -96,11 +136,9 @@ export const assignedProgramIds  = computed(() => currentUser.value?.assigned_pr
 export const hasScopeRestriction = computed(() =>
   (assignedLocationIds.value.length + assignedListingIds.value.length + assignedProgramIds.value.length) > 0)
 
-// Only Managers/Staff (not Owners, not platform admins) are narrowed by assignment.
 function scopeNarrows() {
   return !isSuperAdmin.value && !isCountryAdmin.value && role.value !== 'provider_admin'
 }
-/** Narrow a list of locations (objects with .id) to the user's assigned scope. */
 export function scopeLocations(locs) {
   if (!scopeNarrows()) return locs
   const ids = assignedLocationIds.value
@@ -108,7 +146,6 @@ export function scopeLocations(locs) {
   const set = new Set(ids)
   return locs.filter(l => set.has(l.id))
 }
-/** Narrow listings (objects with .id) to assigned listings, if any are set. */
 export function scopeListings(items) {
   if (!scopeNarrows()) return items
   const ids = assignedListingIds.value
@@ -116,7 +153,6 @@ export function scopeListings(items) {
   const set = new Set(ids)
   return items.filter(i => set.has(i.id))
 }
-/** Narrow programs (objects with .id) to assigned programs, if any are set. */
 export function scopePrograms(items) {
   if (!scopeNarrows()) return items
   const ids = assignedProgramIds.value
@@ -125,13 +161,8 @@ export function scopePrograms(items) {
   return items.filter(i => set.has(i.id))
 }
 
-// Per-user permission overrides ({ grant:[], revoke:[] }) stored on the user row.
-// Absent until the roles migration adds the column → treated as "no overrides".
 export const currentOverrides = computed(() => currentUser.value?.custom_permissions || null)
 
-// Reactive capability check for the active user. Use in templates like
-// `v-if="can(CAP.MANAGE_BOOKINGS)"` — re-evaluates when the active role or the
-// user's per-user overrides change.
 export function can(cap) {
   return roleCan(cap, role.value, currentOverrides.value)
 }

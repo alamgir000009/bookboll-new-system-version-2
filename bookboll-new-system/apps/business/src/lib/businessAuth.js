@@ -90,3 +90,34 @@ export async function loadCountries(search = '') {
     query: search ? { search } : null,
   })
 }
+
+/**
+ * Persist website/brand fields from signup step 2 (or My Website later).
+ * Requires the Sanctum token from registerBusiness / login.
+ *
+ * @param {{
+ *   brand_name: string,
+ *   brand_tagline?: string|null,
+ *   brand_logo_url?: string|null,
+ *   brand_primary?: string|null,
+ *   brand_accent?: string|null,
+ *   brand_meta_title?: string|null,
+ *   brand_meta_description?: string|null,
+ * }} payload
+ */
+export async function updateBusinessBrand(payload) {
+  const token = getApiToken()
+  const res = await apiFetch('/business/brand', {
+    method: 'PUT',
+    body: payload,
+    token: token || null,
+  })
+  if (res.success && res.data?.business) {
+    const prev = getBusinessSnapshot() || {}
+    setBusinessSnapshot({
+      ...prev,
+      business: res.data.business,
+    })
+  }
+  return res
+}

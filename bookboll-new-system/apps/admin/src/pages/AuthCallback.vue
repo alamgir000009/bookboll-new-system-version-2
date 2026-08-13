@@ -1,49 +1,30 @@
 <script setup>
 /**
- * Cross-origin session handoff from business.bookboll.com/signup → admin.bookboll.com.
- * Reads access_token + refresh_token from the query string, establishes the
- * Supabase session on this origin, then lands on the dashboard.
+ * Legacy handoff route from older Supabase signup flows.
+ * Sanctum sessions are established via /login — redirect there and preserve
+ * email / welcome query params for prefilling.
  */
-import { onMounted, ref } from 'vue'
+import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
-import { initAuth } from '../lib/auth.js'
 import { Loader } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
-const err = ref('')
 
-onMounted(async () => {
-  const access_token = String(route.query.access_token || '')
-  const refresh_token = String(route.query.refresh_token || '')
-  const welcome = route.query.welcome === '1'
+onMounted(() => {
   const email = String(route.query.email || '')
-
-  if (!access_token || !refresh_token) {
-    router.replace({ path: '/login', query: email ? { email } : {} })
-    return
-  }
-
-  const { error } = await supabase.auth.setSession({ access_token, refresh_token })
-  if (error) {
-    err.value = error.message || 'Could not restore your session.'
-    setTimeout(() => {
-      router.replace({ path: '/login', query: email ? { email } : {} })
-    }, 1600)
-    return
-  }
-
-  await initAuth()
-  router.replace(welcome ? '/admin?welcome=1' : '/admin')
+  const welcome = route.query.welcome === '1'
+  const query = {}
+  if (email) query.email = email
+  if (welcome) query.welcome = '1'
+  router.replace({ path: '/login', query })
 })
 </script>
 
 <template>
   <div class="cb">
     <Loader :size="22" class="spin" />
-    <p v-if="err">{{ err }}</p>
-    <p v-else>Opening your dashboard…</p>
+    <p>Opening sign-in…</p>
   </div>
 </template>
 
