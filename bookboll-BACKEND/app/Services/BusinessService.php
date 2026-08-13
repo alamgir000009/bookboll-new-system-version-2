@@ -7,7 +7,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
-use Nnjeim\World\World;
+use Nnjeim\World\Models\Country;
 
 class BusinessService
 {
@@ -15,6 +15,7 @@ class BusinessService
     public function __construct(
         private User $user,
         private Business $business,
+        private UserService $userService,
     ) {}
 
     public static function normalizeUsername(?string $username): string
@@ -58,20 +59,21 @@ class BusinessService
     {
         $search = $request->query('search');
 
-        $action = World::countries([
-            'fields' => 'id,name,iso2',
-            'search' => $search,
-        ]);
-
-        if (! $action->success) {
-            return sendSuccess('Countries fetched successfully', ['countries' => []]);
-        }
-
-        $countries = $action->data->map(fn($country) => [
-            'id'   => data_get($country, 'id'),
-            'name' => data_get($country, 'name'),
-            'iso2' => data_get($country, 'iso2'),
-        ])->values();
+        $countries = Country::select('id', 'name', 'iso2')
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('iso2', 'like', "%{$search}%");
+                });
+            })
+            ->orderBy('name')
+            ->get()
+            ->map(fn($country) => [
+                'id'   => $country->id,
+                'name' => $country->name,
+                'iso2' => $country->iso2,
+            ])
+            ->values();
 
         return sendSuccess('Countries fetched successfully', compact('countries'));
     }
@@ -182,5 +184,158 @@ class BusinessService
         return sendSuccess('Business brand updated successfully', [
             'business' => $business->fresh(),
         ]);
+    }
+
+    public function adminIndex(Request $request)
+    {
+        $actor = $request->user();
+        $search           = $request->search;
+        $status           = $request->status;
+        $countryId        = $request->country_id;
+        $recordsPerPage   = (int) ($request->query('records_per_page') ?? 50);
+
+        $query = $this->business::with(['owner'])->latest()
+            ->when($search, function ($query) use ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'LIKE', "%{$search}%")
+                        ->orWhere('username', 'LIKE', "%{$search}%")
+                        ->orWhereHas('owner', function ($oq) use ($search) {
+                            $oq->where('email', 'LIKE', "%{$search}%")
+                                ->orWhere('name', 'LIKE', "%{$search}%");
+                        });
+                });
+            })
+            ->when($countryId, function ($query) use ($countryId) {
+                $query->where('country_id', $countryId);
+            })
+            ->when($status, function ($query) use ($status) {
+                $query->where('status', $status);
+            });
+
+        if ($actor && $actor->hasRole('country_admin') && ! $actor->hasRole('super_admin')) {
+            $allowed = collect($actor->assigned_country_ids ?? [])->filter()->map(fn($id) => (int) $id)->all();
+            if ($actor->country_id) {
+                $allowed[] = (int) $actor->country_id;
+            }
+            $allowed = array_values(array_unique($allowed));
+            if ($allowed) {
+                $query->whereIn('country_id', $allowed);
+            }
+        }
+
+        $paginated = $query->paginate($recordsPerPage);
+
+        $paginated->getCollection()->transform(function (Business $b) {
+            $owner = $b->owner;
+            $staffCount = $owner
+                ? $this->user::where('owner_user_id', $owner->id)->count()
+                : 0;
+
+            return [
+                'id'              => $b->id,
+                'name'            => $b->name,
+                'business_name'   => $b->name,
+                'username'        => $b->username,
+                'business_types'  => $b->business_types ?? [],
+                'status'          => $b->status,
+                'business_status' => $b->status,
+                'country_id'      => $b->country_id,
+                'owner_user_id'   => $b->owner_id,
+                'email'           => $owner?->email,
+                'full_name'       => $owner?->name,
+                'phone'           => $owner?->phone,
+                'staff_count'     => $staffCount,
+                'plan'            => 'free',
+                'premium_since'   => null,
+                'created_at'      => $b->created_at?->toIso8601String(),
+            ];
+        });
+
+        return sendSuccess('Businesses fetched successfully', [
+            'businesses' => $paginated,
+        ]);
+    }
+
+    public function teamIndex(Request $request)
+    {
+        $owner = $request->user();
+        if (! $owner->hasRole('provider_admin')) {
+            return sendError('Only business owners can manage their team.', [], 403);
+        }
+
+        $members = $this->user::where('owner_user_id', $owner->id)
+            ->latest()
+            ->get()
+            ->map(fn(User $u) => $this->userService->formatTeamUser($u))
+            ->values();
+
+        return sendSuccess('Team fetched successfully', [
+            'users' => $members,
+        ]);
+    }
+
+    public function teamStore(Request $request)
+    {
+        $owner = $request->user();
+        if (! $owner->hasRole('provider_admin')) {
+            return sendError('Only business owners can manage their team.', [], 403);
+        }
+
+        $request->merge([
+            'owner_user_id' => $owner->id,
+            'status'        => $request->input('status', User::ACTIVE),
+        ]);
+
+        $allowed = config('roles.provider_team_roles', []);
+        if (! in_array($request->input('role'), $allowed, true)) {
+            return sendError('Invalid team role.', [
+                'role' => ['Choose a role below Owner.'],
+            ], 422);
+        }
+
+        return $this->userService->createUser($request);
+    }
+
+    public function teamUpdate(Request $request, $userId)
+    {
+        $owner = $request->user();
+        if (! $owner->hasRole('provider_admin')) {
+            return sendError('Only business owners can manage their team.', [], 403);
+        }
+
+        $member = $this->user::where('id', $userId)->where('owner_user_id', $owner->id)->first();
+        if (! $member) {
+            return sendError('Team member not found.', [], 404);
+        }
+
+        if ($request->filled('role')) {
+            $allowed = config('roles.provider_team_roles', []);
+            if (! in_array($request->input('role'), $allowed, true)) {
+                return sendError('Invalid team role.', [
+                    'role' => ['Choose a role below Owner.'],
+                ], 422);
+            }
+        }
+
+        $request->merge(['owner_user_id' => $owner->id]);
+
+        return $this->userService->updateUser($request, $member->id);
+    }
+
+    public function teamDestroy(Request $request, $userId)
+    {
+        $owner = $request->user();
+        if (! $owner->hasRole('provider_admin')) {
+            return sendError('Only business owners can manage their team.', [], 403);
+        }
+
+        $member = $this->user::where('id', $userId)->where('owner_user_id', $owner->id)->first();
+        if (! $member) {
+            return sendError('Team member not found.', [], 404);
+        }
+
+        $member->delete();
+
+        return sendSuccess('Team member deleted successfully');
     }
 }

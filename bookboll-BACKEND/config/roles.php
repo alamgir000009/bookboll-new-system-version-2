@@ -6,15 +6,40 @@ return [
 
     'staff_roles' => [
         'super_admin',
+        'country_admin',
+        'platform_staff',
         'admin',
         'senior_employee',
         'junior_employee',
         'guard',
     ],
 
-    /** Provider / business-owner roles (Bookboll for Business). */
+    /** Provider / business roles (Bookboll for Business + My Team). */
     'provider_roles' => [
         'provider_admin',
+        'facility_admin',
+        'provider_supervisor',
+        'staff',
+        'provider_viewer',
+    ],
+
+    /** Roles shown in Platform Team (no owner_user_id). */
+    'platform_team_roles' => [
+        'super_admin',
+        'country_admin',
+        'platform_staff',
+        'admin',
+    ],
+
+    /** Roles assignable as business staff under a provider_admin. */
+    'provider_team_roles' => [
+        'facility_admin',
+        'provider_supervisor',
+        'staff',
+        'provider_viewer',
+        'senior_employee',
+        'junior_employee',
+        'guard',
     ],
 
     'protected_roles' => [
@@ -385,6 +410,58 @@ return [
             ],
         ],
 
+        /** Country-scoped platform admin (same tools as admin, country jurisdiction). */
+        'country_admin' => [
+            'permissions' => [
+                'dashboard'         => ['view'],
+                'calendar'          => ['view'],
+                'bookings'          => ['view', 'create', 'update', 'delete', 'cancel', 'confirm', 'reschedule', 'complete', 'export', 'generate_invoice'],
+                'payments'          => ['view', 'create', 'update', 'delete', 'confirm', 'refund', 'export', 'mark_received', 'mark_paid', 'generate_link', 'download_invoice'],
+                'venues'            => ['view', 'create', 'update', 'delete', 'sort', 'reorder'],
+                'listings'          => ['view', 'create', 'update', 'delete', 'publish', 'sort', 'manage_images'],
+                'special-days'      => ['view', 'create', 'update', 'delete', 'bulk_create'],
+                'resources'         => ['view', 'create', 'update', 'delete'],
+                'add-ons'           => ['view', 'create', 'update', 'delete', 'sort'],
+                'promocodes'        => ['view', 'create', 'update', 'delete', 'validate', 'apply', 'remove'],
+                'loyalty'           => ['view', 'update'],
+                'gift-cards'        => ['view', 'create', 'update', 'delete'],
+                'sports-categories' => ['view', 'create', 'update', 'delete', 'sort', 'manage_types'],
+                'blog'              => ['view', 'create', 'update', 'delete', 'publish', 'manage_categories'],
+                'users'             => ['view', 'create', 'update', 'delete', 'approve', 'reject'],
+                'customers'         => ['view', 'create', 'update', 'delete', 'export', 'manage_tags', 'manage_status'],
+                'invoices'          => ['view', 'create', 'export', 'download'],
+            ],
+            'venue_restricted' => false,
+            'restrictions'     => [
+                'users'      => 'cannot_manage_super_admin',
+                'settings'   => 'view_only',
+                'audit-logs' => 'view_only',
+            ],
+        ],
+
+        /** Bookboll operations staff — catalog + bookings/customers in scope. */
+        'platform_staff' => [
+            'permissions' => [
+                'dashboard'         => ['view'],
+                'calendar'          => ['view'],
+                'bookings'          => ['view', 'create', 'update', 'cancel', 'confirm'],
+                'payments'          => ['view', 'confirm', 'mark_received', 'download_invoice'],
+                'venues'            => ['view'],
+                'listings'          => ['view', 'update', 'publish'],
+                'promocodes'        => ['view', 'create', 'update', 'validate'],
+                'loyalty'           => ['view', 'update'],
+                'sports-categories' => ['view'],
+                'blog'              => ['view', 'create', 'update', 'publish'],
+                'users'             => ['view'],
+                'customers'         => ['view', 'create', 'update', 'manage_tags'],
+                'locations'         => ['view'],
+            ],
+            'venue_restricted' => true,
+            'restrictions'     => [
+                'users' => 'view_only',
+            ],
+        ],
+
         /** Business owner — ops for their own business (not platform admin modules). */
         'provider_admin' => [
             'permissions' => [
@@ -400,11 +477,79 @@ return [
                 'promocodes'   => ['view', 'create', 'update', 'delete', 'validate', 'apply', 'remove'],
                 'customers'    => ['view', 'create', 'update', 'export', 'manage_tags', 'manage_status'],
                 'invoices'     => ['view', 'create', 'export', 'download'],
+                'users'        => ['view', 'create', 'update', 'delete'],
                 'settings'     => ['view', 'update'],
                 'locations'    => ['view', 'create', 'update', 'delete'],
             ],
             'venue_restricted' => true,
             'restrictions'     => [],
+        ],
+
+        /** Manager — day-to-day business ops for assigned venues. */
+        'facility_admin' => [
+            'permissions' => [
+                'dashboard'    => ['view'],
+                'calendar'     => ['view'],
+                'bookings'     => ['view', 'create', 'update', 'delete', 'cancel', 'confirm', 'reschedule', 'complete'],
+                'payments'     => ['view', 'create', 'update', 'confirm', 'mark_received', 'mark_paid', 'generate_link', 'download_invoice'],
+                'venues'       => ['view', 'create', 'update'],
+                'listings'     => ['view', 'create', 'update', 'publish', 'manage_images'],
+                'special-days' => ['view', 'create', 'update', 'delete'],
+                'resources'    => ['view', 'create', 'update'],
+                'add-ons'      => ['view', 'create', 'update'],
+                'promocodes'   => ['view', 'create', 'update', 'validate', 'apply'],
+                'customers'    => ['view', 'create', 'update', 'manage_tags', 'manage_status'],
+                'invoices'     => ['view', 'download'],
+                'users'        => ['view'],
+                'locations'    => ['view', 'update'],
+            ],
+            'venue_restricted' => true,
+            'restrictions'     => [],
+        ],
+
+        /** Supervisor — senior ops + catalog. */
+        'provider_supervisor' => [
+            'permissions' => [
+                'dashboard'    => ['view'],
+                'calendar'     => ['view'],
+                'bookings'     => ['view', 'create', 'update', 'cancel', 'confirm'],
+                'payments'     => ['view', 'confirm', 'mark_received', 'download_invoice'],
+                'venues'       => ['view', 'update'],
+                'listings'     => ['view', 'create', 'update', 'manage_images'],
+                'special-days' => ['view', 'create', 'update'],
+                'promocodes'   => ['view', 'validate', 'apply'],
+                'customers'    => ['view', 'create', 'update', 'manage_tags'],
+                'locations'    => ['view'],
+            ],
+            'venue_restricted' => true,
+            'restrictions'     => [],
+        ],
+
+        /** Front-desk staff. */
+        'staff' => [
+            'permissions' => [
+                'calendar'  => ['view'],
+                'bookings'  => ['view', 'create', 'update', 'confirm'],
+                'payments'  => ['view', 'confirm', 'mark_received'],
+                'customers' => ['view', 'create', 'update'],
+            ],
+            'venue_restricted' => true,
+            'restrictions'     => [
+                'payments' => 'view_only',
+            ],
+        ],
+
+        /** Read-only viewer. */
+        'provider_viewer' => [
+            'permissions' => [
+                'calendar' => ['view'],
+                'bookings' => ['view'],
+            ],
+            'venue_restricted' => true,
+            'restrictions'     => [
+                'bookings' => 'verification_view_only',
+                'calendar' => 'read_only',
+            ],
         ],
     ],
 

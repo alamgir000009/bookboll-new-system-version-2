@@ -5,8 +5,8 @@ namespace App\Services;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Nnjeim\World\Models\City;
+use Nnjeim\World\Models\Country;
 use Nnjeim\World\Models\State;
-use Nnjeim\World\World;
 
 class LocationService
 {
@@ -14,20 +14,21 @@ class LocationService
     {
         $search = $request->query('search');
 
-        $action = World::countries([
-            'fields' => 'id,name,iso2',
-            'search' => $search,
-        ]);
-
-        if (! $action->success) {
-            return sendSuccess('Countries fetched successfully', ['countries' => []]);
-        }
-
-        $countries = $action->data->map(fn ($country) => [
-            'id'   => data_get($country, 'id'),
-            'name' => data_get($country, 'name'),
-            'iso2' => data_get($country, 'iso2'),
-        ])->values();
+        $countries = Country::select('id', 'name', 'iso2')
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('iso2', 'like', "%{$search}%");
+                });
+            })
+            ->orderBy('name')
+            ->get()
+            ->map(fn($country) => [
+                'id'   => $country->id,
+                'name' => $country->name,
+                'iso2' => $country->iso2,
+            ])
+            ->values();
 
         return sendSuccess('Countries fetched successfully', compact('countries'));
     }
@@ -38,21 +39,19 @@ class LocationService
             'country_id' => ['required', 'integer', 'exists:countries,id'],
         ]);
 
-        $action = World::states([
-            'fields'   => 'id,name,country_id',
-            'filters'  => ['country_id' => (int) $request->query('country_id')],
-            'search'   => $request->query('search'),
-        ]);
+        $search = $request->query('search');
 
-        if (! $action->success) {
-            return sendSuccess('States fetched successfully', ['states' => []]);
-        }
-
-        $states = $action->data->map(fn ($state) => [
-            'id'         => data_get($state, 'id'),
-            'name'       => data_get($state, 'name'),
-            'country_id' => data_get($state, 'country_id'),
-        ])->values();
+        $states = State::select('id', 'name', 'country_id')
+            ->where('country_id', (int) $request->query('country_id'))
+            ->when($search, fn($query, $search) => $query->where('name', 'like', "%{$search}%"))
+            ->orderBy('name')
+            ->get()
+            ->map(fn($state) => [
+                'id'         => $state->id,
+                'name'       => $state->name,
+                'country_id' => $state->country_id,
+            ])
+            ->values();
 
         return sendSuccess('States fetched successfully', compact('states'));
     }
@@ -64,30 +63,21 @@ class LocationService
             'country_id' => ['nullable', 'integer', 'exists:countries,id', 'required_without:state_id'],
         ]);
 
-        $filters = [];
+        $search = $request->query('search');
 
-        if ($request->filled('state_id')) {
-            $filters['state_id'] = (int) $request->query('state_id');
-        } elseif ($request->filled('country_id')) {
-            $filters['country_id'] = (int) $request->query('country_id');
-        }
-
-        $action = World::cities([
-            'fields'  => 'id,name,country_id,state_id',
-            'filters' => $filters,
-            'search'  => $request->query('search'),
-        ]);
-
-        if (! $action->success) {
-            return sendSuccess('Cities fetched successfully', ['cities' => []]);
-        }
-
-        $cities = $action->data->map(fn ($city) => [
-            'id'         => data_get($city, 'id'),
-            'name'       => data_get($city, 'name'),
-            'country_id' => data_get($city, 'country_id'),
-            'state_id'   => data_get($city, 'state_id'),
-        ])->values();
+        $cities = City::select('id', 'name', 'country_id', 'state_id')
+            ->when($request->filled('state_id'), fn($query) => $query->where('state_id', (int) $request->query('state_id')))
+            ->when($request->filled('country_id') && ! $request->filled('state_id'), fn($query) => $query->where('country_id', (int) $request->query('country_id')))
+            ->when($search, fn($query, $search) => $query->where('name', 'like', "%{$search}%"))
+            ->orderBy('name')
+            ->get()
+            ->map(fn($city) => [
+                'id'         => $city->id,
+                'name'       => $city->name,
+                'country_id' => $city->country_id,
+                'state_id'   => $city->state_id,
+            ])
+            ->values();
 
         return sendSuccess('Cities fetched successfully', compact('cities'));
     }

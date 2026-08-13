@@ -54,9 +54,12 @@ class RolePermissionMatrix
             'module_actions'   => self::moduleActions(),
             'action_labels'    => config('roles.action_labels', []),
             'restrictions'     => config('roles.restrictions', []),
-            'staff_roles'      => config('roles.staff_roles', []),
-            'protected_roles'  => config('roles.protected_roles', []),
-            'meta_permissions' => config('roles.meta_permissions', []),
+            'staff_roles'          => config('roles.staff_roles', []),
+            'provider_roles'       => config('roles.provider_roles', []),
+            'platform_team_roles'  => config('roles.platform_team_roles', []),
+            'provider_team_roles'  => config('roles.provider_team_roles', []),
+            'protected_roles'      => config('roles.protected_roles', []),
+            'meta_permissions'     => config('roles.meta_permissions', []),
         ];
     }
 

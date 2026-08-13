@@ -1,4 +1,5 @@
 <?php
+
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
@@ -11,6 +12,7 @@ class DatabaseSeeder extends Seeder
             LoyaltyTierTableSeeder::class,
             UserTableSeeder::class,
             RolePermissionTableSeeder::class,
+            TeamDemoSeeder::class,
             SettingTableSeeder::class,
             SportsTypeTableSeeder::class,
             SportsCategoryTableSeeder::class,
@@ -29,6 +31,7 @@ class DatabaseSeeder extends Seeder
             // TransactionTableSeeder::class,
             // PaymentTableSeeder::class,
             // SubscriberTableSeeder::class
+            WorldSeeder::class,
         ]);
     }
 }

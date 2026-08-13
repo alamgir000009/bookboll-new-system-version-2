@@ -56,7 +56,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::put('business/brand', [BusinessController::class, 'updateBrand'])->name('business.brand.update');
 
-    Route::prefix('admin')->middleware(['checkRoles:super_admin,admin,senior_employee,junior_employee,guard'])->group(function () {
+    Route::prefix('business/team')->name('business.team.')->group(function () {
+        Route::get('/', [BusinessController::class, 'teamIndex'])->name('index');
+        Route::post('/', [BusinessController::class, 'teamStore'])->name('store');
+        Route::put('{user}', [BusinessController::class, 'teamUpdate'])->name('update');
+        Route::delete('{user}', [BusinessController::class, 'teamDestroy'])->name('destroy');
+    });
+
+    Route::prefix('admin')->middleware(['checkRoles:super_admin,country_admin,platform_staff,admin,senior_employee,junior_employee,guard'])->group(function () {
 
         Route::apiResource('post-categories', PostCategoryController::class);
         Route::apiResource('posts', PostController::class);
@@ -93,6 +100,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::apiResource('users', UserController::class);
         Route::get('users/required-data', [UserController::class, 'requiredDataForUser']);
+        Route::get('businesses', [BusinessController::class, 'adminIndex'])->name('businesses.index');
         Route::post('users/update-profile', [UserController::class, 'updateProfile']);
         Route::post('customers/register', [CustomerController::class, 'createCustomer']);
 

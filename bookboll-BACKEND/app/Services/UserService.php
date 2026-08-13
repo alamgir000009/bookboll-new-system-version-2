@@ -5,6 +5,7 @@ use App\Mail\CustomerForgotPasswordOtpEmail;
 use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserRejectionEmail;
 use App\Mail\UserWelcomeEmail;
+use App\Models\Business;
 use App\Models\DeletedAccount;
 use App\Models\LoyaltyPoint;
 use App\Models\OnesignalSubscription;
@@ -234,6 +235,8 @@ class UserService
             if ($user->status === $this->userModel::PENDING) {
                 return sendError('Your account is pending admin approval. Please wait for approval before logging in.');
             }
+
+            $user->forceFill(['last_login_at' => now()])->save();
 
             if ($requestFrom == MobileApps::ADMIN) {
                 $token = $user->createToken('bookboll-admin-mobile-app-api-token')->plainTextToken;
@@ -510,45 +513,178 @@ class UserService
     public function list($request)
     {
         $search           = $request->search ?? null;
-        $records_per_page = $request->records_per_page ?? 10;
+        $records_per_page = $request->records_per_page ?? 50;
+        $scope            = $request->scope ?? 'platform';
+        $roleFilter       = $request->role ?? null;
+        $countryId        = $request->country_id ?? null;
+        $ownerUserId      = $request->owner_user_id ?? null;
+
+        $platformRoles     = config('roles.platform_team_roles', ['super_admin', 'country_admin', 'platform_staff', 'admin']);
+        $providerTeamRoles = config('roles.provider_team_roles', []);
+        $legacyStaff       = ['senior_employee', 'junior_employee', 'guard'];
 
         $users = $this->userModel->latest()
-        ->whereHas('roles', function ($query) {
-            $query->whereIn('name', [
-                'admin',
-                'senior_employee',
-                'junior_employee',
-                'guard'
-            ]);
-        })
-        ->with(['venues:id,name'])
-        ->when($search, function ($query, $search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'LIKE', "%{$search}%")
-                    ->orWhere('email', 'LIKE', "%{$search}%")
-                    ->orWhere('status', 'LIKE', "%{$search}%")
-                    ->orWhere('created_at', 'LIKE', "%{$search}%");
+            ->with(['venues:id,name', 'ownedBusiness'])
+            ->when($scope === 'provider_staff', function ($query) use ($providerTeamRoles, $ownerUserId) {
+                $query->whereNotNull('owner_user_id')
+                    ->whereHas('roles', fn ($q) => $q->whereIn('name', $providerTeamRoles));
+                if ($ownerUserId) {
+                    $query->where('owner_user_id', $ownerUserId);
+                }
+            })
+            ->when($scope === 'platform' || $scope === null || $scope === '', function ($query) use ($platformRoles, $legacyStaff, $providerTeamRoles) {
+                // Platform team: platform roles, OR provider-team roles with no owner (orphans / HQ), OR legacy staff without owner.
+                $query->where(function ($outer) use ($platformRoles, $legacyStaff, $providerTeamRoles) {
+                    $outer->whereHas('roles', fn ($q) => $q->whereIn('name', $platformRoles))
+                        ->orWhere(function ($q) use ($legacyStaff) {
+                            $q->whereNull('owner_user_id')
+                                ->whereHas('roles', fn ($r) => $r->whereIn('name', $legacyStaff));
+                        })
+                        ->orWhere(function ($q) use ($providerTeamRoles) {
+                            $q->whereNull('owner_user_id')
+                                ->whereHas('roles', fn ($r) => $r->whereIn('name', $providerTeamRoles));
+                        });
+                });
+            })
+            ->when($roleFilter, function ($query, $roleFilter) {
+                $query->whereHas('roles', fn ($q) => $q->where('name', $roleFilter));
+            })
+            ->when($countryId, function ($query, $countryId) {
+                $query->where(function ($q) use ($countryId) {
+                    $q->where('country_id', $countryId)
+                        ->orWhereJsonContains('assigned_country_ids', (int) $countryId)
+                        ->orWhereJsonContains('assigned_country_ids', (string) $countryId);
+                });
+            })
+            ->when($search, function ($query, $search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'LIKE', "%{$search}%")
+                        ->orWhere('email', 'LIKE', "%{$search}%")
+                        ->orWhere('status', 'LIKE', "%{$search}%")
+                        ->orWhere('phone', 'LIKE', "%{$search}%");
+                });
             });
-        })
-        ->paginate($records_per_page);
+
+        // Country admin jurisdiction
+        $actor = auth()->user();
+        if ($actor && $actor->hasRole('country_admin') && ! $actor->hasRole('super_admin')) {
+            $allowed = collect($actor->assigned_country_ids ?? [])->filter()->map(fn ($id) => (int) $id)->all();
+            if ($actor->country_id) {
+                $allowed[] = (int) $actor->country_id;
+            }
+            $allowed = array_values(array_unique($allowed));
+            if ($allowed) {
+                $users->where(function ($q) use ($allowed) {
+                    $q->whereIn('country_id', $allowed);
+                    foreach ($allowed as $cid) {
+                        $q->orWhereJsonContains('assigned_country_ids', $cid)
+                            ->orWhereJsonContains('assigned_country_ids', (string) $cid);
+                    }
+                });
+            }
+        }
+
+        $paginated = $users->paginate($records_per_page);
+
+        $paginated->getCollection()->transform(fn (User $u) => $this->formatTeamUser($u));
 
         $roles  = Role::get(['id', 'name']);
         $venues = Venue::get(['id', 'name']);
 
-        return sendSuccess("Users fetched successfully", compact('users', 'roles', 'venues', 'search'));
+        return sendSuccess('Users fetched successfully', [
+            'users'  => $paginated,
+            'roles'  => $roles,
+            'venues' => $venues,
+            'search' => $search,
+            'scope'  => $scope,
+        ]);
+    }
+
+    /** Shape expected by the Vue Team page (maps Laravel user → admin_users-like row). */
+    public function formatTeamUser(User $user): array
+    {
+        $user->loadMissing(['ownedBusiness']);
+        $roles = $user->getRoleNames()->values()->all();
+        $role  = $roles[0] ?? null;
+
+        foreach (['super_admin', 'country_admin', 'platform_staff', 'admin', 'provider_admin', 'facility_admin', 'provider_supervisor', 'staff', 'provider_viewer', 'senior_employee', 'junior_employee', 'guard'] as $preferred) {
+            if (in_array($preferred, $roles, true)) {
+                $role = $preferred;
+                break;
+            }
+        }
+
+        $business = $user->ownedBusiness;
+
+        return [
+            'id'                    => $user->id,
+            'full_name'             => $user->name,
+            'name'                  => $user->name,
+            'email'                 => $user->email,
+            'phone'                 => $user->phone,
+            'status'                => $user->status,
+            'role'                  => $role,
+            'roles'                 => $roles,
+            'country_id'            => $user->country_id,
+            'assigned_country_ids'  => $user->assigned_country_ids ?? [],
+            'owner_user_id'         => $user->owner_user_id,
+            'last_login'            => $user->last_login_at?->toIso8601String(),
+            'last_login_at'         => $user->last_login_at?->toIso8601String(),
+            'created_at'            => $user->created_at?->toIso8601String(),
+            'business_name'         => $business?->name,
+            'username'              => $business?->username,
+            'business_types'        => $business?->business_types ?? [],
+            'business_status'       => $business?->status,
+            'business_id'           => $business?->id,
+            'custom_permissions'    => null,
+            'assigned_location_ids' => [],
+            'assigned_listing_ids'  => [],
+            'assigned_program_ids'  => [],
+            'plan'                  => 'free',
+            'premium_since'         => null,
+        ];
     }
 
     public function createUser($request)
     {
+        $providerTeamRoles = config('roles.provider_team_roles', []);
+        $platformRoles     = array_merge(
+            config('roles.platform_team_roles', []),
+            ['senior_employee', 'junior_employee', 'guard']
+        );
+
         $formData = $request->validate([
-            'name'     => 'required|string|max:100',
-            'email'    => 'required|email',
-            'role'     => 'required|exists:roles,name',
-            'status'   => 'required|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
-            'password' => 'nullable|min:3',
-            'venues'   => 'nullable|array',
-            'venues.*' => 'numeric|exists:venues,id',
+            'name'                   => 'required|string|max:100',
+            'email'                  => 'required|email',
+            'role'                   => 'required|exists:roles,name',
+            'status'                 => 'required|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
+            'password'               => 'nullable|min:3',
+            'phone'                  => 'nullable|string|max:30',
+            'country_id'             => 'nullable|integer',
+            'assigned_country_ids'   => 'nullable|array',
+            'assigned_country_ids.*' => 'integer',
+            'owner_user_id'          => 'nullable|integer|exists:users,id',
+            'venues'                 => 'nullable|array',
+            'venues.*'               => 'numeric|exists:venues,id',
+            'business_name'          => 'nullable|string|max:150',
+            'username'               => 'nullable|string|min:3|max:30',
+            'business_types'         => 'nullable|array',
         ]);
+
+        if (in_array($formData['role'], $providerTeamRoles, true) && empty($formData['owner_user_id'])) {
+            return sendError('Provider staff require an owner_user_id.', [
+                'owner_user_id' => ['Select the business owner for this team member.'],
+            ], 422);
+        }
+
+        if (! empty($formData['owner_user_id'])) {
+            $owner = $this->userModel->find($formData['owner_user_id']);
+            if (! $owner || ! $owner->hasRole('provider_admin')) {
+                return sendError('owner_user_id must be a provider_admin.', [
+                    'owner_user_id' => ['Invalid business owner.'],
+                ], 422);
+            }
+        }
 
         $existing = $this->userModel::where('email', $formData['email'])->first();
 
@@ -557,16 +693,14 @@ class UserService
         }
 
         try {
-
             DB::beginTransaction();
 
             $role = Role::where('name', $formData['role'])->firstOrFail();
 
-            $isSuperAdminOrAdmin = in_array($role->id, [1, 2]);
+            $isGlobalPlatform = in_array($formData['role'], ['super_admin', 'admin', 'country_admin'], true);
 
-            if ($isSuperAdminOrAdmin) {
-                $allVenues          = Venue::pluck('id')->toArray();
-                $formData['venues'] = $allVenues;
+            if ($isGlobalPlatform) {
+                $formData['venues'] = Venue::pluck('id')->toArray();
             }
 
             if (empty($formData['password'])) {
@@ -576,15 +710,17 @@ class UserService
             $plainPassword = $formData['password'];
 
             $user = $this->userModel->create([
-                'name'     => $formData['name'],
-                'email'    => $formData['email'],
-                'status'   => $formData['status'],
-                'password' => $formData['password'],
+                'name'                  => $formData['name'],
+                'email'                 => $formData['email'],
+                'status'                => $formData['status'],
+                'password'              => $formData['password'],
+                'phone'                 => $formData['phone'] ?? null,
+                'country_id'            => $formData['country_id'] ?? null,
+                'assigned_country_ids'  => $formData['assigned_country_ids'] ?? null,
+                'owner_user_id'         => in_array($formData['role'], $providerTeamRoles, true)
+                    ? ($formData['owner_user_id'] ?? null)
+                    : null,
             ]);
-
-            if (! $role) {
-                throw new Exception("Role not found");
-            }
 
             $user->assignRole($formData['role']);
 
@@ -606,24 +742,50 @@ class UserService
                 $user->venues()->sync($formData['venues']);
             }
 
+            if ($formData['role'] === 'provider_admin') {
+                $username = BusinessService::normalizeUsername($formData['username'] ?? null);
+                if ($username === '' || strlen($username) < 3) {
+                    $username = BusinessService::normalizeUsername(explode('@', $formData['email'])[0] ?? 'business');
+                    if (strlen($username) < 3) {
+                        $username = 'biz-' . $user->id;
+                    }
+                }
+                if (Business::where('username', $username)->orWhere('brand_subdomain', $username)->exists()) {
+                    $username = $username . '-' . $user->id;
+                }
+                Business::create([
+                    'owner_id'        => $user->id,
+                    'name'            => $formData['business_name'] ?? $formData['name'],
+                    'username'        => $username,
+                    'business_types'  => array_values($formData['business_types'] ?? []),
+                    'country_id'      => $formData['country_id'] ?? null,
+                    'status'          => Business::STATUS_PENDING,
+                    'brand_subdomain' => $username,
+                ]);
+            }
+
             DB::commit();
 
             try {
                 Mail::to($user->email)->send(new UserWelcomeEmail($user, $plainPassword));
             } catch (Exception $e) {
-                Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
+                Log::error('Failed to send welcome email: ' . $e->getMessage(), ['Exception' => $e]);
             }
 
-            $user->load(['roles', 'venues']);
+            $user->load(['roles', 'venues', 'ownedBusiness']);
             $user->makeHidden('roles');
             $roles = $user->getRoleNames();
 
-            return sendSuccess("User created successfully", compact('user', 'roles'));
+            return sendSuccess('User created successfully', [
+                'user'  => $this->formatTeamUser($user),
+                'roles' => $roles,
+            ]);
 
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error("User creation error: " . $e->getMessage(), ['Exception' => $e]);
-            return sendError("Something went wrong " . $e->getMessage());
+            Log::error('User creation error: ' . $e->getMessage(), ['Exception' => $e]);
+
+            return sendError('Something went wrong ' . $e->getMessage());
         }
     }
 
@@ -633,7 +795,11 @@ class UserService
      */
     private function createUserWhenEmailExists(User $existing, array $formData)
     {
-        $staffRoleNames = ['super_admin', 'admin', 'senior_employee', 'junior_employee', 'guard'];
+        $staffRoleNames = array_values(array_unique(array_merge(
+            config('roles.staff_roles', []),
+            config('roles.provider_roles', []),
+            config('roles.provider_team_roles', []),
+        )));
 
         if ($existing->hasAnyRole($staffRoleNames)) {
             return sendError(
@@ -662,11 +828,11 @@ class UserService
         try {
             DB::beginTransaction();
 
-            $role = Role::where('name', $formData['role'])->firstOrFail();
+            Role::where('name', $formData['role'])->firstOrFail();
 
-            $isSuperAdminOrAdmin = in_array($role->id, [1, 2]);
+            $isGlobalPlatform = in_array($formData['role'], ['super_admin', 'admin', 'country_admin'], true);
 
-            if ($isSuperAdminOrAdmin) {
+            if ($isGlobalPlatform) {
                 $formData['venues'] = Venue::pluck('id')->toArray();
             }
 
@@ -675,14 +841,20 @@ class UserService
             }
 
             $plainPassword = $formData['password'];
+            $providerTeamRoles = config('roles.provider_team_roles', []);
 
             $existing->update([
-                'name'     => $formData['name'],
-                'status'   => $formData['status'],
-                'password' => $formData['password'],
+                'name'                 => $formData['name'],
+                'status'               => $formData['status'],
+                'password'             => $formData['password'],
+                'phone'                => $formData['phone'] ?? $existing->phone,
+                'country_id'           => $formData['country_id'] ?? $existing->country_id,
+                'assigned_country_ids' => $formData['assigned_country_ids'] ?? $existing->assigned_country_ids,
+                'owner_user_id'        => in_array($formData['role'], $providerTeamRoles, true)
+                    ? ($formData['owner_user_id'] ?? null)
+                    : null,
             ]);
 
-            // Keep Spatie customer role so bookings / loyalty / customer app access remain valid.
             if (! $existing->hasRole($formData['role'])) {
                 $existing->assignRole($formData['role']);
             }
@@ -697,22 +869,25 @@ class UserService
             try {
                 Mail::to($existing->email)->send(new UserWelcomeEmail($existing, $plainPassword));
             } catch (Exception $e) {
-                Log::error("Failed to send welcome email: " . $e->getMessage(), ["Exception" => $e]);
+                Log::error('Failed to send welcome email: ' . $e->getMessage(), ['Exception' => $e]);
             }
 
-            $existing->load(['roles', 'venues']);
+            $existing->load(['roles', 'venues', 'ownedBusiness']);
             $existing->makeHidden('roles');
             $user  = $existing;
             $roles = $user->getRoleNames();
 
             return sendSuccess(
                 'Staff role added. This user remains a customer and now also has the role you selected.',
-                compact('user', 'roles')
+                [
+                    'user'  => $this->formatTeamUser($user),
+                    'roles' => $roles,
+                ]
             );
 
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error("Customer to staff promotion error: " . $e->getMessage(), ['Exception' => $e]);
+            Log::error('Customer to staff promotion error: ' . $e->getMessage(), ['Exception' => $e]);
 
             return sendError('Something went wrong ' . $e->getMessage());
         }
@@ -728,78 +903,100 @@ class UserService
         $user = $this->findById($id);
 
         if (! $user) {
-            return sendError("User not found");
+            return sendError('User not found');
         }
 
-        $updatableFields = [
-            'name'     => 'sometimes|string|max:100',
-            'email'    => 'sometimes|email|unique:users,email,' . $user->id,
-            'role'     => 'sometimes|exists:roles,name',
-            'status'   => 'sometimes|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
-            'password' => 'sometimes|min:3',
-            'venues'   => 'sometimes|nullable|array',
-            'venues.*' => 'numeric|exists:venues,id',
-        ];
+        $providerTeamRoles = config('roles.provider_team_roles', []);
 
-        $formData = $request->validate($updatableFields);
+        $formData = $request->validate([
+            'name'                   => 'sometimes|string|max:100',
+            'email'                  => 'sometimes|email|unique:users,email,' . $user->id,
+            'role'                   => 'sometimes|exists:roles,name',
+            'status'                 => 'sometimes|in:' . $this->userModel::ACTIVE . ',' . $this->userModel::INACTIVE,
+            'password'               => 'sometimes|min:3',
+            'phone'                  => 'nullable|string|max:30',
+            'country_id'             => 'nullable|integer',
+            'assigned_country_ids'   => 'nullable|array',
+            'assigned_country_ids.*' => 'integer',
+            'owner_user_id'          => 'nullable|integer|exists:users,id',
+            'venues'                 => 'sometimes|nullable|array',
+            'venues.*'               => 'numeric|exists:venues,id',
+            'business_name'          => 'nullable|string|max:150',
+        ]);
 
         try {
-
             DB::beginTransaction();
 
             $updateData = array_filter([
-                'name'   => $formData['name'] ?? $user->name,
-                'email'  => $formData['email'] ?? $user->email,
-                'status' => $formData['status'] ?? $user->status,
-            ], function ($value) {
-                return $value != null;
-            });
+                'name'   => $formData['name'] ?? null,
+                'email'  => $formData['email'] ?? null,
+                'status' => $formData['status'] ?? null,
+                'phone'  => array_key_exists('phone', $formData) ? $formData['phone'] : null,
+            ], fn ($value) => $value !== null);
 
+            if (array_key_exists('country_id', $formData)) {
+                $updateData['country_id'] = $formData['country_id'];
+            }
+            if (array_key_exists('assigned_country_ids', $formData)) {
+                $updateData['assigned_country_ids'] = $formData['assigned_country_ids'];
+            }
+            if (array_key_exists('owner_user_id', $formData)) {
+                $updateData['owner_user_id'] = $formData['owner_user_id'];
+            }
             if (isset($formData['password'])) {
                 $updateData['password'] = $formData['password'];
             }
 
-            $user->update($updateData);
+            if ($updateData) {
+                $user->update($updateData);
+            }
 
             if (isset($formData['role'])) {
-
-                $role = Role::where('name', $formData['role'])->firstOrFail();
-
-                if (! $role) {
-                    throw new Exception("Role not found");
-                }
-
-                $roleName = $role->name;
-
+                $roleName = $formData['role'];
                 $user->syncRoles([]);
                 $user->assignRole($roleName);
+
+                if (in_array($roleName, $providerTeamRoles, true)) {
+                    // keep owner_user_id
+                } elseif ($roleName === 'provider_admin') {
+                    $user->update(['owner_user_id' => null]);
+                } else {
+                    $user->update(['owner_user_id' => null]);
+                }
             }
 
             if (isset($formData['venues'])) {
                 $currentRole         = $user->roles->first();
                 $roleName            = $currentRole ? $currentRole->name : null;
-                $isSuperAdminOrAdmin = in_array($roleName, ['super_admin', 'admin']);
+                $isSuperAdminOrAdmin = in_array($roleName, ['super_admin', 'admin', 'country_admin'], true);
 
                 if ($isSuperAdminOrAdmin) {
-                    $allVenues          = Venue::pluck('id')->toArray();
-                    $formData['venues'] = $allVenues;
+                    $formData['venues'] = Venue::pluck('id')->toArray();
                 }
 
                 $user->venues()->sync($formData['venues'] ?? []);
             }
 
+            if (! empty($formData['business_name']) && $user->ownedBusiness) {
+                $user->ownedBusiness->update(['name' => $formData['business_name']]);
+            }
+
             DB::commit();
 
-            $user->load(['roles', 'venues']);
+            $user->load(['roles', 'venues', 'ownedBusiness']);
             $user->makeHidden(['roles']);
             $roles = $user->getRoleNames();
 
-            return sendSuccess("User updated successfully", compact('user', 'roles'));
+            return sendSuccess('User updated successfully', [
+                'user'  => $this->formatTeamUser($user->fresh(['ownedBusiness'])),
+                'roles' => $roles,
+            ]);
 
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error("User update error: " . $e->getMessage(), ['user_id' => $id, 'Exception' => $e]);
-            return sendError("Something went wrong: " . $e->getMessage());
+            Log::error('User update error: ' . $e->getMessage(), ['user_id' => $id, 'Exception' => $e]);
+
+            return sendError('Something went wrong: ' . $e->getMessage());
         }
     }
 
@@ -807,10 +1004,11 @@ class UserService
     {
         $user = $this->findById($id);
         if ($user->id == auth()->id() || $user->id == 1) {
-            return sendError("This user cannot be deleted");
+            return sendError('This user cannot be deleted');
         } elseif ($user) {
             $user->delete();
         }
+
         return sendSuccess('User deleted successfully');
     }
 

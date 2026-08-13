@@ -36,6 +36,10 @@ class User extends Authenticatable
         'date_of_birth',
         'blocking_reason',
         'loyalty_tier_id',
+        'country_id',
+        'assigned_country_ids',
+        'owner_user_id',
+        'last_login_at',
     ];
 
     protected $hidden = [
@@ -53,8 +57,10 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'password'          => 'hashed',
-            'email_verified_at' => 'datetime',
+            'password'              => 'hashed',
+            'email_verified_at'     => 'datetime',
+            'last_login_at'         => 'datetime',
+            'assigned_country_ids'  => 'array',
         ];
     }
 
@@ -104,6 +110,16 @@ class User extends Authenticatable
     public function ownedBusiness()
     {
         return $this->hasOne(Business::class, 'owner_id');
+    }
+
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_user_id');
+    }
+
+    public function teamMembers()
+    {
+        return $this->hasMany(User::class, 'owner_user_id');
     }
 
     public function bookings()

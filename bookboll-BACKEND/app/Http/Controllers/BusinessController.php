@@ -29,4 +29,29 @@ class BusinessController extends Controller
     {
         return $this->businessService->updateBrand($request);
     }
+
+    public function adminIndex(Request $request)
+    {
+        return $this->businessService->adminIndex($request);
+    }
+
+    public function teamIndex(Request $request)
+    {
+        return $this->businessService->teamIndex($request);
+    }
+
+    public function teamStore(Request $request)
+    {
+        return $this->businessService->teamStore($request);
+    }
+
+    public function teamUpdate(Request $request, $user)
+    {
+        return $this->businessService->teamUpdate($request, $user);
+    }
+
+    public function teamDestroy(Request $request, $user)
+    {
+        return $this->businessService->teamDestroy($request, $user);
+    }
 }
