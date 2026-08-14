@@ -180,7 +180,7 @@ class TeamDemoSeeder extends Seeder
             'country_id'     => $ksa,
             'business_types' => ['gym', 'other_venue'],
             'brand_name'     => 'Riyadh Fit Hub',
-            'brand_subdomain'=> 'pendinggym',
+            'brand_subdomain' => 'pendinggym',
         ]);
 
         $this->command?->info('TeamDemoSeeder done. Login password for all demo users: ' . self::PASSWORD);
@@ -216,7 +216,7 @@ class TeamDemoSeeder extends Seeder
     private function countryId(string $iso2): ?int
     {
         try {
-            $id = Country::query()->where('iso2', strtoupper($iso2))->value('id');
+            $id = Country::where('iso2', strtoupper($iso2))->value('id');
 
             return $id ? (int) $id : null;
         } catch (\Throwable) {
