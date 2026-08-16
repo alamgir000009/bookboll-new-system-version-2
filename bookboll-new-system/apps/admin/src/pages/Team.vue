@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { apiFetch } from '../lib/api.js'
 import { askConfirm } from '../lib/confirm.js'
 import { pushToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
@@ -17,6 +17,25 @@ import { logAudit, AUDIT } from '../lib/audit.js'
 import MultiSelect from '../components/MultiSelect.vue'
 import { BUSINESS_TYPES, normalizeBusinessTypes, businessTypeLabel } from '../lib/businessTypes.js'
 
+function unwrapPage(block) {
+  if (!block) return []
+  if (Array.isArray(block)) return block
+  if (Array.isArray(block.data)) return block.data
+  return []
+}
+
+function apiErr(res, fallback = 'Request failed.') {
+  if (!res) return fallback
+  const errors = res.errors
+  if (errors && typeof errors === 'object') {
+    for (const v of Object.values(errors)) {
+      if (Array.isArray(v) && v[0]) return String(v[0])
+      if (typeof v === 'string' && v) return v
+    }
+  }
+  return res.message || fallback
+}
+
 // Roles a super admin can assign (platform + provider) and a provider can assign
 // to their own team (everything below Owner).
 const ASSIGNABLE_ADMIN_ROLES = [...PLATFORM_ROLES, ...PROVIDER_ROLES]
@@ -26,7 +45,12 @@ const { loadUserContext, isSuperAdmin, isCountryAdmin, role: actorRole, currentU
 
 // Platform-side roles (Bookboll) all get the management view; provider roles get
 // the "My Team" view. Country Admin / Platform Staff are platform-side.
-const isPlatformSide = computed(() => isSuperAdmin.value || isCountryAdmin.value || actorRole.value === 'platform_staff')
+const isPlatformSide = computed(() =>
+  isSuperAdmin.value
+  || isCountryAdmin.value
+  || actorRole.value === 'platform_staff'
+  || actorRole.value === 'admin'
+)
 
 // Roles the CURRENT user may assign — you can never grant a role at or above your
 // own authority. Super → all; Country Admin → Platform Staff + provider; Platform
@@ -43,12 +67,14 @@ const assignableRoles = computed(() => {
 function businessCountryIds(ownerId) {
   const set = new Set()
   for (const l of locations.value) {
-    if (l.owner_user_id !== ownerId) continue
+    if (String(l.owner_user_id) !== String(ownerId)) continue
     const city = cities.value.find(c => c.id === l.city_id)
     if (city?.country_id) set.add(city.country_id)
   }
-  const owner = allUsers.value.find(u => u.id === ownerId)
-  if (owner?.country_id) set.add(owner.country_id)   // anchor for brand-new businesses
+  const owner = allUsers.value.find(u => String(u.id) === String(ownerId))
+  if (owner?.country_id) set.add(owner.country_id)
+  const biz = businesses.value.find(b => String(b.owner_user_id) === String(ownerId))
+  if (biz?.country_id) set.add(biz.country_id)
   return set
 }
 // The current platform user's country jurisdiction (null = global/unrestricted).
@@ -79,15 +105,13 @@ function businessInJurisdiction(ownerId) {
 
 // ── Shared ────────────────────────────────────────────────────────────────────
 const locations       = ref([])
-const listings        = ref([])   // for per-user listing-scope pickers
-const programs        = ref([])   // for per-user program-scope pickers
+const listings        = ref([])   // venue scope deferred — kept empty for now
+const programs        = ref([])
 const countries       = ref([])
 const cities          = ref([])
-// Roles that carry per-user permission overrides + location/listing/program scope.
+const businesses      = ref([])   // Laravel /admin/businesses
 const SCOPED_ROLES = ['facility_admin', 'provider_supervisor', 'staff', 'provider_viewer', 'platform_staff']
 const isScopedRole = (r) => SCOPED_ROLES.includes(r)
-// { [countryId]: { facility: number, program: number } }
-// Loaded from commission_rates table — used to auto-fill new provider accounts.
 const commissionRates = ref({})
 const showModal = ref(false)
 const editing   = ref(null)
@@ -95,9 +119,9 @@ const saving    = ref(false)
 const search    = ref('')
 const filterCountry = ref([])
 const filterCity    = ref([])
-const filterBizTypes = ref([])   // business-type filter for the provider roster
+const filterBizTypes = ref([])
 const bizTypeOptions = BUSINESS_TYPES.map(t => ({ value: t.key, label: t.label }))
-const filterPlan = ref('')       // '' | 'premium' | 'free'
+const filterPlan = ref('')
 const triedSave = ref(false)
 // Team members (admin_users) carry country_id / city_id directly.
 function memberGeoMatch(u) {
@@ -166,35 +190,40 @@ function openAdminEdit(u) {
   clearDirty()
   showModal.value = true
 }
-// Insert/update an admin_users row, tolerating columns this DB hasn't migrated yet
-// (e.g. commission_rate_* on older schemas): on a "column does not exist" error we
-// drop the named column and retry, so saving never hard-fails on optional fields.
+// Persist via Laravel /admin/users (Sanctum).
 async function persistAdminUser(payload) {
-  const p = { ...payload }
-  const run = () => editing.value
-    ? supabase.from('admin_users').update(p).eq('id', editing.value.id)
-    : supabase.from('admin_users').insert(p)
-  for (let i = 0; i < 6; i++) {
-    const { error } = await run()
-    if (!error) return null
-    const m = error.message.match(/'?([a-z_]+)'? column|column [^.]*\.([a-z_]+) does not exist/i)
-    const col = m && (m[1] || m[2])
-    if (col && col in p) { delete p[col]; continue }   // drop unknown column, retry
-    return error
+  const body = {
+    name: payload.full_name || payload.name,
+    email: payload.email,
+    role: payload.role,
+    status: payload.status || 'active',
+    phone: payload.phone || null,
+    country_id: payload.country_id || null,
+    assigned_country_ids: payload.assigned_country_ids || null,
+    owner_user_id: payload.owner_user_id || null,
+    business_name: payload.business_name || payload.full_name || null,
+    username: payload.username || null,
+    business_types: payload.business_types || null,
   }
-  return { message: 'Could not save user (schema mismatch).' }
+  if (payload.password) body.password = payload.password
+
+  const res = editing.value
+    ? await apiFetch(`/admin/users/${editing.value.id}`, { method: 'PUT', body })
+    : await apiFetch('/admin/users', { method: 'POST', body })
+
+  if (!res.success) return { message: apiErr(res, 'Could not save user.') }
+  return null
 }
 
 async function saveAdmin() {
   formError.value = ''
   triedSave.value = true
-  // Authority: you can never assign a role at or above your own.
   if (!assignableRoles.value.includes(adminForm.value.role)) {
     formError.value = "You don't have permission to assign that role."
     return
   }
   const isOwner    = adminForm.value.role === 'provider_admin'
-  const isInternal = ['super_admin', 'country_admin', 'platform_staff'].includes(adminForm.value.role)
+  const isInternal = ['super_admin', 'country_admin', 'platform_staff', 'admin'].includes(adminForm.value.role)
   if (isOwner && !editing.value && !adminForm.value.username.trim()) {
     formError.value = 'Company Login Username is required.'
     return
@@ -204,49 +233,39 @@ async function saveAdmin() {
   if (isOwner) {
     resolvedUsername = editing.value ? undefined : adminForm.value.username.trim().toLowerCase().replace(/\s+/g, '')
   } else {
-    // Staff/managers carry NO username (it's a unique company-login field owned by the
-    // provider). Their company is resolved via owner_user_id; keep username null on
-    // create and untouched on edit.
     resolvedUsername = editing.value ? undefined : null
   }
-  // For provider-scoped roles, inherit country from the assigned provider rather than
-  // requiring the admin to select it manually — it's always the same as the provider's country.
   let resolvedCountryId = adminForm.value.country_id || null
   if (isProviderScopedRole(adminForm.value.role) && resolvedOwnerId) {
-    const owner = allUsers.value.find(u => u.id === resolvedOwnerId)
+    const owner = allUsers.value.find(u => String(u.id) === String(resolvedOwnerId))
     if (owner?.country_id) resolvedCountryId = owner.country_id
   }
-  // A brand-new business (no locations yet) gets a country anchor from the creator's
-  // jurisdiction so it shows in their list until its locations define its countries.
   if (isOwner && !editing.value && !resolvedCountryId) {
     const j = jurisdictionCountryIds.value
     if (j && j.size) resolvedCountryId = [...j][0]
   }
 
   const payload = {
-    full_name: adminForm.value.full_name, email: adminForm.value.email, role: adminForm.value.role,
-    country_id: resolvedCountryId, location_id: adminForm.value.location_id || null,
-    owner_user_id: resolvedOwnerId, status: adminForm.value.status,
-    phone: isOwner ? adminForm.value.phone : null,
-    city_id: isOwner ? (adminForm.value.city_id || null) : null,
-    commission_rate_facility: isOwner ? (adminForm.value.commission_rate_facility != null ? Number(adminForm.value.commission_rate_facility) : null) : null,
-    commission_rate_program:  isOwner ? (adminForm.value.commission_rate_program  != null ? Number(adminForm.value.commission_rate_program)  : null) : null,
-    business_status: isOwner ? (adminForm.value.business_status || 'pending') : null,
-    description: isOwner ? adminForm.value.description : null,
-    license_number: isOwner ? adminForm.value.license_number : null,
-    // Per-user permission overrides + scope apply only to scoped roles.
-    custom_permissions:    isScopedRole(adminForm.value.role) ? (adminForm.value.custom_permissions || {}) : {},
-    assigned_location_ids: isScopedRole(adminForm.value.role) ? (adminForm.value.assigned_location_ids || []) : [],
-    assigned_listing_ids:  isScopedRole(adminForm.value.role) ? (adminForm.value.assigned_listing_ids  || []) : [],
-    assigned_program_ids:  isScopedRole(adminForm.value.role) ? (adminForm.value.assigned_program_ids  || []) : [],
+    full_name: adminForm.value.full_name,
+    email: adminForm.value.email,
+    role: adminForm.value.role,
+    country_id: resolvedCountryId,
+    owner_user_id: resolvedOwnerId,
+    status: adminForm.value.status,
+    phone: isOwner ? adminForm.value.phone : (adminForm.value.phone || null),
+    business_name: isOwner ? (adminForm.value.full_name || adminForm.value.email) : null,
   }
   if (resolvedUsername !== undefined) payload.username = resolvedUsername
-  // New Platform Staff inherit the creator's country jurisdiction (empty = global).
   if (adminForm.value.role === 'platform_staff' && !editing.value) {
     const j = jurisdictionCountryIds.value
     payload.assigned_country_ids = j ? [...j] : []
   }
+  if (adminForm.value.role === 'country_admin') {
+    payload.assigned_country_ids = resolvedCountryId ? [Number(resolvedCountryId)] : (adminForm.value.assigned_country_ids || [])
+  }
+  saving.value = true
   const error = await persistAdminUser(payload)
+  saving.value = false
   if (error) { formError.value = error.message; pushToast('Could not save user.', 'error'); return }
   clearDirty()
   logAudit({ action: editing.value ? AUDIT.UPDATED : AUDIT.CREATED, entity_type: 'admin_user', entity_id: editing.value?.id || payload.email, details: `${editing.value ? 'Updated' : 'Created'} ${roleLabelFn(adminForm.value.role)} ${payload.full_name || payload.email || ''}`.trim() })
@@ -256,20 +275,17 @@ async function saveAdmin() {
   await loadUserContext()
 }
 async function removeAdmin(user) {
-  // Same authority ladder as saveAdmin: you can only delete someone whose role
-  // you could assign. Without this, an unassigned platform_staff (empty
-  // jurisdiction = sees every business) could delete any provider business.
   if (!user || !assignableRoles.value.includes(user.role)) {
     pushToast("You don't have the authority to delete this user.", 'error')
     return
   }
   if (!(await askConfirm({
     title: 'Delete user?',
-    message: 'This user will be removed. If they own a business, all their locations and wallet data will be removed too. This cannot be undone.',
+    message: 'This user will be removed. If they own a business, related data may be removed too. This cannot be undone.',
     confirmText: 'Delete',
   }))) return
-  const { error } = await supabase.from('admin_users').delete().eq('id', user.id)
-  if (error) { pushToast('Could not delete user.', 'error'); return }
+  const res = await apiFetch(`/admin/users/${user.id}`, { method: 'DELETE' })
+  if (!res.success) { pushToast(apiErr(res, 'Could not delete user.'), 'error'); return }
   pushToast('User deleted', 'success')
   load()
 }
@@ -359,23 +375,20 @@ async function saveTeam() {
     pushToast('Please fill in the name, email and role.', 'error'); return
   }
   saving.value = true
-  const payload = {
-    full_name: teamForm.value.full_name.trim(), email: teamForm.value.email.trim().toLowerCase(),
-    role: teamForm.value.role, location_id: teamForm.value.location_id || null,
-    phone: teamForm.value.phone || null, status: teamForm.value.status,
-    owner_user_id: currentOwnerUserId.value,
-    custom_permissions: teamForm.value.custom_permissions || {},
-    assigned_location_ids: teamForm.value.assigned_location_ids || [],
-    assigned_listing_ids:  teamForm.value.assigned_listing_ids  || [],
-    assigned_program_ids:  teamForm.value.assigned_program_ids  || [],
+  const body = {
+    name: teamForm.value.full_name.trim(),
+    email: teamForm.value.email.trim().toLowerCase(),
+    role: teamForm.value.role,
+    phone: teamForm.value.phone || null,
+    status: teamForm.value.status,
   }
-  const { error } = editing.value
-    ? await supabase.from('admin_users').update(payload).eq('id', editing.value.id)
-    : await supabase.from('admin_users').insert(payload)
+  const res = editing.value
+    ? await apiFetch(`/business/team/${editing.value.id}`, { method: 'PUT', body })
+    : await apiFetch('/business/team', { method: 'POST', body })
   saving.value = false
-  if (error) { pushToast('Could not save team member.', 'error'); return }
+  if (!res.success) { pushToast(apiErr(res, 'Could not save team member.'), 'error'); return }
   clearDirty()
-  logAudit({ action: editing.value ? AUDIT.UPDATED : AUDIT.CREATED, entity_type: 'team_member', entity_id: editing.value?.id || payload.email, details: `${editing.value ? 'Updated' : 'Added'} ${roleLabelFn(teamForm.value.role)} ${payload.full_name || payload.email || ''}`.trim() })
+  logAudit({ action: editing.value ? AUDIT.UPDATED : AUDIT.CREATED, entity_type: 'team_member', entity_id: editing.value?.id || body.email, details: `${editing.value ? 'Updated' : 'Added'} ${roleLabelFn(teamForm.value.role)} ${body.name || body.email || ''}`.trim() })
   pushToast(editing.value ? 'Team member updated' : 'Team member added', 'success')
   showModal.value = false
   load()
@@ -386,86 +399,104 @@ async function removeTeam(u) {
     message: `${u.full_name || u.email} will be removed from your team and will lose access.`,
     confirmText: 'Remove',
   }))) return
-  const { error } = await supabase.from('admin_users').delete().eq('id', u.id)
-  if (error) { pushToast('Could not remove team member.', 'error'); return }
+  const res = await apiFetch(`/business/team/${u.id}`, { method: 'DELETE' })
+  if (!res.success) { pushToast(apiErr(res, 'Could not remove team member.'), 'error'); return }
   pushToast('Team member removed', 'success')
   load()
 }
 
-// ── Load ──────────────────────────────────────────────────────────────────────
+// ── Load (Laravel Sanctum) ────────────────────────────────────────────────────
 async function load() {
   if (isPlatformSide.value) {
-    const [u, c, ci, l, cr, li, pg] = await Promise.all([
-      supabase.from('admin_users').select('*').order('created_at', { ascending: false }),
-      supabase.from('countries').select('*').eq('status', 'active').order('name'),
-      supabase.from('cities').select('*').eq('status', 'active').order('name'),
-      supabase.from('locations').select('*'),
-      supabase.from('commission_rates').select('*'),
-      supabase.from('listings').select('id, name, location_id'),
-      supabase.from('class_programs').select('id, name, location_id, owner_user_id'),
+    const [platformRes, staffRes, bizRes, countriesRes] = await Promise.all([
+      apiFetch('/admin/users', { query: { scope: 'platform', records_per_page: 200 } }),
+      apiFetch('/admin/users', { query: { scope: 'provider_staff', records_per_page: 500 } }),
+      apiFetch('/admin/businesses', { query: { records_per_page: 200 } }),
+      apiFetch('/admin/locations/countries'),
     ])
-    allUsers.value   = u.data || []
-    countries.value  = c.data || []
-    cities.value     = ci.data || []
-    locations.value  = l.data || []
-    listings.value   = li.data || []
-    programs.value   = pg.data || []
-    const rates = {}
-    for (const r of (cr.data || [])) {
-      if (!rates[r.country_id]) rates[r.country_id] = { facility: 20, program: 20 }
-      rates[r.country_id][r.listing_type] = Number(r.rate_percent)
+    const platformUsers = unwrapPage(platformRes.data?.users)
+    const staffUsers = unwrapPage(staffRes.data?.users)
+    // Include provider owners from businesses so groups/edit still resolve.
+    const ownersFromBiz = unwrapPage(bizRes.data?.businesses).map(b => ({
+      id: b.owner_user_id,
+      full_name: b.full_name || b.business_name || b.name,
+      email: b.email,
+      role: 'provider_admin',
+      status: 'active',
+      country_id: b.country_id,
+      username: b.username,
+      business_name: b.business_name || b.name,
+      business_types: b.business_types || [],
+      business_status: b.business_status || b.status,
+      business_id: b.id,
+      plan: b.plan || 'free',
+      owner_user_id: null,
+      last_login: null,
+    })).filter(o => o.id)
+
+    const byId = new Map()
+    for (const u of [...platformUsers, ...staffUsers, ...ownersFromBiz]) {
+      byId.set(String(u.id), u)
     }
-    commissionRates.value = rates
+    allUsers.value = [...byId.values()]
+    businesses.value = unwrapPage(bizRes.data?.businesses)
+    countries.value = countriesRes.data?.countries || []
+    cities.value = []
+    locations.value = []
+    listings.value = []
+    programs.value = []
+    commissionRates.value = {}
   } else {
     const ownerId = currentOwnerUserId.value
     if (!ownerId) return
-    const [tm, lc] = await Promise.all([
-      supabase.from('admin_users').select('*').eq('owner_user_id', ownerId)
-        .in('role', ['facility_admin', 'provider_supervisor', 'staff', 'provider_viewer', 'senior_employee', 'junior_employee', 'guard'])
-        .order('created_at', { ascending: false }),
-      supabase.from('locations').select('id, name').eq('owner_user_id', ownerId).order('name'),
-    ])
-    team.value      = tm.data || []
-    locations.value = lc.data || []
-    // Listings + programs for the per-user scope pickers (owner's own catalog).
-    const locIds = (lc.data || []).map(l => l.id)
-    if (locIds.length) {
-      const [li, pg] = await Promise.all([
-        supabase.from('listings').select('id, name, location_id').in('location_id', locIds),
-        supabase.from('class_programs').select('id, name, location_id').in('location_id', locIds),
-      ])
-      listings.value = li.data || []
-      programs.value = pg.data || []
-    } else { listings.value = []; programs.value = [] }
+    const teamRes = await apiFetch('/business/team')
+    team.value = teamRes.data?.users || []
+    locations.value = []
+    listings.value = []
+    programs.value = []
   }
 }
 onMounted(load)
-// Reload when the active user changes (role/jurisdiction differ → different data set).
 watch(() => currentUser.value?.id, () => load())
 
 // ── Grouped view helpers (super admin) ────────────────────────────────────────
 
-// Platform-level team: Bookboll staff (super/country admins + platform staff with no
-// owner). Limited to roles the current user may manage (so a Platform Staff doesn't
-// see/manage other platform staff or admins), plus themselves.
 const platformTeam = computed(() =>
   allUsers.value.filter(u => {
-    const isPlatformMember = ['super_admin', 'country_admin', 'platform_staff'].includes(u.role) ||
+    const isPlatformMember = ['super_admin', 'country_admin', 'platform_staff', 'admin'].includes(u.role) ||
       (isProviderScopedRole(u.role) && !u.owner_user_id)
     if (!isPlatformMember) return false
     if (isSuperAdmin.value) return true
-    return u.id === currentUser.value?.id || assignableRoles.value.includes(u.role)
+    return String(u.id) === String(currentUser.value?.id) || assignableRoles.value.includes(u.role)
   })
 )
 
-// Each provider_admin with their staff grouped — only businesses in the current
-// platform user's jurisdiction (country / assigned venues).
 const providerGroups = computed(() => {
-  const providers = allUsers.value.filter(u => u.role === 'provider_admin' && businessInJurisdiction(u.id))
-  return providers.map(p => ({
-    provider: p,
-    staff: allUsers.value.filter(u => u.owner_user_id === p.id),
-  }))
+  return businesses.value
+    .filter(b => businessInJurisdiction(b.owner_user_id))
+    .map(b => {
+      const ownerRow = allUsers.value.find(u => String(u.id) === String(b.owner_user_id))
+      const provider = {
+        id: b.owner_user_id,
+        role: 'provider_admin',
+        full_name: ownerRow?.full_name || b.full_name || b.business_name || b.name,
+        email: ownerRow?.email || b.email,
+        username: b.username,
+        business_name: b.business_name || b.name,
+        business_types: b.business_types || [],
+        business_status: b.business_status || b.status,
+        business_id: b.id,
+        country_id: b.country_id ?? ownerRow?.country_id,
+        plan: b.plan || 'free',
+        premium_since: null,
+        status: ownerRow?.status || 'active',
+        last_login: ownerRow?.last_login || ownerRow?.last_login_at,
+      }
+      return {
+        provider,
+        staff: allUsers.value.filter(u => String(u.owner_user_id) === String(b.owner_user_id)),
+      }
+    })
 })
 
 // Expand state for business groups — all collapsed by default
@@ -578,41 +609,13 @@ function scopeText(u) {
   return 'Global'
 }
 
-const statusBadge = (s) => ({ approved: 'badge-success', pending: 'badge-warning', rejected: 'badge-error' }[s] || 'badge-neutral')
+const statusBadge = (s) => ({ approved: 'badge-success', active: 'badge-success', pending: 'badge-warning', rejected: 'badge-error', suspended: 'badge-error' }[s] || 'badge-neutral')
 
-// ── Provider plan (Free / Premium) — super admin only ──────────────────────────
-// The plan lives on the provider's own admin_users row; flipping it here lets Bookboll
-// comp a business to Premium or move them back to Free without touching billing.
+// Premium plan toggle deferred until businesses.plan exists on Laravel.
 const isPremiumPlan = (p) => p?.plan === 'premium'
 const planBusyId = ref('')
-async function setProviderPlan(provider, plan) {
-  if (!isSuperAdmin.value || !provider?.id || planBusyId.value) return
-  if (isPremiumPlan(provider) === (plan === 'premium')) return   // no change
-  if (plan === 'free') {
-    const ok = await askConfirm({
-      title: 'Move this business to Free?',
-      message: `${provider.business_name || provider.full_name} will lose Premium features (blog, marketing emails, exports, promo codes, custom banners, scoped widgets). Their data stays; the features just lock again.`,
-      confirmText: 'Move to Free', danger: true,
-    })
-    if (!ok) return
-  }
-  planBusyId.value = provider.id
-  const patch = plan === 'premium'
-    ? { plan: 'premium', premium_since: new Date().toISOString() }
-    : { plan: 'free', premium_since: null }
-  const { error } = await supabase.from('admin_users').update(patch).eq('id', provider.id)
-  planBusyId.value = ''
-  if (error) {
-    pushToast(/could not find|does not exist|schema cache/i.test(error.message || '')
-      ? 'Run the provider_premium migration (20260725000000) first.'
-      : (error.message || 'Could not change the plan.'), 'error')
-    return
-  }
-  // Update the in-memory row so the badge flips instantly (allUsers drives the groups).
-  const row = allUsers.value.find(u => u.id === provider.id)
-  if (row) { row.plan = patch.plan; row.premium_since = patch.premium_since }
-  logAudit({ action: plan === 'premium' ? AUDIT.ENABLED : AUDIT.DISABLED, entity_type: 'provider_plan', entity_id: provider.id, details: `Set ${provider.business_name || provider.full_name} to ${plan === 'premium' ? 'Premium' : 'Free'}` })
-  pushToast(plan === 'premium' ? 'Business upgraded to Premium' : 'Business moved to Free', 'success')
+async function setProviderPlan(_provider, _plan) {
+  pushToast('Premium plan management will be available in a later billing step.', 'info')
 }
 const timeAgo = (ts) => {
   if (!ts) return 'Never'
@@ -627,8 +630,12 @@ const timeAgo = (ts) => {
 function avatarInitials(name) { return (name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase() }
 const avatarColors = ['#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777']
 function avatarColor(id) {
-  const n = id ? parseInt(id.replace(/-/g, '').slice(0, 8), 16) : 0
-  return avatarColors[n % avatarColors.length]
+  if (id == null || id === '') return avatarColors[0]
+  // Laravel numeric ids + legacy UUID strings both work.
+  const n = typeof id === 'number'
+    ? id
+    : parseInt(String(id).replace(/-/g, '').slice(0, 8), 16) || Number(id) || 0
+  return avatarColors[Math.abs(n) % avatarColors.length]
 }
 </script>
 
@@ -729,8 +736,8 @@ function avatarColor(id) {
               <span v-if="g.provider.country_id" class="biz-country-pill">{{ countryName(g.provider.country_id) }}</span>
             </div>
             <div class="biz-actions" @click.stop>
-              <button v-if="isSuperAdmin && !isPremiumPlan(g.provider)" class="btn-icon plan-up" :disabled="planBusyId === g.provider.id" @click="setProviderPlan(g.provider, 'premium')" title="Upgrade to Premium"><Crown :size="15" /></button>
-              <button v-else-if="isSuperAdmin" class="btn-icon plan-down" :disabled="planBusyId === g.provider.id" @click="setProviderPlan(g.provider, 'free')" title="Move to Free"><CircleArrowDown :size="15" /></button>
+              <button v-if="false && isSuperAdmin && !isPremiumPlan(g.provider)" class="btn-icon plan-up" :disabled="planBusyId === g.provider.id" @click="setProviderPlan(g.provider, 'premium')" title="Upgrade to Premium"><Crown :size="15" /></button>
+              <button v-else-if="false && isSuperAdmin" class="btn-icon plan-down" :disabled="planBusyId === g.provider.id" @click="setProviderPlan(g.provider, 'free')" title="Move to Free"><CircleArrowDown :size="15" /></button>
               <button class="btn-icon" @click="openAdminEdit(g.provider)" title="Edit business"><Edit2 :size="15" /></button>
               <button class="btn-icon danger" @click="removeAdmin(g.provider)" title="Delete business"><Trash2 :size="15" /></button>
             </div>
