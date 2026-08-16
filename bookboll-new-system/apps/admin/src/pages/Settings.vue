@@ -1,23 +1,30 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { Settings as SettingsIcon, Bell, Shield, DollarSign, Globe as Globe2, Mail, Building2, User, FileText, AlertTriangle, Info, Check } from 'lucide-vue-next'
-import { supabase } from '../lib/supabase.js'
 import { pushToast } from '../lib/toast.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { changeOwnPassword, authError } from '../lib/auth.js'
+import { fetchSettings, updateSettings, asBool, asNumber } from '../lib/settings.js'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
-const { isSuperAdmin, isCountryAdmin, currentUser, loadUserContext } = useCurrentUser()
+const { isSuperAdmin, isCountryAdmin, currentUser } = useCurrentUser()
 
 const isAdminView = computed(() => isSuperAdmin.value || isCountryAdmin.value)
 
-// ── Super admin tabs ──────────────────────────────────────────
 const tab = ref('platform')
-const platform = ref({ commission: 20, currency: 'AED', name: 'Bookboll', tagline: 'Book your game' })
-const notifications = ref({ newBooking: true, paymentFailed: true, providerSignup: true, daily: false })
+const loading = ref(false)
+const savingAll = ref(false)
+const savedAll = ref(false)
 
-// ── Policies state ────────────────────────────────────────────
+const platform = ref({ name: 'Bookboll', tagline: 'Book your game', currency: 'AED' })
+const notifications = ref({
+  newBooking: true,
+  paymentFailed: true,
+  providerSignup: true,
+  daily: false,
+})
+
 const policies = ref({
   cancellation_hours: 48,
   booking_hold_minutes: 10,
@@ -26,32 +33,123 @@ const policies = ref({
 })
 const policiesSaving = ref(false)
 const policiesSaved = ref(false)
+const platformSaving = ref(false)
+const platformSaved = ref(false)
+const notificationsSaving = ref(false)
+const notificationsSaved = ref(false)
 
-async function loadPolicies() {
-  const { data } = await supabase.from('platform_settings').select('key, value')
-    .in('key', ['cancellation_hours', 'booking_hold_minutes', 'noshow_policy', 'trial_cancel_policy'])
-  if (data) {
-    for (const row of data) {
-      if (row.key === 'cancellation_hours' || row.key === 'booking_hold_minutes') policies.value[row.key] = Number(row.value)
-      else policies.value[row.key] = row.value
-    }
+function applySettingsMap(map) {
+  const s = map || {}
+  platform.value = {
+    name: s.platform_name || platform.value.name,
+    tagline: s.platform_tagline || platform.value.tagline,
+    currency: s.platform_default_currency || platform.value.currency,
   }
+  policies.value = {
+    cancellation_hours: asNumber(s.cancellation_hours, policies.value.cancellation_hours),
+    booking_hold_minutes: asNumber(
+      s.booking_hold_minutes ?? s.default_bookings_slot_lock_time,
+      policies.value.booking_hold_minutes,
+    ),
+    noshow_policy: s.noshow_policy ?? policies.value.noshow_policy,
+    trial_cancel_policy: s.trial_cancel_policy ?? policies.value.trial_cancel_policy,
+  }
+  notifications.value = {
+    newBooking: asBool(s.notify_new_booking, true),
+    paymentFailed: asBool(s.notify_payment_failed, true),
+    providerSignup: asBool(s.notify_provider_signup, true),
+    daily: asBool(s.notify_daily_summary, false),
+  }
+}
+
+async function loadAdminSettings() {
+  loading.value = true
+  const res = await fetchSettings()
+  loading.value = false
+  if (!res.success) {
+    pushToast(res.message || 'Could not load settings.', 'error')
+    return
+  }
+  applySettingsMap(res.data?.settings || {})
+}
+
+function platformRows() {
+  return [
+    { key: 'platform_name', value: String(platform.value.name || '').trim() || 'Bookboll' },
+    { key: 'platform_tagline', value: String(platform.value.tagline || '').trim() },
+    { key: 'platform_default_currency', value: String(platform.value.currency || '').trim().toUpperCase() || 'AED' },
+  ]
+}
+
+function policyRows() {
+  return [
+    { key: 'cancellation_hours', value: String(Math.max(0, Number(policies.value.cancellation_hours) || 0)) },
+    { key: 'booking_hold_minutes', value: String(Math.max(1, Number(policies.value.booking_hold_minutes) || 10)) },
+    { key: 'noshow_policy', value: policies.value.noshow_policy || '' },
+    { key: 'trial_cancel_policy', value: policies.value.trial_cancel_policy || '' },
+  ]
+}
+
+function notificationRows() {
+  return [
+    { key: 'notify_new_booking', value: notifications.value.newBooking ? '1' : '0' },
+    { key: 'notify_payment_failed', value: notifications.value.paymentFailed ? '1' : '0' },
+    { key: 'notify_provider_signup', value: notifications.value.providerSignup ? '1' : '0' },
+    { key: 'notify_daily_summary', value: notifications.value.daily ? '1' : '0' },
+  ]
+}
+
+async function saveRows(rows) {
+  const res = await updateSettings(rows)
+  if (!res.success) {
+    pushToast(res.message || 'Could not save settings.', 'error')
+    return false
+  }
+  return true
+}
+
+async function savePlatform() {
+  platformSaving.value = true
+  const ok = await saveRows(platformRows())
+  platformSaving.value = false
+  if (!ok) return
+  platformSaved.value = true
+  pushToast('Platform settings saved', 'success')
+  setTimeout(() => { platformSaved.value = false }, 2500)
 }
 
 async function savePolicies() {
   policiesSaving.value = true
-  const rows = [
-    { key: 'cancellation_hours', value: String(policies.value.cancellation_hours), updated_at: new Date().toISOString() },
-    { key: 'booking_hold_minutes', value: String(Math.max(1, Number(policies.value.booking_hold_minutes) || 10)), updated_at: new Date().toISOString() },
-    { key: 'noshow_policy', value: policies.value.noshow_policy, updated_at: new Date().toISOString() },
-    { key: 'trial_cancel_policy', value: policies.value.trial_cancel_policy, updated_at: new Date().toISOString() },
-  ]
-  const { error } = await supabase.from('platform_settings').upsert(rows, { onConflict: 'key' })
+  const ok = await saveRows(policyRows())
   policiesSaving.value = false
-  if (error) { pushToast('Could not save policies.', 'error'); return }
+  if (!ok) return
   policiesSaved.value = true
   pushToast('Policies saved', 'success')
   setTimeout(() => { policiesSaved.value = false }, 2500)
+}
+
+async function saveNotifications() {
+  notificationsSaving.value = true
+  const ok = await saveRows(notificationRows())
+  notificationsSaving.value = false
+  if (!ok) return
+  notificationsSaved.value = true
+  pushToast('Notification preferences saved', 'success')
+  setTimeout(() => { notificationsSaved.value = false }, 2500)
+}
+
+async function saveAllChanges() {
+  savingAll.value = true
+  const ok = await saveRows([
+    ...platformRows(),
+    ...policyRows(),
+    ...notificationRows(),
+  ])
+  savingAll.value = false
+  if (!ok) return
+  savedAll.value = true
+  pushToast('All settings saved', 'success')
+  setTimeout(() => { savedAll.value = false }, 2500)
 }
 
 // ── Provider admin state ──────────────────────────────────────
@@ -62,48 +160,42 @@ const saving = ref(false)
 const saved = ref(false)
 
 onMounted(async () => {
-  if (isAdminView.value) loadPolicies()
+  if (isAdminView.value) await loadAdminSettings()
   if (!isAdminView.value && currentUser.value) {
     providerForm.value = {
       business_name: currentUser.value.business_name || '',
       description: currentUser.value.description || '',
       phone: currentUser.value.phone || '',
-      full_name: currentUser.value.full_name || '',
+      full_name: currentUser.value.full_name || currentUser.value.name || '',
       email: currentUser.value.email || '',
     }
   }
 })
 
-// ── Change my password (Supabase Auth; works for the signed-in account) ──────
+// ── Change password (Laravel /change-password) ────────────────
+const pwCurrent = ref('')
 const pwNew = ref('')
 const pwConfirm = ref('')
 const pwSaving = ref(false)
 async function changePassword() {
   const p = pwNew.value
+  if (!pwCurrent.value) { pushToast('Enter your current password.', 'error'); return }
   if (p.length < 10) { pushToast('Use at least 10 characters.', 'error'); return }
   if (p !== pwConfirm.value) { pushToast('The two passwords don\'t match.', 'error'); return }
   pwSaving.value = true
-  const ok = await changeOwnPassword(p)
+  const ok = await changeOwnPassword(p, pwCurrent.value)
   pwSaving.value = false
   if (!ok) { pushToast(authError.value || 'Could not change the password.', 'error'); return }
-  pwNew.value = ''; pwConfirm.value = ''
+  pwCurrent.value = ''; pwNew.value = ''; pwConfirm.value = ''
   pushToast('Password changed — use the new one from your next sign-in.', 'success')
 }
 
 async function saveProviderProfile() {
   if (!currentUser.value) return
   saving.value = true
-  await supabase.from('admin_users').update({
-    business_name: providerForm.value.business_name,
-    description: providerForm.value.description,
-    phone: providerForm.value.phone,
-    full_name: providerForm.value.full_name,
-  }).eq('id', currentUser.value.id)
-  await loadUserContext()
+  // Provider profile still pending a dedicated Laravel business profile endpoint.
+  pushToast('Business profile save will be wired to Laravel next.', 'error')
   saving.value = false
-  saved.value = true
-  pushToast('Profile saved', 'success')
-  setTimeout(() => { saved.value = false }, 2500)
 }
 </script>
 
@@ -117,7 +209,9 @@ async function saveProviderProfile() {
           <div class="page-title">Settings</div>
           <div class="page-subtitle">Platform-wide configuration and preferences</div>
         </div>
-        <button class="btn btn-primary">Save All Changes</button>
+        <button class="btn btn-primary" :disabled="savingAll || loading" @click="saveAllChanges">
+          {{ savingAll ? 'Saving…' : savedAll ? 'Saved!' : 'Save All Changes' }}
+        </button>
       </div>
 
       <div class="grid" style="grid-template-columns: 240px 1fr;">
@@ -136,9 +230,20 @@ async function saveProviderProfile() {
         <div class="card" style="padding: 28px;">
           <div v-if="tab==='platform'">
             <h3>Platform Settings</h3>
-            <div class="form-group"><label class="form-label">Platform Name</label><input v-model="platform.name" /></div>
-            <div class="form-group"><label class="form-label">Tagline</label><input v-model="platform.tagline" /></div>
-            <div class="form-group"><label class="form-label">Default Currency</label><input v-model="platform.currency" /></div>
+            <p v-if="loading" class="muted">Loading…</p>
+            <template v-else>
+              <div class="form-group"><label class="form-label">Platform Name</label><input v-model="platform.name" /></div>
+              <div class="form-group"><label class="form-label">Tagline</label><input v-model="platform.tagline" /></div>
+              <div class="form-group"><label class="form-label">Default Currency</label><input v-model="platform.currency" /></div>
+              <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
+                <button class="btn btn-primary" :disabled="platformSaving" @click="savePlatform">
+                  {{ platformSaving ? 'Saving…' : 'Save Platform' }}
+                </button>
+                <span v-if="platformSaved" style="display:flex;align-items:center;gap:5px;color:var(--primary);font-size:13px;font-weight:600;">
+                  <Check :size="14" /> Saved
+                </span>
+              </div>
+            </template>
           </div>
           <div v-if="tab==='commission'">
             <h3>Commission Configuration</h3>
@@ -237,10 +342,19 @@ async function saveProviderProfile() {
           </div>
           <div v-if="tab==='notifications'">
             <h3>Notifications</h3>
+            <p class="muted">Choose which platform events should notify Bookboll staff.</p>
             <label class="toggle"><input type="checkbox" v-model="notifications.newBooking" />New booking alerts</label>
             <label class="toggle"><input type="checkbox" v-model="notifications.paymentFailed" />Payment failure alerts</label>
             <label class="toggle"><input type="checkbox" v-model="notifications.providerSignup" />New provider signups</label>
             <label class="toggle"><input type="checkbox" v-model="notifications.daily" />Daily summary emails</label>
+            <div style="display:flex; align-items:center; gap:12px; margin-top:16px;">
+              <button class="btn btn-primary" :disabled="notificationsSaving" @click="saveNotifications">
+                {{ notificationsSaving ? 'Saving…' : 'Save Notifications' }}
+              </button>
+              <span v-if="notificationsSaved" style="display:flex;align-items:center;gap:5px;color:var(--primary);font-size:13px;font-weight:600;">
+                <Check :size="14" /> Saved
+              </span>
+            </div>
           </div>
           <div v-if="tab==='security'">
             <h3>Security</h3>
@@ -249,6 +363,10 @@ async function saveProviderProfile() {
             <div class="policy-card">
               <div class="policy-card-title"><Shield :size="14" /> Change my password</div>
               <div class="form-group" style="margin-top:12px;">
+                <label class="form-label">Current password</label>
+                <input type="password" v-model="pwCurrent" autocomplete="current-password" placeholder="Your current password" style="max-width:340px;" />
+              </div>
+              <div class="form-group">
                 <label class="form-label">New password</label>
                 <input type="password" v-model="pwNew" autocomplete="new-password" placeholder="At least 10 characters" style="max-width:340px;" />
               </div>
@@ -256,7 +374,7 @@ async function saveProviderProfile() {
                 <label class="form-label">Repeat new password</label>
                 <input type="password" v-model="pwConfirm" autocomplete="new-password" placeholder="Same password again" style="max-width:340px;" />
               </div>
-              <button class="btn btn-primary" :disabled="pwSaving || !pwNew" @click="changePassword">{{ pwSaving ? 'Changing…' : 'Change password' }}</button>
+              <button class="btn btn-primary" :disabled="pwSaving || !pwNew || !pwCurrent" @click="changePassword">{{ pwSaving ? 'Changing…' : 'Change password' }}</button>
               <div class="policy-info-box" style="margin-top:12px;">
                 <Info :size="13" />
                 <span>Takes effect immediately — you stay signed in here, and the <strong>new</strong> password is required from your next sign-in on any device.</span>
