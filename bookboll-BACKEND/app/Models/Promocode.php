@@ -29,17 +29,35 @@ class Promocode extends Model
         'is_reminder_promocode',
         'is_gift_card_promocode',
         'gift_card_id',
+        'recipient',
+        'creator_role',
+        'owner_user_id',
+        'applicable_to',
+        'location_id',
+        'owner_user_ids',
+        'location_ids',
+        'listing_ids',
+        'program_ids',
+        'audience',
+        'target_emails',
+        'per_customer_limit',
     ];
 
     protected $casts = [
-        'valid_from'            => 'date',
-        'expires_at'            => 'date',
-        'used_by_users'         => 'array',
+        'valid_from'             => 'date',
+        'expires_at'             => 'date',
+        'used_by_users'          => 'array',
         'discount_value'         => 'decimal:2',
         'is_reminder_promocode'  => 'boolean',
         'is_gift_card_promocode' => 'boolean',
-        'min_order_amount'    => 'decimal:2',
-        'max_discount_amount' => 'decimal:2',
+        'min_order_amount'       => 'decimal:2',
+        'max_discount_amount'    => 'decimal:2',
+        'owner_user_ids'         => 'array',
+        'location_ids'           => 'array',
+        'listing_ids'            => 'array',
+        'program_ids'            => 'array',
+        'target_emails'          => 'array',
+        'per_customer_limit'     => 'integer',
     ];
 
     public function venues()
@@ -65,6 +83,11 @@ class Promocode extends Model
     public function users()
     {
         return $this->belongsToMany(User::class, 'promocode_user')->withPivot('usage_count')->withTimestamps();
+    }
+
+    public function redemptions()
+    {
+        return $this->hasMany(PromocodeRedemption::class);
     }
 
     public function scopeActive($query)
@@ -253,6 +276,11 @@ class Promocode extends Model
             'is_reminder_promocode',
             'is_gift_card_promocode',
             'gift_card_id',
+            'recipient',
+            'creator_role',
+            'owner_user_id',
+            'applicable_to',
+            'audience',
         ];
     }
 

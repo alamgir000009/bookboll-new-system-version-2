@@ -27,8 +27,7 @@ class GeographyService
             $recordsPerPage = 250;
         }
 
-        $query = Country::query()
-            ->withCount('cities')
+        $query = Country::withCount('cities')
             ->with('currency')
             ->orderBy('name');
 
@@ -51,7 +50,7 @@ class GeographyService
 
         $actor = $request->user();
         if ($actor && $actor->hasRole('country_admin') && ! $actor->hasRole('super_admin')) {
-            $allowed = collect($actor->assigned_country_ids ?? [])->filter()->map(fn ($id) => (int) $id)->all();
+            $allowed = collect($actor->assigned_country_ids ?? [])->filter()->map(fn($id) => (int) $id)->all();
             if ($actor->country_id) {
                 $allowed[] = (int) $actor->country_id;
             }
@@ -64,11 +63,11 @@ class GeographyService
         }
 
         $paginator = $query->paginate($recordsPerPage);
-        $countries = collect($paginator->items())->map(fn (Country $c) => $this->mapCountry($c))->values();
+        $countries = collect($paginator->items())->map(fn(Country $c) => $this->mapCountry($c))->values();
 
         $countryIds = $countries->pluck('id')->all();
         $rates = $countryIds
-            ? CommissionRate::query()->whereIn('country_id', $countryIds)->get()
+            ? CommissionRate::whereIn('country_id', $countryIds)->get()
             : collect();
 
         $commissionRates = [];
@@ -105,15 +104,14 @@ class GeographyService
             'search'     => 'nullable|string|max:100',
         ]);
 
-        $query = City::query()
-            ->where('country_id', $data['country_id'])
+        $query = City::where('country_id', $data['country_id'])
             ->orderBy('name');
 
         if (! empty($data['search'])) {
             $query->where('name', 'LIKE', '%' . $data['search'] . '%');
         }
 
-        $cities = $query->get()->map(fn (City $c) => $this->mapCity($c));
+        $cities = $query->get()->map(fn(City $c) => $this->mapCity($c));
 
         return sendSuccess('Cities fetched successfully', compact('cities'));
     }
@@ -164,13 +162,9 @@ class GeographyService
             'city_ids.*' => 'integer',
         ]);
 
-        if (! \Schema::hasColumn('cities', 'status')) {
-            return sendError('City status column is missing. Run migrations.', [], 500);
-        }
-
         $status = in_array($data['status'], ['active', '1', 1], true) ? 1 : 0;
 
-        $query = City::query()->where('country_id', $data['country_id']);
+        $query = City::where('country_id', $data['country_id']);
         if (! empty($data['city_ids'])) {
             $query->whereIn('id', $data['city_ids']);
         }

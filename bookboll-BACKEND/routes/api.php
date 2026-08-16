@@ -150,13 +150,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::delete('listings/{id}/images', [ListingController::class, 'deleteImage'])->name('listings.deleteImage');
         Route::apiResource('listings', ListingController::class);
 
-        Route::apiResource('promocodes', PromocodeController::class);
-
+        Route::get('promocodes/options', [PromocodeController::class, 'options'])->name('promocodes.options');
         Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues'])->name('promocodes.venues.search');
         Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings'])->name('promocodes.listings.search');
         Route::post('promocodes/validate', [PromocodeController::class, 'validate'])->name('promocodes.validate');
+        Route::get('promocodes/{promocode}/redemptions', [PromocodeController::class, 'redemptions'])->name('promocodes.redemptions');
+        Route::post('promocodes/{promocode}/redemptions', [PromocodeController::class, 'storeRedemption'])->name('promocodes.redemptions.store');
         Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply'])->name('promocodes.apply');
         Route::post('promocodes/{booking}/remove', [PromocodeController::class, 'remove'])->name('promocodes.remove');
+        Route::apiResource('promocodes', PromocodeController::class);
 
         Route::get('extra-data', [HelperController::class, 'extraData'])->name('extra-data');
         Route::get('extra-customers', [HelperController::class, 'extraCustomers'])->name('extra-customers');

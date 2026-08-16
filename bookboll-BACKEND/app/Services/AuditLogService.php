@@ -86,8 +86,8 @@ class AuditLogService
         $stats = $this->getStats();
 
         $filterOptions = [
-            'actions'   => $this->auditLogModel::query()->distinct()->orderBy('action')->pluck('action')->filter()->values(),
-            'resources' => $this->auditLogModel::query()->distinct()->orderBy('resource')->pluck('resource')->filter()->values(),
+            'actions'   => $this->auditLogModel::distinct()->orderBy('action')->pluck('action')->filter()->values(),
+            'resources' => $this->auditLogModel::distinct()->orderBy('resource')->pluck('resource')->filter()->values(),
         ];
 
         return sendSuccess('Audit logs retrieved successfully', compact('logs', 'stats', 'filterOptions'));

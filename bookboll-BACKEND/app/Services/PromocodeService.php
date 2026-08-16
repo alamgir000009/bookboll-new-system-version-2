@@ -1,9 +1,13 @@
 <?php
+
 namespace App\Services;
 
 use App\Models\Booking;
+use App\Models\Business;
 use App\Models\Listing;
 use App\Models\Promocode;
+use App\Models\PromocodeRedemption;
+use App\Models\User;
 use App\Models\Venue;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
@@ -18,42 +22,190 @@ use PaymentType;
 
 class PromocodeService
 {
-    public function __construct(protected Promocode $promocodeModel, protected Booking $bookingModel)
-    {}
+    public function __construct(protected Promocode $promocodeModel, protected Booking $bookingModel) {}
 
     public function all($request)
     {
-        $records_per_page = $request->records_per_page ?? 10;
-        $search           = $request->search ?? null;
+        $recordsPerPage = (int) ($request->records_per_page ?? $request->query('records_per_page', 25));
+        if ($recordsPerPage < 1) {
+            $recordsPerPage = 25;
+        }
+        if ($recordsPerPage > 250) {
+            $recordsPerPage = 250;
+        }
+
+        $search    = $request->search ?? $request->query('search');
+        $recipient = $request->recipient ?? $request->query('recipient');
+        $status    = $request->status ?? $request->query('status');
 
         $query = $this->promocodeModel::with(['venues', 'listings', 'users'])
             ->nonReminderPromocodes()
             ->where('is_gift_card_promocode', false)
-            ->latest()
-            ->when($search, function ($query, $search) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('code', 'LIKE', "%{$search}%")
-                        ->orWhere('description', 'LIKE', "%{$search}%")
-                        ->orWhere('discount_type', 'LIKE', "%{$search}%")
-                        ->orWhere('valid_from', 'LIKE', "%{$search}%")
-                        ->orWhere('expires_at', 'LIKE', "%{$search}%")
-                        ->orWhere('min_order_amount', 'LIKE', "%{$search}%")
-                        ->orWhere('max_discount_amount', 'LIKE', "%{$search}%")
-                        ->orWhere('usage_limit', 'LIKE', "%{$search}%")
-                        ->orWhereHas('users', function ($sub) use ($search) {
-                            $sub->where('name', 'LIKE', "%{$search}%")
-                                ->orWhere('email', 'LIKE', "%{$search}%")
-                                ->orWhere('phone', 'LIKE', "%{$search}%");
-                        });
-                });
-            })
-            ->when($request->status ?? null, fn($q, $status) => $q->where('status', $status))
-            ->when($request->discount_type ?? null, fn($q, $type) => $q->where('discount_type', $type))
-            ->when($request->payment_methods ?? null, fn($q, $type) => $q->where('payment_methods', $type));
+            ->latest();
 
-        $promocodes = $query->paginate($records_per_page);
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('code', 'LIKE', "%{$search}%")
+                    ->orWhere('description', 'LIKE', "%{$search}%");
+            });
+        }
 
-        return sendSuccess('Promocodes fetched successfully', compact('promocodes'));
+        if ($recipient && in_array($recipient, ['bookboll', 'provider'], true)) {
+            $query->where('recipient', $recipient);
+        }
+
+        if ($status) {
+            $query->where('status', $status);
+        }
+
+        $this->applyActorScope($query, $request->user());
+        $this->applyGeoFilter($query, $request);
+
+        $paginator = $query->paginate($recordsPerPage);
+        $codes = collect($paginator->items())->map(fn(Promocode $p) => $this->mapDashboard($p))->values();
+
+        return sendSuccess('Promocodes fetched successfully', [
+            'promocodes' => $codes,
+            'pagination' => [
+                'current_page'     => $paginator->currentPage(),
+                'last_page'        => $paginator->lastPage(),
+                'records_per_page' => $paginator->perPage(),
+                'total'            => $paginator->total(),
+                'from'             => $paginator->firstItem(),
+                'to'               => $paginator->lastItem(),
+            ],
+        ]);
+    }
+
+    public function options(Request $request)
+    {
+        $venues = Venue::with('users')
+            ->orderBy('name')
+            ->get(['id', 'name', 'status', 'city_id', 'country_id', 'created_by']);
+
+        $locations = $venues->map(function (Venue $v) {
+            return [
+                'id'            => $v->id,
+                'name'          => $v->name,
+                'status'        => $v->status,
+                'city_id'       => $v->city_id,
+                'owner_user_id' => $v->users->first()?->id ?? $v->created_by,
+            ];
+        });
+
+        $ownerByVenue = $locations->pluck('owner_user_id', 'id');
+
+        $listings = Listing::orderBy('name')
+            ->get(['id', 'name', 'venue_id', 'created_by'])
+            ->map(function (Listing $l) use ($ownerByVenue) {
+                return [
+                    'id'            => $l->id,
+                    'name'          => $l->name,
+                    'location_id'   => $l->venue_id,
+                    'owner_user_id' => $ownerByVenue[$l->venue_id] ?? $l->created_by,
+                ];
+            });
+
+        $customers = User::role('customer')
+            ->orderBy('name')
+            ->get(['id', 'name', 'email'])
+            ->map(fn(User $u) => [
+                'id'        => $u->id,
+                'full_name' => $u->name,
+                'email'     => $u->email,
+            ]);
+
+        $cityIds = $venues->pluck('city_id')->filter()->unique()->values();
+        $cities = $cityIds->isEmpty()
+            ? collect()
+            : \Nnjeim\World\Models\City::whereIn('id', $cityIds)
+            ->orderBy('name')
+            ->get(['id', 'name', 'country_id']);
+
+        $countryIds = $venues->pluck('country_id')
+            ->merge($cities->pluck('country_id'))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $countries = $countryIds->isEmpty()
+            ? \Nnjeim\World\Models\Country::orderBy('name')->get(['id', 'name'])
+            : \Nnjeim\World\Models\Country::whereIn('id', $countryIds)
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        $businesses = Business::with('owner:id,name,email')
+            ->orderBy('name')
+            ->get()
+            ->map(fn(Business $b) => [
+                'id'            => $b->owner_id,
+                'full_name'     => $b->owner?->name ?: $b->name,
+                'username'      => $b->username,
+                'email'         => $b->owner?->email,
+                'country_id'    => $b->country_id,
+                'role'          => 'provider_admin',
+            ]);
+
+        return sendSuccess('Promocode options fetched', [
+            'locations'  => $locations,
+            'listings'   => $listings,
+            'programs'   => [],
+            'customers'  => $customers,
+            'countries'  => $countries,
+            'cities'     => $cities,
+            'businesses' => $businesses,
+        ]);
+    }
+
+    public function redemptions($id)
+    {
+        $rows = PromocodeRedemption::where('promocode_id', $id)
+            ->orderByDesc('redeemed_at')
+            ->orderByDesc('id')
+            ->get();
+
+        return sendSuccess('Redemptions fetched', [
+            'redemptions' => $rows,
+        ]);
+    }
+
+    public function storeRedemption(Request $request, $id)
+    {
+        $promocode = $this->promocodeModel->find($id);
+        $data = $request->validate([
+            'customer_email'  => 'nullable|string|max:255',
+            'customer_name'   => 'nullable|string|max:255',
+            'source_type'     => 'nullable|string|max:40',
+            'source_id'       => 'nullable|string|max:64',
+            'order_amount'    => 'nullable|numeric|min:0',
+            'discount_amount' => 'nullable|numeric|min:0',
+            'currency'        => 'nullable|string|max:10',
+            'recipient'       => 'nullable|string|max:20',
+            'owner_user_id'   => 'nullable|integer',
+            'country_id'      => 'nullable|integer',
+        ]);
+
+        $row = PromocodeRedemption::create([
+            'promocode_id'    => $promocode?->id,
+            'code'            => $promocode?->code ?? '',
+            'customer_email'  => strtolower(trim((string) ($data['customer_email'] ?? ''))),
+            'customer_name'   => $data['customer_name'] ?? '',
+            'source_type'     => $data['source_type'] ?? '',
+            'source_id'       => $data['source_id'] ?? null,
+            'order_amount'    => $data['order_amount'] ?? 0,
+            'discount_amount' => $data['discount_amount'] ?? 0,
+            'currency'        => $data['currency'] ?? 'AED',
+            'recipient'       => $data['recipient'] ?? ($promocode?->recipient ?? ''),
+            'owner_user_id'   => $data['owner_user_id'] ?? $promocode?->owner_user_id,
+            'country_id'      => $data['country_id'] ?? null,
+            'redeemed_at'     => now(),
+        ]);
+
+        if ($promocode) {
+            $promocode->increment('used_count');
+        }
+
+        return sendSuccess('Redemption recorded', ['redemption' => $row], 201);
     }
 
     public function customerPromocodes($request)
@@ -70,9 +222,9 @@ class PromocodeService
                     $subQ->whereDoesntHave('users')
                         ->where('is_reminder_promocode', false);
                 })
-                ->orWhereHas('users', function ($subQ) use ($user) {
-                    $subQ->where('user_id', $user->id);
-                });
+                    ->orWhereHas('users', function ($subQ) use ($user) {
+                        $subQ->where('user_id', $user->id);
+                    });
             })
             ->latest()
             ->when($search, function ($query, $search) {
@@ -96,13 +248,10 @@ class PromocodeService
 
             $promocode = $this->promocodeModel::create($validated);
 
-            if (! empty($request->venues)) {
-                $promocode->venues()->sync($request->venues);
-            }
-
-            if (! empty($request->listings)) {
-                $promocode->listings()->sync($request->listings);
-            }
+            $venueIds = $this->scopeIds($request->location_ids ?? $request->venues ?? []);
+            $listingIds = $this->scopeIds($request->listing_ids ?? $request->listings ?? []);
+            $promocode->venues()->sync($venueIds);
+            $promocode->listings()->sync($listingIds);
 
             if ($request->has('users')) {
                 $users = $request->users ?? [];
@@ -121,8 +270,9 @@ class PromocodeService
 
             $promocode->load(['venues', 'listings', 'users']);
 
-            return sendSuccess('Promocode created successfully', compact('promocode'), 201);
-
+            return sendSuccess('Promocode created successfully', [
+                'promocode' => $this->mapDashboard($promocode),
+            ], 201);
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Failed to create promocode: ' . $e->getMessage(), ['Exception' => $e]);
@@ -140,12 +290,12 @@ class PromocodeService
 
             $promocode->update($validated);
 
-            if ($request->has('venues')) {
-                $promocode->venues()->sync($request->venues ?? []);
+            if ($request->has('venues') || $request->has('location_ids')) {
+                $promocode->venues()->sync($this->scopeIds($request->location_ids ?? $request->venues ?? []));
             }
 
-            if ($request->has('listings')) {
-                $promocode->listings()->sync($request->listings ?? []);
+            if ($request->has('listings') || $request->has('listing_ids')) {
+                $promocode->listings()->sync($this->scopeIds($request->listing_ids ?? $request->listings ?? []));
             }
 
             if ($request->has('users')) {
@@ -153,7 +303,6 @@ class PromocodeService
                 if (empty($users)) {
                     $promocode->users()->detach();
                 } else {
-                    $existingUsers = $promocode->users()->pluck('user_id')->toArray();
                     $syncData      = [];
                     foreach ($users as $userId) {
                         $existingPivot     = $promocode->users()->where('user_id', $userId)->first();
@@ -169,8 +318,9 @@ class PromocodeService
 
             $promocode->load(['venues', 'listings', 'users']);
 
-            return sendSuccess('Promocode updated successfully', compact('promocode'));
-
+            return sendSuccess('Promocode updated successfully', [
+                'promocode' => $this->mapDashboard($promocode),
+            ]);
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Failed to update promocode: ' . $e->getMessage(), ['promocode_id' => $id, 'Exception' => $e]);
@@ -212,12 +362,16 @@ class PromocodeService
 
     protected function validateRequest($request, bool $isUpdate = false, $promocodeId = null): array
     {
+        if ($request->filled('code')) {
+            $request->merge(['code' => strtoupper(trim((string) $request->code))]);
+        }
+
         $rules = [
             'code' => $isUpdate
-                ? "sometimes|required|string|max:20|unique:promocodes,code,{$promocodeId}"
-                : 'required|string|max:20|unique:promocodes,code',
+                ? "sometimes|required|string|max:50|unique:promocodes,code,{$promocodeId}"
+                : 'required|string|max:50|unique:promocodes,code',
             'status'              => 'required|in:active,inactive',
-            'description'         => 'required|string|max:500',
+            'description'         => 'nullable|string|max:500',
             'discount_type'       => 'required|in:fixed,percentage',
             'discount_value'      => [
                 'required',
@@ -227,32 +381,88 @@ class PromocodeService
                     if ($request->discount_type === 'percentage' && $value > 100) {
                         $fail('Percentage discount cannot exceed 100%');
                     }
-                    if ($request->discount_type === 'fixed' && $value < 0) {
-                        $fail('Fixed discount cannot be negative');
-                    }
                 },
             ],
-            'usage_limit'         => 'nullable|integer|min:1',
-            'valid_from'          => 'nullable|date|after_or_equal:today',
-            'expires_at'          => 'nullable|date|after_or_equal:valid_from',
+            'usage_limit'         => 'nullable|integer|min:0',
+            'valid_from'          => 'nullable|date',
+            'expires_at'          => 'nullable|date',
+            'valid_to'            => 'nullable|date',
             'min_order_amount'    => 'nullable|numeric|min:0',
+            'min_order'           => 'nullable|numeric|min:0',
             'max_discount_amount' => 'nullable|numeric|min:0',
-            'per_user_limit'      => 'nullable|integer|min:1',
-            'payment_methods'     => 'required|in:all,online_only',
+            'per_user_limit'      => 'nullable|integer|min:0',
+            'per_customer_limit'  => 'nullable|integer|min:0',
+            'payment_methods'     => 'nullable|in:all,online_only',
             'venues'              => 'nullable|array',
-            'venues.*'            => 'exists:venues,id',
+            'venues.*'            => 'integer',
             'listings'            => 'nullable|array',
-            'listings.*'          => 'exists:listings,id',
+            'listings.*'          => 'integer',
             'users'               => 'nullable|array',
-            'users.*'             => 'exists:users,id',
+            'users.*'             => 'integer',
+            'recipient'           => 'nullable|in:bookboll,provider',
+            'creator_role'        => 'nullable|string|max:40',
+            'owner_user_id'       => 'nullable|integer',
+            'applicable_to'       => 'nullable|in:all,facility,program,provider_plan',
+            'location_id'         => 'nullable|integer',
+            'owner_user_ids'      => 'nullable|array',
+            'owner_user_ids.*'    => 'integer',
+            'location_ids'        => 'nullable|array',
+            'location_ids.*'      => 'integer',
+            'listing_ids'         => 'nullable|array',
+            'listing_ids.*'       => 'integer',
+            'program_ids'         => 'nullable|array',
+            'audience'            => 'nullable|in:all,new,specific',
+            'target_emails'       => 'nullable|array',
+            'target_emails.*'     => 'nullable|string',
         ];
 
-        if ($isUpdate) {
-            $rules['valid_from'] = 'sometimes|nullable|date';
-            $rules['expires_at'] = 'sometimes|nullable|date|after_or_equal:valid_from';
+        $data = $request->validate($rules);
+
+        $data['description'] = $data['description'] ?? '';
+        $data['payment_methods'] = $data['payment_methods'] ?? 'all';
+
+        if (array_key_exists('valid_to', $data) && ! array_key_exists('expires_at', $data)) {
+            $data['expires_at'] = $data['valid_to'] ?: null;
+        }
+        unset($data['valid_to']);
+
+        if (array_key_exists('min_order', $data)) {
+            $data['min_order_amount'] = $data['min_order'];
+            unset($data['min_order']);
         }
 
-        return $request->validate($rules);
+        if (isset($data['usage_limit']) && (int) $data['usage_limit'] === 0) {
+            $data['usage_limit'] = null;
+        }
+
+        $perCustomer = (int) ($data['per_customer_limit'] ?? 0);
+        $data['per_customer_limit'] = $perCustomer;
+        if (! isset($data['per_user_limit'])) {
+            $data['per_user_limit'] = $perCustomer > 0 ? $perCustomer : null;
+        }
+
+        $locationIds = $this->scopeIds($data['location_ids'] ?? $request->location_ids ?? []);
+        $listingIds  = $this->scopeIds($data['listing_ids'] ?? $request->listing_ids ?? []);
+        $ownerIds    = $this->scopeIds($data['owner_user_ids'] ?? $request->owner_user_ids ?? []);
+
+        $data['location_ids']  = $locationIds;
+        $data['listing_ids']   = $listingIds;
+        $data['owner_user_ids'] = $ownerIds;
+        $data['program_ids']   = $this->scopeIds($data['program_ids'] ?? []);
+        $data['target_emails'] = array_values(array_unique(array_filter(array_map(
+            fn($e) => strtolower(trim((string) $e)),
+            $data['target_emails'] ?? []
+        ))));
+        $data['audience']      = $data['audience'] ?? 'all';
+        $data['recipient']     = $data['recipient'] ?? 'bookboll';
+        $data['creator_role']  = $data['creator_role'] ?? 'super_admin';
+        $data['applicable_to'] = $data['applicable_to'] ?? 'all';
+        $data['location_id']   = $data['location_id'] ?? ($locationIds[0] ?? null);
+        $data['owner_user_id'] = $data['owner_user_id'] ?? ($ownerIds[0] ?? null);
+
+        unset($data['venues'], $data['listings'], $data['users']);
+
+        return $data;
     }
 
     public function validatePromocode($request)
@@ -361,7 +571,6 @@ class PromocodeService
                     'discount_amount' => $promocode->applyDiscount($validated['amount']),
                 ],
             ], 200);
-
         } catch (Exception $e) {
             Log::error("Promocode validation failed: " . $e->getMessage(), ['request' => $request->all()]);
             return $this->invalidResponse('Something went wrong during validation');
@@ -565,7 +774,6 @@ class PromocodeService
             ]);
 
             return sendSuccess('Booking updated successfully', compact('booking'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error("Failed to update booking #{$bookingId}: " . $e->getMessage(), [
@@ -609,5 +817,148 @@ class PromocodeService
                 'exception'  => $e,
             ]);
         }
+    }
+
+    protected function mapDashboard(Promocode $p): array
+    {
+        $locationIds = $p->relationLoaded('venues') && $p->venues->isNotEmpty()
+            ? $p->venues->pluck('id')->map(fn($id) => (int) $id)->values()->all()
+            : $this->scopeIds($p->location_ids ?? []);
+        $listingIds = $p->relationLoaded('listings') && $p->listings->isNotEmpty()
+            ? $p->listings->pluck('id')->map(fn($id) => (int) $id)->values()->all()
+            : $this->scopeIds($p->listing_ids ?? []);
+        $ownerIds = $this->scopeIds($p->owner_user_ids ?? []);
+
+        return [
+            'id'                 => $p->id,
+            'code'               => $p->code,
+            'description'        => $p->description,
+            'discount_type'      => $p->discount_type,
+            'discount_value'     => (float) $p->discount_value,
+            'min_order'          => (float) ($p->min_order_amount ?? 0),
+            'usage_limit'        => (int) ($p->usage_limit ?? 0),
+            'usage_count'        => (int) ($p->used_count ?? 0),
+            'status'             => $p->status,
+            'valid_from'         => optional($p->valid_from)->toDateString(),
+            'valid_to'           => optional($p->expires_at)->toDateString(),
+            'recipient'          => $p->recipient ?: 'bookboll',
+            'creator_role'       => $p->creator_role ?: 'super_admin',
+            'owner_user_id'      => $p->owner_user_id,
+            'applicable_to'      => $p->applicable_to ?: 'all',
+            'owner_user_ids'     => $ownerIds,
+            'location_ids'       => $locationIds,
+            'listing_ids'        => $listingIds,
+            'program_ids'        => $this->scopeIds($p->program_ids ?? []),
+            'location_id'        => $p->location_id ?: ($locationIds[0] ?? null),
+            'audience'           => $p->audience ?: 'all',
+            'target_emails'      => $p->target_emails ?? [],
+            'per_customer_limit' => (int) ($p->per_customer_limit ?? 0),
+            'created_at'         => optional($p->created_at)?->toIso8601String(),
+        ];
+    }
+
+    protected function scopeIds($value): array
+    {
+        if (! is_array($value)) {
+            return $value ? [(int) $value] : [];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $value))));
+    }
+
+    protected function applyActorScope($query, $actor): void
+    {
+        if (! $actor) {
+            return;
+        }
+
+        if ($actor->hasRole('super_admin')) {
+            return;
+        }
+
+        if ($actor->hasRole('provider_admin') || $actor->owner_user_id) {
+            $ownerId = $actor->hasRole('provider_admin') ? $actor->id : (int) $actor->owner_user_id;
+            $query->where(function ($q) use ($ownerId) {
+                $q->where('owner_user_id', $ownerId)
+                    ->orWhereJsonContains('owner_user_ids', $ownerId)
+                    ->orWhereJsonContains('owner_user_ids', (string) $ownerId);
+            });
+
+            return;
+        }
+
+        if ($actor->hasRole('country_admin')) {
+            $allowed = collect($actor->assigned_country_ids ?? [])->filter()->map(fn($id) => (int) $id)->all();
+            if ($actor->country_id) {
+                $allowed[] = (int) $actor->country_id;
+            }
+            $allowed = array_values(array_unique($allowed));
+            if (! $allowed) {
+                $query->whereRaw('1 = 0');
+
+                return;
+            }
+
+            $ownerIds = Business::whereIn('country_id', $allowed)->pluck('owner_id')->filter()->all();
+            $venueIds = Venue::whereIn('country_id', $allowed)->pluck('id')->all();
+
+            $query->where(function ($q) use ($ownerIds, $venueIds) {
+                $q->where(function ($inner) {
+                    $inner->whereNull('owner_user_id')
+                        ->where(function ($empty) {
+                            $empty->whereNull('owner_user_ids')
+                                ->orWhereJsonLength('owner_user_ids', 0);
+                        })
+                        ->whereNull('location_id')
+                        ->where(function ($emptyLoc) {
+                            $emptyLoc->whereNull('location_ids')
+                                ->orWhereJsonLength('location_ids', 0);
+                        });
+                });
+                if ($ownerIds) {
+                    $q->orWhereIn('owner_user_id', $ownerIds);
+                    foreach ($ownerIds as $oid) {
+                        $q->orWhereJsonContains('owner_user_ids', (int) $oid);
+                    }
+                }
+                if ($venueIds) {
+                    $q->orWhereIn('location_id', $venueIds)
+                        ->orWhereHas('venues', fn($vq) => $vq->whereIn('venues.id', $venueIds));
+                }
+            });
+        }
+    }
+
+    protected function applyGeoFilter($query, Request $request): void
+    {
+        $countryIds = $this->scopeIds($request->input('country_ids', $request->query('country_ids')));
+        $cityIds    = $this->scopeIds($request->input('city_ids', $request->query('city_ids')));
+        if (! $countryIds && ! $cityIds) {
+            return;
+        }
+
+        $venueQuery = Venue::query();
+        if ($countryIds) {
+            $venueQuery->whereIn('country_id', $countryIds);
+        }
+        if ($cityIds) {
+            $venueQuery->whereIn('city_id', $cityIds);
+        }
+        $venueIds = $venueQuery->pluck('id')->all();
+
+        $query->where(function ($q) use ($venueIds) {
+            $q->where(function ($global) {
+                $global->whereNull('location_id')
+                    ->where(function ($empty) {
+                        $empty->whereNull('location_ids')
+                            ->orWhereJsonLength('location_ids', 0);
+                    })
+                    ->whereDoesntHave('venues');
+            });
+            if ($venueIds) {
+                $q->orWhereIn('location_id', $venueIds)
+                    ->orWhereHas('venues', fn($vq) => $vq->whereIn('venues.id', $venueIds));
+            }
+        });
     }
 }

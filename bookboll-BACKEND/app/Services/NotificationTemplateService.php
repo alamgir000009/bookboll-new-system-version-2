@@ -89,7 +89,7 @@ class NotificationTemplateService
 
     protected function readPlatformTemplates(): ?array
     {
-        $raw = Setting::query()->where('key', self::SETTING_KEY)->value('value');
+        $raw = Setting::where('key', self::SETTING_KEY)->value('value');
         if ($raw === null || $raw === '') {
             return null;
         }
@@ -116,7 +116,7 @@ class NotificationTemplateService
         }
 
         if ($user->owner_user_id) {
-            return Business::query()->where('owner_id', $user->owner_user_id)->first();
+            return Business::where('owner_id', $user->owner_user_id)->first();
         }
 
         return null;
