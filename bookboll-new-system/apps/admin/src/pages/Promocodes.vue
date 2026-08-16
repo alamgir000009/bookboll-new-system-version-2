@@ -1,39 +1,35 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
 import { askConfirm } from '../lib/confirm.js'
 import { pushToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
 import {
   Search, Plus, Ticket, Trash2, Pencil, X, Copy, Check,
-  ShieldCheck, Store, AlertCircle, BarChart3, Users
+  ShieldCheck, Store, AlertCircle, BarChart3,
 } from 'lucide-vue-next'
 import PaginationBar from '../components/PaginationBar.vue'
 import EmptyState from '../components/EmptyState.vue'
 import FilterBar from '../components/FilterBar.vue'
 import MultiSelect from '../components/MultiSelect.vue'
-import { usePagination } from '../lib/usePagination.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { usePremium } from '../lib/premium.js'
-import { matchesLocationGeo } from '../lib/geoFilter.js'
 import { CAP } from '../lib/permissions.js'
 import { logAudit, AUDIT } from '../lib/audit.js'
-import { loadRedemptions, AUDIENCE_LABEL } from '../lib/promocodes.js'
+import {
+  loadRedemptions, AUDIENCE_LABEL,
+  fetchPromocodes, fetchPromocodeOptions,
+  createPromocode, updatePromocode, deletePromocode, firstError,
+} from '../lib/promocodes.js'
 
 const { isSuperAdmin, isCountryAdmin, role: actorRole, isProviderScoped, currentOwnerUserId, currentCountryId,
-  assignedCountryIds, assignedLocationIds, allBusinessOwners, currentUser, can } = useCurrentUser()
-// Platform roles (super / country admin / platform staff) manage the full split UI.
+  assignedCountryIds, assignedLocationIds, currentUser, can } = useCurrentUser()
 const isPlatformAdmin = computed(() => isSuperAdmin.value || isCountryAdmin.value || actorRole.value === 'platform_staff')
-// Fee-type capability split: Bookboll-fee codes need the platform cap; provider-share
-// codes need the provider cap. A user can open the page if they have either.
 const canManagePlatformPromos = computed(() => can(CAP.MANAGE_PROMOCODES_PLATFORM))
 const canManageProviderPromos = computed(() => can(CAP.MANAGE_PROMOCODES))
 const canManagePromos = computed(() => canManagePlatformPromos.value || canManageProviderPromos.value)
-const { isPremium, requirePremium } = usePremium()   // promocode creation is a Premium feature for providers
-// Can the current user manage THIS code (by its fee type)?
+const { isPremium, requirePremium } = usePremium()
 const canManageCode = (c) => c.recipient === 'bookboll' ? canManagePlatformPromos.value : canManageProviderPromos.value
 
-// ── State ─────────────────────────────────────────────────────────────────────
 const codes     = ref([])
 const locations = ref([])
 const listings  = ref([])
@@ -41,9 +37,11 @@ const programs  = ref([])
 const customers = ref([])
 const countries = ref([])
 const cities    = ref([])
-const custSearch = ref('')   // searchable customer-email picker query
+const businessOwners = ref([])
+const loading   = ref(true)
+const custSearch = ref('')
 const search    = ref('')
-const filterTab = ref('all')   // 'all' | 'bookboll' | 'provider'
+const filterTab = ref('all')
 const filterCountry = ref([])
 const filterCity    = ref([])
 const showModal = ref(false)
@@ -54,7 +52,20 @@ const triedSave = ref(false)
 const form      = ref(defaultForm())
 const copied    = ref(null)
 
-// Guarded close (prompts if there are unsaved edits)
+const promoPage = ref(1)
+const promoPerPage = ref(25)
+const promoTotal = ref(0)
+const promoTotalPages = computed(() => Math.max(1, Math.ceil(promoTotal.value / promoPerPage.value) || 1))
+const promoVisiblePages = computed(() => {
+  const total = promoTotalPages.value
+  const cur = promoPage.value
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages = new Set([1, total, cur])
+  if (cur > 1) pages.add(cur - 1)
+  if (cur < total) pages.add(cur + 1)
+  return Array.from(pages).sort((a, b) => a - b)
+})
+
 async function requestClose() {
   if (await confirmDiscardIfDirty()) showModal.value = false
 }
@@ -110,26 +121,72 @@ watch(() => form.value.applicable_to, (v) => {
 })
 
 // ── Data loading ──────────────────────────────────────────────────────────────
-async function load() {
-  const [coRes, loRes, ctRes, ciRes, liRes, pgRes, cuRes] = await Promise.all([
-    supabase.from('promocodes').select('*').order('created_at', { ascending: false }),
-    supabase.from('locations').select('id, name, owner_user_id, city_id').eq('status', 'active').order('name'),
-    supabase.from('countries').select('id, name').eq('status', 'active').order('name'),
-    supabase.from('cities').select('id, name, country_id').eq('status', 'active').order('name'),
-    supabase.from('listings').select('id, name, location_id, owner_user_id').order('name'),
-    supabase.from('class_programs').select('id, name, location_id, owner_user_id').order('name'),
-    supabase.from('customers').select('id, full_name, email').order('full_name'),
-  ])
-  codes.value     = coRes.data || []
-  locations.value = loRes.data || []
-  countries.value = ctRes.data || []
-  cities.value    = ciRes.data || []
-  listings.value  = liRes.data || []
-  programs.value  = pgRes.data || []
-  customers.value = cuRes.data || []
+async function loadOptions() {
+  const res = await fetchPromocodeOptions()
+  if (!res.success) {
+    pushToast(res.message || 'Could not load promocode options.', 'error')
+    return
+  }
+  const d = res.data || {}
+  locations.value = d.locations || []
+  listings.value  = d.listings || []
+  programs.value  = d.programs || []
+  customers.value = d.customers || []
+  countries.value = d.countries || []
+  cities.value    = d.cities || []
+  businessOwners.value = d.businesses || []
 }
-onMounted(load)
-watch(() => currentUser.value?.id, load)
+
+async function load(page = promoPage.value) {
+  loading.value = true
+  const res = await fetchPromocodes({
+    page,
+    records_per_page: promoPerPage.value,
+    search: search.value.trim() || undefined,
+    recipient: filterTab.value === 'all' ? undefined : filterTab.value,
+    country_ids: filterCountry.value.length ? filterCountry.value : undefined,
+    city_ids: filterCity.value.length ? filterCity.value : undefined,
+  })
+  loading.value = false
+  if (!res.success) {
+    pushToast(res.message || 'Could not load promocodes.', 'error')
+    codes.value = []
+    promoTotal.value = 0
+    return
+  }
+  codes.value = res.data?.promocodes || []
+  const pagination = res.data?.pagination || {}
+  promoTotal.value = Number(pagination.total ?? codes.value.length) || 0
+  if (pagination.current_page) promoPage.value = Number(pagination.current_page)
+}
+
+let searchTimer
+function scheduleLoad() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    promoPage.value = 1
+    load(1)
+  }, 300)
+}
+
+onMounted(async () => {
+  await loadOptions()
+  await load(1)
+})
+watch(() => currentUser.value?.id, async () => {
+  await loadOptions()
+  promoPage.value = 1
+  await load(1)
+})
+watch(search, () => scheduleLoad())
+watch([filterTab, filterCountry, filterCity, promoPerPage], () => {
+  promoPage.value = 1
+  load(1)
+})
+function promoGoTo(p) {
+  promoPage.value = p
+  load(p)
+}
 
 // ── Jurisdiction (platform roles see only their countries / assigned venues) ──
 const jurisdictionCountryIds = computed(() => {
@@ -140,7 +197,7 @@ const jurisdictionCountryIds = computed(() => {
   return new Set()
 })
 function ownerCountryId(ownerId) {
-  return allBusinessOwners.value.find(u => u.id === ownerId)?.country_id || null
+  return businessOwners.value.find(u => String(u.id) === String(ownerId))?.country_id || null
 }
 function locationCountryId(locId) {
   const loc = locations.value.find(l => l.id === locId)
@@ -192,13 +249,13 @@ const scopedLocations = computed(() => {
 })
 // Business owners the platform user may scope a code to (jurisdiction-limited).
 const scopableOwners = computed(() => {
-  if (isSuperAdmin.value) return allBusinessOwners.value
+  if (isSuperAdmin.value) return businessOwners.value
   const set = jurisdictionCountryIds.value
-  let list = allBusinessOwners.value
-  if (set) list = list.filter(o => set.has(o.country_id))
+  let list = businessOwners.value
+  if (set) list = list.filter(o => set.has(o.country_id) || set.has(String(o.country_id)) || set.has(Number(o.country_id)))
   if (actorRole.value === 'platform_staff' && (assignedLocationIds.value || []).length) {
     const owners = new Set(locations.value.filter(l => assignedLocationIds.value.includes(l.id)).map(l => l.owner_user_id))
-    list = allBusinessOwners.value.filter(o => owners.has(o.id))
+    list = businessOwners.value.filter(o => owners.has(o.id) || owners.has(String(o.id)) || owners.has(Number(o.id)))
   }
   return list
 })
@@ -255,41 +312,6 @@ function customerNameForEmail(email) {
 }
 
 // ── Filtering ─────────────────────────────────────────────────────────────────
-const filtered = computed(() => {
-  let list = codes.value
-
-  // Providers see only their own codes
-  if (isProviderScoped.value && currentOwnerUserId.value) {
-    list = list.filter(c => c.owner_user_id === currentOwnerUserId.value)
-  }
-  // Platform admins below super are scoped to their jurisdiction.
-  if (isPlatformAdmin.value && !isSuperAdmin.value) {
-    list = list.filter(codeInJurisdiction)
-  }
-
-  if (filterTab.value === 'bookboll') list = list.filter(c => c.recipient === 'bookboll')
-  if (filterTab.value === 'provider') list = list.filter(c => c.recipient === 'provider')
-
-  // Country/City: a code scoped to a location must match; global codes apply everywhere.
-  if (filterCountry.value.length || filterCity.value.length) {
-    list = list.filter(c => !c.location_id || matchesLocationGeo(c.location_id, locations.value, cities.value, filterCountry.value, filterCity.value))
-  }
-
-  if (search.value) {
-    const q = search.value.toLowerCase()
-    list = list.filter(c =>
-      c.code.toLowerCase().includes(q) ||
-      c.description?.toLowerCase().includes(q)
-    )
-  }
-  return list
-})
-
-const { page: promoPage, perPage: promoPerPage, totalPages: promoTotalPages,
-        paginated: paginatedPromos, visiblePages: promoVisiblePages, goTo: promoGoTo }
-  = usePagination(filtered)
-
-// When the picked businesses change, drop any now-out-of-scope location/listing/program picks.
 watch(() => (form.value.owner_user_ids || []).join(','), () => {
   if (!isPlatformAdmin.value) return
   const locOk = new Set(scopeLocationsList.value.map(l => l.id))
@@ -398,19 +420,13 @@ async function save() {
   }
 
   saving.value = true
-  const { error } = editing.value
-    ? await supabase.from('promocodes').update(payload).eq('id', editing.value.id)
-    : await supabase.from('promocodes').insert(payload)
+  const res = editing.value
+    ? await updatePromocode(editing.value.id, payload)
+    : await createPromocode(payload)
   saving.value = false
 
-  if (error) {
-    if (error.code === '23505') {
-      formError.value = 'A promocode with this code already exists.'
-    } else if (error.code === '23514' || /applicable_to|violates check/i.test(error.message || '')) {
-      formError.value = 'Provider-plan codes need a quick migration first — run the promocode_provider_plan SQL, then save.'
-    } else {
-      formError.value = error.message
-    }
+  if (!res.success) {
+    formError.value = firstError(res)
     pushToast('Could not save promocode.', 'error')
     return
   }
@@ -432,8 +448,8 @@ async function remove(id) {
     confirmText: 'Delete',
   }))) return
   const codeStr = codes.value.find(c => c.id === id)?.code || id
-  const { error } = await supabase.from('promocodes').delete().eq('id', id)
-  if (error) { pushToast('Could not delete promocode.', 'error'); return }
+  const res = await deletePromocode(id)
+  if (!res.success) { pushToast(res.message || 'Could not delete promocode.', 'error'); return }
   logAudit({ action: AUDIT.DELETED, entity_type: 'promocode', entity_id: id, details: `Deleted promocode ${codeStr}` })
   pushToast('Promocode deleted', 'success')
   load()
@@ -470,7 +486,7 @@ function applicableLabel(a) {
 }
 function providerName(ownerId) {
   if (!ownerId) return 'Super Admin (global)'
-  const o = allBusinessOwners.value.find(u => u.id === ownerId)
+  const o = businessOwners.value.find(u => String(u.id) === String(ownerId))
   return o ? (o.full_name || o.username || 'Provider') : 'Provider'
 }
 function locationName(locId) {
@@ -546,7 +562,7 @@ function usagePercent(c) {
     <!-- Cards -->
     <div class="promo-grid">
       <div
-        v-for="c in paginatedPromos" :key="c.id"
+        v-for="c in codes" :key="c.id"
         class="promo-card"
         :class="c.recipient === 'bookboll' ? 'card-bookboll' : 'card-provider'"
       >
@@ -619,9 +635,12 @@ function usagePercent(c) {
         </div>
       </div>
 
-      <div v-if="!filtered.length" class="card" style="grid-column:1/-1">
+      <div v-if="loading" class="card" style="grid-column:1/-1">
+        <EmptyState :icon="Ticket" title="Loading promocodes…" message="Fetching discount codes from the server." compact />
+      </div>
+      <div v-else-if="!codes.length" class="card" style="grid-column:1/-1">
         <EmptyState
-          v-if="!codes.length"
+          v-if="!search && filterTab === 'all' && !filterCountry.length && !filterCity.length"
           :icon="Ticket"
           title="No promocodes yet"
           message="Create your first discount code to run a promotion for your customers."
@@ -639,9 +658,9 @@ function usagePercent(c) {
     </div>
 
     <PaginationBar
-      v-if="filtered.length > 0"
+      v-if="!loading && promoTotal > 0"
       :page="promoPage" :perPage="promoPerPage" :totalPages="promoTotalPages"
-      :total="filtered.length" :visiblePages="promoVisiblePages"
+      :total="promoTotal" :visiblePages="promoVisiblePages"
       @update:perPage="promoPerPage = $event"
       @goTo="promoGoTo"
     />
