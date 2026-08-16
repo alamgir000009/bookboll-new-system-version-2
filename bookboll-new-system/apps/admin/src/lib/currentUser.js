@@ -47,6 +47,7 @@ export function pickPrimaryRole(roles = []) {
 export function mapLaravelUserToAdmin(user, roles = []) {
   if (!user) return null
   const role = pickPrimaryRole(roles)
+  const business = user.owned_business || user.ownedBusiness || null
   return {
     id: String(user.id),
     source: 'laravel',
@@ -54,13 +55,16 @@ export function mapLaravelUserToAdmin(user, roles = []) {
     email: user.email || '',
     role,
     status: user.status || 'active',
-    business_name: null,
-    business_status: null,
-    username: null,
-    country_id: null,
-    owner_user_id: null,
+    business_name: business?.name || null,
+    business_status: business?.status || null,
+    business_id: business?.id ? String(business.id) : null,
+    username: business?.username || null,
+    country_id: user.country_id != null ? String(user.country_id) : null,
+    owner_user_id: user.owner_user_id != null ? String(user.owner_user_id) : null,
     custom_permissions: null,
-    assigned_country_ids: [],
+    assigned_country_ids: Array.isArray(user.assigned_country_ids)
+      ? user.assigned_country_ids.map(String)
+      : [],
     assigned_location_ids: [],
     assigned_listing_ids: [],
     assigned_program_ids: [],

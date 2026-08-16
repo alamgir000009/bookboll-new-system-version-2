@@ -129,9 +129,7 @@ async function save() {
     : await saveProviderNotificationSettings(currentOwnerUserId.value, settings.value)
   saving.value = false
   if (error) {
-    pushToast(/could not find|does not exist|schema cache/i.test(error.message || '')
-      ? 'Run the notification_templates migration (20260727000000) first, then save.'
-      : (error.message || 'Could not save.'), 'error')
+    pushToast(error.message || 'Could not save.', 'error')
     return
   }
   clearDirty()

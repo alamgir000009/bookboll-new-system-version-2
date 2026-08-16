@@ -2,18 +2,15 @@
  * notificationTemplates.js — automated message templates (Email / SMS / WhatsApp)
  * for booking + membership lifecycle events, per audience (customer / provider team).
  *
- * Storage:
- *  - Marketplace DEFAULTS: platform_settings key 'notification_templates' (super admin edits).
- *  - Per-provider OVERRIDES: admin_users.notification_templates jsonb
- *    (migration 20260727000000_notification_templates.sql — null = inherit defaults).
- *  Effective templates for a provider = builtin ⟵ platform saved ⟵ provider saved (deep merge).
+ * Storage (Laravel):
+ *  - Marketplace DEFAULTS: settings.key = 'notification_templates' (JSON).
+ *  - Per-business OVERRIDES: businesses.notification_templates (JSON, null = inherit).
+ *  Effective templates for a business = builtin ⟵ platform saved ⟵ business saved (deep merge).
  *
  * Templates use [square_bracket] tokens (see TEMPLATE_VARS); renderPreview() substitutes
- * sample values so admins see a realistic message while editing. Actual dispatch is a
- * production concern (demo records/simulates sends), so this page is the single source
- * of truth for wording + which channels each event uses.
+ * sample values so admins see a realistic message while editing.
  */
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 export const CHANNELS = [
   { key: 'email',    label: 'Email' },
@@ -25,7 +22,6 @@ export const AUDIENCES = [
   { key: 'provider', label: 'To you & your team' },
 ]
 
-// ── Template variables (grouped; sample powers the live preview) ──────────────
 export const TEMPLATE_VARS = [
   { group: 'Customer', vars: [
     { code: '[customer_name]',       label: 'Customer full name',   sample: 'Sara Ahmed' },
@@ -74,24 +70,15 @@ export const TEMPLATE_VARS = [
 ]
 const VAR_SAMPLES = Object.fromEntries(TEMPLATE_VARS.flatMap(g => g.vars.map(v => [v.code, v.sample])))
 
-/** Substitute [tokens] with sample values for the live preview. */
 export function renderPreview(text) {
   return String(text || '').replace(/\[[a-z_]+\]/g, (m) => VAR_SAMPLES[m] ?? m)
 }
 
-/** Rough SMS segment count (160 GSM chars per segment — long texts split). */
 export function smsSegments(text) {
   const len = renderPreview(text).length
   return len === 0 ? 0 : Math.ceil(len / 160)
 }
 
-// ── Event catalog + built-in default templates ────────────────────────────────
-// Each event: which audiences it goes to and the default per-channel templates.
-// `on` defaults: customer email ON everywhere; provider email ON for money/ops
-// events; SMS + WhatsApp OFF (they consume credits in production) — but both
-// ship with ready-to-send default wording so turning a channel on needs zero writing.
-// SMS defaults aim for one 160-char segment with sample data (plain hyphens/quotes
-// keep GSM-7 encoding); WhatsApp defaults are 3–4 short lines, one leading emoji max.
 const T = (subject, body, sms = '', whatsapp = '') => ({
   email:    { on: true,  subject, body },
   sms:      { on: false, body: sms },
@@ -166,7 +153,6 @@ export const NOTIFICATION_EVENTS = [
   },
 ]
 
-// Built-in default wording (used until the marketplace / provider customises).
 const BUILTIN_TEMPLATES = {
   booking_confirmation: {
     client: T(
@@ -322,7 +308,6 @@ const BUILTIN_TEMPLATES = {
   },
 }
 
-// Default provider-email OFF for chatty events (they'd spam the front desk).
 for (const k of ['booking_reminder', 'booking_changed']) {
   if (BUILTIN_TEMPLATES[k]?.provider) BUILTIN_TEMPLATES[k].provider.email.on = false
 }
@@ -337,15 +322,14 @@ export function builtinSettings() {
     }
   }
   return {
-    remind_before_days: 1,      // booking reminder lead time
-    trial_ending_days: 3,       // trial-ending lead time
-    renewal_reminder_days: 3,   // renewal-reminder lead time (before recurring charge)
-    dunning_retry_days: 3,      // grace window to update the card after a failed charge
+    remind_before_days: 1,
+    trial_ending_days: 3,
+    renewal_reminder_days: 3,
+    dunning_retry_days: 3,
     events,
   }
 }
 
-// Deep merge: `patch` wins where set; objects merge recursively.
 function deepMerge(base, patch) {
   if (patch === null || patch === undefined) return base
   if (typeof base !== 'object' || base === null || Array.isArray(base)) return patch
@@ -356,38 +340,42 @@ function deepMerge(base, patch) {
   return out
 }
 
-/** Marketplace defaults (platform_settings), builtin-merged. */
+/** Marketplace defaults (Laravel settings), builtin-merged. */
 export async function loadPlatformNotificationSettings() {
-  const { data } = await supabase.from('platform_settings').select('value').eq('key', 'notification_templates').maybeSingle()
-  let saved = null
-  try { saved = data?.value ? JSON.parse(data.value) : null } catch { saved = null }
-  return deepMerge(builtinSettings(), saved)
+  const res = await apiFetch('/admin/notification-templates')
+  if (!res.success) return builtinSettings()
+  return deepMerge(builtinSettings(), res.data?.templates || null)
 }
 
 /**
- * Effective settings for a provider: builtin ⟵ platform ⟵ provider row.
- * Returns { settings, providerSaved } (providerSaved = raw override or null).
+ * Effective settings for a business: builtin ⟵ platform ⟵ business row.
+ * ownerId kept for call-site compatibility (resolved server-side from auth).
  */
-export async function loadProviderNotificationSettings(ownerId) {
-  const platform = await loadPlatformNotificationSettings()
-  if (!ownerId) return { settings: platform, providerSaved: null }
-  const { data } = await supabase.from('admin_users').select('notification_templates').eq('id', ownerId).maybeSingle()
-  const saved = data?.notification_templates || null
-  return { settings: deepMerge(platform, saved), providerSaved: saved }
+export async function loadProviderNotificationSettings(_ownerId) {
+  const res = await apiFetch('/business/notification-templates')
+  if (!res.success) {
+    const platform = await loadPlatformNotificationSettings()
+    return { settings: platform, providerSaved: null, error: res.message }
+  }
+  const platformMerged = deepMerge(builtinSettings(), res.data?.platform || null)
+  const saved = res.data?.templates || null
+  return { settings: deepMerge(platformMerged, saved), providerSaved: saved }
 }
 
-/** Save marketplace defaults (super admin). */
+/** Save marketplace defaults (super admin / platform staff). */
 export async function savePlatformNotificationSettings(settings) {
-  const { error } = await supabase.from('platform_settings').upsert(
-    { key: 'notification_templates', value: JSON.stringify(settings), updated_at: new Date().toISOString() },
-    { onConflict: 'key' },
-  )
-  return { error }
+  const res = await apiFetch('/admin/notification-templates', {
+    method: 'PUT',
+    body: { templates: settings },
+  })
+  return { error: res.success ? null : { message: res.message || 'Could not save.' } }
 }
 
-/** Save a provider's settings (whole effective object — simple & predictable). */
-export async function saveProviderNotificationSettings(ownerId, settings) {
-  const { error } = await supabase.from('admin_users')
-    .update({ notification_templates: settings }).eq('id', ownerId)
-  return { error }
+/** Save a business's templates (auth user's business). */
+export async function saveProviderNotificationSettings(_ownerId, settings) {
+  const res = await apiFetch('/business/notification-templates', {
+    method: 'PUT',
+    body: { templates: settings },
+  })
+  return { error: res.success ? null : { message: res.message || 'Could not save.' } }
 }
