@@ -5,6 +5,8 @@ const STORAGE_KEY = 'bb_active_user'
 
 const STAFF_ROLE_PRIORITY = [
   'super_admin',
+  'country_admin',
+  'platform_staff',
   'admin',
   'senior_employee',
   'junior_employee',
@@ -14,6 +16,10 @@ const STAFF_ROLE_PRIORITY = [
 export const ALLOWED_PORTAL_ROLES = new Set([
   ...STAFF_ROLE_PRIORITY,
   'provider_admin',
+  'facility_admin',
+  'provider_supervisor',
+  'staff',
+  'provider_viewer',
 ])
 
 export const activeUserId = ref(localStorage.getItem(STORAGE_KEY) || '')
@@ -28,7 +34,9 @@ export function pickPrimaryRole(roles = []) {
   for (const r of STAFF_ROLE_PRIORITY) {
     if (list.includes(r)) return r
   }
-  if (list.includes('provider_admin')) return 'provider_admin'
+  for (const r of ['provider_admin', 'facility_admin', 'provider_supervisor', 'staff', 'provider_viewer']) {
+    if (list.includes(r)) return r
+  }
   return list[0] || 'provider_admin'
 }
 
