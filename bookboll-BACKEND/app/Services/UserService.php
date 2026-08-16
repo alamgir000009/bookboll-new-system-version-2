@@ -246,7 +246,7 @@ class UserService
 
             $roles = $user->getRoleNames();
 
-            $user->load('venues');
+            $user->load(['venues', 'ownedBusiness']);
             $permissions = $user->getAllPermissions()->pluck('name');
 
             $user->makeHidden(['roles']);
@@ -407,7 +407,7 @@ class UserService
     public function loginUser()
     {
         $user = auth()->user();
-        $user->load('venues');
+        $user->load(['venues', 'ownedBusiness']);
         $user->makeHidden(['roles']);
 
         $roles           = $user->getRoleNames();

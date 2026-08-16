@@ -26,6 +26,7 @@ return new class extends Migration
             $table->string('brand_accent', 20)->nullable();
             $table->string('brand_meta_title')->nullable();
             $table->text('brand_meta_description')->nullable();
+            $table->json('notification_templates')->nullable();
 
             $table->timestamps();
         });

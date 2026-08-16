@@ -6,6 +6,8 @@ use App\Http\Controllers\BookingController;
 use App\Http\Controllers\BusinessController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\Admin\GeographyController;
+use App\Http\Controllers\Admin\NotificationTemplateController;
+use App\Http\Controllers\BusinessNotificationTemplateController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
@@ -56,6 +58,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('subscribe-onesignal', [UserController::class, 'subscribeOneSignal'])->name('customer.subscribe-onesignal');
 
     Route::put('business/brand', [BusinessController::class, 'updateBrand'])->name('business.brand.update');
+    Route::get('business/notification-templates', [BusinessNotificationTemplateController::class, 'show'])->name('business.notification-templates.show');
+    Route::put('business/notification-templates', [BusinessNotificationTemplateController::class, 'update'])->name('business.notification-templates.update');
 
     Route::prefix('business/team')->name('business.team.')->group(function () {
         Route::get('/', [BusinessController::class, 'teamIndex'])->name('index');
@@ -118,6 +122,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('settings', [SettingController::class, 'index'])->name('settings.index');
         Route::post('settings/{key}', [SettingController::class, 'updateSingle'])->name('settings.updateSingle');
         Route::post('settings', [SettingController::class, 'update'])->name('settings.update');
+
+        Route::get('notification-templates', [NotificationTemplateController::class, 'showPlatform'])->name('notification-templates.show');
+        Route::put('notification-templates', [NotificationTemplateController::class, 'updatePlatform'])->name('notification-templates.update');
 
         Route::apiResource('sports-types', SportsTypeController::class)->only(['store', 'update', 'destroy']);
         Route::post('sports-types/sort', [SportsTypeController::class, 'sort'])->name('sports-types.sort');

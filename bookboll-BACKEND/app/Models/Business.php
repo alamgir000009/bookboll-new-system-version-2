@@ -45,13 +45,15 @@ class Business extends Model
         'brand_subdomain',
         'brand_meta_title',
         'brand_meta_description',
+        'notification_templates',
     ];
 
     protected function casts(): array
     {
         return [
-            'business_types' => 'array',
-            'brand_enabled'  => 'boolean',
+            'business_types'          => 'array',
+            'brand_enabled'           => 'boolean',
+            'notification_templates'  => 'array',
         ];
     }
 
@@ -98,6 +100,7 @@ class Business extends Model
             'brand_accent',
             'brand_meta_title',
             'brand_meta_description',
+            'notification_templates',
         ];
     }
 }
