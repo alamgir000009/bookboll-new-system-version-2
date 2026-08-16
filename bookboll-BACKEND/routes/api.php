@@ -120,6 +120,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('resources', ResourceController::class);
 
         Route::get('audit-logs', [AuditLogController::class, 'index']);
+        Route::post('audit-logs', [AuditLogController::class, 'store']);
         Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
         Route::get('audit-logs/export', [AuditLogController::class, 'export']);
 

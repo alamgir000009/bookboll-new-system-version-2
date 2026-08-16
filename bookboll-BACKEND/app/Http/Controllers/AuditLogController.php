@@ -14,6 +14,11 @@ class AuditLogController extends Controller
         return $this->auditLogService->getLogs($request);
     }
 
+    public function store(Request $request)
+    {
+        return $this->auditLogService->store($request);
+    }
+
     public function export(Request $request)
     {
         return $this->auditLogService->exportCsv($request);

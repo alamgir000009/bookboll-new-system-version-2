@@ -33,12 +33,31 @@ class AuditLogService
 
     public function getLogs(Request $request)
     {
-        $records_per_page = $request->records_per_page ?? 10;
-        $query            = $this->auditLogModel::with('actor')->latest();
+        $records_per_page = $request->records_per_page ?? 25;
+        $query            = $this->auditLogModel::with(['actor.roles'])->latest('timestamp');
 
         if ($request->filled('email')) {
-            $query->whereHas('actor', function ($query) use ($request) {
-                $query->where('email', 'LIKE', "%{$request->email}%");
+            $email = $request->email;
+            $query->where(function ($q) use ($email) {
+                $q->where('actor_email', 'LIKE', "%{$email}%")
+                    ->orWhereHas('actor', function ($aq) use ($email) {
+                        $aq->where('email', 'LIKE', "%{$email}%")
+                            ->orWhere('name', 'LIKE', "%{$email}%");
+                    });
+            });
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('details', 'LIKE', "%{$search}%")
+                    ->orWhere('action', 'LIKE', "%{$search}%")
+                    ->orWhere('resource', 'LIKE', "%{$search}%")
+                    ->orWhere('actor_email', 'LIKE', "%{$search}%")
+                    ->orWhereHas('actor', function ($aq) use ($search) {
+                        $aq->where('email', 'LIKE', "%{$search}%")
+                            ->orWhere('name', 'LIKE', "%{$search}%");
+                    });
             });
         }
 
@@ -66,7 +85,33 @@ class AuditLogService
 
         $stats = $this->getStats();
 
-        return sendSuccess('Audit logs retrieved successfully', compact('logs', 'stats'));
+        $filterOptions = [
+            'actions'   => $this->auditLogModel::query()->distinct()->orderBy('action')->pluck('action')->filter()->values(),
+            'resources' => $this->auditLogModel::query()->distinct()->orderBy('resource')->pluck('resource')->filter()->values(),
+        ];
+
+        return sendSuccess('Audit logs retrieved successfully', compact('logs', 'stats', 'filterOptions'));
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'action'      => 'required|string|max:100',
+            'resource'    => 'nullable|string|max:100',
+            'resource_id' => 'nullable|string|max:100',
+            'details'     => 'nullable|string|max:2000',
+        ]);
+
+        $user = $request->user();
+        $log  = $this->logActivity(
+            $data['action'],
+            $data['resource'] ?? 'general',
+            (string) ($data['resource_id'] ?? ''),
+            (string) ($data['details'] ?? ''),
+            $user
+        );
+
+        return sendSuccess('Audit log recorded', ['log' => $log], 201);
     }
 
     public function exportCsv(Request $request)

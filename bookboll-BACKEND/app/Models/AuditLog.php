@@ -11,6 +11,7 @@ class AuditLog extends Model
         'device',
         'details',
         'actor_id',
+        'actor_email',
         'resource',
         'timestamp',
         'ip_address',
