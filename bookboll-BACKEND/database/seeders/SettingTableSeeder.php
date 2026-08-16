@@ -117,10 +117,85 @@ class SettingTableSeeder extends Seeder
                 'type'        => 'integer',
                 'description' => 'The following number of days the reminder promocode will be valid',
             ],
+
+            // Admin dashboard — Platform
+            [
+                'key'         => 'platform_name',
+                'value'       => 'Bookboll',
+                'type'        => 'string',
+                'description' => 'Platform display name',
+            ],
+            [
+                'key'         => 'platform_tagline',
+                'value'       => 'Book your game',
+                'type'        => 'string',
+                'description' => 'Platform tagline',
+            ],
+            [
+                'key'         => 'platform_default_currency',
+                'value'       => 'AED',
+                'type'        => 'string',
+                'description' => 'Default display currency code',
+            ],
+
+            // Admin dashboard — Policies (Supabase platform_settings parity)
+            [
+                'key'         => 'cancellation_hours',
+                'value'       => 48,
+                'type'        => 'integer',
+                'description' => 'Hours before booking for refundable cancellation',
+            ],
+            [
+                'key'         => 'booking_hold_minutes',
+                'value'       => 10,
+                'type'        => 'integer',
+                'description' => 'Checkout slot hold timer (minutes)',
+            ],
+            [
+                'key'         => 'noshow_policy',
+                'value'       => 'Customer forfeits deposit. Provider receives nothing. Provider may ban the customer from the dashboard.',
+                'type'        => 'text',
+                'description' => 'No-show policy text shown to customers',
+            ],
+            [
+                'key'         => 'trial_cancel_policy',
+                'value'       => 'Customer must cancel before the trial period ends. First billing charge applies if not cancelled in time.',
+                'type'        => 'text',
+                'description' => 'Membership trial cancellation policy text',
+            ],
+
+            // Admin dashboard — Notification preferences
+            [
+                'key'         => 'notify_new_booking',
+                'value'       => 1,
+                'type'        => 'boolean',
+                'description' => 'Alert on new bookings',
+            ],
+            [
+                'key'         => 'notify_payment_failed',
+                'value'       => 1,
+                'type'        => 'boolean',
+                'description' => 'Alert on payment failures',
+            ],
+            [
+                'key'         => 'notify_provider_signup',
+                'value'       => 1,
+                'type'        => 'boolean',
+                'description' => 'Alert on new provider signups',
+            ],
+            [
+                'key'         => 'notify_daily_summary',
+                'value'       => 0,
+                'type'        => 'boolean',
+                'description' => 'Daily summary emails',
+            ],
         ];
 
         foreach ($defaults as $setting) {
-            Setting::create($setting);
+            Setting::firstOrCreate(
+                ['key' => $setting['key']],
+                $setting
+            );
         }
     }
 }

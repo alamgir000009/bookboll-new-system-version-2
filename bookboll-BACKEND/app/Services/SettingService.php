@@ -26,19 +26,37 @@ class SettingService
         try {
             $formData = $request->validate([
                 '*.key'   => 'required|string|max:255',
-                '*.value' => 'required',
+                '*.value' => 'nullable',
             ]);
 
             DB::beginTransaction();
 
             $updated = [];
             foreach ($formData as $item) {
+                $value = $item['value'];
+                if (is_bool($value)) {
+                    $value = $value ? '1' : '0';
+                } elseif (is_array($value) || is_object($value)) {
+                    $value = json_encode($value);
+                } else {
+                    $value = $value === null ? null : (string) $value;
+                }
+
                 $setting = $this->settingModel::updateOrCreate(
                     ['key' => $item['key']],
-                    ['value' => $item['value'], 'updated_at' => now()]
+                    ['value' => $value, 'updated_at' => now()]
                 );
 
                 $updated[$item['key']] = $setting->value;
+
+                // Keep Laravel booking lock duration in sync with admin hold timer.
+                if ($item['key'] === 'booking_hold_minutes') {
+                    $this->settingModel::updateOrCreate(
+                        ['key' => 'default_bookings_slot_lock_time'],
+                        ['value' => (string) max(1, (int) $value), 'updated_at' => now()]
+                    );
+                    $updated['default_bookings_slot_lock_time'] = (string) max(1, (int) $value);
+                }
             }
             DB::commit();
 
@@ -52,13 +70,28 @@ class SettingService
 
     public function updateSingle(Request $request, string $key)
     {
-        $request->validate(['value' => 'required']);
+        $request->validate(['value' => 'nullable']);
         $value = $request->value;
+        if (is_bool($value)) {
+            $value = $value ? '1' : '0';
+        } elseif (is_array($value) || is_object($value)) {
+            $value = json_encode($value);
+        } else {
+            $value = $value === null ? null : (string) $value;
+        }
 
         $setting = $this->settingModel::updateOrCreate(
             ['key' => $key],
-            ['value' => $value]);
+            ['value' => $value]
+        );
 
-        return sendSuccess('Setting updated successfully', compact('key', 'value'));
+        if ($key === 'booking_hold_minutes') {
+            $this->settingModel::updateOrCreate(
+                ['key' => 'default_bookings_slot_lock_time'],
+                ['value' => (string) max(1, (int) $value)]
+            );
+        }
+
+        return sendSuccess('Setting updated successfully', ['key' => $key, 'value' => $setting->value]);
     }
 }
