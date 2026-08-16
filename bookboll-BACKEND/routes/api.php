@@ -5,6 +5,7 @@ use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\BusinessController;
 use App\Http\Controllers\CustomerController;
+use App\Http\Controllers\Admin\GeographyController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
@@ -78,6 +79,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::apiResource('countries', LocationCountryController::class);
             Route::apiResource('states', LocationStateController::class);
             Route::apiResource('cities', LocationCityController::class);
+        });
+
+        // Countries & Cities admin page (World package + commission rates)
+        Route::prefix('geography')->name('geography.')->group(function () {
+            Route::get('countries', [GeographyController::class, 'countries'])->name('countries');
+            Route::get('cities', [GeographyController::class, 'cities'])->name('cities');
+            Route::patch('countries/{id}/status', [GeographyController::class, 'updateCountryStatus'])->name('countries.status');
+            Route::patch('cities/{id}/status', [GeographyController::class, 'updateCityStatus'])->name('cities.status');
+            Route::post('cities/bulk-status', [GeographyController::class, 'bulkUpdateCityStatus'])->name('cities.bulk-status');
+            Route::put('commission-rates', [GeographyController::class, 'upsertCommission'])->name('commission-rates');
         });
 
         Route::prefix('roles')->name('roles.')->middleware('role:super_admin')->group(function () {
