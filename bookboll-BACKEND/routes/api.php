@@ -199,6 +199,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar'])->name('special-days.calendar');
         Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate'])->name('special-days.bulk');
 
+        Route::get('customers/dashboard', [CustomerController::class, 'dashboard'])->name('customers.dashboard');
+        Route::get('customers/{id}/crm', [CustomerController::class, 'crm'])->name('customers.crm');
+        Route::put('customers/{id}/loyalty', [CustomerController::class, 'replaceLoyalty'])->name('customers.loyalty.replace');
+        Route::post('customers/{id}/loyalty', [CustomerController::class, 'upsertLoyalty'])->name('customers.loyalty.upsert');
+        Route::delete('customers/{id}/loyalty/{countryId}', [CustomerController::class, 'deleteLoyalty'])->name('customers.loyalty.delete');
         Route::get('customers/export', [CustomerController::class, 'export'])->name('customers.export');
         Route::get('customers/list', [CustomerController::class, 'listOptimized'])->name('customers.listOptimized');
         Route::get('customers/{id}/profile', [CustomerController::class, 'adminProfile'])->name('customers.profile');

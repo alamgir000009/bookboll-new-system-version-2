@@ -40,6 +40,10 @@ class User extends Authenticatable
         'assigned_country_ids',
         'owner_user_id',
         'last_login_at',
+        'crm_tags',
+        'marketing_email',
+        'marketing_sms',
+        'marketing_whatsapp',
     ];
 
     protected $hidden = [
@@ -61,6 +65,9 @@ class User extends Authenticatable
             'email_verified_at'     => 'datetime',
             'last_login_at'         => 'datetime',
             'assigned_country_ids'  => 'array',
+            'marketing_email'       => 'boolean',
+            'marketing_sms'         => 'boolean',
+            'marketing_whatsapp'    => 'boolean',
         ];
     }
 
@@ -140,6 +147,11 @@ class User extends Authenticatable
     public function loyaltyPoints()
     {
         return $this->hasMany(LoyaltyPoint::class);
+    }
+
+    public function customerLoyalty()
+    {
+        return $this->hasMany(CustomerLoyalty::class, 'customer_id');
     }
 
     public function loyaltyTier()

@@ -16,6 +16,41 @@ class CustomerController extends Controller
         return $this->customerService->list($request);
     }
 
+    public function dashboard(Request $request)
+    {
+        return $this->customerService->dashboard($request);
+    }
+
+    public function crm($id)
+    {
+        return $this->customerService->crm($id);
+    }
+
+    public function store(Request $request)
+    {
+        return $this->customerService->storeDashboard($request);
+    }
+
+    public function update(Request $request, $id)
+    {
+        return $this->customerService->updateDashboard($request, $id);
+    }
+
+    public function replaceLoyalty(Request $request, $id)
+    {
+        return $this->customerService->replaceLoyalty($request, $id);
+    }
+
+    public function upsertLoyalty(Request $request, $id)
+    {
+        return $this->customerService->upsertLoyalty($request, $id);
+    }
+
+    public function deleteLoyalty($id, $countryId)
+    {
+        return $this->customerService->deleteLoyalty($id, $countryId);
+    }
+
     public function listOptimized(Request $request)
     {
         return $this->customerService->listOptimized($request);

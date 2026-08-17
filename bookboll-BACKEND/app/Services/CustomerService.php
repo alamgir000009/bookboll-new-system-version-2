@@ -3,10 +3,16 @@ namespace App\Services;
 
 use App\Mail\UserWelcomeEmail;
 use App\Models\Booking;
+use App\Models\CustomerLoyalty;
+use App\Models\Listing;
 use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
+use App\Models\Venue;
+use BookingPaymentStatus;
 use BookingStatus;
+use Nnjeim\World\Models\City;
+use Nnjeim\World\Models\Country;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -523,6 +529,496 @@ class CustomerService
             ]);
             return sendError('Failed to delete customer: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Full roster payload for the apps/admin Customers page (client-side filters/KPIs).
+     */
+    public function dashboard(Request $request)
+    {
+        $customers = $this->customerQuery()
+            ->with(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier'])
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (User $u) => $this->mapDashboardCustomer($u))
+            ->values();
+
+        $lookups = $this->dashboardLookups();
+
+        $bookings = Booking::query()
+            ->whereNotNull('user_id')
+            ->where('status', '!=', BookingStatus::CANCELLED)
+            ->orderByDesc('date')
+            ->get(['id', 'user_id', 'listing_id', 'venue_id', 'date', 'total_price', 'status', 'payment_status', 'start_time', 'end_time', 'created_at'])
+            ->map(fn (Booking $b) => $this->mapDashboardBooking($b))
+            ->values();
+
+        $spentByCustomer = [];
+        foreach ($bookings as $b) {
+            if (! $b['customer_id']) {
+                continue;
+            }
+            $spentByCustomer[$b['customer_id']] = ($spentByCustomer[$b['customer_id']] ?? 0) + (float) $b['total'];
+        }
+        $customers = $customers->map(function ($c) use ($spentByCustomer) {
+            $c['total_spent'] = round($spentByCustomer[$c['id']] ?? 0, 2);
+            return $c;
+        })->values();
+
+        $loyalty = CustomerLoyalty::query()
+            ->orderBy('customer_id')
+            ->get()
+            ->map(fn (CustomerLoyalty $row) => $this->mapLoyaltyRow($row))
+            ->values();
+
+        return sendSuccess('Customers fetched', array_merge($lookups, [
+            'customers'         => $customers,
+            'bookings'          => $bookings,
+            'customer_loyalty'  => $loyalty,
+            'programs'          => [],
+            'subscriptions'     => [],
+            'loyalty_programs'  => [],
+            'loyalty_tiers'     => [],
+        ]));
+    }
+
+    public function crm($id)
+    {
+        $customer = $this->customerQuery()
+            ->with(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier'])
+            ->find($id);
+
+        if (! $customer) {
+            return sendError('Customer not found', [], 404);
+        }
+
+        $lookups = $this->dashboardLookups();
+
+        $bookings = Booking::query()
+            ->where('user_id', $customer->id)
+            ->orderByDesc('date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (Booking $b) => $this->mapDashboardBooking($b))
+            ->values();
+
+        $loyalty = $customer->customerLoyalty
+            ->map(fn (CustomerLoyalty $row) => $this->mapLoyaltyRow($row))
+            ->values();
+
+        return sendSuccess('Customer fetched', array_merge($lookups, [
+            'customer'          => $this->mapDashboardCustomer($customer),
+            'bookings'          => $bookings,
+            'customer_loyalty'  => $loyalty,
+            'programs'          => [],
+            'loyalty_programs'  => [],
+            'loyalty_tiers'     => [],
+        ]));
+    }
+
+    public function storeDashboard(Request $request)
+    {
+        $data = $this->validateDashboard($request);
+
+        try {
+            DB::beginTransaction();
+
+            if (empty($data['password'])) {
+                $data['password'] = Str::random(12);
+            }
+
+            $email = trim((string) ($data['email'] ?? ''));
+            if ($email === '') {
+                $email = 'c-' . Str::uuid() . '@placeholder.local';
+            }
+
+            $user = $this->customerModel->create([
+                'name'               => $data['full_name'] ?? $data['name'] ?? null,
+                'email'              => $email,
+                'phone'              => $data['phone'] ?? null,
+                'password'           => $data['password'],
+                'gender'             => ($data['gender'] ?? '') ?: null,
+                'country_id'         => ($data['country_id'] ?? '') ?: null,
+                'status'             => $data['status'] ?? User::ACTIVE,
+                'crm_tags'           => $data['tags'] ?? '',
+                'marketing_email'    => (bool) ($data['marketing_email'] ?? false),
+                'marketing_sms'      => (bool) ($data['marketing_sms'] ?? false),
+                'marketing_whatsapp' => (bool) ($data['marketing_whatsapp'] ?? false),
+            ]);
+
+            $user->assignRole('customer');
+            $this->syncCrmTags($user, $data['tags'] ?? '');
+            $this->replaceLoyaltyRows($user->id, $data['loyalty'] ?? []);
+
+            Preference::create([
+                'user_id'         => $user->id,
+                'notifications'   => [
+                    'booking_emails'   => true,
+                    'sms_reminders'    => false,
+                    'marketing_emails' => (bool) ($data['marketing_email'] ?? false),
+                ],
+                'favorite_sports' => [],
+                'language'        => 'english',
+                'currency'        => 'AED',
+            ]);
+
+            DB::commit();
+
+            $user->load(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier']);
+
+            return sendSuccess('Customer created', [
+                'customer' => $this->mapDashboardCustomer($user),
+            ], 201);
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Customer create error: ' . $e->getMessage(), ['Exception' => $e]);
+            return sendError('Could not save customer.');
+        }
+    }
+
+    public function updateDashboard(Request $request, $id)
+    {
+        $user = $this->customerQuery()->findOrFail($id);
+        $data = $this->validateDashboard($request, $user->id, true);
+
+        try {
+            DB::beginTransaction();
+
+            $payload = [];
+            if (array_key_exists('full_name', $data) || array_key_exists('name', $data)) {
+                $payload['name'] = $data['full_name'] ?? $data['name'] ?? $user->name;
+            }
+            foreach (['email', 'phone', 'gender', 'country_id', 'status'] as $key) {
+                if (array_key_exists($key, $data)) {
+                    if ($key === 'email') {
+                        $email = trim((string) $data['email']);
+                        if ($email !== '') {
+                            $payload['email'] = $email;
+                        }
+                        continue;
+                    }
+                    $payload[$key] = $data[$key] === '' ? null : $data[$key];
+                }
+            }
+            foreach (['marketing_email', 'marketing_sms', 'marketing_whatsapp'] as $key) {
+                if (array_key_exists($key, $data)) {
+                    $payload[$key] = (bool) $data[$key];
+                }
+            }
+            if (array_key_exists('tags', $data)) {
+                $payload['crm_tags'] = $data['tags'];
+            }
+
+            if ($payload) {
+                $user->update($payload);
+            }
+
+            if (array_key_exists('tags', $data)) {
+                $this->syncCrmTags($user, $data['tags']);
+            }
+
+            if (array_key_exists('loyalty', $data)) {
+                $this->replaceLoyaltyRows($user->id, $data['loyalty'] ?? []);
+            }
+
+            DB::commit();
+
+            $user->load(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier']);
+
+            return sendSuccess('Customer updated', [
+                'customer' => $this->mapDashboardCustomer($user),
+            ]);
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Customer update error: ' . $e->getMessage(), ['customer_id' => $id, 'Exception' => $e]);
+            return sendError('Could not save customer.');
+        }
+    }
+
+    public function replaceLoyalty(Request $request, $id)
+    {
+        $user = $this->customerQuery()->findOrFail($id);
+        $data = $request->validate([
+            'loyalty'                   => 'nullable|array',
+            'loyalty.*.country_id'      => 'required',
+            'loyalty.*.points'          => 'nullable|numeric|min:0',
+            'loyalty.*.lifetime_points' => 'nullable|numeric|min:0',
+        ]);
+
+        $this->replaceLoyaltyRows($user->id, $data['loyalty'] ?? []);
+
+        $rows = CustomerLoyalty::where('customer_id', $user->id)
+            ->get()
+            ->map(fn (CustomerLoyalty $row) => $this->mapLoyaltyRow($row))
+            ->values();
+
+        return sendSuccess('Loyalty updated', ['customer_loyalty' => $rows]);
+    }
+
+    public function upsertLoyalty(Request $request, $id)
+    {
+        $user = $this->customerQuery()->findOrFail($id);
+        $data = $request->validate([
+            'country_id'      => 'required',
+            'points'          => 'nullable|numeric|min:0',
+            'lifetime_points' => 'nullable|numeric|min:0',
+        ]);
+
+        $pts  = max(0, (int) round((float) ($data['points'] ?? 0)));
+        $life = max($pts, (int) round((float) ($data['lifetime_points'] ?? 0)));
+
+        $row = CustomerLoyalty::updateOrCreate(
+            [
+                'customer_id' => $user->id,
+                'country_id'  => (int) $data['country_id'],
+            ],
+            [
+                'points'          => $pts,
+                'lifetime_points' => $life,
+            ]
+        );
+
+        return sendSuccess('Loyalty points updated', [
+            'row' => $this->mapLoyaltyRow($row),
+        ]);
+    }
+
+    public function deleteLoyalty($id, $countryId)
+    {
+        $user = $this->customerQuery()->findOrFail($id);
+
+        CustomerLoyalty::where('customer_id', $user->id)
+            ->where('country_id', $countryId)
+            ->delete();
+
+        return sendSuccess('Loyalty removed');
+    }
+
+    protected function customerQuery()
+    {
+        return $this->customerModel::whereHas('roles', function ($query) {
+            $query->where('name', 'customer');
+        });
+    }
+
+    protected function validateDashboard(Request $request, $ignoreId = null, bool $partial = false)
+    {
+        $emailRule = $partial
+            ? 'sometimes|nullable|email|unique:users,email' . ($ignoreId ? ',' . $ignoreId : '')
+            : 'nullable|email|unique:users,email' . ($ignoreId ? ',' . $ignoreId : '');
+
+        return $request->validate([
+            'full_name'                 => ($partial ? 'sometimes|' : 'required|') . 'string|max:100',
+            'name'                      => 'sometimes|nullable|string|max:100',
+            'email'                     => $emailRule,
+            'phone'                     => 'nullable|string|max:20',
+            'password'                  => 'nullable|min:8',
+            'gender'                    => 'nullable|string|in:male,female,other',
+            'country_id'                => 'nullable',
+            'status'                    => 'sometimes|in:' . User::ACTIVE . ',' . User::INACTIVE . ',' . User::BLOCKED,
+            'tags'                      => 'nullable|string',
+            'marketing_email'           => 'sometimes|boolean',
+            'marketing_sms'             => 'sometimes|boolean',
+            'marketing_whatsapp'        => 'sometimes|boolean',
+            'loyalty'                   => 'nullable|array',
+            'loyalty.*.country_id'      => 'required',
+            'loyalty.*.points'          => 'nullable|numeric|min:0',
+            'loyalty.*.lifetime_points' => 'nullable|numeric|min:0',
+        ]);
+    }
+
+    protected function syncCrmTags(User $user, ?string $encoded): void
+    {
+        $encoded = (string) $encoded;
+        $user->crm_tags = $encoded;
+        $user->save();
+
+        $names = [];
+        foreach (explode(',', $encoded) as $entry) {
+            $entry = trim($entry);
+            if ($entry === '' || str_starts_with($entry, '⛔')) {
+                continue;
+            }
+            $names[] = $entry;
+        }
+
+        $user->syncTags($names);
+    }
+
+    protected function replaceLoyaltyRows($customerId, array $rows): void
+    {
+        CustomerLoyalty::where('customer_id', $customerId)->delete();
+
+        $byCountry = [];
+        foreach ($rows as $r) {
+            $cid = $r['country_id'] ?? null;
+            if ($cid === null || $cid === '') {
+                continue;
+            }
+            $pts  = max(0, (int) round((float) ($r['points'] ?? 0)));
+            $life = max($pts, (int) round((float) ($r['lifetime_points'] ?? 0)));
+            $now = now();
+            $byCountry[(int) $cid] = [
+                'customer_id'     => $customerId,
+                'country_id'      => (int) $cid,
+                'points'          => $pts,
+                'lifetime_points' => $life,
+                'created_at'      => $now,
+                'updated_at'      => $now,
+            ];
+        }
+
+        if ($byCountry) {
+            CustomerLoyalty::insert(array_values($byCountry));
+        }
+    }
+
+    protected function dashboardLookups(): array
+    {
+        $venues = Venue::with('users')
+            ->orderBy('name')
+            ->get(['id', 'name', 'status', 'city_id', 'country_id', 'created_by']);
+
+        $countryIds = $venues->pluck('country_id')->filter()->unique()->values();
+        $currencyByCountry = $countryIds->isEmpty()
+            ? collect()
+            : Country::with('currency')->whereIn('id', $countryIds)->get()
+                ->mapWithKeys(fn (Country $c) => [$c->id => $c->currency?->code ?: 'AED']);
+
+        $locations = $venues->map(function (Venue $v) use ($currencyByCountry) {
+            $ownerId = $v->users->first()?->id ?? $v->created_by;
+
+            return [
+                'id'                => (string) $v->id,
+                'name'              => $v->name,
+                'status'            => $v->status,
+                'city_id'           => $v->city_id ? (string) $v->city_id : null,
+                'owner_user_id'     => $ownerId ? (string) $ownerId : null,
+                'currency_override' => $currencyByCountry[$v->country_id] ?? null,
+            ];
+        })->values();
+
+        $listings = Listing::with('sportsCategory:id,name')
+            ->orderBy('name')
+            ->get(['id', 'name', 'venue_id', 'calendar_color', 'sports_category_id'])
+            ->map(function (Listing $l) {
+                return [
+                    'id'             => (string) $l->id,
+                    'name'           => $l->name,
+                    'location_id'    => $l->venue_id ? (string) $l->venue_id : null,
+                    'booking_color'  => $l->calendar_color ?: '#64748b',
+                    'sport_category' => $l->sportsCategory?->name,
+                ];
+            })->values();
+
+        $cityIds = $venues->pluck('city_id')->filter()->unique()->values();
+        $cities = $cityIds->isEmpty()
+            ? collect()
+            : City::whereIn('id', $cityIds)
+                ->orderBy('name')
+                ->get(['id', 'name', 'country_id'])
+                ->map(fn (City $c) => [
+                    'id'         => (string) $c->id,
+                    'name'       => $c->name,
+                    'country_id' => $c->country_id ? (string) $c->country_id : null,
+                    'status'     => 'active',
+                ]);
+
+        $countries = Country::with('currency')
+            ->orderBy('name')
+            ->get()
+            ->filter(fn (Country $c) => (int) ($c->status ?? 1) === 1)
+            ->map(function (Country $c) {
+                return [
+                    'id'            => (string) $c->id,
+                    'name'          => $c->name,
+                    'currency_code' => $c->currency?->code ?: 'AED',
+                    'status'        => 'active',
+                ];
+            })->values();
+
+        return compact('locations', 'listings', 'cities', 'countries');
+    }
+
+    protected function mapDashboardCustomer(User $u): array
+    {
+        $u->setAppends([]);
+
+        $loyaltyRows = $u->relationLoaded('customerLoyalty')
+            ? $u->customerLoyalty
+            : $u->customerLoyalty()->get();
+
+        $loyaltyPoints = (int) $loyaltyRows->sum('points');
+
+        $prefs  = $u->preferences;
+        $notify = is_array($prefs?->notifications) ? $prefs->notifications : [];
+
+        $tags = $u->crm_tags;
+        if ($tags === null || $tags === '') {
+            $tagNames = $u->relationLoaded('tags')
+                ? $u->tags->pluck('name')->all()
+                : [];
+            $tags = implode(', ', $tagNames);
+        }
+
+        return [
+            'id'                 => (string) $u->id,
+            'full_name'          => $u->name,
+            'email'              => str_ends_with((string) $u->email, '@placeholder.local') ? '' : $u->email,
+            'phone'              => $u->phone,
+            'gender'             => $u->gender,
+            'country_id'         => $u->country_id ? (string) $u->country_id : null,
+            'status'             => $u->status ?: User::ACTIVE,
+            'tags'               => (string) $tags,
+            'loyalty_tier'       => $u->loyaltyTier?->name ?: 'Rookie',
+            'loyalty_points'     => $loyaltyPoints,
+            'marketing_email'    => (bool) ($u->marketing_email ?? $notify['marketing_emails'] ?? $notify['marketing'] ?? false),
+            'marketing_sms'      => (bool) ($u->marketing_sms ?? $notify['sms_reminders'] ?? false),
+            'marketing_whatsapp' => (bool) ($u->marketing_whatsapp ?? false),
+            'unsubscribe_token'  => substr(hash('sha256', 'unsub:' . $u->id . config('app.key')), 0, 32),
+            'created_at'         => $u->created_at?->toIso8601String(),
+            'updated_at'         => $u->updated_at?->toIso8601String(),
+        ];
+    }
+
+    protected function mapDashboardBooking(Booking $b): array
+    {
+        $payment = (string) $b->payment_status;
+        if ($payment === BookingPaymentStatus::FULLY_PAID) {
+            $payment = 'paid';
+        } elseif ($payment === BookingPaymentStatus::PAYMENT_SKIPPED) {
+            $payment = 'skipped';
+        }
+
+        $date = $b->date;
+        if ($date instanceof \Carbon\CarbonInterface) {
+            $date = $date->format('Y-m-d');
+        }
+
+        return [
+            'id'             => (string) $b->id,
+            'customer_id'    => $b->user_id ? (string) $b->user_id : null,
+            'listing_id'     => $b->listing_id ? (string) $b->listing_id : null,
+            'location_id'    => $b->venue_id ? (string) $b->venue_id : null,
+            'booking_date'   => $date,
+            'total'          => (float) ($b->total_price ?? 0),
+            'booking_status' => $b->status,
+            'payment_status' => $payment,
+            'start_time'     => $b->start_time,
+            'end_time'       => $b->end_time,
+            'created_at'     => $b->created_at?->toIso8601String(),
+        ];
+    }
+
+    protected function mapLoyaltyRow(CustomerLoyalty $row): array
+    {
+        return [
+            'id'              => (string) $row->id,
+            'customer_id'     => (string) $row->customer_id,
+            'country_id'      => (string) $row->country_id,
+            'points'          => (int) $row->points,
+            'lifetime_points' => (int) $row->lifetime_points,
+        ];
     }
 
 }
