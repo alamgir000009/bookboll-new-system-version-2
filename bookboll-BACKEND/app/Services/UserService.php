@@ -48,7 +48,22 @@ class UserService
             $user = $this->userModel->where("email", $formData['email'])->first();
 
             if ($user) {
-                if (! $user->hasRole('customer')) {
+                if ($user->status == User::BLOCKED) {
+                    DB::rollBack();
+                    return sendError('Your account is blocked by admin. Please contact for further details.');
+                }
+
+                if ($this->customerAccountWasDeleted($user)) {
+                    $restoreData = $user->getRoleNames()->isEmpty()
+                        ? [
+                            'name'     => $formData['name'],
+                            'phone'    => $formData['phone'],
+                            'password' => $formData['password'],
+                        ]
+                        : [];
+
+                    $this->restoreCustomerAccount($user, $restoreData);
+                } elseif (! $user->hasRole('customer')) {
                     $user->assignRole('customer');
 
                     if (! $user->preferences) {
@@ -291,6 +306,20 @@ class UserService
 
             if ($user && $user->status == User::BLOCKED) {
                 return sendError('Your account is block by admin please contact for further details');
+            }
+
+            if ($user && $this->customerAccountWasDeleted($user)) {
+                $restoreData = $user->getRoleNames()->isEmpty()
+                    ? [
+                        'name'              => $name,
+                        'image'             => $picture,
+                        'provider'          => 'google',
+                        'provider_id'       => $googleId,
+                        'email_verified_at' => now(),
+                    ]
+                    : [];
+
+                $this->restoreCustomerAccount($user, $restoreData);
             }
 
             if (! $user) {
@@ -1278,7 +1307,7 @@ class UserService
                 ? DeletedAccount::TYPE_ACCESS_REMOVED
                 : DeletedAccount::TYPE_ACCOUNT_DELETED;
 
-            $this->recordDeletedAccount($user, $request, $deletionType, $staffRoles);
+            $this->recordDeletedAccount($user, $request, $deletionType, $staffRoles, DeletedAccount::SOURCE_ADMIN_MOBILE_APP);
 
             $user->tokens()
                 ->whereIn('name', ['bookboll-admin-mobile-app-api-token', 'bookboll-admin-web-api-token'])
@@ -1317,11 +1346,113 @@ class UserService
         }
     }
 
-    protected function recordDeletedAccount(User $user, $request, string $deletionType, array $staffRoles): DeletedAccount
+    public function deleteCustomerAccount($request)
+    {
+        $user = auth()->user();
+
+        if (! $user || ! $user->hasRole('customer')) {
+            return sendError('This account is not eligible for deletion from the customer app.');
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $remainingRoles = $user->getRoleNames()->diff(['customer']);
+            $hasOtherRoles = $remainingRoles->isNotEmpty();
+            $deletionType = $hasOtherRoles
+                ? DeletedAccount::TYPE_ACCESS_REMOVED
+                : DeletedAccount::TYPE_ACCOUNT_DELETED;
+
+            $this->recordDeletedAccount(
+                $user,
+                $request,
+                $deletionType,
+                ['customer'],
+                DeletedAccount::SOURCE_CUSTOMER_MOBILE_APP
+            );
+
+            $user->tokens()
+                ->whereIn('name', [
+                    'bookboll-customer-login-api-token',
+                    'bookboll-api-token',
+                    'auth-token',
+                ])
+                ->delete();
+
+            $user->removeRole('customer');
+
+            if ($hasOtherRoles) {
+                DB::commit();
+
+                return sendSuccess('Your customer account has been removed successfully.');
+            }
+
+            $user->tokens()->delete();
+            $user->onesignalSubscriptions()->delete();
+            $user->status = User::INACTIVE;
+            $user->save();
+
+            DB::commit();
+
+            return sendSuccess('Your account has been deleted successfully.');
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Customer account deletion error: '.$e->getMessage(), [
+                'user_id'   => $user->id,
+                'Exception' => $e,
+            ]);
+
+            return sendError('Failed to delete account. Please try again later.');
+        }
+    }
+
+    protected function customerAccountWasDeleted(User $user): bool
+    {
+        if ($user->hasRole('customer')) {
+            return false;
+        }
+
+        return DeletedAccount::query()
+            ->where('user_id', $user->id)
+            ->where('source', DeletedAccount::SOURCE_CUSTOMER_MOBILE_APP)
+            ->exists();
+    }
+
+    protected function restoreCustomerAccount(User $user, array $attributes = []): User
+    {
+        $user->update(array_merge($attributes, [
+            'status' => User::ACTIVE,
+        ]));
+
+        if (! $user->hasRole('customer')) {
+            $user->assignRole('customer');
+        }
+
+        $user->refresh();
+
+        if (! $user->preferences) {
+            Preference::create([
+                'user_id'         => $user->id,
+                'notifications'   => [
+                    'booking_emails'   => true,
+                    'sms_reminders'    => false,
+                    'marketing_emails' => true,
+                ],
+                'favorite_sports' => [],
+                'language'        => 'english',
+                'currency'        => 'QAR',
+            ]);
+        }
+
+        return $user;
+    }
+
+    protected function recordDeletedAccount(User $user, $request, string $deletionType, array $rolesToRemove, string $source = DeletedAccount::SOURCE_ADMIN_MOBILE_APP): DeletedAccount
     {
         $user->loadMissing('venues');
 
-        $removedRoles = $user->getRoleNames()->intersect($staffRoles)->values()->all();
+        $removedRoles = $user->getRoleNames()->intersect($rolesToRemove)->values()->all();
 
         return DeletedAccount::create([
             'user_id'          => $user->id,
@@ -1329,7 +1460,7 @@ class UserService
             'email'            => $user->email,
             'phone'            => $user->phone,
             'deletion_type'    => $deletionType,
-            'source'           => DeletedAccount::SOURCE_ADMIN_MOBILE_APP,
+            'source'           => $source,
             'roles'            => $removedRoles,
             'assigned_venues'  => $user->venues->map(fn ($venue) => [
                 'id'     => $venue->id,

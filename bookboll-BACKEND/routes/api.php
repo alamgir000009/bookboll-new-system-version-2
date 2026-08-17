@@ -189,6 +189,7 @@ Route::prefix('customer')->group(function () {
         Route::post('update-profile', [UserController::class, 'updateCustomerProfile'])->name('customer.updateCustomerProfile');
         Route::post('update-profile-image', [UserController::class, 'updateProfileImage'])->name('customer.updateProfileImage');
         Route::get('payment-methods', [PaymentController::class, 'getPaymentMethods'])->name('customer.payment-methods');
+        Route::post('delete-account', [UserController::class, 'deleteCustomerAccount'])->name('customer.delete-account');
     });
 
 });

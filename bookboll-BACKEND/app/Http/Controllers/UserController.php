@@ -144,6 +144,11 @@ class UserController extends Controller
         return $this->userService->deleteAdminAppAccount($request);
     }
 
+    public function deleteCustomerAccount(Request $request)
+    {
+        return $this->userService->deleteCustomerAccount($request);
+    }
+
     public function listPendingUsers(Request $request)
     {
         return $this->userService->listPendingUsers($request);

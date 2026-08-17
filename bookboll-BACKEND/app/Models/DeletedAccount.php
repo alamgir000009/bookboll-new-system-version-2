@@ -13,6 +13,7 @@ class DeletedAccount extends Model
     public const TYPE_ACCESS_REMOVED = 'access_removed';
 
     public const SOURCE_ADMIN_MOBILE_APP = 'admin_mobile_app';
+    public const SOURCE_CUSTOMER_MOBILE_APP = 'customer_mobile_app';
 
     protected $fillable = [
         'user_id',
@@ -42,6 +43,11 @@ class DeletedAccount extends Model
     public function scopeFromAdminMobileApp($query)
     {
         return $query->where('source', self::SOURCE_ADMIN_MOBILE_APP);
+    }
+
+    public function scopeFromCustomerMobileApp($query)
+    {
+        return $query->where('source', self::SOURCE_CUSTOMER_MOBILE_APP);
     }
 
     public function scopeAccountDeleted($query)

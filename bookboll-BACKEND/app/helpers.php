@@ -353,6 +353,7 @@ if (! function_exists('getResourceFromRoute')) {
             'customers.createCustomer'     => 'Customer',
             'customers.updateTags'         => 'Customer',
             'customers.updateStatus'       => 'Customer',
+            'customer.delete-account'      => 'Customer',
 
             'reviews.store'                => 'Review',
             'reviews.update'               => 'Review',
@@ -522,6 +523,7 @@ if (! function_exists('extractSuccessDetails')) {
                 'customers.createCustomer' => "Created customer #{$id}",
                 'customers.updateTags' => "Updated tags for customer #{$id}",
                 'customers.updateStatus' => "Updated status for customer #{$id}",
+                'customer.delete-account' => "Deleted customer account #{$id}",
 
                 'bookings.store' => "Created booking #{$id}",
                 'bookings.update' => "Updated booking #{$id}",
