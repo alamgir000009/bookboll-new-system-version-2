@@ -10,7 +10,7 @@
  */
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
+import { fetchCustomerCrm, updateCustomer, upsertCustomerLoyalty, deleteCustomerLoyalty, firstError } from '../lib/customers.js'
 import { customerModalId, closeCustomer, requestEditCustomerId, requestBlockCustomerId } from '../lib/customerModal.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
@@ -46,25 +46,17 @@ watch(customerModalId, async (id) => {
   historyId.value = null
   editingCountryId.value = null
   adding.value = false
-  const [cRes, bRes, loRes, ciRes, coRes] = await Promise.all([
-    supabase.from('customers').select('*').eq('id', id).maybeSingle(),
-    supabase.from('bookings').select('id, location_id, booking_date, total, booking_status').eq('customer_id', id).neq('booking_status', 'cancelled'),
-    supabase.from('locations').select('id, name, city_id, owner_user_id'),
-    supabase.from('cities').select('id, country_id'),
-    supabase.from('countries').select('id, name, currency_code'),
-  ])
-  customer.value  = cRes.data
-  bookings.value  = bRes.data || []
-  locations.value = loRes.data || []
-  cities.value    = ciRes.data || []
-  countries.value = coRes.data || []
+  const res = await fetchCustomerCrm(id)
+  const d = res.success ? (res.data || {}) : {}
+  customer.value  = d.customer || null
+  bookings.value  = (d.bookings || []).filter(b => b.booking_status !== 'cancelled')
+  locations.value = d.locations || []
+  cities.value    = d.cities || []
+  countries.value = d.countries || []
   if (canSeeLoyalty.value) {
-    const [clRes, lpRes, ltRes] = await Promise.all([
-      supabase.from('customer_loyalty').select('*').eq('customer_id', id),
-      supabase.from('loyalty_programs').select('id, country_id'),
-      supabase.from('loyalty_tiers').select('id, program_id, name, threshold'),
-    ])
-    loyalty.value = clRes.data || []; programs.value = lpRes.data || []; tiers.value = ltRes.data || []
+    loyalty.value = d.customer_loyalty || []
+    programs.value = d.loyalty_programs || []
+    tiers.value = d.loyalty_tiers || []
   } else { loyalty.value = []; programs.value = []; tiers.value = [] }
   loading.value = false
 })
@@ -125,8 +117,8 @@ const availableLoyaltyCountries = computed(() => {
 
 async function reloadLoyalty() {
   if (!canSeeLoyalty.value || !customer.value) { loyalty.value = []; return }
-  const { data } = await supabase.from('customer_loyalty').select('*').eq('customer_id', customer.value.id)
-  loyalty.value = data || []
+  const res = await fetchCustomerCrm(customer.value.id)
+  loyalty.value = res.success ? (res.data?.customer_loyalty || []) : []
 }
 
 function startEditLoyalty(r) {
@@ -144,10 +136,9 @@ async function saveEditLoyalty() {
   let life  = Math.max(0, Math.round(Number(editLifetime.value) || 0))
   if (life < pts) life = pts   // lifetime (earned) can't be below the current balance
   savingLoyalty.value = true
-  const { error } = await supabase.from('customer_loyalty')
-    .upsert({ customer_id: customer.value.id, country_id: cid, points: pts, lifetime_points: life }, { onConflict: 'customer_id,country_id' })
+  const res = await upsertCustomerLoyalty(customer.value.id, { country_id: cid, points: pts, lifetime_points: life })
   savingLoyalty.value = false
-  if (error) { pushToast('Could not save loyalty points.', 'error'); return }
+  if (!res.success) { pushToast(firstError(res, 'Could not save loyalty points.'), 'error'); return }
   pushToast('Loyalty points updated', 'success')
   editingCountryId.value = null
   await reloadLoyalty()
@@ -167,10 +158,9 @@ async function addLoyalty() {
   let life  = Math.max(0, Math.round(Number(newLifetime.value) || 0))
   if (life < pts) life = pts
   savingLoyalty.value = true
-  const { error } = await supabase.from('customer_loyalty')
-    .upsert({ customer_id: customer.value.id, country_id: newCountryId.value, points: pts, lifetime_points: life }, { onConflict: 'customer_id,country_id' })
+  const res = await upsertCustomerLoyalty(customer.value.id, { country_id: newCountryId.value, points: pts, lifetime_points: life })
   savingLoyalty.value = false
-  if (error) { pushToast('Could not add loyalty points.', 'error'); return }
+  if (!res.success) { pushToast(firstError(res, 'Could not add loyalty points.'), 'error'); return }
   pushToast('Loyalty points added', 'success')
   adding.value = false
   await reloadLoyalty()
@@ -180,9 +170,9 @@ async function removeLoyalty(r) {
   if (!customer.value) return
   if (!(await askConfirm({ title: 'Remove loyalty points?', message: `Remove all ${r.countryName} loyalty points for ${customer.value.full_name || 'this customer'}? This cannot be undone.`, confirmText: 'Remove' }))) return
   savingLoyalty.value = true
-  const { error } = await supabase.from('customer_loyalty').delete().eq('customer_id', customer.value.id).eq('country_id', r.country_id)
+  const res = await deleteCustomerLoyalty(customer.value.id, r.country_id)
   savingLoyalty.value = false
-  if (error) { pushToast('Could not remove loyalty.', 'error'); return }
+  if (!res.success) { pushToast(firstError(res, 'Could not remove loyalty.'), 'error'); return }
   pushToast(`${r.countryName} loyalty removed`, 'success')
   await reloadLoyalty()
 }
@@ -223,16 +213,16 @@ function editCustomer() {
 }
 
 async function refreshCustomer() {
-  const { data } = await supabase.from('customers').select('*').eq('id', customer.value.id).maybeSingle()
-  if (data) customer.value = data
+  const res = await fetchCustomerCrm(customer.value.id)
+  if (res.success && res.data?.customer) customer.value = res.data.customer
 }
 async function toggleBlock() {
   const c = customer.value; if (!c) return
   // Bookboll staff un-banning a platform-blocked customer → inline (quick reverse).
   if (isBookbollSide.value && isPlatformBlocked.value) {
     const { tags, blks } = parsed.value
-    const { error } = await supabase.from('customers').update({ tags: encodeTags(tags, blks.filter(b => b.type !== 'platform')), status: 'active' }).eq('id', c.id)
-    if (error) { pushToast('Could not unblock.', 'error'); return }
+    const res = await updateCustomer(c.id, { tags: encodeTags(tags, blks.filter(b => b.type !== 'platform')), status: 'active' })
+    if (!res.success) { pushToast(firstError(res, 'Could not unblock.'), 'error'); return }
     pushToast(`${c.full_name || 'Customer'} unblocked`, 'success')
     await refreshCustomer()
     return

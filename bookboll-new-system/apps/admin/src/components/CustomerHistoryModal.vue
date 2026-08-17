@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { fetchCustomerCrm } from '../lib/customers.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { fmt12 } from '../lib/slots'
@@ -33,16 +33,12 @@ watch(() => props.customerId, async (id) => {
   search.value = ''
   statusFilter.value = ''
 
-  const [cRes, bRes, lRes, locRes] = await Promise.all([
-    supabase.from('customers').select('*').eq('id', id).maybeSingle(),
-    supabase.from('bookings').select('*').eq('customer_id', id).order('created_at', { ascending: false }),
-    supabase.from('listings').select('id, name'),
-    supabase.from('locations').select('id, name, currency_override, owner_user_id, city_id'),
-  ])
-  customer.value   = cRes.data
-  bookings.value   = bRes.data || []
-  listings.value   = lRes.data || []
-  locations.value  = locRes.data || []
+  const res = await fetchCustomerCrm(id)
+  const d = res.success ? (res.data || {}) : {}
+  customer.value   = d.customer || null
+  bookings.value   = d.bookings || []
+  listings.value   = d.listings || []
+  locations.value  = d.locations || []
   loading.value = false
 }, { immediate: true })
 
@@ -51,7 +47,8 @@ function locationName(id) { return locations.value.find(l => l.id === id)?.name 
 function currency(locId)  { return locations.value.find(l => l.id === locId)?.currency_override || 'AED' }
 
 function bookingRef(b) {
-  return `#BKN_${new Date(b.created_at).getFullYear()}_${b.id.slice(0,2).toUpperCase()}${b.id.slice(-3).toUpperCase()}`
+  const id = String(b.id || '')
+  return `#BKN_${new Date(b.created_at).getFullYear()}_${id.slice(0,2).toUpperCase()}${id.slice(-3).toUpperCase()}`
 }
 
 function fmtDate(d) {

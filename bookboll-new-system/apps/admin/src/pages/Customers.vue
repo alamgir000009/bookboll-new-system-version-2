@@ -1,6 +1,9 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { supabase } from '../lib/supabase.js'
+import {
+  fetchCustomersDashboard, createCustomer, updateCustomer, deleteCustomer, firstError,
+} from '../lib/customers.js'
 import { askConfirm } from '../lib/confirm.js'
 import { pushToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
@@ -162,30 +165,23 @@ function defaultForm() {
 
 // ── Load ─────────────────────────────────────────────────────────────────────────
 async function load() {
-  const [c, co, ci, bk, ls, lo, sb, pg, cl, lp, lt] = await Promise.all([
-    supabase.from('customers').select('*').order('created_at', { ascending: false }),
-    supabase.from('countries').select('id, name, currency_code').eq('status', 'active').order('name'),
-    supabase.from('cities').select('id, name, country_id').eq('status', 'active').order('name'),
-    supabase.from('bookings').select('id, customer_id, listing_id, location_id, booking_date, total').not('customer_id', 'is', null).neq('booking_status', 'cancelled'),
-    supabase.from('listings').select('id, name, location_id, booking_color, sport_category'),
-    supabase.from('locations').select('id, name, city_id, owner_user_id'),
-    supabase.from('class_subscriptions').select('id, customer_email, program_id, status, trial_status, started_at'),
-    supabase.from('class_programs').select('id, name, owner_user_id, location_id').order('name'),
-    supabase.from('customer_loyalty').select('*'),
-    supabase.from('loyalty_programs').select('id, country_id, is_active'),
-    supabase.from('loyalty_tiers').select('id, program_id, name, threshold, sort_order'),
-  ])
-  customers.value     = c.data  || []
-  countries.value     = co.data || []
-  cities.value        = ci.data || []
-  bookings.value      = bk.data || []
-  listings.value      = ls.data || []
-  locations.value     = lo.data || []
-  subscriptions.value = sb.data || []
-  programs.value      = pg.data || []
-  customerLoyalty.value = cl.data || []
-  loyaltyPrograms.value = lp.data || []
-  loyaltyTiers.value    = lt.data || []
+  const res = await fetchCustomersDashboard()
+  if (!res.success) {
+    pushToast(res.message || 'Could not load customers.', 'error')
+    return
+  }
+  const d = res.data || {}
+  customers.value      = d.customers || []
+  countries.value      = d.countries || []
+  cities.value         = d.cities || []
+  bookings.value       = d.bookings || []
+  listings.value       = d.listings || []
+  locations.value      = d.locations || []
+  subscriptions.value  = d.subscriptions || []
+  programs.value       = d.programs || []
+  customerLoyalty.value = d.customer_loyalty || []
+  loyaltyPrograms.value = d.loyalty_programs || []
+  loyaltyTiers.value    = d.loyalty_tiers || []
 }
 onMounted(load)
 
@@ -992,7 +988,7 @@ async function applyBlock() {
     }
     const updates = { tags: encodeField(tags, newBlks) }
     if (isPlatform) updates.status = 'blocked'
-    return supabase.from('customers').update(updates).eq('id', c.id)
+    return updateCustomer(c.id, updates)
   }))
   showBlockDialog.value = false
   clearSelection(); load()
@@ -1006,7 +1002,7 @@ async function removeBlock(customerId, blockType, blockTargetId) {
   const updates = { tags: encodeField(tags, remaining) }
   if (blockType === 'platform' && !remaining.some(b => b.type === 'platform'))
     updates.status = 'active'
-  await supabase.from('customers').update(updates).eq('id', customerId)
+  await updateCustomer(customerId, updates)
   load()
 }
 
@@ -1015,7 +1011,7 @@ async function unblockSelected() {
   const selected = customers.value.filter(c => selectedIds.value.has(c.id))
   await Promise.all(selected.map(c => {
     const { tags } = parseField(c)
-    return supabase.from('customers').update({ tags: tags.join(', '), status: 'active' }).eq('id', c.id)
+    return updateCustomer(c.id, { tags: tags.join(', '), status: 'active' })
   }))
   clearSelection(); load()
 }
@@ -1038,7 +1034,7 @@ async function applyTag() {
   await Promise.all(selected.map(c => {
     const existing = (c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
     const merged = [...new Set([...existing, ...newTags])]
-    return supabase.from('customers').update({ tags: merged.join(', ') }).eq('id', c.id)
+    return updateCustomer(c.id, { tags: merged.join(', ') })
   }))
   showTagDialog.value = false; tagInput.value = ''
   clearSelection(); load()
@@ -1048,7 +1044,7 @@ async function removeTag(customerId, tag) {
   const c = customers.value.find(x => x.id === customerId)
   if (!c) return
   const remaining = (c.tags || '').split(',').map(t => t.trim()).filter(t => t && t !== tag)
-  await supabase.from('customers').update({ tags: remaining.join(', ') }).eq('id', customerId)
+  await updateCustomer(customerId, { tags: remaining.join(', ') })
   load()
 }
 
@@ -1388,34 +1384,21 @@ async function save() {
   triedSave.value = true
   if (!form.value.full_name?.trim()) { pushToast('Customer name is required.', 'error'); return }
   if (form.value.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.value.email.trim())) { pushToast('Please enter a valid email address.', 'error'); return }
-  // `loyalty` lives in its own table — keep it out of the customers payload.
-  const { loyalty, ...rest } = form.value
-  const payload = { ...rest, loyalty_points: Number(rest.loyalty_points) || 0 }
-  let custId = editing.value?.id
-  if (editing.value) {
-    const { error } = await supabase.from('customers').update(payload).eq('id', editing.value.id)
-    if (error) { pushToast('Could not save customer.', 'error'); return }
-  } else {
-    const { data, error } = await supabase.from('customers').insert(payload).select().maybeSingle()
-    if (error) { pushToast('Could not save customer.', 'error'); return }
-    custId = data?.id
+  const { loyalty, loyalty_points, loyalty_tier, ...rest } = form.value
+  const payload = {
+    ...rest,
+    country_id: rest.country_id || null,
+    gender: rest.gender || null,
+    loyalty: (loyalty || []).filter(r => r.country_id),
   }
-  // Replace this customer's per-country loyalty balances (lifetime >= current balance).
-  if (custId) {
-    const byCountry = {}
-    for (const r of (loyalty || [])) {
-      if (!r.country_id) continue
-      const pts = Math.max(0, Number(r.points) || 0)
-      byCountry[r.country_id] = {
-        customer_id: custId, country_id: r.country_id,
-        points: pts, lifetime_points: Math.max(pts, Number(r.lifetime_points) || 0),
-        updated_at: new Date().toISOString(),
-      }
-    }
-    const rows = Object.values(byCountry)
-    await supabase.from('customer_loyalty').delete().eq('customer_id', custId)
-    if (rows.length) await supabase.from('customer_loyalty').insert(rows)
-  }
+  delete payload.id
+  delete payload.created_at
+  delete payload.updated_at
+  delete payload.unsubscribe_token
+  const res = editing.value
+    ? await updateCustomer(editing.value.id, payload)
+    : await createCustomer(payload)
+  if (!res.success) { pushToast(firstError(res), 'error'); return }
   clearDirty()
   pushToast(editing.value ? 'Customer updated' : 'Customer created', 'success')
   showModal.value = false; load()
@@ -1426,8 +1409,8 @@ async function remove(id) {
     message: 'This customer and their profile will be permanently removed. This cannot be undone.',
     confirmText: 'Delete',
   }))) return
-  const { error } = await supabase.from('customers').delete().eq('id', id)
-  if (error) { pushToast('Could not delete customer.', 'error'); return }
+  const res = await deleteCustomer(id)
+  if (!res.success) { pushToast(firstError(res, 'Could not delete customer.'), 'error'); return }
   pushToast('Customer deleted', 'success')
   load()
 }
@@ -1459,7 +1442,7 @@ function countryName(id) { return countries.value.find(c => c.id === id)?.name |
 function avatarInitials(name) { return (name||'?').split(' ').map(s=>s[0]).slice(0,2).join('').toUpperCase() }
 const AVG_COLORS = ['#0f766e','#0891b2','#7c3aed','#d97706','#dc2626','#059669']
 function avatarColor(id) {
-  const n = id ? parseInt(id.replace(/-/g,'').slice(0,8), 16) : 0
+  const n = id ? parseInt(String(id).replace(/-/g,'').slice(0,8), 16) : 0
   return AVG_COLORS[n % AVG_COLORS.length]
 }
 </script>
