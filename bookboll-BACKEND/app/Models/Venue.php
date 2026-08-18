@@ -28,6 +28,9 @@ class Venue extends Model
         'description',
         'min_advance_booking',
         'max_bookings_per_slot',
+        'city_id',
+        'country_id',
+        'currency_override',
     ];
 
     protected $appends = ['location_label'];

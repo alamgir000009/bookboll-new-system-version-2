@@ -11,6 +11,7 @@ class CustomerLoyalty extends Model
 
     protected $fillable = [
         'customer_id',
+        'user_id',
         'country_id',
         'points',
         'lifetime_points',
@@ -19,14 +20,31 @@ class CustomerLoyalty extends Model
     protected function casts(): array
     {
         return [
-            'points'           => 'integer',
-            'lifetime_points'  => 'integer',
-            'country_id'       => 'integer',
+            'points'          => 'integer',
+            'lifetime_points' => 'integer',
+            'country_id'      => 'integer',
         ];
+    }
+
+    public static function ownerColumn(): string
+    {
+        static $column;
+        if ($column === null) {
+            $column = \Illuminate\Support\Facades\Schema::hasColumn('customer_loyalty', 'customer_id')
+                ? 'customer_id'
+                : 'user_id';
+        }
+
+        return $column;
     }
 
     public function customer(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'customer_id');
+        return $this->belongsTo(User::class, self::ownerColumn());
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->customer();
     }
 }

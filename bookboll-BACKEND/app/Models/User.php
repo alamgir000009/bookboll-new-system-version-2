@@ -151,7 +151,7 @@ class User extends Authenticatable
 
     public function customerLoyalty()
     {
-        return $this->hasMany(CustomerLoyalty::class, 'customer_id');
+        return $this->hasMany(CustomerLoyalty::class, CustomerLoyalty::ownerColumn());
     }
 
     public function loyaltyTier()

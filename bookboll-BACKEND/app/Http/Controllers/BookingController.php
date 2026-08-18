@@ -19,6 +19,51 @@ class BookingController extends Controller
         return $this->bookingService->all($request);
     }
 
+    public function dashboard(Request $request)
+    {
+        return $this->bookingService->dashboard($request);
+    }
+
+    public function crm($id)
+    {
+        return $this->bookingService->crm($id);
+    }
+
+    public function occupancy(Request $request)
+    {
+        return $this->bookingService->occupancy($request);
+    }
+
+    public function dashboardStore(Request $request)
+    {
+        return $this->bookingService->dashboardStore($request);
+    }
+
+    public function dashboardUpdate(Request $request, $id)
+    {
+        return $this->bookingService->dashboardUpdate($request, $id);
+    }
+
+    public function dashboardCancel(Request $request)
+    {
+        return $this->bookingService->dashboardCancel($request);
+    }
+
+    public function dashboardCollect(Request $request, $id, $paymentId)
+    {
+        return $this->bookingService->dashboardCollect($request, $id, $paymentId);
+    }
+
+    public function dashboardSpecialDays(Request $request)
+    {
+        return $this->bookingService->dashboardSpecialDays($request);
+    }
+
+    public function dashboardPaymentLink(Request $request)
+    {
+        return $this->bookingService->dashboardPaymentLink($request);
+    }
+
     public function store(Request $request)
     {
         return $this->bookingService->store($request);

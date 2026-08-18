@@ -43,6 +43,9 @@ class Booking extends Model
         'payment_breakdown',
         'full_payment_received',
         'loyalty_points_earned',
+        'origin',
+        'players',
+        'program_id',
     ];
 
     protected $casts = [
@@ -151,7 +154,7 @@ class Booking extends Model
 
     public function addOns()
     {
-        return $this->belongsToMany(AddOn::class);
+        return $this->belongsToMany(AddOn::class)->withPivot(['quantity', 'unit_price', 'subtotal']);
     }
 
     public function payments()

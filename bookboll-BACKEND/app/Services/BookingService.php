@@ -2,12 +2,14 @@
 namespace App\Services;
 
 use App\Models\AddOn;
+use App\Models\AuditLog;
 use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\LoyaltyPoint;
 use App\Models\Payment;
 use App\Models\Promocode;
 use App\Models\Resource;
+use App\Models\Schedule;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\Transaction;
@@ -22,9 +24,15 @@ use BookingPaymentStatus;
 use BookingStatus;
 use Carbon\Carbon;
 use Exception;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Nnjeim\World\Models\City;
+use Nnjeim\World\Models\Country;
 use PaymentMethod;
 use PaymentStatus;
 use PaymentType;
@@ -217,7 +225,7 @@ class BookingService
 
         $currentUser         = auth()->user();
         $isBookingOwner      = (int) $currentUser->id === (int) $booking->user_id;
-        $isAdmin             = $currentUser->hasAnyRole(['super_admin', 'admin']);
+        $isAdmin             = $currentUser->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff']);
         $isStaff             = $currentUser->hasAnyRole(['senior_employee', 'junior_employee', 'guard']);
         $hasCancelPermission = $isAdmin || $isStaff;
 
@@ -3233,6 +3241,1092 @@ class BookingService
 
             return $booking;
         });
+    }
+
+    /**
+     * Full roster payload for the apps/admin Bookings page.
+     */
+    public function dashboard(Request $request)
+    {
+        $lookups = $this->dashboardLookups();
+
+        $query = $this->bookingModel::query()
+            ->with(['user:id,name,email,phone', 'listing:id,name,venue_id', 'venue:id,name', 'payments', 'promocode'])
+            ->latest('id');
+
+        if (Schema::hasColumn('bookings', 'origin')) {
+            $query->where(function ($q) {
+                $q->whereNull('origin')->orWhere('origin', '!=', 'class_program');
+            });
+        }
+
+        $user = auth()->user();
+        if ($user && ! $user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
+            $query = applyVenueFilter($query, 'venue_id');
+        }
+
+        $bookings = $query->get()->map(fn (Booking $b) => $this->mapDashboardBooking($b))->values();
+
+        return sendSuccess('Bookings fetched', array_merge($lookups, [
+            'bookings' => $bookings,
+        ]));
+    }
+
+    public function crm($id)
+    {
+        $booking = $this->bookingModel::with([
+            'user:id,name,email,phone,gender,status,created_at',
+            'listing',
+            'venue.users',
+            'payments',
+            'promocode',
+            'addOns',
+            'history.user:id,name',
+        ])->find($id);
+
+        if (! $booking) {
+            return sendError('Booking not found', [], 404);
+        }
+
+        $lookups = $this->dashboardLookups();
+        $mapped  = $this->mapDashboardBooking($booking);
+
+        $customer = $booking->user ? [
+            'id'              => (string) $booking->user->id,
+            'full_name'       => $booking->user->name,
+            'email'           => $booking->user->email,
+            'phone'           => $booking->user->phone,
+            'gender'          => $booking->user->gender,
+            'status'          => $booking->user->status,
+            'created_at'      => $booking->user->created_at?->toIso8601String(),
+            'loyalty_points'  => (int) LoyaltyPoint::balance($booking->user->id),
+        ] : null;
+
+        $listing  = $this->mapDashboardListing($booking->listing);
+        $location = $this->mapDashboardLocation($booking->venue);
+
+        $payments = $booking->payments->map(fn (Payment $p) => $this->mapDashboardPayment($p))->values();
+
+        $auditLogs = AuditLog::query()
+            ->where('resource', 'booking')
+            ->where('resource_id', (string) $booking->id)
+            ->orderBy('timestamp')
+            ->get()
+            ->map(fn (AuditLog $log) => [
+                'id'         => (string) $log->id,
+                'action'     => $log->action,
+                'details'    => $log->details,
+                'actor'      => $log->actor_email,
+                'created_at' => $log->timestamp?->toIso8601String() ?: $log->created_at?->toIso8601String(),
+            ])->values();
+
+        $existingPromo = null;
+        if ($booking->promocode && (float) $booking->discount_amount > 0) {
+            $existingPromo = [
+                'code'            => $booking->promocode->code,
+                'discount_amount' => (float) $booking->discount_amount,
+            ];
+        }
+
+        return sendSuccess('Booking fetched', array_merge($lookups, [
+            'booking'        => $mapped,
+            'customer'       => $customer,
+            'listing'        => $listing,
+            'location'       => $location,
+            'payments'       => $payments,
+            'audit_logs'     => $auditLogs,
+            'existing_promo' => $existingPromo,
+            'other_pending'  => $this->mapDashboardOtherPending($booking),
+            'wallets'        => $this->mapDashboardWallets($booking->listing),
+        ]));
+    }
+
+    public function occupancy(Request $request)
+    {
+        $data = $request->validate([
+            'listing_id' => 'required',
+            'date'       => 'required|date',
+        ]);
+
+        $listing = Listing::with(['schedules', 'addOns', 'pricingGroups'])->find($data['listing_id']);
+        if (! $listing) {
+            return sendError('Listing not found', [], 404);
+        }
+
+        $existing = $this->bookingModel::query()
+            ->where('listing_id', $listing->id)
+            ->whereDate('date', $data['date'])
+            ->where('status', '!=', BookingStatus::CANCELLED)
+            ->get(['id', 'start_time', 'end_time'])
+            ->map(fn (Booking $b) => [
+                'id'         => (string) $b->id,
+                'start_time' => $this->fmtTime($b->start_time),
+                'end_time'   => $this->fmtTime($b->end_time),
+            ])->values();
+
+        $dowMap = [
+            'sunday' => 0, 'monday' => 1, 'tuesday' => 2, 'wednesday' => 3,
+            'thursday' => 4, 'friday' => 5, 'saturday' => 6,
+        ];
+
+        $listingHours = $listing->schedules->map(function (Schedule $s) use ($dowMap) {
+            $day = strtolower((string) $s->day);
+
+            return [
+                'day_of_week' => $dowMap[$day] ?? 0,
+                'is_open'     => (bool) $s->is_open,
+                'open_time'   => $this->fmtTime($s->start_time),
+                'close_time'  => $this->fmtTime($s->end_time),
+            ];
+        })->values();
+
+        $addOns = $listing->addOns
+            ->filter(fn ($a) => ($a->status ?? 'active') === 'active')
+            ->map(fn ($a) => [
+                'id'          => (string) $a->id,
+                'name'        => $a->name,
+                'description' => $a->description,
+                'price'       => (float) $a->price,
+                'stock'       => null,
+                'status'      => $a->status ?? 'active',
+            ])->values();
+
+        [$pricingCells, $pricingGroups] = $this->mapDashboardPricing($listing);
+
+        return sendSuccess('Occupancy fetched', [
+            'existing_bookings' => $existing,
+            'listing_hours'     => $listingHours,
+            'pricing_cells'     => $pricingCells,
+            'pricing_groups'    => $pricingGroups,
+            'add_ons'           => $addOns,
+            'listing'           => $this->mapDashboardListing($listing),
+            'special_days'      => $this->mapDashboardSpecialDays($listing, $data['date']),
+        ]);
+    }
+
+    public function dashboardStore(Request $request)
+    {
+        $data = $request->validate([
+            'listing_id'     => 'required|exists:listings,id',
+            'location_id'    => 'required|exists:venues,id',
+            'customer_id'    => 'nullable|exists:users,id',
+            'booking_date'   => 'required|date',
+            'start_time'     => 'required',
+            'end_time'       => 'required',
+            'players'        => 'nullable|integer|min:1',
+            'total'          => 'nullable|numeric|min:0',
+            'discount'       => 'nullable|numeric|min:0',
+            'payment_method' => 'required|string',
+            'notes'          => 'nullable|string|max:1000',
+            'promocode_id'   => 'nullable|exists:promocodes,id',
+            'addon_ids'      => 'nullable|array',
+            'addon_ids.*'    => 'exists:add_ons,id',
+            'addons'         => 'nullable|array',
+            'addons.*.id'    => 'required|exists:add_ons,id',
+            'addons.*.quantity' => 'nullable|integer|min:1',
+            'addons.*.unit_price' => 'nullable|numeric|min:0',
+        ]);
+
+        $listing = Listing::findOrFail($data['listing_id']);
+        $user    = $this->resolveDashboardCustomer($data['customer_id'] ?? null);
+        $mapped  = $this->fromDashboardPaymentMethod($data['payment_method']);
+        $total   = (float) ($data['total'] ?? 0);
+        $discount = (float) ($data['discount'] ?? 0);
+        $subtotal = max(0, $total + $discount);
+
+        try {
+            DB::beginTransaction();
+
+            $startMins = $this->timeToMinutes($this->fmtTime($data['start_time']));
+            $endMins   = $this->timeToMinutes($this->fmtTime($data['end_time']));
+            $durationHours = $endMins > $startMins ? (int) round(($endMins - $startMins) / 60) : 1;
+
+            $addonRows = $this->normalizeDashboardAddons($data);
+            $addonTotal = collect($addonRows)->sum(fn ($r) => $r['subtotal']);
+            $basePrice  = max(0, $subtotal - $addonTotal);
+
+            $booking = $this->bookingModel::create([
+                'user_id'               => $user->id,
+                'venue_id'              => $data['location_id'],
+                'listing_id'            => $listing->id,
+                'date'                  => $data['booking_date'],
+                'start_time'            => $data['start_time'],
+                'end_time'              => $data['end_time'],
+                'duration'              => max(1, $durationHours),
+                'subtotal'              => $subtotal,
+                'discount_amount'       => $discount,
+                'total_price'           => $total,
+                'payment_method'        => $mapped['method'],
+                'payment_status'        => $mapped['status'],
+                'status'                => BookingStatus::CONFIRMED,
+                'notes'                 => $data['notes'] ?? '',
+                'players'               => (int) ($data['players'] ?? 1),
+                'origin'                => 'manual_admin',
+                'promocode_id'          => $data['promocode_id'] ?? null,
+                'loyalty_points_earned' => $listing->loyalty_points ?? 0,
+                'full_payment_received' => $mapped['status'] === BookingPaymentStatus::FULLY_PAID,
+                'is_free'               => $mapped['status'] === BookingPaymentStatus::PAYMENT_SKIPPED,
+                'created_by'            => auth()->id(),
+                'payment_breakdown'     => [
+                    'base_price'         => $basePrice,
+                    'addon_total'        => $addonTotal,
+                    'commission_amount'  => 0,
+                ],
+            ]);
+
+            if ($addonRows) {
+                $sync = [];
+                foreach ($addonRows as $row) {
+                    $sync[$row['id']] = [
+                        'quantity'   => $row['quantity'],
+                        'unit_price' => $row['unit_price'],
+                        'subtotal'   => $row['subtotal'],
+                    ];
+                }
+                $booking->addOns()->sync($sync);
+            }
+
+            if (! empty($data['promocode_id'])) {
+                Promocode::where('id', $data['promocode_id'])->increment('used_count');
+            }
+
+            if ($mapped['status'] !== BookingPaymentStatus::PAYMENT_SKIPPED && $total > 0) {
+                $this->paymentModel::create([
+                    'user_id'    => $user->id,
+                    'booking_id' => $booking->id,
+                    'type'       => PaymentType::FULL,
+                    'amount'     => $total,
+                    'payment_id' => generatePaymentId($booking->id, PaymentType::FULL),
+                    'date'       => $mapped['status'] === BookingPaymentStatus::FULLY_PAID ? now()->format('Y-m-d') : null,
+                    'status'     => $mapped['status'] === BookingPaymentStatus::FULLY_PAID ? PaymentStatus::PAID : PaymentStatus::PENDING,
+                    'method'     => $mapped['pay_method'],
+                    'notes'      => $mapped['status'] === BookingPaymentStatus::FULLY_PAID
+                        ? "Full payment for booking #{$booking->booking_id}"
+                        : "Payment pending for booking #{$booking->booking_id}",
+                ]);
+            }
+
+            if (($listing->loyalty_points ?? 0) > 0) {
+                $user->addLoyaltyPoints(
+                    (int) $listing->loyalty_points,
+                    $booking->id,
+                    "Loyalty points earned for booking #{$booking->booking_id}"
+                );
+            }
+
+            $booking->history()->create([
+                'user_id'     => auth()->id(),
+                'action'      => 'booking_created',
+                'description' => 'Booking created in admin dashboard by ' . (auth()->user()?->name ?? 'staff'),
+            ]);
+
+            DB::commit();
+
+            $booking->load(['user', 'listing', 'venue', 'payments']);
+
+            return sendSuccess('Booking created', [
+                'booking' => $this->mapDashboardBooking($booking),
+            ], 201);
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Dashboard booking create failed: ' . $e->getMessage(), ['Exception' => $e]);
+
+            return sendError('Failed to create booking: ' . $e->getMessage());
+        }
+    }
+
+    public function dashboardUpdate(Request $request, $id)
+    {
+        $booking = $this->bookingModel::findOrFail($id);
+        $data = $request->validate([
+            'location_id'    => 'sometimes|exists:venues,id',
+            'listing_id'     => 'sometimes|exists:listings,id',
+            'customer_id'    => 'sometimes|nullable|exists:users,id',
+            'booking_date'   => 'sometimes|date',
+            'start_time'     => 'sometimes',
+            'end_time'       => 'sometimes',
+            'total'          => 'sometimes|numeric|min:0',
+            'booking_status' => 'sometimes|in:pending,confirmed,completed,cancelled,no_show',
+            'payment_method' => 'sometimes|string',
+            'notes'          => 'nullable|string|max:1000',
+            'players'        => 'sometimes|integer|min:1',
+        ]);
+
+        $payload = [];
+        if (array_key_exists('location_id', $data)) {
+            $payload['venue_id'] = $data['location_id'];
+        }
+        if (array_key_exists('listing_id', $data)) {
+            $payload['listing_id'] = $data['listing_id'];
+        }
+        if (array_key_exists('customer_id', $data)) {
+            $payload['user_id'] = $data['customer_id'] ?: $booking->user_id;
+        }
+        if (array_key_exists('booking_date', $data)) {
+            $payload['date'] = $data['booking_date'];
+        }
+        if (array_key_exists('start_time', $data)) {
+            $payload['start_time'] = $data['start_time'];
+        }
+        if (array_key_exists('end_time', $data)) {
+            $payload['end_time'] = $data['end_time'];
+        }
+        if (array_key_exists('total', $data)) {
+            $payload['total_price'] = $data['total'];
+            $payload['subtotal']    = $data['total'];
+        }
+        if (array_key_exists('booking_status', $data)) {
+            $payload['status'] = $data['booking_status'] === 'no_show' ? BookingStatus::COMPLETED : $data['booking_status'];
+        }
+        if (array_key_exists('payment_method', $data)) {
+            $mapped = $this->fromDashboardPaymentMethod($data['payment_method']);
+            $payload['payment_method'] = $mapped['method'];
+        }
+        if (array_key_exists('notes', $data)) {
+            $payload['notes'] = $data['notes'] ?? '';
+        }
+        if (array_key_exists('players', $data)) {
+            $payload['players'] = $data['players'];
+        }
+
+        $booking->update($payload);
+        $booking->load(['user', 'listing', 'venue', 'payments', 'promocode']);
+
+        return sendSuccess('Booking updated', [
+            'booking' => $this->mapDashboardBooking($booking),
+        ]);
+    }
+
+    public function dashboardCancel(Request $request)
+    {
+        $data = $request->validate([
+            'booking_id'    => 'required',
+            'program_id'    => 'nullable',
+            'booking_date'  => 'nullable|date',
+            'cancel_all'    => 'sometimes|boolean',
+            'cancel_reason' => 'nullable|string|max:255',
+        ]);
+
+        if (! empty($data['cancel_all']) && ! empty($data['program_id'])) {
+            $query = $this->bookingModel::query()
+                ->where('program_id', $data['program_id'])
+                ->where('status', '!=', BookingStatus::CANCELLED);
+            if (! empty($data['booking_date'])) {
+                $query->whereDate('date', '>=', $data['booking_date']);
+            }
+            $ids = $query->pluck('id');
+            foreach ($ids as $id) {
+                $req = new Request([
+                    'booking_id'    => $id,
+                    'cancel_reason' => $data['cancel_reason'] ?? 'Cancelled in admin dashboard',
+                ]);
+                $this->cancel($req);
+            }
+
+            return sendSuccess('Bookings cancelled');
+        }
+
+        $req = new Request([
+            'booking_id'    => $data['booking_id'],
+            'cancel_reason' => $data['cancel_reason'] ?? 'Cancelled in admin dashboard',
+        ]);
+
+        return $this->cancel($req);
+    }
+
+    public function dashboardCollect(Request $request, $id, $paymentId)
+    {
+        $data = $request->validate([
+            'method'       => 'required|string',
+            'amount'       => 'nullable|numeric|min:0',
+            'discount'     => 'nullable|numeric|min:0',
+            'promocode_id' => 'nullable|exists:promocodes,id',
+        ]);
+
+        $booking = $this->bookingModel::with('payments')->find($id);
+        if (! $booking) {
+            return sendError('Booking not found', [], 404);
+        }
+
+        $payment = $booking->payments()->find($paymentId);
+        if (! $payment) {
+            return sendError('Payment not found', [], 404);
+        }
+
+        if ($payment->status === PaymentStatus::PAID) {
+            return sendError('This payment is already marked as paid.');
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $discount = (float) ($data['discount'] ?? 0);
+            if ($discount > 0) {
+                $payment->amount = max(0, (float) $payment->amount - $discount);
+                $booking->discount_amount = (float) $booking->discount_amount + $discount;
+                $booking->total_price = max(0, (float) $booking->total_price - $discount);
+                if (! empty($data['promocode_id'])) {
+                    $booking->promocode_id = $data['promocode_id'];
+                    Promocode::where('id', $data['promocode_id'])->increment('used_count');
+                }
+            }
+
+            $payMethod = match ($data['method']) {
+                'card', 'credit_card', 'paid_card' => PaymentMethod::CREDIT_CARD,
+                'cheque', 'paid_cheque'            => PaymentMethod::CHEQUE,
+                'wire', 'wire_transfer', 'paid_wire' => PaymentMethod::WIRE_TRANSFER,
+                'online'                           => PaymentMethod::ONLINE,
+                default                            => PaymentMethod::CASH,
+            };
+
+            $payment->status = PaymentStatus::PAID;
+            $payment->method = $payMethod;
+            $payment->date   = now()->format('Y-m-d');
+            $payment->save();
+
+            $remaining = $booking->payments()
+                ->where('id', '!=', $payment->id)
+                ->where('status', '!=', PaymentStatus::PAID)
+                ->exists();
+
+            $booking->payment_status        = $remaining ? BookingPaymentStatus::DEPOSIT_PAID : BookingPaymentStatus::FULLY_PAID;
+            $booking->full_payment_received = ! $remaining;
+            $booking->save();
+
+            $booking->history()->create([
+                'user_id'     => auth()->id(),
+                'action'      => 'payment_collected',
+                'description' => 'Payment collected in admin dashboard via ' . $data['method'],
+            ]);
+
+            DB::commit();
+
+            $booking->load(['user', 'listing', 'venue', 'payments', 'promocode']);
+
+            $auditLogs = AuditLog::query()
+                ->where('resource', 'booking')
+                ->where('resource_id', (string) $booking->id)
+                ->orderBy('timestamp')
+                ->get()
+                ->map(fn (AuditLog $log) => [
+                    'id'         => (string) $log->id,
+                    'action'     => $log->action,
+                    'details'    => $log->details,
+                    'actor'      => $log->actor_email,
+                    'created_at' => $log->timestamp?->toIso8601String() ?: $log->created_at?->toIso8601String(),
+                ])->values();
+
+            return sendSuccess('Payment collected', [
+                'booking'    => $this->mapDashboardBooking($booking),
+                'payments'   => $booking->payments->map(fn (Payment $p) => $this->mapDashboardPayment($p))->values(),
+                'audit_logs' => $auditLogs,
+            ]);
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Dashboard payment collect failed: ' . $e->getMessage(), ['Exception' => $e]);
+
+            return sendError('Failed to collect payment: ' . $e->getMessage());
+        }
+    }
+
+    protected function resolveDashboardCustomer($id): User
+    {
+        if ($id) {
+            return User::findOrFail($id);
+        }
+
+        $email = 'walkin@bookboll.local';
+        $user  = User::where('email', $email)->first();
+        if ($user) {
+            if (! $user->hasRole('customer')) {
+                $user->assignRole('customer');
+            }
+
+            return $user;
+        }
+
+        $user = User::create([
+            'name'     => 'Walk-in customer',
+            'email'    => $email,
+            'password' => Hash::make(Str::random(32)),
+            'status'   => User::ACTIVE,
+        ]);
+        $user->assignRole('customer');
+
+        return $user;
+    }
+
+    protected function mapDashboardSpecialDays(Listing $listing, string $date)
+    {
+        return SpecialDay::with('timeBlocks')
+            ->whereDate('date', $date)
+            ->where(function ($q) use ($listing) {
+                $q->where('venue_id', $listing->venue_id);
+                $q->orWhere('listing_id', $listing->id);
+            })
+            ->get()
+            ->flatMap(function (SpecialDay $sd) {
+                $dateStr  = $sd->date instanceof \Carbon\CarbonInterface ? $sd->date->format('Y-m-d') : (string) $sd->date;
+                $isClosed = strtolower((string) $sd->type) === 'holiday';
+                $blocks   = $sd->timeBlocks;
+
+                if ($isClosed || $blocks->isEmpty()) {
+                    return [[
+                        'id'               => (string) $sd->id,
+                        'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
+                        'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
+                        'name'             => $sd->description ?: ($isClosed ? 'Closed' : 'Special schedule'),
+                        'date'             => $dateStr,
+                        'type'             => $sd->type,
+                        'is_closed'        => $isClosed,
+                        'open_time'        => null,
+                        'close_time'       => null,
+                        'custom_price'     => $sd->price !== null ? (float) $sd->price : null,
+                        'price_multiplier' => 1,
+                    ]];
+                }
+
+                return $blocks->map(fn ($block) => [
+                    'id'               => (string) $sd->id . '-' . $block->id,
+                    'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
+                    'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
+                    'name'             => $sd->description ?: 'Special schedule',
+                    'date'             => $dateStr,
+                    'type'             => $sd->type,
+                    'is_closed'        => false,
+                    'open_time'        => $this->fmtTime($block->start_time),
+                    'close_time'       => $this->fmtTime($block->end_time),
+                    'custom_price'     => $block->price_per_hour !== null ? (float) $block->price_per_hour : ($sd->price !== null ? (float) $sd->price : null),
+                    'price_multiplier' => 1,
+                ])->all();
+            })
+            ->values();
+    }
+
+    protected function mapDashboardOtherPending(Booking $current)
+    {
+        return Payment::query()
+            ->where('status', PaymentStatus::PENDING)
+            ->where('booking_id', '!=', $current->id)
+            ->whereHas('booking', fn ($q) => $q->where('status', '!=', BookingStatus::CANCELLED))
+            ->with(['booking.venue.users', 'booking.listing'])
+            ->latest('id')
+            ->limit(80)
+            ->get()
+            ->map(function (Payment $p) {
+                $b   = $p->booking;
+                $loc = $b?->venue;
+                $ownerId = $loc?->relationLoaded('users')
+                    ? ($loc->users->first()?->id ?? ($loc->created_by ?? null))
+                    : ($loc->created_by ?? null);
+                $date = $b?->date;
+                if ($date instanceof \Carbon\CarbonInterface) {
+                    $date = $date->format('Y-m-d');
+                }
+                $type = (string) $p->type;
+                if ($type === PaymentType::FULL) {
+                    $type = 'booking';
+                } elseif ($type === PaymentType::REMAINING) {
+                    $type = 'remaining';
+                }
+
+                return [
+                    'id'            => (string) $p->id,
+                    'booking_id'    => $b ? (string) $b->id : null,
+                    'customer_id'   => $b && $b->user_id ? (string) $b->user_id : null,
+                    'amount'        => (float) $p->amount,
+                    'currency'      => 'AED',
+                    'payment_type'  => $type,
+                    'booking_date'  => $date,
+                    'created_at'    => $b?->created_at?->toIso8601String() ?: $p->created_at?->toIso8601String(),
+                    'location_id'   => $b && $b->venue_id ? (string) $b->venue_id : null,
+                    'owner_user_id' => $ownerId ? (string) $ownerId : null,
+                    'venue'         => $loc?->name ?: '—',
+                    'listingName'   => $b?->listing?->name ?: '',
+                ];
+            })
+            ->values();
+    }
+
+    protected function dashboardLookups(): array
+    {
+        $venueCols = ['id', 'name', 'status'];
+        foreach (['city_id', 'country_id', 'created_by', 'currency_override'] as $col) {
+            if (Schema::hasColumn('venues', $col)) {
+                $venueCols[] = $col;
+            }
+        }
+
+        $venues = Venue::with('users')->orderBy('name')->get($venueCols);
+
+        $locations = $venues->map(fn (Venue $v) => $this->mapDashboardLocation($v))->values();
+
+        $listings = Listing::with(['sportsCategory:id,name', 'addOns'])
+            ->orderBy('name')
+            ->get()
+            ->map(fn (Listing $l) => $this->mapDashboardListing($l))
+            ->values();
+
+        $customers = User::role('customer')
+            ->orderBy('name')
+            ->get(['id', 'name', 'email', 'phone', 'status'])
+            ->map(fn (User $u) => [
+                'id'        => (string) $u->id,
+                'full_name' => $u->name,
+                'email'     => $u->email,
+                'phone'     => $u->phone,
+                'status'    => $u->status,
+            ])->values();
+
+        $cityIds = $venues->pluck('city_id')->filter()->unique()->values();
+        $cities = ($cityIds->isEmpty() || ! class_exists(City::class))
+            ? collect()
+            : City::whereIn('id', $cityIds)->orderBy('name')->get(['id', 'name', 'country_id'])
+                ->map(fn (City $c) => [
+                    'id'         => (string) $c->id,
+                    'name'       => $c->name,
+                    'country_id' => $c->country_id ? (string) $c->country_id : null,
+                    'status'     => 'active',
+                ]);
+
+        $countries = class_exists(Country::class)
+            ? Country::with('currency')->orderBy('name')->get()
+                ->filter(fn (Country $c) => (int) ($c->status ?? 1) === 1)
+                ->map(fn (Country $c) => [
+                    'id'            => (string) $c->id,
+                    'name'          => $c->name,
+                    'currency_code' => $c->currency?->code ?: 'AED',
+                    'status'        => 'active',
+                ])->values()
+            : collect();
+
+        return compact('locations', 'listings', 'customers', 'cities', 'countries');
+    }
+
+    protected function mapDashboardBooking(Booking $b): array
+    {
+        $b->setAppends([]);
+        $date = $b->date;
+        if ($date instanceof \Carbon\CarbonInterface) {
+            $date = $date->format('Y-m-d');
+        }
+
+        $paymentStatus = (string) $b->payment_status;
+        if ($paymentStatus === BookingPaymentStatus::FULLY_PAID) {
+            $paymentStatus = 'paid';
+        } elseif ($paymentStatus === BookingPaymentStatus::PAYMENT_SKIPPED) {
+            $paymentStatus = 'skipped';
+        }
+        if ($b->refunded_at) {
+            $paymentStatus = 'refunded';
+        }
+
+        $breakdown = is_array($b->payment_breakdown) ? $b->payment_breakdown : [];
+        $addonTotal = (float) ($breakdown['addon_total'] ?? 0);
+        if ($addonTotal <= 0 && $b->relationLoaded('addOns')) {
+            $addonTotal = (float) $b->addOns->sum(function ($a) {
+                return (float) ($a->pivot->subtotal ?? $a->price ?? 0);
+            });
+        }
+        $basePrice = (float) ($breakdown['base_price'] ?? max(0, ((float) ($b->subtotal ?? 0)) - $addonTotal));
+        $amountPaid = $b->relationLoaded('payments')
+            ? (float) $b->payments->where('status', PaymentStatus::PAID)->sum('amount')
+            : 0;
+        if ($b->payment_status === BookingPaymentStatus::FULLY_PAID && $amountPaid <= 0) {
+            $amountPaid = (float) ($b->total_price ?? 0);
+        }
+
+        return [
+            'id'             => (string) $b->id,
+            'booking_id'     => $b->booking_id,
+            'customer_id'    => $b->user_id ? (string) $b->user_id : null,
+            'listing_id'     => $b->listing_id ? (string) $b->listing_id : null,
+            'location_id'    => $b->venue_id ? (string) $b->venue_id : null,
+            'booking_date'   => $date,
+            'start_time'     => $this->fmtTime($b->start_time),
+            'end_time'       => $this->fmtTime($b->end_time),
+            'players'        => (int) ($b->players ?? 1),
+            'base_price'     => $basePrice,
+            'addon_total'    => $addonTotal,
+            'total'          => (float) ($b->total_price ?? 0),
+            'discount'       => (float) ($b->discount_amount ?? 0),
+            'amount_paid'    => $amountPaid,
+            'notes'          => $b->notes ?: '',
+            'booking_status' => $b->status,
+            'payment_status' => $paymentStatus,
+            'payment_method' => $this->toDashboardPaymentMethod($b->payment_method),
+            'origin'             => $b->origin ?: 'bookboll_web',
+            'program_id'         => $b->program_id ? (string) $b->program_id : null,
+            'commission_amount'  => (float) ($breakdown['commission_amount'] ?? 0),
+            'created_at'         => $b->created_at?->toIso8601String(),
+            'updated_at'         => $b->updated_at?->toIso8601String(),
+        ];
+    }
+
+    protected function mapDashboardListing(?Listing $l): ?array
+    {
+        if (! $l) {
+            return null;
+        }
+
+        $mins = (int) round(((float) ($l->slot_duration ?? 1)) * 60);
+        if ($mins < 15) {
+            $mins = 60;
+        }
+
+        return [
+            'id'             => (string) $l->id,
+            'name'           => $l->name,
+            'status'         => $l->status,
+            'location_id'    => $l->venue_id ? (string) $l->venue_id : null,
+            'base_price'     => (float) ($l->base_price ?? 0),
+            'capacity'       => (int) ($l->capacity ?? 99),
+            'slot_duration'  => $mins,
+            'buffer_time'    => 0,
+            'booking_color'  => $l->calendar_color ?: '#64748b',
+            'listing_type'   => 'court',
+            'sport_category' => $l->sportsCategory?->name,
+            'online_payment' => (bool) ($l->online_payment ?? false),
+            'add_ons'        => $l->relationLoaded('addOns')
+                ? $l->addOns->map(fn ($a) => [
+                    'id'     => (string) $a->id,
+                    'name'   => $a->name,
+                    'price'  => (float) $a->price,
+                    'status' => $a->status ?? 'active',
+                    'stock'  => null,
+                ])->values()
+                : [],
+        ];
+    }
+
+    protected function mapDashboardLocation(?Venue $v): ?array
+    {
+        if (! $v) {
+            return null;
+        }
+
+        $ownerId = $v->relationLoaded('users')
+            ? ($v->users->first()?->id ?? ($v->created_by ?? null))
+            : ($v->created_by ?? null);
+
+        return [
+            'id'                => (string) $v->id,
+            'name'              => $v->name,
+            'status'            => $v->status,
+            'city_id'           => isset($v->city_id) && $v->city_id ? (string) $v->city_id : null,
+            'country_id'        => isset($v->country_id) && $v->country_id ? (string) $v->country_id : null,
+            'owner_user_id'     => $ownerId ? (string) $ownerId : null,
+            'currency_override' => $v->currency_override ?: null,
+        ];
+    }
+
+    protected function mapDashboardPayment(Payment $p): array
+    {
+        $status = (string) $p->status;
+        if ($status === PaymentStatus::PAID) {
+            $status = 'paid';
+        } elseif (in_array($status, [PaymentStatus::PENDING, PaymentStatus::UNPAID], true)) {
+            $status = 'pending';
+        }
+
+        $type = (string) $p->type;
+        if ($type === PaymentType::FULL) {
+            $type = 'booking';
+        } elseif ($type === PaymentType::REMAINING) {
+            $type = 'remaining';
+        }
+
+        $paidAt = $p->date;
+        if ($paidAt instanceof \Carbon\CarbonInterface) {
+            $paidAt = $paidAt->toIso8601String();
+        } elseif (is_string($paidAt) && $paidAt !== '') {
+            $paidAt = $paidAt . 'T00:00:00';
+        }
+
+        return [
+            'id'           => (string) $p->id,
+            'booking_id'   => $p->booking_id ? (string) $p->booking_id : null,
+            'payment_type' => $type,
+            'method'       => $this->toDashboardPaymentMethod($p->method),
+            'amount'       => (float) $p->amount,
+            'currency'     => 'AED',
+            'status'       => $status,
+            'paid_at'      => $status === 'paid' ? $paidAt : null,
+            'created_at'   => $p->created_at?->toIso8601String(),
+        ];
+    }
+
+    protected function toDashboardPaymentMethod(?string $method): string
+    {
+        return match ($method) {
+            BookingPaymentMethod::PAID_CASH,
+            BookingPaymentMethod::CASH_ON_ARRIVAL,
+            PaymentMethod::CASH, 'cash', 'paid_cash' => 'cash',
+            BookingPaymentMethod::PAID_CREDIT_CARD,
+            PaymentMethod::CREDIT_CARD, 'card', 'paid_card' => 'card',
+            BookingPaymentMethod::PAID_CHEQUE,
+            PaymentMethod::CHEQUE, 'cheque', 'paid_cheque' => 'cheque',
+            BookingPaymentMethod::PAID_WIRE_TRANSFER,
+            PaymentMethod::WIRE_TRANSFER, 'wire_transfer', 'paid_wire' => 'wire_transfer',
+            BookingPaymentMethod::ONLINE_PAYMENT,
+            PaymentMethod::ONLINE, 'online' => 'online',
+            BookingPaymentMethod::PAYMENT_SKIPPED, 'payment_skipped' => 'payment_skipped',
+            default => $method ?: '',
+        };
+    }
+
+    protected function fromDashboardPaymentMethod(string $method): array
+    {
+        return match ($method) {
+            'payment_skipped' => [
+                'method'     => BookingPaymentMethod::PAYMENT_SKIPPED,
+                'status'     => BookingPaymentStatus::PAYMENT_SKIPPED,
+                'pay_method' => PaymentMethod::CASH,
+            ],
+            'paid_cash' => [
+                'method'     => BookingPaymentMethod::PAID_CASH,
+                'status'     => BookingPaymentStatus::FULLY_PAID,
+                'pay_method' => PaymentMethod::CASH,
+            ],
+            'paid_cheque' => [
+                'method'     => BookingPaymentMethod::PAID_CHEQUE,
+                'status'     => BookingPaymentStatus::FULLY_PAID,
+                'pay_method' => PaymentMethod::CHEQUE,
+            ],
+            'paid_card' => [
+                'method'     => BookingPaymentMethod::PAID_CREDIT_CARD,
+                'status'     => BookingPaymentStatus::FULLY_PAID,
+                'pay_method' => PaymentMethod::CREDIT_CARD,
+            ],
+            'paid_wire' => [
+                'method'     => BookingPaymentMethod::PAID_WIRE_TRANSFER,
+                'status'     => BookingPaymentStatus::FULLY_PAID,
+                'pay_method' => PaymentMethod::WIRE_TRANSFER,
+            ],
+            'cash' => [
+                'method'     => BookingPaymentMethod::CASH_ON_ARRIVAL,
+                'status'     => BookingPaymentStatus::PENDING,
+                'pay_method' => PaymentMethod::CASH,
+            ],
+            default => [
+                'method'     => BookingPaymentMethod::CASH_ON_ARRIVAL,
+                'status'     => BookingPaymentStatus::PENDING,
+                'pay_method' => PaymentMethod::CASH,
+            ],
+        };
+    }
+
+    protected function fmtTime($value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+        if ($value instanceof \Carbon\CarbonInterface) {
+            return $value->format('H:i');
+        }
+        $s = (string) $value;
+        if (strlen($s) >= 5) {
+            return substr($s, 0, 5);
+        }
+
+        return $s;
+    }
+
+    public function dashboardSpecialDays(Request $request)
+    {
+        $data = $request->validate([
+            'location_id'  => 'nullable',
+            'location_ids' => 'nullable|string',
+            'listing_id'   => 'nullable',
+            'date'         => 'nullable|date',
+            'from'         => 'nullable|date',
+            'to'           => 'nullable|date',
+        ]);
+
+        $venueIds = [];
+        if (! empty($data['location_id'])) {
+            $venueIds[] = $data['location_id'];
+        }
+        if (! empty($data['location_ids'])) {
+            $venueIds = array_merge($venueIds, explode(',', $data['location_ids']));
+        }
+        $venueIds = array_values(array_filter($venueIds));
+
+        $query = SpecialDay::with('timeBlocks');
+        if ($venueIds) {
+            $query->whereIn('venue_id', $venueIds);
+        }
+        if (! empty($data['listing_id'])) {
+            $query->where(function ($q) use ($data) {
+                $q->whereNull('listing_id')->orWhere('listing_id', $data['listing_id']);
+            });
+        }
+        if (! empty($data['date'])) {
+            $query->whereDate('date', $data['date']);
+        } else {
+            if (! empty($data['from'])) {
+                $query->whereDate('date', '>=', $data['from']);
+            }
+            if (! empty($data['to'])) {
+                $query->whereDate('date', '<=', $data['to']);
+            }
+        }
+
+        $mapped = $query->get()->flatMap(fn (SpecialDay $sd) => $this->expandSpecialDayRow($sd))->values();
+
+        return sendSuccess('Special days fetched', ['special_days' => $mapped]);
+    }
+
+    public function dashboardPaymentLink(Request $request)
+    {
+        return app(PaymentService::class)->generatePaymentLink($request);
+    }
+
+    protected function expandSpecialDayRow(SpecialDay $sd)
+    {
+        $dateStr  = $sd->date instanceof \Carbon\CarbonInterface ? $sd->date->format('Y-m-d') : (string) $sd->date;
+        $isClosed = strtolower((string) $sd->type) === 'holiday';
+        $blocks   = $sd->timeBlocks;
+
+        if ($isClosed || $blocks->isEmpty()) {
+            return [[
+                'id'               => (string) $sd->id,
+                'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
+                'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
+                'name'             => $sd->description ?: ($isClosed ? 'Closed' : 'Special schedule'),
+                'date'             => $dateStr,
+                'type'             => $sd->type,
+                'is_closed'        => $isClosed,
+                'open_time'        => null,
+                'close_time'       => null,
+                'custom_price'     => $sd->price !== null ? (float) $sd->price : null,
+                'price_multiplier' => 1,
+            ]];
+        }
+
+        return $blocks->map(fn ($block) => [
+            'id'               => (string) $sd->id . '-' . $block->id,
+            'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
+            'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
+            'name'             => $sd->description ?: 'Special schedule',
+            'date'             => $dateStr,
+            'type'             => $sd->type,
+            'is_closed'        => false,
+            'open_time'        => $this->fmtTime($block->start_time),
+            'close_time'       => $this->fmtTime($block->end_time),
+            'custom_price'     => $block->price_per_hour !== null ? (float) $block->price_per_hour : ($sd->price !== null ? (float) $sd->price : null),
+            'price_multiplier' => 1,
+        ])->all();
+    }
+
+    protected function mapDashboardPricing(Listing $listing): array
+    {
+        $dowMap = [
+            'sunday' => 0, 'monday' => 1, 'tuesday' => 2, 'wednesday' => 3,
+            'thursday' => 4, 'friday' => 5, 'saturday' => 6,
+        ];
+        $slotMins = (int) round(((float) ($listing->slot_duration ?? 1)) * 60);
+        if ($slotMins < 15) {
+            $slotMins = 60;
+        }
+
+        $groups = [];
+        $cells  = [];
+        foreach ($listing->pricingGroups as $g) {
+            $groups[] = [
+                'id'    => (string) $g->id,
+                'name'  => $g->name,
+                'price' => (float) $g->price_per_hour,
+            ];
+            $start = $this->timeToMinutes($this->fmtTime($g->start_time));
+            $end   = $this->timeToMinutes($this->fmtTime($g->end_time));
+            if ($end <= $start) {
+                continue;
+            }
+            $days = is_array($g->days) ? $g->days : [];
+            foreach ($days as $dayName) {
+                $dow = $dowMap[strtolower((string) $dayName)] ?? null;
+                if ($dow === null) {
+                    continue;
+                }
+                for ($t = $start; $t + $slotMins <= $end; $t += $slotMins) {
+                    $cells[] = [
+                        'day_of_week'      => $dow,
+                        'slot_time'        => sprintf('%02d:%02d', intdiv($t, 60), $t % 60),
+                        'pricing_group_id' => (string) $g->id,
+                        'direct_price'     => null,
+                    ];
+                }
+            }
+        }
+
+        return [$cells, $groups];
+    }
+
+    protected function mapDashboardWallets(?Listing $listing): array
+    {
+        if (! $listing || ! $listing->online_payment) {
+            return [];
+        }
+
+        return [[
+            'id'            => 'listing-' . $listing->id,
+            'purpose'       => 'bookings',
+            'setup_status'  => 'active',
+            'setup_method'  => 'stripe_connect',
+            'payout_paused' => false,
+            'is_current'    => true,
+        ]];
+    }
+
+    protected function normalizeDashboardAddons(array $data): array
+    {
+        $rows = [];
+        if (! empty($data['addons']) && is_array($data['addons'])) {
+            foreach ($data['addons'] as $row) {
+                $id  = $row['id'] ?? null;
+                $qty = max(1, (int) ($row['quantity'] ?? 1));
+                if (! $id) {
+                    continue;
+                }
+                $addon = AddOn::find($id);
+                $unit  = isset($row['unit_price']) ? (float) $row['unit_price'] : (float) ($addon?->price ?? 0);
+                $rows[] = [
+                    'id'         => $id,
+                    'quantity'   => $qty,
+                    'unit_price' => $unit,
+                    'subtotal'   => $qty * $unit,
+                ];
+            }
+
+            return $rows;
+        }
+
+        foreach ($data['addon_ids'] ?? [] as $id) {
+            $addon = AddOn::find($id);
+            $unit  = (float) ($addon?->price ?? 0);
+            $rows[] = [
+                'id'         => $id,
+                'quantity'   => 1,
+                'unit_price' => $unit,
+                'subtotal'   => $unit,
+            ];
+        }
+
+        return $rows;
+    }
+
+    protected function timeToMinutes(?string $time): int
+    {
+        if (! $time) {
+            return 0;
+        }
+        if ($time === '24:00') {
+            return 24 * 60;
+        }
+        [$h, $m] = array_pad(explode(':', $time), 2, 0);
+
+        return ((int) $h) * 60 + (int) $m;
     }
 
 }

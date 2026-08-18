@@ -21,6 +21,11 @@ class PromocodeController extends Controller
         return $this->promocodeService->options($request);
     }
 
+    public function show($id)
+    {
+        return $this->promocodeService->show($id);
+    }
+
     public function redemptions($id)
     {
         return $this->promocodeService->redemptions($id);

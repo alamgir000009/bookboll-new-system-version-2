@@ -3,8 +3,6 @@
 use App\Support\RolePermissionMatrix;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
 return new class extends Migration
@@ -12,43 +10,74 @@ return new class extends Migration
     public function up(): void
     {
         $guard = config('roles.guard', 'web');
-
-        app()[PermissionRegistrar::class]->forgetCachedPermissions();
+        $now = now();
 
         // Rename legacy "<module>.read" permissions to "<module>.view".
         foreach (config('roles.modules', []) as $module) {
             $legacy = "{$module}.read";
             $target = "{$module}.view";
 
-            $existingTarget = Permission::where('name', $target)->where('guard_name', $guard)->first();
+            $existingTarget = DB::table('permissions')
+                ->where('name', $target)
+                ->where('guard_name', $guard)
+                ->exists();
 
             if ($existingTarget) {
-                // Target already exists: drop the legacy duplicate.
-                Permission::where('name', $legacy)->where('guard_name', $guard)->delete();
+                DB::table('permissions')
+                    ->where('name', $legacy)
+                    ->where('guard_name', $guard)
+                    ->delete();
                 continue;
             }
 
-            Permission::where('name', $legacy)
+            DB::table('permissions')
+                ->where('name', $legacy)
                 ->where('guard_name', $guard)
-                ->update(['name' => $target]);
+                ->update(['name' => $target, 'updated_at' => $now]);
         }
 
-        // Ensure every catalog permission exists.
-        foreach (RolePermissionMatrix::fullPermissionNames() as $name) {
-            Permission::findOrCreate($name, $guard);
+        $names = RolePermissionMatrix::fullPermissionNames();
+        $existing = DB::table('permissions')
+            ->where('guard_name', $guard)
+            ->whereIn('name', $names)
+            ->pluck('name')
+            ->all();
+        $existing = array_flip($existing);
+
+        $insert = [];
+        foreach ($names as $name) {
+            if (! isset($existing[$name])) {
+                $insert[] = [
+                    'name'       => $name,
+                    'guard_name' => $guard,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
+        }
+        if ($insert) {
+            DB::table('permissions')->insert($insert);
         }
 
-        app()[PermissionRegistrar::class]->forgetCachedPermissions();
-
-        // Re-sync super_admin to the full catalog.
-        $superAdmin = Role::where('name', 'super_admin')->where('guard_name', $guard)->first();
+        $superAdmin = DB::table('roles')
+            ->where('name', 'super_admin')
+            ->where('guard_name', $guard)
+            ->first();
 
         if ($superAdmin) {
-            $permissions = Permission::whereIn('name', RolePermissionMatrix::fullPermissionNames())
+            $permissionIds = DB::table('permissions')
+                ->whereIn('name', $names)
                 ->where('guard_name', $guard)
-                ->get();
+                ->pluck('id');
 
-            $superAdmin->syncPermissions($permissions);
+            $rows = $permissionIds->map(fn ($id) => [
+                'permission_id' => $id,
+                'role_id'       => $superAdmin->id,
+            ])->all();
+
+            foreach (array_chunk($rows, 100) as $chunk) {
+                DB::table('role_has_permissions')->insertOrIgnore($chunk);
+            }
         }
 
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
@@ -58,22 +87,23 @@ return new class extends Migration
     {
         $guard = config('roles.guard', 'web');
 
-        app()[PermissionRegistrar::class]->forgetCachedPermissions();
-
-        // Reverse the "<module>.view" rename back to "<module>.read".
         foreach (config('roles.modules', []) as $module) {
             $view = "{$module}.view";
             $read = "{$module}.read";
 
-            $existingRead = Permission::where('name', $read)->where('guard_name', $guard)->first();
+            $existingRead = DB::table('permissions')
+                ->where('name', $read)
+                ->where('guard_name', $guard)
+                ->exists();
 
             if ($existingRead) {
                 continue;
             }
 
-            Permission::where('name', $view)
+            DB::table('permissions')
+                ->where('name', $view)
                 ->where('guard_name', $guard)
-                ->update(['name' => $read]);
+                ->update(['name' => $read, 'updated_at' => now()]);
         }
 
         app()[PermissionRegistrar::class]->forgetCachedPermissions();

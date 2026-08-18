@@ -30,6 +30,7 @@ use App\Http\Controllers\SportsCategoryController;
 use App\Http\Controllers\SportsTypeController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VenueController;
+use App\Http\Controllers\WhatsappController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('login', [UserController::class, 'login'])->name('login');
@@ -141,6 +142,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('audit-logs', [AuditLogController::class, 'store']);
         Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
         Route::get('audit-logs/export', [AuditLogController::class, 'export']);
+        Route::post('notifications/whatsapp', [WhatsappController::class, 'send']);
+        Route::get('notifications/owner-phone', [WhatsappController::class, 'ownerPhone']);
 
         Route::post('add-ons/sort', [AddOnController::class, 'sort'])->name('add-ons.sort');
         Route::apiResource('add-ons', AddOnController::class);
@@ -154,8 +157,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues'])->name('promocodes.venues.search');
         Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings'])->name('promocodes.listings.search');
         Route::post('promocodes/validate', [PromocodeController::class, 'validate'])->name('promocodes.validate');
-        Route::get('promocodes/{promocode}/redemptions', [PromocodeController::class, 'redemptions'])->name('promocodes.redemptions');
-        Route::post('promocodes/{promocode}/redemptions', [PromocodeController::class, 'storeRedemption'])->name('promocodes.redemptions.store');
+        Route::get('promocodes/{id}/redemptions', [PromocodeController::class, 'redemptions'])->name('promocodes.redemptions');
+        Route::post('promocodes/{id}/redemptions', [PromocodeController::class, 'storeRedemption'])->name('promocodes.redemptions.store');
         Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply'])->name('promocodes.apply');
         Route::post('promocodes/{booking}/remove', [PromocodeController::class, 'remove'])->name('promocodes.remove');
         Route::apiResource('promocodes', PromocodeController::class);
@@ -172,6 +175,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('dashboard-data', [BookingController::class, 'dashboardData'])->name('dashboard-data');
         Route::get('dashboard/chart', [BookingController::class, 'dashboardChart'])->name('dashboard.chart');
 
+        Route::get('bookings/dashboard', [BookingController::class, 'dashboard'])->name('bookings.dashboard');
+        Route::get('bookings/occupancy', [BookingController::class, 'occupancy'])->name('bookings.occupancy');
+        Route::get('bookings/special-days', [BookingController::class, 'dashboardSpecialDays'])->name('bookings.special-days');
+        Route::post('bookings/dashboard', [BookingController::class, 'dashboardStore'])->name('bookings.dashboard.store');
+        Route::post('bookings/dashboard-cancel', [BookingController::class, 'dashboardCancel'])->name('bookings.dashboard.cancel');
+        Route::post('bookings/dashboard-payment-link', [BookingController::class, 'dashboardPaymentLink'])->name('bookings.dashboard.payment-link');
+        Route::get('bookings/{id}/crm', [BookingController::class, 'crm'])->name('bookings.crm');
+        Route::put('bookings/{id}/dashboard', [BookingController::class, 'dashboardUpdate'])->name('bookings.dashboard.update');
+        Route::put('bookings/{id}/payments/{paymentId}/collect', [BookingController::class, 'dashboardCollect'])->name('bookings.dashboard.collect');
         Route::get('bookings/list', [BookingController::class, 'mobileBookingsList'])->name('bookings.list');
         Route::get('bookings/filter-options', [BookingController::class, 'mobileBookingsFilterOptions'])->name('bookings.filter-options');
 
@@ -200,16 +212,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate'])->name('special-days.bulk');
 
         Route::get('customers/dashboard', [CustomerController::class, 'dashboard'])->name('customers.dashboard');
-        Route::get('customers/{id}/crm', [CustomerController::class, 'crm'])->name('customers.crm');
-        Route::put('customers/{id}/loyalty', [CustomerController::class, 'replaceLoyalty'])->name('customers.loyalty.replace');
-        Route::post('customers/{id}/loyalty', [CustomerController::class, 'upsertLoyalty'])->name('customers.loyalty.upsert');
-        Route::delete('customers/{id}/loyalty/{countryId}', [CustomerController::class, 'deleteLoyalty'])->name('customers.loyalty.delete');
         Route::get('customers/export', [CustomerController::class, 'export'])->name('customers.export');
         Route::get('customers/list', [CustomerController::class, 'listOptimized'])->name('customers.listOptimized');
+        Route::get('customers/{id}/crm', [CustomerController::class, 'crm'])->name('customers.crm');
         Route::get('customers/{id}/profile', [CustomerController::class, 'adminProfile'])->name('customers.profile');
         Route::get('customers/{id}/bookings', [CustomerController::class, 'adminBookings'])->name('customers.bookings');
         Route::put('customers/{id}/tags', [CustomerController::class, 'updateTags'])->name('customers.updateTags');
         Route::put('customers/{id}/status', [CustomerController::class, 'updateStatus'])->name('customers.updateStatus');
+        Route::put('customers/{id}/loyalty', [CustomerController::class, 'replaceLoyalty'])->name('customers.loyalty.replace');
+        Route::post('customers/{id}/loyalty', [CustomerController::class, 'upsertLoyalty'])->name('customers.loyalty.upsert');
+        Route::delete('customers/{id}/loyalty/{countryId}', [CustomerController::class, 'deleteLoyalty'])->name('customers.loyalty.delete');
         Route::apiResource('customers', CustomerController::class);
 
     });

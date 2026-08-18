@@ -16,6 +16,7 @@ use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use PaymentStatus;
 use PaymentType;
@@ -62,55 +63,69 @@ class PromocodeService
         $this->applyGeoFilter($query, $request);
 
         $paginator = $query->paginate($recordsPerPage);
-        $codes = collect($paginator->items())->map(fn(Promocode $p) => $this->mapDashboard($p))->values();
+
+        // apps/admin sends dashboard=1. Old ADMIN expects a Laravel paginator on promocodes.
+        if ($request->boolean('dashboard') || (string) $request->query('dashboard') === '1') {
+            $codes = collect($paginator->items())->map(fn (Promocode $p) => $this->mapDashboard($p))->values();
+
+            return sendSuccess('Promocodes fetched successfully', [
+                'promocodes' => $codes,
+                'pagination' => [
+                    'current_page'     => $paginator->currentPage(),
+                    'last_page'        => $paginator->lastPage(),
+                    'records_per_page' => $paginator->perPage(),
+                    'total'            => $paginator->total(),
+                    'from'             => $paginator->firstItem(),
+                    'to'               => $paginator->lastItem(),
+                ],
+            ]);
+        }
 
         return sendSuccess('Promocodes fetched successfully', [
-            'promocodes' => $codes,
-            'pagination' => [
-                'current_page'     => $paginator->currentPage(),
-                'last_page'        => $paginator->lastPage(),
-                'records_per_page' => $paginator->perPage(),
-                'total'            => $paginator->total(),
-                'from'             => $paginator->firstItem(),
-                'to'               => $paginator->lastItem(),
-            ],
+            'promocodes' => $paginator,
         ]);
     }
 
     public function options(Request $request)
     {
+        $venueCols = $this->existingColumns('venues', ['id', 'name', 'status', 'city_id', 'country_id', 'created_by']);
         $venues = Venue::with('users')
             ->orderBy('name')
-            ->get(['id', 'name', 'status', 'city_id', 'country_id', 'created_by']);
+            ->get($venueCols);
 
         $locations = $venues->map(function (Venue $v) {
             return [
-                'id'            => $v->id,
+                'id'            => (string) $v->id,
                 'name'          => $v->name,
                 'status'        => $v->status,
-                'city_id'       => $v->city_id,
-                'owner_user_id' => $v->users->first()?->id ?? $v->created_by,
+                'city_id'       => $v->city_id ? (string) $v->city_id : null,
+                'owner_user_id' => ($v->users->first()?->id ?? $v->created_by)
+                    ? (string) ($v->users->first()?->id ?? $v->created_by)
+                    : null,
             ];
         });
 
         $ownerByVenue = $locations->pluck('owner_user_id', 'id');
 
+        $listingCols = $this->existingColumns('listings', ['id', 'name', 'venue_id', 'created_by']);
         $listings = Listing::orderBy('name')
-            ->get(['id', 'name', 'venue_id', 'created_by'])
+            ->get($listingCols)
             ->map(function (Listing $l) use ($ownerByVenue) {
+                $locationId = $l->venue_id ? (string) $l->venue_id : null;
+
                 return [
-                    'id'            => $l->id,
+                    'id'            => (string) $l->id,
                     'name'          => $l->name,
-                    'location_id'   => $l->venue_id,
-                    'owner_user_id' => $ownerByVenue[$l->venue_id] ?? $l->created_by,
+                    'location_id'   => $locationId,
+                    'owner_user_id' => $ownerByVenue[$locationId] ?? ($l->created_by ? (string) $l->created_by : null),
                 ];
             });
 
         $customers = User::role('customer')
             ->orderBy('name')
             ->get(['id', 'name', 'email'])
-            ->map(fn(User $u) => [
-                'id'        => $u->id,
+            ->map(fn (User $u) => [
+                'id'        => (string) $u->id,
                 'full_name' => $u->name,
                 'email'     => $u->email,
             ]);
@@ -154,6 +169,18 @@ class PromocodeService
             'countries'  => $countries,
             'cities'     => $cities,
             'businesses' => $businesses,
+        ]);
+    }
+
+    public function show($id)
+    {
+        $promocode = $this->promocodeModel::with(['venues', 'listings', 'users'])->find($id);
+        if (! $promocode) {
+            return sendError('Promocode not found', [], 404);
+        }
+
+        return sendSuccess('Promocode fetched', [
+            'promocode' => $this->mapDashboard($promocode),
         ]);
     }
 
@@ -241,6 +268,7 @@ class PromocodeService
 
     public function create($request)
     {
+        $this->normalizeDashboardInput($request);
         $validated = $this->validateRequest($request);
 
         try {
@@ -960,5 +988,10 @@ class PromocodeService
                     ->orWhereHas('venues', fn($vq) => $vq->whereIn('venues.id', $venueIds));
             }
         });
+    }
+
+    protected function existingColumns(string $table, array $columns): array
+    {
+        return array_values(array_filter($columns, fn ($col) => Schema::hasColumn($table, $col)));
     }
 }

@@ -26,6 +26,11 @@ class CustomerController extends Controller
         return $this->customerService->crm($id);
     }
 
+    public function show($id)
+    {
+        return $this->customerService->crm($id);
+    }
+
     public function store(Request $request)
     {
         return $this->customerService->storeDashboard($request);

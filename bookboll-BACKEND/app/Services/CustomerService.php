@@ -532,21 +532,49 @@ class CustomerService
     }
 
     /**
-     * Full roster payload for the apps/admin Customers page (client-side filters/KPIs).
+     * Paginated roster for the apps/admin Customers page.
+     * Old ADMIN still uses list() / GET /customers.
      */
     public function dashboard(Request $request)
     {
-        $customers = $this->customerQuery()
-            ->with(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier'])
-            ->orderByDesc('id')
-            ->get()
-            ->map(fn (User $u) => $this->mapDashboardCustomer($u))
-            ->values();
+        $perPage = min(max((int) ($request->input('records_per_page') ?? $request->input('per_page') ?? 25), 1), 250);
 
-        $lookups = $this->dashboardLookups();
+        $query = $this->customerQuery()
+            ->with(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier']);
+
+        $search = trim((string) ($request->input('search') ?? ''));
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'LIKE', "%{$search}%")
+                    ->orWhere('email', 'LIKE', "%{$search}%")
+                    ->orWhere('phone', 'LIKE', "%{$search}%");
+            });
+        }
+
+        $statuses = $request->input('status');
+        if (is_string($statuses) && $statuses !== '') {
+            $statuses = [$statuses];
+        }
+        if (is_array($statuses) && $statuses) {
+            $query->whereIn('status', $statuses);
+        }
+
+        $sort = (string) $request->input('sort', 'created_at');
+        $dir  = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+        if ($sort === 'full_name') {
+            $query->orderBy('name', $dir);
+        } else {
+            $query->orderBy('users.created_at', $dir);
+        }
+
+        $paginator = $query->paginate($perPage);
+        $pageUsers = $paginator->getCollection();
+        $pageIds   = $pageUsers->pluck('id')->all();
+
+        $mapped = $pageUsers->map(fn (User $u) => $this->mapDashboardCustomer($u))->values();
 
         $bookings = Booking::query()
-            ->whereNotNull('user_id')
+            ->whereIn('user_id', $pageIds ?: [0])
             ->where('status', '!=', BookingStatus::CANCELLED)
             ->orderByDesc('date')
             ->get(['id', 'user_id', 'listing_id', 'venue_id', 'date', 'total_price', 'status', 'payment_status', 'start_time', 'end_time', 'created_at'])
@@ -560,26 +588,37 @@ class CustomerService
             }
             $spentByCustomer[$b['customer_id']] = ($spentByCustomer[$b['customer_id']] ?? 0) + (float) $b['total'];
         }
-        $customers = $customers->map(function ($c) use ($spentByCustomer) {
+        $mapped = $mapped->map(function ($c) use ($spentByCustomer) {
             $c['total_spent'] = round($spentByCustomer[$c['id']] ?? 0, 2);
+
             return $c;
         })->values();
 
-        $loyalty = CustomerLoyalty::query()
-            ->orderBy('customer_id')
+        $paginator->setCollection($mapped);
+
+        $lookups = $request->boolean('include_lookups', true) ? $this->dashboardLookups() : [];
+        $loyaltyKey = CustomerLoyalty::ownerColumn();
+
+        $lookups['customers'] = $paginator->toArray();
+        $lookups['bookings'] = $bookings;
+        $lookups['customer_loyalty'] = CustomerLoyalty::query()
+            ->whereIn($loyaltyKey, $pageIds ?: [0])
             ->get()
             ->map(fn (CustomerLoyalty $row) => $this->mapLoyaltyRow($row))
             ->values();
+        $lookups['programs'] = $lookups['programs'] ?? [];
+        $lookups['subscriptions'] = $lookups['subscriptions'] ?? [];
+        $lookups['loyalty_programs'] = $lookups['loyalty_programs'] ?? [];
+        $lookups['loyalty_tiers'] = $lookups['loyalty_tiers'] ?? [];
+        $lookups['kpis'] = [
+            'total'      => $this->customerQuery()->count(),
+            'active'     => $this->customerQuery()->where('status', User::ACTIVE)->count(),
+            'activeSubs' => 0,
+            'avgSpend'   => 0,
+            'vip'        => 0,
+        ];
 
-        return sendSuccess('Customers fetched', array_merge($lookups, [
-            'customers'         => $customers,
-            'bookings'          => $bookings,
-            'customer_loyalty'  => $loyalty,
-            'programs'          => [],
-            'subscriptions'     => [],
-            'loyalty_programs'  => [],
-            'loyalty_tiers'     => [],
-        ]));
+        return sendSuccess('Customers fetched', $lookups);
     }
 
     public function crm($id)
@@ -747,7 +786,7 @@ class CustomerService
 
         $this->replaceLoyaltyRows($user->id, $data['loyalty'] ?? []);
 
-        $rows = CustomerLoyalty::where('customer_id', $user->id)
+        $rows = CustomerLoyalty::where(CustomerLoyalty::ownerColumn(), $user->id)
             ->get()
             ->map(fn (CustomerLoyalty $row) => $this->mapLoyaltyRow($row))
             ->values();
@@ -769,8 +808,8 @@ class CustomerService
 
         $row = CustomerLoyalty::updateOrCreate(
             [
-                'customer_id' => $user->id,
-                'country_id'  => (int) $data['country_id'],
+                CustomerLoyalty::ownerColumn() => $user->id,
+                'country_id'                   => (int) $data['country_id'],
             ],
             [
                 'points'          => $pts,
@@ -787,7 +826,7 @@ class CustomerService
     {
         $user = $this->customerQuery()->findOrFail($id);
 
-        CustomerLoyalty::where('customer_id', $user->id)
+        CustomerLoyalty::where(CustomerLoyalty::ownerColumn(), $user->id)
             ->where('country_id', $countryId)
             ->delete();
 
@@ -847,7 +886,8 @@ class CustomerService
 
     protected function replaceLoyaltyRows($customerId, array $rows): void
     {
-        CustomerLoyalty::where('customer_id', $customerId)->delete();
+        $ownerCol = CustomerLoyalty::ownerColumn();
+        CustomerLoyalty::where($ownerCol, $customerId)->delete();
 
         $byCountry = [];
         foreach ($rows as $r) {
@@ -859,7 +899,7 @@ class CustomerService
             $life = max($pts, (int) round((float) ($r['lifetime_points'] ?? 0)));
             $now = now();
             $byCountry[(int) $cid] = [
-                'customer_id'     => $customerId,
+                $ownerCol         => $customerId,
                 'country_id'      => (int) $cid,
                 'points'          => $pts,
                 'lifetime_points' => $life,
@@ -1014,7 +1054,7 @@ class CustomerService
     {
         return [
             'id'              => (string) $row->id,
-            'customer_id'     => (string) $row->customer_id,
+            'customer_id'     => (string) ($row->{CustomerLoyalty::ownerColumn()} ?? $row->customer_id ?? $row->user_id),
             'country_id'      => (string) $row->country_id,
             'points'          => (int) $row->points,
             'lifetime_points' => (int) $row->lifetime_points,
