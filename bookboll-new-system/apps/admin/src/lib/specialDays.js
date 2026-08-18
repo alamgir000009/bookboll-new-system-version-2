@@ -24,7 +24,7 @@
  * bb_hold_slots (supabase/migrations/20260742000000_special_days_availability.sql)
  * so the WhatsApp bot and the hold gate stay consistent — keep them in sync.
  */
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 import { toMinutes, endMinutes, generateSlots } from './slots.js'
 
 // Regular-schedule fallback when a listing has no listing_hours rows at all —
@@ -33,16 +33,18 @@ const DEFAULT_OPEN = 6 * 60
 const DEFAULT_CLOSE = 23 * 60
 
 /** Fetch special_days rows for one venue / a set of venues, optionally date-bounded. */
-export async function fetchSpecialDays({ locationId, locationIds, date, from, to } = {}) {
-  let q = supabase.from('special_days')
-    .select('id, location_id, listing_id, name, date, type, is_closed, open_time, close_time, custom_price, price_multiplier')
-  if (locationId) q = q.eq('location_id', locationId)
-  else if (locationIds?.length) q = q.in('location_id', locationIds)
-  if (date) q = q.eq('date', date)
-  if (from) q = q.gte('date', from)
-  if (to) q = q.lte('date', to)
-  const { data, error } = await q
-  return error ? [] : (data || [])
+export async function fetchSpecialDays({ locationId, locationIds, date, from, to, listingId } = {}) {
+  const res = await apiFetch('/admin/bookings/special-days', {
+    query: {
+      location_id: locationId || undefined,
+      location_ids: locationIds?.length ? locationIds.join(',') : undefined,
+      listing_id: listingId || undefined,
+      date: date || undefined,
+      from: from || undefined,
+      to: to || undefined,
+    },
+  })
+  return res.success ? (res.data?.special_days || []) : []
 }
 
 // A row is usable when it closes the day or carries a valid replacement window.

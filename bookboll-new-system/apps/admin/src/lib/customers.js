@@ -4,8 +4,14 @@
  */
 import { apiFetch } from './api.js'
 
-export async function fetchCustomersDashboard() {
-  return apiFetch('/admin/customers/dashboard')
+export async function fetchCustomersDashboard(query = {}) {
+  const params = {}
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value === undefined || value === null || value === '') continue
+    if (Array.isArray(value) && !value.length) continue
+    params[key] = value
+  }
+  return apiFetch('/admin/customers/dashboard', { query: params })
 }
 
 export async function fetchCustomerCrm(id) {

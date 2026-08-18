@@ -1,6 +1,9 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import {
+  fetchBookingsDashboard, fetchBookingOccupancy, createDashboardBooking, registerCustomer, firstError,
+} from '../lib/bookings.js'
+import { validatePromo } from '../lib/promocodes.js'
 import {
   X, MapPin, ChevronDown, Clock, User, Plus, Check, Loader,
   CircleAlert as AlertCircle, Calendar, ChevronLeft, ChevronRight,
@@ -8,7 +11,7 @@ import {
   CalendarX as CalendarX2, Info,
 } from 'lucide-vue-next'
 import { slotConflicts, toMinutes, fmt12, fmtRange12 } from '../lib/slots.js'
-import { fetchSpecialDays, dayWindows, slotsForWindows, slotInWindows, applySpecialDayPrice } from '../lib/specialDays.js'
+import { dayWindows, slotsForWindows, slotInWindows, applySpecialDayPrice } from '../lib/specialDays.js'
 import { notifyBookingConfirmation } from '../customer/notificationDispatch.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
 import { useCurrentUser } from '../lib/currentUser.js'
@@ -46,14 +49,11 @@ const venueOptions = computed(() =>
 
 async function loadMaster() {
   loadingMaster.value = true
-  const [loRes, lRes, cRes] = await Promise.all([
-    supabase.from('locations').select('*').eq('status', 'active').order('name'),
-    supabase.from('listings').select('*').eq('status', 'active').order('name'),
-    supabase.from('customers').select('id, full_name, phone, email').order('full_name'),
-  ])
-  locations.value = loRes.data || []
-  listings.value  = lRes.data  || []
-  customers.value = cRes.data  || []
+  const res = await fetchBookingsDashboard()
+  const d = res.success ? (res.data || {}) : {}
+  locations.value = (d.locations || []).filter(l => l.status === 'active')
+  listings.value  = (d.listings || []).filter(l => l.status === 'active')
+  customers.value = d.customers || []
   loadingMaster.value = false
 }
 
@@ -102,15 +102,16 @@ const savingCustomer   = ref(false)
 async function createCustomer() {
   if (!newCustomerName.value.trim()) return
   savingCustomer.value = true
-  const { data } = await supabase.from('customers').insert({
-    full_name: newCustomerName.value.trim(),
+  const res = await registerCustomer({
+    name: newCustomerName.value.trim(),
     phone: newCustomerPhone.value.trim() || null,
-    email: newCustomerEmail.value.trim() || null,
-    loyalty_tier: 'Rookie', loyalty_points: 0, status: 'active',
-  }).select('id, full_name, phone, email').maybeSingle()
+    email: newCustomerEmail.value.trim() || `c-${Date.now()}@placeholder.local`,
+  })
   savingCustomer.value = false
-  if (data) {
-    customers.value = [...customers.value, data].sort((a,b) => a.full_name.localeCompare(b.full_name))
+  const user = res.success ? (res.data?.user || res.data?.customer) : null
+  if (user) {
+    const data = { id: String(user.id), full_name: user.name || user.full_name, phone: user.phone, email: user.email }
+    customers.value = [...customers.value, data].sort((a,b) => (a.full_name||'').localeCompare(b.full_name||''))
     customerId.value = data.id
     showAddCustomer.value = false
     newCustomerName.value = ''
@@ -161,20 +162,13 @@ watch([listingId, bookingDate], async ([lid, date]) => {
   specialRows.value = []
   if (!lid || !date) return
   slotsLoading.value = true
-  const locId = selectedListing.value?.location_id || venueId.value || null
-  const [bRes, cellRes, groupRes, hoursRes, sdRes] = await Promise.all([
-    supabase.from('bookings').select('start_time, end_time')
-      .eq('listing_id', lid).eq('booking_date', date).neq('booking_status', 'cancelled'),
-    supabase.from('pricing_cells').select('*').eq('listing_id', lid),
-    supabase.from('pricing_groups').select('*').eq('listing_id', lid),
-    supabase.from('listing_hours').select('day_of_week, is_open, open_time, close_time').eq('listing_id', lid),
-    fetchSpecialDays({ locationId: locId, date }),
-  ])
-  existingBookings.value = bRes.data || []
-  pricingCells.value     = cellRes.data || []
-  pricingGroups.value    = groupRes.data || []
-  listingHours.value     = hoursRes.data || []
-  specialRows.value      = sdRes
+  const occ = await fetchBookingOccupancy(lid, date)
+  const d = occ.success ? (occ.data || {}) : {}
+  existingBookings.value = d.existing_bookings || []
+  pricingCells.value     = d.pricing_cells || []
+  pricingGroups.value    = d.pricing_groups || []
+  listingHours.value     = d.listing_hours || []
+  specialRows.value      = d.special_days || []
   slotsLoading.value = false
 }, { immediate: false })
 
@@ -262,18 +256,15 @@ async function loadListingAddons() {
   listingAddons.value = []
   addonQty.value = {}
   if (!listingId.value) return
-  addonsLoading.value = true
-  const { data } = await supabase
-    .from('listing_addons')
-    .select('addon_id, sort_order, addons(id, name, description, price, stock, category, status)')
-    .eq('listing_id', listingId.value)
-    .order('sort_order')
-  addonsLoading.value = false
-  if (data) {
-    listingAddons.value = data
-      .map(r => r.addons)
-      .filter(a => a && a.status === 'active')
+  const fromListing = selectedListing.value?.add_ons
+  if (fromListing?.length) {
+    listingAddons.value = fromListing.filter(a => a && (a.status || 'active') === 'active')
+    return
   }
+  addonsLoading.value = true
+  const occ = await fetchBookingOccupancy(listingId.value, bookingDate.value || new Date().toISOString().slice(0, 10))
+  addonsLoading.value = false
+  listingAddons.value = ((occ.success ? occ.data?.add_ons : null) || []).filter(a => a && (a.status || 'active') === 'active')
 }
 
 function addonMax(addon) { return addon.stock != null ? addon.stock : 99 }
@@ -312,19 +303,16 @@ async function applyPromo() {
   promoApplied.value = null
   if (!promoInput.value.trim()) return
   promoLoading.value = true
-  const { data } = await supabase
-    .from('promocodes')
-    .select('*')
-    .ilike('code', promoInput.value.trim())
-    .maybeSingle()
+  const result = await validatePromo(promoInput.value, {
+    amount: basePrice.value + addonTotal.value,
+    applicableTo: 'facility',
+    locationId: venueId.value,
+    listingId: listingId.value,
+    customerEmail: selectedCustomer.value?.email || '',
+  })
   promoLoading.value = false
-  if (!data)                       { promoError.value = 'Promo code not found.'; return }
-  if (data.status !== 'active')    { promoError.value = 'This promo code is no longer active.'; return }
-  const today = new Date().toISOString().slice(0, 10)
-  if (data.valid_from && today < data.valid_from) { promoError.value = 'This promo code is not yet valid.'; return }
-  if (data.valid_to   && today > data.valid_to)   { promoError.value = 'This promo code has expired.'; return }
-  if (data.usage_limit && data.usage_count >= data.usage_limit) { promoError.value = 'This promo code has reached its usage limit.'; return }
-  promoApplied.value = data
+  if (!result.ok) { promoError.value = result.reason || 'Promo code not found.'; return }
+  promoApplied.value = result.code
 }
 
 function removePromo() {
@@ -407,16 +395,11 @@ async function toggleRecurringDate(iso) {
 
   if (recurringAvail.value[iso] === undefined) {
     recurringLoading.value = true
-    const locId = selectedListing.value?.location_id || venueId.value || null
-    const [{ data }, sdRows] = await Promise.all([
-      supabase.from('bookings')
-        .select('start_time, end_time')
-        .eq('listing_id', listingId.value)
-        .eq('booking_date', iso)
-        .neq('booking_status', 'cancelled'),
-      fetchSpecialDays({ locationId: locId, date: iso }),
-    ])
+    const occ = await fetchBookingOccupancy(listingId.value, iso)
     recurringLoading.value = false
+    const occData = occ.success ? (occ.data || {}) : {}
+    const data = occData.existing_bookings || []
+    const sdRows = occData.special_days || []
     // A repeat date is unavailable when it's booked, the venue/listing is closed
     // that day, or the picked time falls outside that date's (special) schedule.
     const sched = dayWindows({ date: iso, listing: selectedListing.value, hoursRows: listingHours.value, specialRows: sdRows })
@@ -464,17 +447,14 @@ async function save() {
 
   saving.value = true
   const location  = locations.value.find(l => l.id === venueId.value)
-  const isSkipped = paymentMethod.value === 'payment_skipped'
   const isPrepaid = ['paid_cash', 'paid_cheque', 'paid_card', 'paid_wire'].includes(paymentMethod.value)
   const curr      = location?.currency_override || 'AED'
-  const recipient = !location?.owner_user_id ? 'bookboll' : 'provider'
-  const method    = isPrepaid ? paymentMethod.value.replace('paid_', '') : paymentMethod.value
 
   const dates      = allBookingDates.value
   const createdIds = []
 
   for (const date of dates) {
-    const { data: inserted, error } = await supabase.from('bookings').insert({
+    const res = await createDashboardBooking({
       listing_id:     listingId.value,
       location_id:    venueId.value,
       customer_id:    customerId.value || null,
@@ -482,48 +462,25 @@ async function save() {
       start_time:     selectedSlot.value.start_time,
       end_time:       selectedSlot.value.end_time,
       players:        players.value,
-      base_price:     basePrice.value,
-      addon_total:    addonTotal.value,
-      discount:       discountAmount.value,
       total:          grandTotal.value,
-      amount_paid:    isPrepaid ? grandTotal.value : 0,
+      discount:       discountAmount.value,
       payment_method: paymentMethod.value,
-      payment_status: isSkipped ? 'skipped' : (isPrepaid ? 'paid' : 'pending'),
-      booking_status: 'confirmed',
-      origin:         'manual_admin',
-      notes:          notes.value.trim() || '',   // bookings.notes is NOT NULL — never send null
-    }).select('id').maybeSingle()
+      notes:          notes.value.trim() || '',
+      promocode_id:   promoApplied.value?.id || null,
+      addons:         selectedAddons.value.map(a => ({
+        id: a.id,
+        quantity: addonQty.value[a.id] || 1,
+        unit_price: Number(a.price),
+      })),
+    })
 
-    if (error || !inserted) {
-      saveError.value = error?.message || `Failed to create booking for ${date}.`
+    if (!res.success) {
+      saveError.value = firstError(res, `Failed to create booking for ${date}.`)
       saving.value = false
       return
     }
 
-    createdIds.push(inserted.id)
-
-    if (!isSkipped && grandTotal.value > 0) {
-      await supabase.from('booking_payments').insert({
-        booking_id: inserted.id, payment_type: 'full', method,
-        amount: grandTotal.value, currency: curr, recipient,
-        status: isPrepaid ? 'paid' : 'pending',
-        paid_at: isPrepaid ? new Date().toISOString() : null,
-      })
-    }
-
-    for (const addon of selectedAddons.value) {
-      const qty = addonQty.value[addon.id] || 0
-      await supabase.from('booking_addons').insert({
-        booking_id: inserted.id, addon_id: addon.id,
-        quantity: qty, unit_price: Number(addon.price), subtotal: qty * Number(addon.price),
-      })
-    }
-  }
-
-  if (promoApplied.value) {
-    await supabase.from('promocodes')
-      .update({ usage_count: (promoApplied.value.usage_count || 0) + dates.length })
-      .eq('id', promoApplied.value.id)
+    createdIds.push(res.data?.booking?.id)
   }
 
   // Fire-and-forget: send the configured booking confirmation to the customer (WhatsApp).

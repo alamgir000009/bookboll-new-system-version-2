@@ -26,7 +26,7 @@ export function isCodeLive(code, now = new Date()) {
 export const AUDIENCE_LABEL = { all: 'Everyone', new: 'New customers', specific: 'Specific customers' }
 
 export async function fetchPromocodes(query = {}) {
-  return apiFetch('/admin/promocodes', { query })
+  return apiFetch('/admin/promocodes', { query: { dashboard: 1, ...query } })
 }
 
 export async function fetchPromocodeOptions() {

@@ -1,19 +1,19 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { fetchBookingCrm, fetchBookingOccupancy, fetchBookingsDashboard, updateDashboardBooking, registerCustomer, collectDashboardPayment, generateDashboardPaymentLink, firstError } from '../lib/bookings.js'
 import { X, MapPin, Calendar, Clock, User, Mail, Phone, Star, CreditCard, FileText, PhoneCall, Receipt, Send, Tag, Check, CircleAlert as AlertCircle, Loader, Pencil, StickyNote, ChevronRight, ChevronDown, Plus } from 'lucide-vue-next'
 import WhatsappIcon from './WhatsappIcon.vue'
 import CustomerHistoryModal from './CustomerHistoryModal.vue'
 import { openCustomer } from '../lib/customerModal.js'
 import { slotConflicts, fmt12 } from '../lib/slots.js'
-import { fetchSpecialDays, dayWindows, slotsForWindows, slotInWindows } from '../lib/specialDays.js'
+import { dayWindows, slotsForWindows, slotInWindows } from '../lib/specialDays.js'
 import { notifyBookingChanged, notifyPaymentReceipt } from '../customer/notificationDispatch.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { bookingChannel } from '../lib/bookingMeta.js'
 import { logAudit, AUDIT } from '../lib/audit.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { CAP } from '../lib/permissions.js'
-import { recordRedemption } from '../lib/promocodes.js'
+import { recordRedemption, validatePromo } from '../lib/promocodes.js'
 import { hasActivePayoutMethodFor, isAutomaticPayout, isWalletReady } from '../lib/walletSetup.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import QRCode from 'qrcode'
@@ -33,7 +33,8 @@ const canSeeAllPayments = computed(() => isPlatformSide.value)
 // Jurisdiction check for the pending-payments context list (country_admin /
 // platform_staff). Fed with the pending bookings' own venues (loaded below).
 const pendLocs = ref([])
-const { inJurisdictionLoc } = useJurisdiction({ locations: pendLocs })
+const pendCities = ref([])
+const { inJurisdictionLoc } = useJurisdiction({ locations: pendLocs, cities: pendCities })
 
 const props = defineProps({
   bookingId:   { type: String,  default: null },
@@ -130,21 +131,13 @@ watch([editListingId, editDate], async ([lid, date]) => {
   editSpecialRows.value = []
   if (!lid || !date) return
   editSlotsLoading.value = true
-  const locId = editSelectedListing.value?.location_id || editVenueId.value || null
-  const [bRes, cellRes, groupRes, hoursRes, sdRows] = await Promise.all([
-    supabase.from('bookings').select('start_time, end_time, id')
-      .eq('listing_id', lid).eq('booking_date', date).neq('booking_status', 'cancelled'),
-    supabase.from('pricing_cells').select('*').eq('listing_id', lid),
-    supabase.from('pricing_groups').select('*').eq('listing_id', lid),
-    supabase.from('listing_hours').select('day_of_week, is_open, open_time, close_time').eq('listing_id', lid),
-    fetchSpecialDays({ locationId: locId, date }),
-  ])
-  // exclude the booking being edited from conflict check
-  editExistingBookings.value = (bRes.data || []).filter(b => b.id !== booking.value?.id)
-  editPricingCells.value     = cellRes.data || []
-  editPricingGroups.value    = groupRes.data || []
-  editListingHours.value     = hoursRes.data || []
-  editSpecialRows.value      = sdRows
+  const occ = await fetchBookingOccupancy(lid, date)
+  const occData = occ.success ? (occ.data || {}) : {}
+  editExistingBookings.value = (occData.existing_bookings || []).filter(b => String(b.id) !== String(booking.value?.id))
+  editPricingCells.value     = occData.pricing_cells || []
+  editPricingGroups.value    = occData.pricing_groups || []
+  editListingHours.value     = occData.listing_hours || []
+  editSpecialRows.value      = occData.special_days || []
   editSlotsLoading.value = false
 })
 
@@ -211,29 +204,27 @@ async function openEdit() {
   editing.value = true
 
   // Load master data
-  const [loRes, lRes, cRes] = await Promise.all([
-    supabase.from('locations').select('*').eq('status','active').order('name'),
-    supabase.from('listings').select('*').eq('status','active').order('name'),
-    supabase.from('customers').select('id, full_name, phone, email').order('full_name'),
-  ])
-  editLocations.value = loRes.data || []
-  editListings.value  = lRes.data  || []
-  editCustomers.value = cRes.data  || []
+  const dash = await fetchBookingsDashboard()
+  const d = dash.success ? (dash.data || {}) : {}
+  editLocations.value = (d.locations || []).filter(l => l.status === 'active')
+  editListings.value  = (d.listings || []).filter(l => l.status === 'active')
+  editCustomers.value = d.customers || []
 }
 
 async function createEditCustomer() {
   if (!editNewCustomerName.value.trim()) return
   editSavingCustomer.value = true
-  const { data } = await supabase.from('customers').insert({
-    full_name: editNewCustomerName.value.trim(),
+  const res = await registerCustomer({
+    name: editNewCustomerName.value.trim(),
     phone: editNewCustomerPhone.value.trim() || null,
-    email: editNewCustomerEmail.value.trim() || null,
-    loyalty_tier: 'Rookie', loyalty_points: 0, status: 'active',
-  }).select('id, full_name, phone, email').maybeSingle()
+    email: editNewCustomerEmail.value.trim() || `c-${Date.now()}@placeholder.local`,
+  })
   editSavingCustomer.value = false
-  if (data) {
-    editCustomers.value = [...editCustomers.value, data].sort((a,b) => a.full_name.localeCompare(b.full_name))
-    editCustomerId.value = data.id
+  const user = res.success ? (res.data?.user || res.data?.customer) : null
+  if (user) {
+    const row = { id: String(user.id), full_name: user.name || user.full_name, phone: user.phone, email: user.email }
+    editCustomers.value = [...editCustomers.value, row].sort((a,b) => (a.full_name||'').localeCompare(b.full_name||''))
+    editCustomerId.value = row.id
     editShowAddCustomer.value = false
     editNewCustomerName.value = editNewCustomerPhone.value = editNewCustomerEmail.value = ''
   }
@@ -277,33 +268,32 @@ async function saveEdit() {
   if (before.payment_method !== editPaymentMethod.value) changes.push(`payment method → ${editPaymentMethod.value}`)
   if (Number(before.total) !== Number(editTotal.value)) changes.push(`total ${Number(before.total).toLocaleString()} → ${Number(editTotal.value).toLocaleString()}`)
   if ((before.notes || '') !== editNotes.value.trim()) changes.push('notes updated')
-  await supabase.from('bookings').update({
+  const upd = await updateDashboardBooking(booking.value.id, {
     location_id:    editVenueId.value,
     listing_id:     editListingId.value,
     customer_id:    editCustomerId.value || null,
     booking_date:   editDate.value,
     start_time:     editSelectedSlot.value.start_time,
     end_time:       editSelectedSlot.value.end_time,
-    base_price:     editTotal.value,
     total:          editTotal.value,
     booking_status: editBookingStatus.value,
     payment_method: editPaymentMethod.value,
-    notes:          editNotes.value.trim() || '',   // bookings.notes is NOT NULL — never send null
-  }).eq('id', booking.value.id)
+    notes:          editNotes.value.trim() || '',
+  })
+  if (!upd.success) {
+    editSaving.value = false
+    editError.value = firstError(upd, 'Could not save booking.')
+    return
+  }
 
-  // Reload full booking + related
-  const [bRes, cRes2, lRes2, locRes2] = await Promise.all([
-    supabase.from('bookings').select('*').eq('id', booking.value.id).maybeSingle(),
-    editCustomerId.value
-      ? supabase.from('customers').select('*').eq('id', editCustomerId.value).maybeSingle()
-      : Promise.resolve({ data: null }),
-    supabase.from('listings').select('*').eq('id', editListingId.value).maybeSingle(),
-    supabase.from('locations').select('*').eq('id', editVenueId.value).maybeSingle(),
-  ])
-  booking.value  = bRes.data
-  customer.value = cRes2.data
-  listing.value  = lRes2.data
-  location.value = locRes2.data
+  const crm = await fetchBookingCrm(booking.value.id)
+  const d = crm.success ? (crm.data || {}) : {}
+  booking.value  = d.booking || upd.data?.booking
+  customer.value = d.customer || customer.value
+  listing.value  = d.listing || listing.value
+  location.value = d.location || location.value
+  payments.value = d.payments || payments.value
+  auditLogs.value = d.audit_logs || auditLogs.value
 
   // Fire-and-forget: tell the customer their booking was changed.
   try {
@@ -325,8 +315,8 @@ async function saveEdit() {
     action: AUDIT.UPDATED, entity_type: 'booking', entity_id: before.id,
     details: `Booking edited in the admin dashboard${changes.length ? ' — ' + changes.join(', ') : ''}`,
   })
-  const { data: freshLogs } = await supabase.from('audit_logs').select('*').eq('entity_id', before.id).order('created_at')
-  auditLogs.value = freshLogs || auditLogs.value
+  const crmLogs = await fetchBookingCrm(before.id)
+  if (crmLogs.success) auditLogs.value = crmLogs.data?.audit_logs || auditLogs.value
 
   editSaving.value = false
   editing.value    = false
@@ -358,60 +348,30 @@ function makeRef(b) {
  *   - Only pending payments are surfaced — never other bookings' paid ones.
  * Split into this customer's other unpaid bookings vs. the rest of the business.
  */
-async function loadOtherPending(cur) {
-  if (!cur) return
-  const { data: pend } = await supabase
-    .from('booking_payments')
-    .select('id, amount, currency, payment_type, created_at, booking_id')
-    .eq('status', 'pending')
-    .neq('booking_id', cur.id)
-  if (!pend || !pend.length) return
-
-  const bookingIds = [...new Set(pend.map(p => p.booking_id).filter(Boolean))]
-  if (!bookingIds.length) return
-
-  const { data: obks } = await supabase
-    .from('bookings')
-    .select('id, customer_id, location_id, listing_id, booking_date, booking_status, created_at')
-    .in('id', bookingIds)
-  const bMap = new Map((obks || []).map(b => [b.id, b]))
-
-  const locIds = [...new Set((obks || []).map(b => b.location_id).filter(Boolean))]
-  const lstIds = [...new Set((obks || []).map(b => b.listing_id).filter(Boolean))]
-  const [{ data: locs }, { data: lsts }] = await Promise.all([
-    locIds.length ? supabase.from('locations').select('id, name, owner_user_id, city_id').in('id', locIds) : Promise.resolve({ data: [] }),
-    lstIds.length ? supabase.from('listings').select('id, name').in('id', lstIds) : Promise.resolve({ data: [] }),
-  ])
-  const locMap = new Map((locs || []).map(l => [l.id, l]))
-  const lstMap = new Map((lsts || []).map(l => [l.id, l.name]))
-  pendLocs.value = locs || []   // feeds the jurisdiction check below
+async function loadOtherPending(cur, rows = []) {
+  if (!cur || !rows.length) return
+  pendLocs.value = rows
+    .filter(p => p.location_id)
+    .map(p => ({ id: p.location_id, name: p.venue, owner_user_id: p.owner_user_id }))
 
   const sameCust = []
   const business = []
-  for (const p of pend) {
-    const b = bMap.get(p.booking_id)
-    if (!b || b.booking_status === 'cancelled') continue
-    const loc = locMap.get(b.location_id)
-    // Tenant scoping:
-    //  • platform side — super admin sees all; country_admin / platform_staff
-    //    only venues inside their jurisdiction;
-    //  • provider side — ONLY the viewer's own business. A row with no
-    //    owner_user_id matches nothing (deny by default, never platform-wide).
+  for (const p of rows) {
     if (isPlatformSide.value) {
-      if (!inJurisdictionLoc(b.location_id)) continue
-    } else if (!currentOwnerUserId.value || loc?.owner_user_id !== currentOwnerUserId.value) continue
+      if (!inJurisdictionLoc(p.location_id)) continue
+    } else if (!currentOwnerUserId.value || p.owner_user_id !== currentOwnerUserId.value) continue
     const item = {
       id: p.id,
-      booking_id: b.id,
+      booking_id: p.booking_id,
       amount: Number(p.amount || 0),
       currency: p.currency || 'AED',
       payment_type: p.payment_type,
-      booking_date: b.booking_date,
-      ref: makeRef(b),
-      venue: loc?.name || '—',
-      listingName: lstMap.get(b.listing_id) || '',
+      booking_date: p.booking_date,
+      ref: makeRef({ id: String(p.booking_id || ''), created_at: p.created_at }),
+      venue: p.venue || '—',
+      listingName: p.listingName || '',
     }
-    if (cur.customer_id && b.customer_id === cur.customer_id) sameCust.push(item)
+    if (cur.customer_id && String(p.customer_id) === String(cur.customer_id)) sameCust.push(item)
     else business.push(item)
   }
   const byDate = (a, z) => (String(a.booking_date) < String(z.booking_date) ? -1 : 1)
@@ -450,46 +410,20 @@ watch(() => props.bookingId, async (id) => {
   showHistory.value = false
   editing.value = false
 
-  const [bRes, pmtRes, logRes] = await Promise.all([
-    supabase.from('bookings').select('*').eq('id', id).maybeSingle(),
-    supabase.from('booking_payments').select('*').eq('booking_id', id).order('created_at'),
-    supabase.from('audit_logs').select('*').eq('entity_id', id).order('created_at'),
-  ])
-
-  booking.value = bRes.data
-  payments.value = pmtRes.data || []
-  auditLogs.value = logRes.data || []
-
-  // Discount already baked into the total → surface WHICH code did it (from the
-  // redemption ledger) instead of offering the apply-a-code input again.
-  if (bRes.data && Number(bRes.data.discount) > 0) {
-    try {
-      const { data: red } = await supabase.from('promocode_redemptions')
-        .select('code, discount_amount, currency')
-        .eq('source_id', id).order('redeemed_at', { ascending: false }).limit(1).maybeSingle()
-      existingPromo.value = red || { code: '', discount_amount: Number(bRes.data.discount) || 0 }
-    } catch {
-      existingPromo.value = { code: '', discount_amount: Number(bRes.data.discount) || 0 }
-    }
-  }
-
-  if (bRes.data) {
-    const [cRes, lRes, locRes] = await Promise.all([
-      bRes.data.customer_id
-        ? supabase.from('customers').select('*').eq('id', bRes.data.customer_id).maybeSingle()
-        : Promise.resolve({ data: null }),
-      supabase.from('listings').select('*').eq('id', bRes.data.listing_id).maybeSingle(),
-      supabase.from('locations').select('*').eq('id', bRes.data.location_id).maybeSingle(),
-    ])
-    customer.value = cRes.data
-    listing.value  = lRes.data
-    location.value = locRes.data
-    // Pay-by-QR gating needs the owner's wallets (Stripe rail on the Bookings side).
-    if (locRes.data?.owner_user_id) {
-      const { data: ws } = await supabase.from('provider_wallets').select('*').eq('owner_user_id', locRes.data.owner_user_id)
-      ownerWallets.value = ws || []
-    } else ownerWallets.value = []
-    await loadOtherPending(bRes.data)
+  const res = await fetchBookingCrm(id)
+  const d = res.success ? (res.data || {}) : {}
+  booking.value = d.booking || null
+  payments.value = d.payments || []
+  auditLogs.value = d.audit_logs || []
+  existingPromo.value = d.existing_promo || (d.booking && Number(d.booking.discount) > 0
+    ? { code: '', discount_amount: Number(d.booking.discount) || 0 }
+    : null)
+  customer.value = d.customer || null
+  listing.value = d.listing || null
+  location.value = d.location || null
+  ownerWallets.value = d.wallets || []
+  if (d.booking) {
+    try { await loadOtherPending(d.booking, d.other_pending || []) } catch { /* optional context */ }
   }
 
   loading.value = false
@@ -632,46 +566,17 @@ async function applyPromo() {
   if (!promoCode.value.trim()) return
   promoLoading.value = true
   promoError.value = ''
-  const { data } = await supabase
-    .from('promocodes')
-    .select('*')
-    .eq('code', promoCode.value.trim().toUpperCase())
-    .eq('status', 'active')
-    .maybeSingle()
-  promoLoading.value = false
-  if (!data) { promoError.value = 'Invalid or expired promocode.'; return }
-
-  const now = new Date()
-  if (data.valid_from && new Date(data.valid_from + 'T00:00:00') > now) { promoError.value = 'This promocode is not active yet.'; return }
-  if (data.valid_to   && new Date(data.valid_to   + 'T23:59:59') < now) { promoError.value = 'This promocode has expired.'; return }
-  if (data.usage_limit && data.usage_count >= data.usage_limit)          { promoError.value = 'This promocode has reached its usage limit.'; return }
-
-  // ── Scope validation ───────────────────────────────────────────────────────
   const isProgram = booking.value?.origin === 'class_program'
-
-  // applicable_to scope check
-  if (data.applicable_to === 'facility' && isProgram) {
-    promoError.value = 'This promocode is only valid for court rental bookings, not programs.'
-    return
-  }
-  if (data.applicable_to === 'program' && !isProgram) {
-    promoError.value = 'This promocode is only valid for membership program bookings.'
-    return
-  }
-
-  // Location scope check
-  if (data.location_id && booking.value?.location_id && data.location_id !== booking.value.location_id) {
-    promoError.value = 'This promocode is not valid for this location.'
-    return
-  }
-
-  // Min order check
-  if (data.min_order && Number(booking.value?.total || 0) < Number(data.min_order)) {
-    promoError.value = `This promocode requires a minimum order of ${currency.value} ${Number(data.min_order).toLocaleString()}.`
-    return
-  }
-
-  promoApplied.value = data
+  const result = await validatePromo(promoCode.value, {
+    amount: Number(booking.value?.total || 0),
+    applicableTo: isProgram ? 'program' : 'facility',
+    locationId: booking.value?.location_id,
+    listingId: booking.value?.listing_id,
+    customerEmail: customer.value?.email || '',
+  })
+  promoLoading.value = false
+  if (!result.ok) { promoError.value = result.reason || 'Invalid or expired promocode.'; return }
+  promoApplied.value = result.code
 }
 
 // Which pool of money this promo draws from
@@ -729,7 +634,8 @@ const qrPayAvailable = computed(() => {
   return hasActivePayoutMethodFor(ownerWallets.value, 'bookings')
     && ownerWallets.value.some(w => isWalletReady(w) && isAutomaticPayout(w))
 })
-const payLink = computed(() => (booking.value ? `${appBaseUrl()}/pay/${booking.value.id}` : ''))
+const payLinkOverride = ref('')
+const payLink = computed(() => payLinkOverride.value || (booking.value ? `${appBaseUrl()}/pay/${booking.value.id}` : ''))
 // While the sheet is open the poll refreshes payments — when the customer pays
 // online, the row flips to paid and the sheet switches to its success state.
 const collectRowPaid = computed(() =>
@@ -740,7 +646,15 @@ async function openCollect(pmt) {
   markMethod.value = ''
   linkCopied.value = false
   payQrImg.value = ''
+  payLinkOverride.value = ''
   if (qrPayAvailable.value) {
+    try {
+      const linkRes = await generateDashboardPaymentLink({
+        booking_id: booking.value.id,
+        amount: collectAmountFor(pmt),
+      })
+      if (linkRes.success && linkRes.data?.link) payLinkOverride.value = linkRes.data.link
+    } catch { /* fall back to /pay/:id */ }
     try { payQrImg.value = await QRCode.toDataURL(payLink.value, { width: 420, margin: 1 }) } catch { payQrImg.value = '' }
     startPayPoll()
   }
@@ -749,12 +663,13 @@ function startPayPoll() {
   clearInterval(payQrTimer)
   payQrTimer = setInterval(async () => {
     if (!collectFor.value || !booking.value) { clearInterval(payQrTimer); return }
-    const { data } = await supabase.from('booking_payments').select('*').eq('booking_id', booking.value.id).order('created_at')
-    if (data) payments.value = data
+    const crm = await fetchBookingCrm(booking.value.id)
+    if (crm.success) {
+      payments.value = crm.data?.payments || payments.value
+      if (crm.data?.booking) booking.value = crm.data.booking
+    }
     if (!payments.value.some(p => p.status === 'pending')) {
       clearInterval(payQrTimer)
-      const { data: b } = await supabase.from('bookings').select('*').eq('id', booking.value.id).maybeSingle()
-      if (b) booking.value = b
     }
   }, 4000)
 }
@@ -781,52 +696,45 @@ function collectAmountFor(pmt) {
 async function markPaid(pmtId) {
   markSaving.value = true
 
-  // Desk promo: apply it FOR REAL to the installment being collected — reduce
-  // the payment row, fold the discount into the booking totals, and record the
-  // redemption. (Previously the discounted number was only shown on a button
-  // label while the full amount was collected and nothing was recorded.)
   const pmtRow = payments.value.find(p => p.id === pmtId)
+  let deskDiscount = 0
+  const codeUsed = promoApplied.value
   if (promoApplied.value && discountAmount.value > 0 && pmtRow) {
-    const deskDiscount = Math.min(discountAmount.value, Number(pmtRow.amount) || 0)
-    const codeUsed = promoApplied.value
-    if (deskDiscount > 0) {
-      await supabase.from('booking_payments').update({
-        amount: Math.max(0, +((Number(pmtRow.amount) || 0) - deskDiscount).toFixed(2)),
-      }).eq('id', pmtId)
-      await supabase.from('bookings').update({
-        discount: +((Number(booking.value.discount) || 0) + deskDiscount).toFixed(2),
-        total: Math.max(0, +((Number(booking.value.total) || 0) - deskDiscount).toFixed(2)),
-      }).eq('id', booking.value.id)
-      try {
-        await recordRedemption({
-          code: codeUsed,
-          customer: { email: customer.value?.email || '', name: customer.value?.full_name || '' },
-          source: { type: 'booking', id: booking.value.id, countryId: booking.value.country_id || null },
-          amount: Number(pmtRow.amount) || 0, discount: deskDiscount,
-          currency: pmtRow.currency || currency.value,
-        })
-      } catch { /* best-effort */ }
-      existingPromo.value = { code: codeUsed.code || '', discount_amount: deskDiscount }
-      promoApplied.value = null
-      promoCode.value = ''
-    }
+    deskDiscount = Math.min(discountAmount.value, Number(pmtRow.amount) || 0)
   }
 
-  await supabase.from('booking_payments').update({
-    status: 'paid', method: markMethod.value,
-    paid_at: new Date().toISOString(),
-  }).eq('id', pmtId)
+  const res = await collectDashboardPayment(booking.value.id, pmtId, {
+    method: markMethod.value,
+    discount: deskDiscount || undefined,
+    promocode_id: deskDiscount > 0 ? (codeUsed?.id || null) : null,
+  })
 
-  // refresh payments
-  const { data } = await supabase.from('booking_payments').select('*').eq('booking_id', booking.value.id).order('created_at')
-  payments.value = data || []
+  if (!res.success) {
+    markSaving.value = false
+    return
+  }
+
+  if (deskDiscount > 0 && codeUsed) {
+    try {
+      await recordRedemption({
+        code: codeUsed,
+        customer: { email: customer.value?.email || '', name: customer.value?.full_name || '' },
+        source: { type: 'booking', id: booking.value.id, countryId: booking.value.country_id || null },
+        amount: Number(pmtRow.amount) || 0, discount: deskDiscount,
+        currency: pmtRow.currency || currency.value,
+      })
+    } catch { /* best-effort */ }
+    existingPromo.value = { code: codeUsed.code || '', discount_amount: deskDiscount }
+    promoApplied.value = null
+    promoCode.value = ''
+  }
+
+  payments.value = res.data?.payments || payments.value
+  if (res.data?.booking) booking.value = res.data.booking
+  if (res.data?.audit_logs) auditLogs.value = res.data.audit_logs
 
   const allPaid = payments.value.every(p => p.status === 'paid')
-  await supabase.from('bookings').update({ payment_status: allPaid ? 'paid' : 'deposit_paid' }).eq('id', booking.value.id)
-  const bRes = await supabase.from('bookings').select('*').eq('id', booking.value.id).maybeSingle()
-  booking.value = bRes.data
 
-  // Activity trail: exactly what was collected, how, by whom, and when.
   {
     const pmt = payments.value.find(p => p.id === pmtId)
     if (pmt) {
@@ -834,15 +742,14 @@ async function markPaid(pmtId) {
         action: 'collected', entity_type: 'booking', entity_id: booking.value.id,
         details: `${PMT_LABELS[pmt.payment_type] || 'Payment'} of ${fmtAmt(pmt)} collected via ${METHOD_LABELS[markMethod.value] || markMethod.value}${allPaid ? ' — booking fully paid' : ''}`,
       })
-      const { data: freshLogs } = await supabase.from('audit_logs').select('*').eq('entity_id', booking.value.id).order('created_at')
-      auditLogs.value = freshLogs || auditLogs.value
+      const crmLogs = await fetchBookingCrm(booking.value.id)
+      if (crmLogs.success) auditLogs.value = crmLogs.data?.audit_logs || auditLogs.value
     }
   }
 
   collectFor.value = null
   clearInterval(payQrTimer)
   markSaving.value = false
-  // Fire-and-forget: payment receipt to the customer.
   try {
     if (customer.value) {
       const pmt = payments.value.find(p => p.id === pmtId)

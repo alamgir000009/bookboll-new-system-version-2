@@ -26,8 +26,6 @@ import EmptyState from '../components/EmptyState.vue'
 import PaginationBar from '../components/PaginationBar.vue'
 import MultiSelect from '../components/MultiSelect.vue'
 import FilterBar from '../components/FilterBar.vue'
-import { idIn } from '../lib/geoFilter.js'
-import { usePagination } from '../lib/usePagination.js'
 
 const { role, isSuperAdmin, isCountryAdmin, currentOwnerUserId, scopeLocations, can, currentUser, allUsers } = useCurrentUser()
 const canExport = computed(() => can(CAP.EXPORT_CUSTOMERS))
@@ -43,37 +41,17 @@ const ownedLocationIds = computed(() => {
 // owner link is fixed (previously it saw every business's customers + loyalty).
 const isBookbollSide = computed(() => isPlatformAdmin.value)
 const canSeeLoyalty  = computed(() => isBookbollSide.value)
-// customer_ids in scope: for a provider, those who booked/subscribed at THIS business;
-// for country_admin / platform_staff, those who booked/subscribed at jurisdiction venues.
-const relevantCustomerIds = computed(() => {
-  if (isBookbollSide.value) {
-    const locIds = isPlatformAdmin.value ? allowedLocationIds.value : null
-    if (!locIds) return null                            // null = no scoping (see all)
-    const ids = new Set()
-    for (const b of bookings.value) if (b.customer_id && locIds.has(b.location_id)) ids.add(b.customer_id)
-    // Owner fallback: a program whose location was deleted (location_id → null on
-    // ON DELETE SET NULL) still belongs to its owner — keep it in scope if that
-    // provider has any venue inside this jurisdiction. Location-only would drop it.
-    const scopedProgIds = new Set(programs.value.filter(p => locIds.has(p.location_id) || inJurisdictionOwner(p.owner_user_id)).map(p => p.id))
-    const emails = new Set(subscriptions.value.filter(s => scopedProgIds.has(s.program_id)).map(s => (s.customer_email || '').toLowerCase()).filter(Boolean))
-    if (emails.size) for (const c of customers.value) if (emails.has((c.email || '').toLowerCase())) ids.add(c.id)
-    return ids
-  }
-  const locIds = ownedLocationIds.value || new Set()
-  const ids = new Set()
-  for (const b of bookings.value) if (b.customer_id && locIds.has(b.location_id)) ids.add(b.customer_id)
-  const ownedProgIds = new Set(programs.value.filter(p => p.owner_user_id === currentOwnerUserId.value || locIds.has(p.location_id)).map(p => p.id))
-  const emails = new Set(subscriptions.value.filter(s => ownedProgIds.has(s.program_id)).map(s => (s.customer_email || '').toLowerCase()).filter(Boolean))
-  if (emails.size) for (const c of customers.value) if (emails.has((c.email || '').toLowerCase())) ids.add(c.id)
-  return ids
-})
-// Base customer set after tenant scoping (used by KPIs + the table).
-const scopedCustomers = computed(() =>
-  relevantCustomerIds.value ? customers.value.filter(c => relevantCustomerIds.value.has(c.id)) : customers.value
-)
+// Server already tenant-scopes the paginated roster.
+const scopedCustomers = computed(() => customers.value)
 
 // ── Data ────────────────────────────────────────────────────────────────────────
 const customers     = ref([])
+const matchingTotal = ref(0)
+const rosterTotal   = ref(0)
+const loadingList   = ref(false)
+const lookupsLoaded = ref(false)
+const filterTags    = ref([])
+const kpisFromApi   = ref({ total: 0, active: 0, activeSubs: 0, avgSpend: 0, vip: 0 })
 const countries     = ref([])
 const cities        = ref([])
 const bookings      = ref([])
@@ -94,20 +72,8 @@ const jCities = computed(() => scopeCities(cities.value))
 // FilterBar geo options derive from THIS roster: countries customers are actually
 // registered in, cities they have actually booked in. A provider stops seeing
 // every platform country/city. Falls back to jurisdiction lists while loading.
-const fbCountries = computed(() => {
-  const used = new Set(scopedCustomers.value.map(c => c.country_id).filter(Boolean))
-  const rows = jCountries.value.filter(c => used.has(c.id))
-  return rows.length ? rows : jCountries.value
-})
-const fbCities = computed(() => {
-  const used = new Set()
-  for (const c of scopedCustomers.value) {
-    const cits = citiesByCustomer.value[c.id]
-    if (cits) for (const id of cits) used.add(id)
-  }
-  const rows = jCities.value.filter(c => used.has(c.id))
-  return rows.length ? rows : jCities.value
-})
+const fbCountries = computed(() => jCountries.value)
+const fbCities = computed(() => jCities.value)
 
 // ── Filter state ────────────────────────────────────────────────────────────────
 const search          = ref('')
@@ -163,27 +129,109 @@ function defaultForm() {
   return { full_name: '', email: '', phone: '', gender: '', country_id: '', loyalty_tier: 'Rookie', loyalty_points: 0, status: 'active', tags: '', loyalty: [] }
 }
 
-// ── Load ─────────────────────────────────────────────────────────────────────────
-async function load() {
-  const res = await fetchCustomersDashboard()
+const custPage = ref(1)
+const custPerPage = ref(25)
+const custTotalPages = ref(1)
+const listRequestId = ref(0)
+let filterQuiet = false
+
+function buildCustomerQuery({ useFilters = true, includeLookups = false, exportAll = false, idsOnly = false } = {}) {
+  const q = {
+    page: custPage.value,
+    records_per_page: exportAll ? 5000 : custPerPage.value,
+    sort: sortKey.value,
+    sort_dir: sortDir.value,
+    include_lookups: includeLookups || !lookupsLoaded.value ? 1 : 0,
+  }
+  if (idsOnly) q.ids_only = 1
+  if (exportAll) {
+    q.export = 1
+    q.page = 1
+  }
+  if (!useFilters) return q
+
+  if (search.value.trim()) q.search = search.value.trim()
+  if (statusFilter.value.length) q.status = statusFilter.value
+  if (genderFilter.value.length) q.gender = genderFilter.value
+  if (filterCountry.value.length) q.country_id = filterCountry.value
+  if (filterCity.value.length) q.city_id = filterCity.value
+  if (locationFilter.value.length) q.location_id = locationFilter.value
+  if (listingFilter.value.length) q.listing_id = listingFilter.value
+  if (sportFilter.value.length) q.sport = sportFilter.value
+  if (tagFilter.value.length) q.tag = tagFilter.value
+  if (marketingFilter.value.length) q.marketing = marketingFilter.value
+  if (tierFilter.value) q.tier = tierFilter.value
+  if (lastActivityFilter.value) q.last_activity = lastActivityFilter.value
+  if (joinedFrom.value) q.joined_from = joinedFrom.value
+  if (joinedTo.value) q.joined_to = joinedTo.value
+  if (spendMin.value !== '') q.spend_min = spendMin.value
+  if (spendMax.value !== '') q.spend_max = spendMax.value
+  if (bkMin.value > 0) q.bk_min = bkMin.value
+  if (bkMax.value > 0) q.bk_max = bkMax.value
+  return q
+}
+
+function applyDashboardPayload(d, { mergeLookups = true } = {}) {
+  const p = d.customers && !Array.isArray(d.customers) ? d.customers : null
+  customers.value = p ? (p.data || []) : (d.customers || [])
+  matchingTotal.value = p ? Number(p.total || 0) : customers.value.length
+  custPage.value = p ? Number(p.current_page || custPage.value) : custPage.value
+  custPerPage.value = p ? Number(p.per_page || custPerPage.value) : custPerPage.value
+  custTotalPages.value = p ? Math.max(1, Number(p.last_page || 1)) : 1
+
+  if (mergeLookups) {
+    if (d.countries) countries.value = d.countries
+    if (d.cities) cities.value = d.cities
+    if (d.listings) listings.value = d.listings
+    if (d.locations) locations.value = d.locations
+    if (d.subscriptions) subscriptions.value = d.subscriptions
+    if (d.programs) programs.value = d.programs
+    if (d.loyalty_programs) loyaltyPrograms.value = d.loyalty_programs
+    if (d.loyalty_tiers) loyaltyTiers.value = d.loyalty_tiers
+    if (Array.isArray(d.filter_tags)) filterTags.value = d.filter_tags
+    if (d.kpis) {
+      kpisFromApi.value = { ...kpisFromApi.value, ...d.kpis }
+      rosterTotal.value = Number(d.kpis.total || 0)
+    }
+    if (d.countries || d.locations) lookupsLoaded.value = true
+  }
+
+  bookings.value = d.bookings || []
+  customerLoyalty.value = d.customer_loyalty || []
+}
+
+async function load(opts = {}) {
+  const id = ++listRequestId.value
+  loadingList.value = true
+  const res = await fetchCustomersDashboard(buildCustomerQuery({
+    includeLookups: opts.includeLookups || !lookupsLoaded.value,
+    useFilters: opts.useFilters !== false,
+  }))
+  if (id !== listRequestId.value) return
+  loadingList.value = false
   if (!res.success) {
     pushToast(res.message || 'Could not load customers.', 'error')
     return
   }
-  const d = res.data || {}
-  customers.value      = d.customers || []
-  countries.value      = d.countries || []
-  cities.value         = d.cities || []
-  bookings.value       = d.bookings || []
-  listings.value       = d.listings || []
-  locations.value      = d.locations || []
-  subscriptions.value  = d.subscriptions || []
-  programs.value       = d.programs || []
-  customerLoyalty.value = d.customer_loyalty || []
-  loyaltyPrograms.value = d.loyalty_programs || []
-  loyaltyTiers.value    = d.loyalty_tiers || []
+  applyDashboardPayload(res.data || {})
 }
-onMounted(load)
+
+let searchTimer = null
+function scheduleSearchLoad() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => resetToFirstPageAndLoad(), 400)
+}
+
+onMounted(() => load({ includeLookups: true }))
+watch(custPage, () => { if (!filterQuiet) load() })
+watch(custPerPage, () => resetToFirstPageAndLoad())
+watch([
+  statusFilter, genderFilter, filterCountry, filterCity, locationFilter, listingFilter,
+  sportFilter, tagFilter, marketingFilter, subStatusFilter, programFilter, currencyFilter,
+  tierFilter, lastActivityFilter, joinedFrom, joinedTo, spendMin, spendMax, bkMin, bkMax,
+  sortKey, sortDir,
+], () => resetToFirstPageAndLoad(), { deep: true })
+watch(search, scheduleSearchLoad)
 
 // Handoffs from the global Customer Details modal ("Edit" / "Block" actions).
 watch(requestEditCustomerId, async (id) => {
@@ -349,6 +397,8 @@ function customerSpendList(id) {
 // All currencies present across customers (for the filter)
 const allCurrencies = computed(() => {
   const set = new Set()
+  for (const c of countries.value) if (c.currency_code) set.add(c.currency_code)
+  for (const l of locations.value) if (l.currency_override) set.add(l.currency_override)
   for (const m of Object.values(spendByCustomer.value)) for (const cur of Object.keys(m)) set.add(cur)
   return [...set].sort()
 })
@@ -441,8 +491,8 @@ const someOnPageSelected = computed(() =>
 )
 
 const allTags = computed(() => {
-  const tags = new Set()
-  for (const c of scopedCustomers.value) {
+  const tags = new Set(filterTags.value)
+  for (const c of customers.value) {
     parseField(c).tags.forEach(t => tags.add(t))
   }
   return [...tags].sort()
@@ -497,17 +547,21 @@ function toggleSelect(id) {
   selectedIds.value = s
 }
 
-// Header checkbox selects/clears EVERY customer matching the current filters
-// (across all pages), not just the visible page.
 function toggleSelectAll() {
   if (allFilteredSelected.value) {
     selectedIds.value = new Set()
-  } else {
-    selectedIds.value = new Set(filteredSorted.value.map(c => c.id))
+    return
   }
+  fetchCustomersDashboard(buildCustomerQuery({ idsOnly: true, includeLookups: false })).then((res) => {
+    if (!res.success) {
+      selectedIds.value = new Set(customers.value.map(c => c.id))
+      return
+    }
+    selectedIds.value = new Set(res.data?.ids || [])
+  })
 }
 const allFilteredSelected = computed(() =>
-  filteredSorted.value.length > 0 && filteredSorted.value.every(c => selectedIds.value.has(c.id))
+  matchingTotal.value > 0 && selectedIds.value.size >= matchingTotal.value
 )
 
 function clearSelection() { selectedIds.value = new Set() }
@@ -1087,18 +1141,7 @@ const listingsBySport = computed(() => {
 })
 
 // ── KPIs ─────────────────────────────────────────────────────────────────────────
-const kpis = computed(() => {
-  const base   = scopedCustomers.value
-  const total  = base.length
-  const active = base.filter(c => c.status === 'active').length
-  const activeSubEmails = new Set(
-    scopedSubscriptions.value.filter(s => s.status === 'active').map(s => s.customer_email?.toLowerCase()).filter(Boolean)
-  )
-  const activeSubs = base.filter(c => c.email && activeSubEmails.has(c.email.toLowerCase())).length
-  const totalSpent = base.reduce((s, c) => s + Number(c.total_spent || 0), 0)
-  const avgSpend   = total ? Math.round(totalSpent / total) : 0
-  return { total, active, activeSubs, avgSpend }
-})
+const kpis = computed(() => kpisFromApi.value)
 
 // ── Sorting ──────────────────────────────────────────────────────────────────────
 // Rank derives from configured thresholds (tierRank computed above).
@@ -1148,175 +1191,30 @@ const citiesByCustomer = computed(() => {
   return map
 })
 
-// ── Filtered + sorted list ───────────────────────────────────────────────────────
-const filteredSorted = computed(() => {
-  let list = scopedCustomers.value.slice()   // already tenant-scoped for providers
-
-  // text search
-  const q = search.value.toLowerCase()
-  if (q) list = list.filter(c =>
-    (c.full_name || '').toLowerCase().includes(q) ||
-    (c.email    || '').toLowerCase().includes(q) ||
-    (c.phone    || '').toLowerCase().includes(q)
-  )
-
-  // tier quick pill (now also available in filter panel)
-  if (tierFilter.value) list = list.filter(c => customerLoyaltyList(c.id).some(r => r.tier === tierFilter.value))
-
-  // status (multi-chip)
-  if (statusFilter.value.length) list = list.filter(c => statusFilter.value.includes(c.status))
-
-  // tags (multi) — customer carries at least one selected tag
-  if (tagFilter.value.length) {
-    const sel = new Set(tagFilter.value)
-    list = list.filter(c => parseField(c).tags.some(t => sel.has(t)))
-  }
-
-  // country (multi) — the customer's registered country
-  if (filterCountry.value.length) list = list.filter(c => idIn(c.country_id, filterCountry.value))
-
-  // city (multi) — customer must have a booking in one of the selected cities
-  if (filterCity.value.length) {
-    list = list.filter(c => {
-      const cits = citiesByCustomer.value[c.id]
-      return cits && [...cits].some(id => idIn(id, filterCity.value))
-    })
-  }
-
-  // location — customer must have visited at least one selected location
-  if (locationFilter.value.length) {
-    const sel = new Set(locationFilter.value)
-    list = list.filter(c => {
-      const locs = locationsByCustomer.value[c.id]
-      return locs && [...locs].some(id => sel.has(id))
-    })
-  }
-
-  // listing — customer must have booked at least one selected listing
-  if (listingFilter.value.length) {
-    const sel = new Set(listingFilter.value)
-    list = list.filter(c => {
-      const lsts = listingsByCustomer.value[c.id]
-      return lsts && [...lsts].some(id => sel.has(id))
-    })
-  }
-
-  // sport type — customer must have booked at least one listing of a selected sport
-  if (sportFilter.value.length) {
-    const sportListingIds = new Set(
-      sportFilter.value.flatMap(s => [...(listingsBySport.value[s] || [])])
-    )
-    list = list.filter(c => {
-      const lsts = listingsByCustomer.value[c.id]
-      return lsts && [...lsts].some(id => sportListingIds.has(id))
-    })
-  }
-
-  // program/plan — customer email must have a subscription to at least one selected program
-  if (programFilter.value.length) {
-    const sel = new Set(programFilter.value)
-    list = list.filter(c => {
-      const pids = c.email ? programsByEmail.value[c.email.toLowerCase()] : null
-      return pids && [...pids].some(id => sel.has(id))
-    })
-  }
-
-  // gender (multi-chip)
-  if (genderFilter.value.length) {
-    list = list.filter(c => {
-      const g = (c.gender || '').toLowerCase()
-      return genderFilter.value.includes(g || 'other')
-    })
-  }
-
-  // subscription status (multi-chip)
-  if (subStatusFilter.value.length) {
-    list = list.filter(c => subStatusFilter.value.includes(subStatusValue(subForCustomer(c))))
-  }
-
-  // marketing consent (multi-chip): match ANY selected channel; 'none' = opted into nothing
-  if (marketingFilter.value.length) {
-    list = list.filter(c => {
-      const on = []
-      if (c.marketing_email === true) on.push('email')
-      if (c.marketing_sms === true) on.push('sms')
-      if (c.marketing_whatsapp === true) on.push('whatsapp')
-      if (!on.length) on.push('none')
-      return marketingFilter.value.some(sel => on.includes(sel))
-    })
-  }
-
-  // last activity (single-select pills)
-  if (lastActivityFilter.value) {
-    const now = new Date()
-    list = list.filter(c => {
-      const last = lastBookingByCustomer.value[c.id]
-      if (lastActivityFilter.value === 'never')    return !last
-      if (!last) return false
-      const days = (now - new Date(last)) / 86400000
-      if (lastActivityFilter.value === '7d')       return days <= 7
-      if (lastActivityFilter.value === '30d')      return days <= 30
-      if (lastActivityFilter.value === '90d')      return days <= 90
-      if (lastActivityFilter.value === 'inactive') return days > 90
-      return true
-    })
-  }
-
-  // currency — customer must have spent in at least one selected currency
-  if (currencyFilter.value.length) {
-    const sel = new Set(currencyFilter.value)
-    list = list.filter(c => {
-      const m = spendByCustomer.value[c.id]
-      return m && Object.keys(m).some(cur => sel.has(cur))
-    })
-  }
-
-  // spend range — applies per-currency. If currencies are selected, range checks
-  // those; otherwise it matches a customer who spent in [min,max] in ANY currency.
-  const hasMin = spendMin.value !== '', hasMax = spendMax.value !== ''
-  if (hasMin || hasMax) {
-    const min = hasMin ? Number(spendMin.value) : -Infinity
-    const max = hasMax ? Number(spendMax.value) :  Infinity
-    const curScope = currencyFilter.value.length ? new Set(currencyFilter.value) : null
-    list = list.filter(c => {
-      const m = spendByCustomer.value[c.id] || {}
-      const entries = Object.entries(m).filter(([cur]) => !curScope || curScope.has(cur))
-      return entries.some(([, amt]) => amt >= min && amt <= max)
-    })
-  }
-
-  // booking range
-  // Guard a contradictory pair (min > max) by swapping instead of silently
-  // returning an empty roster.
-  const bkLo = bkMax.value > 0 ? Math.min(bkMin.value, bkMax.value) : bkMin.value
-  const bkHi = bkMax.value > 0 ? Math.max(bkMin.value, bkMax.value) : 0
-  if (bkLo > 0) list = list.filter(c => scopedBookingsCount(c) >= bkLo)
-  if (bkHi > 0) list = list.filter(c => scopedBookingsCount(c) <= bkHi)
-
-  // joined date range
-  if (joinedFrom.value) list = list.filter(c => (c.created_at || '') >= joinedFrom.value)
-  if (joinedTo.value)   list = list.filter(c => (c.created_at || '') <= joinedTo.value + 'T23:59:59')
-
-  // sort
-  list.sort((a, b) => {
-    let av, bv
-    if (sortKey.value === 'full_name')           { av = (a.full_name||'').toLowerCase(); bv = (b.full_name||'').toLowerCase() }
-    else if (sortKey.value === 'total_bookings') { av = scopedBookingsCount(a); bv = scopedBookingsCount(b) }
-    else if (sortKey.value === 'total_spent')    { av = Math.max(0, ...Object.values(spendByCustomer.value[a.id]||{0:0})); bv = Math.max(0, ...Object.values(spendByCustomer.value[b.id]||{0:0})) }
-    else if (sortKey.value === 'loyalty_tier')   { av = tierRank.value[customerHighestTier(a.id)]||0; bv = tierRank.value[customerHighestTier(b.id)]||0 }
-    else if (sortKey.value === 'loyalty_points') { av = customerTotalPoints(a.id); bv = customerTotalPoints(b.id) }
-    else if (sortKey.value === 'last_booking')   { av = lastBookingByCustomer.value[a.id]||''; bv = lastBookingByCustomer.value[b.id]||'' }
-    else { av = a.created_at||''; bv = b.created_at||'' }
-    if (av < bv) return sortDir.value === 'asc' ? -1 : 1
-    if (av > bv) return sortDir.value === 'asc' ?  1 : -1
-    return 0
-  })
-  return list
+// Server already filtered + sorted this page.
+const filteredSorted = computed(() => customers.value)
+const paginatedCustomers = computed(() => customers.value)
+const custVisiblePages = computed(() => {
+  const total = custTotalPages.value
+  const cur = custPage.value
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages = new Set([1, total, cur])
+  if (cur > 1) pages.add(cur - 1)
+  if (cur < total) pages.add(cur + 1)
+  return Array.from(pages).sort((a, b) => a - b)
 })
+function custGoTo(p) {
+  custPage.value = Math.min(custTotalPages.value, Math.max(1, p))
+}
 
-const { page: custPage, perPage: custPerPage, totalPages: custTotalPages, paginated: paginatedCustomers, visiblePages: custVisiblePages, goTo: custGoTo } = usePagination(filteredSorted)
+function resetToFirstPageAndLoad() {
+  if (filterQuiet) return
+  if (custPage.value !== 1) custPage.value = 1
+  else load()
+}
 
 function clearFilters() {
+  filterQuiet = true
   tierFilter.value = ''
   statusFilter.value = [];    filterCountry.value = [];  filterCity.value = []
   locationFilter.value = [];  listingFilter.value = [];  programFilter.value = []
@@ -1329,12 +1227,20 @@ function clearFilters() {
   bkMin.value = 0;     bkMax.value = 0
   joinedFrom.value = ''; joinedTo.value = ''
   search.value = ''
+  filterQuiet = false
+  resetToFirstPageAndLoad()
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
 const showExportModal = ref(false)
-function doExport(useFilters) {
-  const rows = useFilters ? filteredSorted.value : scopedCustomers.value
+async function doExport(useFilters) {
+  const res = await fetchCustomersDashboard(buildCustomerQuery({
+    useFilters,
+    exportAll: true,
+    includeLookups: false,
+  }))
+  const p = res.data?.customers
+  const rows = p?.data || (Array.isArray(res.data?.customers) ? res.data.customers : [])
   downloadCSV(rows, [
     { label: 'ID',            key: 'id' },
     { label: 'Full Name',     key: 'full_name' },
@@ -1471,7 +1377,7 @@ function avatarColor(id) {
       </div>
       <div v-if="canSeeLoyalty" class="card kpi">
         <div class="kpi-top"><div class="kpi-label">VIP (Legend+)</div><div class="kpi-icon" style="background:#fef3c7;color:#d97706"><Award :size="18" /></div></div>
-        <div class="kpi-value">{{ scopedCustomers.filter(c => ['Legend','GOAT'].includes(customerHighestTier(c.id))).length }}</div>
+        <div class="kpi-value">{{ kpis.vip }}</div>
         <div class="kpi-delta">Legend &amp; GOAT tier</div>
       </div>
       <div class="card kpi">
@@ -1645,8 +1551,8 @@ function avatarColor(id) {
           <div class="bulk-info">
             <div class="bulk-check-icon"><CheckCircle :size="15" /></div>
             <strong>{{ selectedIds.size }}</strong>&nbsp;customer{{ selectedIds.size !== 1 ? 's' : '' }} selected
-            <button v-if="!allFilteredSelected && filteredSorted.length > selectedIds.size" class="bulk-selectall-link" @click="selectedIds = new Set(filteredSorted.map(c => c.id))">
-              Select all {{ filteredSorted.length }} matching
+            <button v-if="!allFilteredSelected && matchingTotal > selectedIds.size" class="bulk-selectall-link" @click="toggleSelectAll">
+              Select all {{ matchingTotal }} matching
             </button>
           </div>
           <div class="bulk-actions">
@@ -1835,12 +1741,17 @@ function avatarColor(id) {
                 </div>
               </td>
             </tr>
-            <tr v-if="!filteredSorted.length">
+            <tr v-if="loadingList">
+              <td colspan="10" style="padding:28px;text-align:center;color:var(--text-muted)">
+                <Loader :size="18" style="display:inline;margin-right:8px" />Loading customers…
+              </td>
+            </tr>
+            <tr v-else-if="!filteredSorted.length">
               <td colspan="10" style="padding:0">
                 <EmptyState :icon="Users"
-                  :title="customers.length ? 'No matching customers' : 'No customers yet'"
-                  :message="customers.length ? 'No customers match your search or filters. Try clearing them.' : 'Add your first customer to start building your CRM.'"
-                  :action-label="customers.length ? '' : 'New Customer'" @action="openNew" />
+                  :title="rosterTotal ? 'No matching customers' : 'No customers yet'"
+                  :message="rosterTotal ? 'No customers match your search or filters. Try clearing them.' : 'Add your first customer to start building your CRM.'"
+                  :action-label="rosterTotal ? '' : 'New Customer'" @action="openNew" />
               </td>
             </tr>
           </tbody>
@@ -1849,7 +1760,7 @@ function avatarColor(id) {
 
       <PaginationBar
         :page="custPage" :perPage="custPerPage" :totalPages="custTotalPages"
-        :total="filteredSorted.length" :visiblePages="custVisiblePages"
+        :total="matchingTotal" :visiblePages="custVisiblePages"
         @update:perPage="custPerPage=$event"
         @goTo="custGoTo"
       />
@@ -2253,11 +2164,11 @@ function avatarColor(id) {
         <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
           <button class="export-choice-btn" @click="doExport(true)">
             <Download :size="16"/>
-            <div><strong>Export with filters</strong><br><span>{{ filteredSorted.length }} customers</span></div>
+            <div><strong>Export with filters</strong><br><span>{{ matchingTotal }} customers</span></div>
           </button>
           <button class="export-choice-btn" @click="doExport(false)">
             <Download :size="16"/>
-            <div><strong>Export all customers</strong><br><span>{{ customers.length }} customers</span></div>
+            <div><strong>Export all customers</strong><br><span>{{ rosterTotal }} customers</span></div>
           </button>
         </div>
         <div class="modal-footer"><button class="btn btn-secondary" @click="showExportModal=false">Cancel</button></div>

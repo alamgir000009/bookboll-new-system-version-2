@@ -22,7 +22,7 @@
  *  - DELIVERY still requires the platform WhatsApp channel connected (super-admin → WhatsApp)
  *    and, outside the 24h window, an approved utility template (bookboll_event_update).
  */
-import { supabase } from '../lib/supabase.js'
+import { apiFetch } from '../lib/api.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { loadProviderNotificationSettings } from '../lib/notificationTemplates.js'
 import { fmt12 } from '../lib/slots.js'
@@ -37,29 +37,23 @@ function normalizeWaNumber(phone) {
 }
 async function invokeWhatsapp(payload) {
   try {
-    const { data, error } = await supabase.functions.invoke('send-whatsapp', { body: payload })
-    return error ? { ok: false } : (data ?? { ok: false })
+    const res = await apiFetch('/admin/notifications/whatsapp', { method: 'POST', body: payload })
+    if (res.data && typeof res.data.ok === 'boolean') return res.data
+    return { ok: Boolean(res.success) }
   } catch { return { ok: false } }
 }
 /** Prefer a given phone; else look the customer up by id, then email. */
-async function resolvePhone({ phone, customerId, email } = {}) {
+async function resolvePhone({ phone } = {}) {
   if (normalizeWaNumber(phone)) return phone
-  try {
-    if (customerId) {
-      const { data } = await supabase.from('customers').select('phone').eq('id', customerId).maybeSingle()
-      if (data?.phone) return data.phone
-    }
-    if (email) {
-      const { data } = await supabase.from('customers').select('phone').ilike('email', email).limit(1)
-      if (data && data[0]?.phone) return data[0].phone
-    }
-  } catch { /* ignore */ }
   return ''
 }
-/** The provider/owner's own phone (admin_users.phone) — recipient for the "provider" audience. */
+/** The provider/owner's own phone — recipient for the "provider" audience. */
 async function resolveOwnerPhone(ownerId) {
   if (!ownerId) return ''
-  try { const { data } = await supabase.from('admin_users').select('phone').eq('id', ownerId).maybeSingle(); return data?.phone || '' } catch { return '' }
+  try {
+    const res = await apiFetch('/admin/notifications/owner-phone', { query: { owner_id: ownerId } })
+    return res.data?.phone || ''
+  } catch { return '' }
 }
 
 /** Replace [token] placeholders with real values; unknown/empty tokens collapse to ''. */

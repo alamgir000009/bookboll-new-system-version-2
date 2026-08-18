@@ -1,6 +1,9 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import {
+  fetchBookingsDashboard, cancelDashboardBooking, firstError,
+} from '../lib/bookings.js'
+import { pushToast } from '../lib/toast.js'
 import { Search, Plus, Download, Eye, Pencil, X, TriangleAlert as AlertTriangle, SlidersHorizontal, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, FileDown, ListFilter as Filter, RotateCcw, BookOpen, Loader } from 'lucide-vue-next'
 import EmptyState from '../components/EmptyState.vue'
 import { openCustomer } from '../lib/customerModal.js'
@@ -155,22 +158,19 @@ const cancelling        = ref(false)
 // ── Load ──────────────────────────────────────────────────────────────────────
 async function load() {
   loading.value = true
-  const [b, l, c, lo, co, ci] = await Promise.all([
-    supabase.from('bookings').select('*').order('created_at', { ascending: false }),
-    supabase.from('listings').select('*'),
-    supabase.from('customers').select('*'),
-    supabase.from('locations').select('*'),
-    supabase.from('countries').select('id, name, currency_code').eq('status', 'active').order('name'),
-    supabase.from('cities').select('id, name, country_id').eq('status', 'active').order('name'),
-  ])
-  // Class-program sessions are calendar reservations, not real customer bookings —
-  // keep them out of the bookings table entirely.
-  bookings.value  = (b.data || []).filter(x => x.origin !== 'class_program')
-  listings.value  = l.data  || []
-  customers.value = c.data  || []
-  locations.value = lo.data || []
-  countries.value = co.data || []
-  cities.value    = ci.data || []
+  const res = await fetchBookingsDashboard()
+  if (!res.success) {
+    pushToast(res.message || 'Could not load bookings.', 'error')
+    loading.value = false
+    return
+  }
+  const d = res.data || {}
+  bookings.value  = (d.bookings || []).filter(x => x.origin !== 'class_program')
+  listings.value  = d.listings || []
+  customers.value = d.customers || []
+  locations.value = d.locations || []
+  countries.value = d.countries || []
+  cities.value    = d.cities || []
   loading.value   = false
 }
 
@@ -240,7 +240,7 @@ const scopedBookings = computed(() => {
 const filtered = computed(() => {
   const q = search.value.toLowerCase()
   let rows = scopedBookings.value.filter(b => {
-    if (q && !customerName(b.customer_id).toLowerCase().includes(q) && !listingName(b.listing_id).toLowerCase().includes(q) && !locationName(b.location_id).toLowerCase().includes(q) && !b.id.toLowerCase().includes(q)) return false
+    if (q && !customerName(b.customer_id).toLowerCase().includes(q) && !listingName(b.listing_id).toLowerCase().includes(q) && !locationName(b.location_id).toLowerCase().includes(q) && !String(b.id).toLowerCase().includes(q)) return false
     if (filterStatus.value.length  && !filterStatus.value.includes(b.booking_status))  return false
     if (filterPayment.value.length && !filterPayment.value.includes(b.payment_status)) return false
     if (!matchKind(b, filterKind.value))        return false
@@ -326,26 +326,27 @@ async function doCancel() {
   if (!cancelTarget.value) return
   cancelling.value = true
   const b = cancelTarget.value
-  if (cancellingAll.value && b.program_id) {
-    await supabase.from('bookings').update({ booking_status: 'cancelled' })
-      .eq('program_id', b.program_id).gte('booking_date', b.booking_date).neq('booking_status', 'cancelled')
-  } else {
-    await supabase.from('bookings').update({ booking_status: 'cancelled' }).eq('id', b.id)
-    // Fire-and-forget: tell the customer their booking was cancelled (transactional, un-gated).
-    if (b.customer_id) {
-      try {
-        const loc = locations.value.find(l => l.id === b.location_id)
-        notifyBookingCancelled({
-          ownerId: loc?.owner_user_id || null,
-          customer: { id: b.customer_id, name: customerName(b.customer_id), email: customers.value.find(c => c.id === b.customer_id)?.email || '' },
-          booking: {
-            listing: listingName(b.listing_id), venue: locationName(b.location_id), business_name: locationName(b.location_id),
-            date: b.booking_date, start_time: fmt12(b.start_time), end_time: fmt12(b.end_time),
-            code: (b.id || '').toString().slice(0, 8).toUpperCase(), currency: currencyOf(b),
-          },
-        })
-      } catch { /* never let a notification break the cancel */ }
-    }
+  const res = cancellingAll.value && b.program_id
+    ? await cancelDashboardBooking({ booking_id: b.id, program_id: b.program_id, booking_date: b.booking_date, cancel_all: true })
+    : await cancelDashboardBooking({ booking_id: b.id })
+  if (!res.success) {
+    cancelling.value = false
+    pushToast(firstError(res, 'Could not cancel booking.'), 'error')
+    return
+  }
+  if (!cancellingAll.value && b.customer_id) {
+    try {
+      const loc = locations.value.find(l => l.id === b.location_id)
+      notifyBookingCancelled({
+        ownerId: loc?.owner_user_id || null,
+        customer: { id: b.customer_id, name: customerName(b.customer_id), email: customers.value.find(c => c.id === b.customer_id)?.email || '' },
+        booking: {
+          listing: listingName(b.listing_id), venue: locationName(b.location_id), business_name: locationName(b.location_id),
+          date: b.booking_date, start_time: fmt12(b.start_time), end_time: fmt12(b.end_time),
+          code: (b.id || '').toString().slice(0, 8).toUpperCase(), currency: currencyOf(b),
+        },
+      })
+    } catch { /* never let a notification break the cancel */ }
   }
   cancelling.value = false; showCancelConfirm.value = false
   cancelTarget.value = null; cancellingAll.value = false
@@ -595,7 +596,7 @@ function exportCSV(useFilters) {
     <NewBookingDrawer
       :open="showNewBooking"
       @close="showNewBooking = false"
-      @saved="(ids) => { showNewBooking = false; load(); viewingId = Array.isArray(ids) ? ids[0] : ids }"
+      @saved="(ids) => { showNewBooking = false; load(); viewingId = String(Array.isArray(ids) ? ids[0] : ids) }"
     />
 
     <BookingDetailModal
