@@ -1222,6 +1222,238 @@ class BookingService
         return sendSuccess("Bookings fetched successfully", compact('bookings'));
     }
 
+    /**
+     * New admin dashboard calendar payload (apps/admin Calendar.vue).
+     * Returns locations, listings, bookings for [from,to], opening hours, and
+     * special days — same shape the page previously loaded from Supabase.
+     */
+    public function calendarDashboard(Request $request)
+    {
+        $from = $request->input('from') ?: ($request->input('date') ?: now()->format('Y-m-d'));
+        $to   = $request->input('to') ?: $from;
+
+        try {
+            $from = Carbon::parse($from)->format('Y-m-d');
+            $to   = Carbon::parse($to)->format('Y-m-d');
+        } catch (\Throwable $e) {
+            $from = now()->format('Y-m-d');
+            $to   = $from;
+        }
+
+        if ($to < $from) {
+            [$from, $to] = [$to, $from];
+        }
+
+        $user = auth()->user();
+        $venueQuery = Venue::where('status', Venue::ACTIVE)->orderBy('sort_order')->orderBy('name');
+        if ($user && ! $user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
+            $allowed = DB::table('user_venue')->where('user_id', $user->id)->pluck('venue_id');
+            $venueQuery->whereIn('id', $allowed);
+        }
+        if ($request->filled('venue_id') || $request->filled('location_id')) {
+            $venueQuery->where('id', $request->input('venue_id') ?: $request->input('location_id'));
+        }
+
+        $venueCols = ['id', 'name', 'status', 'sort_order'];
+        foreach (['city_id', 'country_id', 'owner_user_id', 'created_by', 'currency_override'] as $col) {
+            if (Schema::hasColumn('venues', $col)) {
+                $venueCols[] = $col;
+            }
+        }
+        $venues = $venueQuery->with('users')->get($venueCols);
+        $venueIds = $venues->pluck('id')->all();
+
+        $locations = $venues->map(function (Venue $v) {
+            $ownerId = null;
+            if (Schema::hasColumn('venues', 'owner_user_id') && $v->owner_user_id) {
+                $ownerId = $v->owner_user_id;
+            } else {
+                $ownerId = $v->relationLoaded('users')
+                    ? ($v->users->first()?->id ?? $v->created_by)
+                    : $v->created_by;
+            }
+
+            return [
+                'id'                => (string) $v->id,
+                'name'              => $v->name,
+                'status'            => $v->status,
+                'city_id'           => $v->city_id ? (string) $v->city_id : null,
+                'country_id'        => $v->country_id ? (string) $v->country_id : null,
+                'owner_user_id'     => $ownerId ? (string) $ownerId : null,
+                'currency_override' => $v->currency_override ?: null,
+                'sort_order'        => (int) ($v->sort_order ?? 0),
+            ];
+        })->values();
+
+        $listings = $venueIds
+            ? Listing::with('sportsCategory:id,name')
+            ->whereIn('venue_id', $venueIds)
+            ->where('status', 'active')
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get()
+            ->map(fn(Listing $l) => [
+                'id'             => (string) $l->id,
+                'location_id'    => $l->venue_id ? (string) $l->venue_id : null,
+                'name'           => $l->name,
+                'sport_category' => $l->sportsCategory?->name,
+                'booking_color'  => $l->calendar_color ?: '#64748b',
+                'status'         => $l->status,
+            ])->values()
+            : collect();
+
+        $bookingQuery = $this->bookingModel::query()
+            ->with(['listing:id,name,venue_id,calendar_color', 'venue:id,name', 'user:id,name'])
+            ->whereBetween('date', [$from, $to]);
+
+        if ($venueIds) {
+            $bookingQuery->whereIn('venue_id', $venueIds);
+        } else {
+            $bookingQuery->whereRaw('1 = 0');
+        }
+
+        if ($request->filled('listing_id')) {
+            $bookingQuery->where('listing_id', $request->listing_id);
+        }
+
+        // Exclude cancelled; exclude materialised class_program blocks (derived client-side).
+        $bookingQuery->where('status', '!=', BookingStatus::CANCELLED);
+        if (Schema::hasColumn('bookings', 'origin')) {
+            $bookingQuery->where(function ($q) {
+                $q->whereNull('origin')->orWhere('origin', '!=', 'class_program');
+            });
+        }
+
+        $bookings = $bookingQuery->orderBy('date')->orderBy('start_time')
+            ->get()
+            ->map(fn(Booking $b) => $this->mapDashboardBooking($b))
+            ->values();
+
+        $locationHours = $this->calendarLocationHours($venueIds);
+
+        $specialDays = [];
+        if ($venueIds) {
+            $sdReq = Request::create('/admin/bookings/special-days', 'GET', [
+                'location_ids' => implode(',', $venueIds),
+                'from'         => $from,
+                'to'           => $to,
+            ]);
+            $sdReq->setUserResolver(fn() => $user);
+            $sdRes = $this->dashboardSpecialDays($sdReq);
+            $sdData = method_exists($sdRes, 'getData') ? $sdRes->getData(true) : [];
+            $specialDays = $sdData['data']['special_days'] ?? [];
+        }
+
+        // Program modules are not in Laravel yet — empty until that migration.
+        $programExceptions = [];
+        if (Schema::hasColumn('bookings', 'origin') && Schema::hasColumn('bookings', 'program_id') && $venueIds) {
+            $programExceptions = $this->bookingModel::query()
+                ->where('origin', 'class_program')
+                ->where('status', BookingStatus::CANCELLED)
+                ->whereBetween('date', [$from, $to])
+                ->whereIn('venue_id', $venueIds)
+                ->get(['program_id', 'date'])
+                ->map(fn(Booking $b) => [
+                    'program_id'   => $b->program_id ? (string) $b->program_id : null,
+                    'booking_date' => $b->date instanceof \Carbon\CarbonInterface
+                        ? $b->date->format('Y-m-d')
+                        : (string) $b->date,
+                ])
+                ->filter(fn($r) => $r['program_id'])
+                ->values()
+                ->all();
+        }
+
+        return sendSuccess('Calendar dashboard fetched', [
+            'locations'          => $locations,
+            'listings'           => $listings,
+            'bookings'           => $bookings,
+            'location_hours'     => $locationHours,
+            'special_days'       => $specialDays,
+            'programs'           => [],
+            'subscriptions'      => [],
+            'program_exceptions' => $programExceptions,
+            'from'               => $from,
+            'to'                 => $to,
+        ]);
+    }
+
+    /**
+     * Opening hours for calendar closed-slot shading.
+     * Prefer venue_hour_periods; fall back to schedules (venue-level rows).
+     */
+    protected function calendarLocationHours(array $venueIds): array
+    {
+        if (! $venueIds) {
+            return [];
+        }
+
+        $dayIndex = [
+            'sunday' => 0,
+            'monday' => 1,
+            'tuesday' => 2,
+            'wednesday' => 3,
+            'thursday' => 4,
+            'friday' => 5,
+            'saturday' => 6,
+        ];
+
+        $fmt = function ($t) {
+            if ($t instanceof \DateTimeInterface) {
+                return $t->format('H:i');
+            }
+            if (! $t) {
+                return null;
+            }
+            $s = (string) $t;
+
+            return strlen($s) >= 5 ? substr($s, 0, 5) : $s;
+        };
+
+        if (Schema::hasTable('venue_hour_periods') && class_exists(\App\Models\VenueHourPeriod::class)) {
+            return \App\Models\VenueHourPeriod::query()
+                ->whereIn('venue_id', $venueIds)
+                ->orderBy('venue_id')
+                ->orderBy('day')
+                ->get()
+                ->map(function ($row) use ($dayIndex, $fmt) {
+                    $day = strtolower((string) $row->day);
+
+                    return [
+                        'location_id' => (string) $row->venue_id,
+                        'day_of_week' => $dayIndex[$day] ?? null,
+                        'is_open'     => (bool) $row->is_open,
+                        'open_time'   => $fmt($row->open_time),
+                        'close_time'  => $fmt($row->close_time),
+                    ];
+                })
+                ->filter(fn($r) => $r['day_of_week'] !== null)
+                ->values()
+                ->all();
+        }
+
+        return Schedule::query()
+            ->whereIn('venue_id', $venueIds)
+            ->whereNull('listing_id')
+            ->orderBy('venue_id')
+            ->orderBy('day')
+            ->get()
+            ->map(function (Schedule $row) use ($dayIndex, $fmt) {
+                $day = strtolower((string) $row->day);
+
+                return [
+                    'location_id' => (string) $row->venue_id,
+                    'day_of_week' => $dayIndex[$day] ?? null,
+                    'is_open'     => (bool) $row->is_open,
+                    'open_time'   => $fmt($row->start_time),
+                    'close_time'  => $fmt($row->end_time),
+                ];
+            })
+            ->filter(fn($r) => $r['day_of_week'] !== null)
+            ->values()
+            ->all();
+    }
+
     public function customerHistory($customerId)
     {
         $bookings = $this->bookingModel

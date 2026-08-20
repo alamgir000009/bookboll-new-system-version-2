@@ -194,6 +194,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('bookings/form-data', [BookingController::class, 'formData'])->name('bookings.form-data');
         Route::get('bookings/payment-methods', [BookingController::class, 'getPaymentMethods'])->name('bookings.payment-methods');
         Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar'])->name('bookings.calendar');
+        Route::get('bookings/calendar-dashboard', [BookingController::class, 'calendarDashboard'])->name('bookings.calendar-dashboard');
         Route::post('bookings/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
         Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings'])->name('bookings.due');
         Route::get('bookings/export', [BookingController::class, 'export'])->name('bookings.export');

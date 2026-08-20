@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Models\Booking;
@@ -87,7 +88,7 @@ class PaymentService
             'booking.venue:id,name',
         ])
             ->latest()
-            ->when($search, fn ($query) => $this->applyPaymentSearch($query, $search))
+            ->when($search, fn($query) => $this->applyPaymentSearch($query, $search))
             ->when($method, function ($query, $method) {
                 $query->where('method', $method);
             })
@@ -129,9 +130,25 @@ class PaymentService
 
         $query = $this->paymentModel::query()
             ->select([
-                'id', 'payment_id', 'booking_id', 'user_id', 'type', 'amount', 'currency',
-                'recipient', 'method', 'status', 'date', 'paid_at', 'notes', 'source_type',
-                'subscription_id', 'marked_paid_by', 'created_by', 'created_at', 'updated_at',
+                'id',
+                'payment_id',
+                'booking_id',
+                'user_id',
+                'type',
+                'amount',
+                'currency',
+                'recipient',
+                'method',
+                'status',
+                'date',
+                'paid_at',
+                'notes',
+                'source_type',
+                'subscription_id',
+                'marked_paid_by',
+                'created_by',
+                'created_at',
+                'updated_at',
             ]);
 
         $query = applyVenueFilterToPayments($query);
@@ -149,13 +166,29 @@ class PaymentService
         $siblingPayments = $bookingIds->isEmpty()
             ? collect()
             : $this->paymentModel::query()
-                ->select([
-                    'id', 'payment_id', 'booking_id', 'user_id', 'type', 'amount', 'currency',
-                    'recipient', 'method', 'status', 'date', 'paid_at', 'notes', 'source_type',
-                    'subscription_id', 'marked_paid_by', 'created_by', 'created_at', 'updated_at',
-                ])
-                ->whereIn('booking_id', $bookingIds)
-                ->get();
+            ->select([
+                'id',
+                'payment_id',
+                'booking_id',
+                'user_id',
+                'type',
+                'amount',
+                'currency',
+                'recipient',
+                'method',
+                'status',
+                'date',
+                'paid_at',
+                'notes',
+                'source_type',
+                'subscription_id',
+                'marked_paid_by',
+                'created_by',
+                'created_at',
+                'updated_at',
+            ])
+            ->whereIn('booking_id', $bookingIds)
+            ->get();
 
         $allForLookups = $pagePayments->concat($siblingPayments)->unique('id');
         $lookupBookingIds = $allForLookups->pluck('booking_id')->filter()->unique()->values();
@@ -163,22 +196,32 @@ class PaymentService
         $bookingsRaw = $lookupBookingIds->isEmpty()
             ? collect()
             : Booking::query()
-                ->select([
-                    'id', 'user_id', 'venue_id', 'listing_id', 'date', 'start_time', 'end_time',
-                    'status', 'payment_status', 'total_price', 'origin', 'players', 'created_at',
-                ])
-                ->whereIn('id', $lookupBookingIds)
-                ->get()
-                ->keyBy('id');
+            ->select([
+                'id',
+                'user_id',
+                'venue_id',
+                'listing_id',
+                'date',
+                'start_time',
+                'end_time',
+                'status',
+                'payment_status',
+                'total_price',
+                'origin',
+                'players',
+                'created_at',
+            ])
+            ->whereIn('id', $lookupBookingIds)
+            ->get()
+            ->keyBy('id');
 
         $venueIds = $bookingsRaw->pluck('venue_id')->filter()->unique()->values();
         $venuesRaw = $venueIds->isEmpty()
             ? collect()
-            : Venue::query()
-                ->select(['id', 'name', 'city_id', 'country_id', 'owner_user_id', 'status', 'currency_override'])
-                ->whereIn('id', $venueIds)
-                ->get()
-                ->keyBy('id');
+            : Venue::select(['id', 'name', 'city_id', 'country_id', 'owner_user_id', 'status', 'currency_override'])
+            ->whereIn('id', $venueIds)
+            ->get()
+            ->keyBy('id');
 
         $ownerIds = $venuesRaw->pluck('owner_user_id')->filter()->unique()->values();
         $owners = $ownerIds->isEmpty()
@@ -189,9 +232,9 @@ class PaymentService
         $currencyByCountry = $countryIdsForCurrency->isEmpty()
             ? collect()
             : \Nnjeim\World\Models\Country::with('currency')
-                ->whereIn('id', $countryIdsForCurrency)
-                ->get()
-                ->mapWithKeys(fn ($c) => [$c->id => $c->currency?->code ?: 'AED']);
+            ->whereIn('id', $countryIdsForCurrency)
+            ->get()
+            ->mapWithKeys(fn($c) => [$c->id => $c->currency?->code ?: 'AED']);
 
         $mapOne = function (Payment $p) use ($bookingsRaw, $venuesRaw, $owners, $currencyByCountry) {
             $booking = $p->booking_id ? $bookingsRaw->get($p->booking_id) : null;
@@ -207,36 +250,36 @@ class PaymentService
         $mappedPage = $pagePayments->map($mapOne)->values();
         $mappedRelated = $siblingPayments->map($mapOne)->values();
 
-        $bookings = $bookingsRaw->values()->map(fn (Booking $b) => $this->mapDashboardBooking($b))->values();
+        $bookings = $bookingsRaw->values()->map(fn(Booking $b) => $this->mapDashboardBooking($b))->values();
 
         $customerIds = $bookingsRaw->pluck('user_id')->filter()->unique()->values();
         $customers = $customerIds->isEmpty()
             ? collect()
             : \App\Models\User::whereIn('id', $customerIds)
-                ->get(['id', 'name', 'email', 'phone'])
-                ->map(fn ($u) => [
-                    'id'        => (string) $u->id,
-                    'full_name' => $u->name,
-                    'email'     => $u->email,
-                    'phone'     => $u->phone,
-                ])
-                ->values();
+            ->get(['id', 'name', 'email', 'phone'])
+            ->map(fn($u) => [
+                'id'        => (string) $u->id,
+                'full_name' => $u->name,
+                'email'     => $u->email,
+                'phone'     => $u->phone,
+            ])
+            ->values();
 
         $listingIds = $bookingsRaw->pluck('listing_id')->filter()->unique()->values();
         $listings = $listingIds->isEmpty()
             ? collect()
             : Listing::whereIn('id', $listingIds)
-                ->get(['id', 'name', 'venue_id', 'status'])
-                ->map(fn (Listing $l) => [
-                    'id'          => (string) $l->id,
-                    'name'        => $l->name,
-                    'location_id' => $l->venue_id ? (string) $l->venue_id : null,
-                    'status'      => $l->status,
-                ])
-                ->values();
+            ->get(['id', 'name', 'venue_id', 'status'])
+            ->map(fn(Listing $l) => [
+                'id'          => (string) $l->id,
+                'name'        => $l->name,
+                'location_id' => $l->venue_id ? (string) $l->venue_id : null,
+                'status'      => $l->status,
+            ])
+            ->values();
 
         // Filter dropdowns: all venues the actor can see (not just this page).
-        $filterVenuesQuery = Venue::query()->orderBy('name');
+        $filterVenuesQuery = Venue::orderBy('name');
         $actor = $request->user();
         if ($actor && ! $actor->hasAnyRole(['super_admin', 'admin'])) {
             $allowedVenueIds = DB::table('user_venue')->where('user_id', $actor->id)->pluck('venue_id');
@@ -245,7 +288,7 @@ class PaymentService
         $filterVenues = $filterVenuesQuery
             ->get(['id', 'name', 'city_id', 'country_id', 'owner_user_id', 'status', 'currency_override']);
 
-        $locations = $filterVenues->map(fn (Venue $v) => [
+        $locations = $filterVenues->map(fn(Venue $v) => [
             'id'                => (string) $v->id,
             'name'              => $v->name,
             'city_id'           => $v->city_id ? (string) $v->city_id : null,
@@ -259,14 +302,14 @@ class PaymentService
         $cities = $cityIds->isEmpty()
             ? collect()
             : \Nnjeim\World\Models\City::whereIn('id', $cityIds)
-                ->orderBy('name')
-                ->get(['id', 'name', 'country_id'])
-                ->map(fn ($c) => [
-                    'id'         => (string) $c->id,
-                    'name'       => $c->name,
-                    'country_id' => $c->country_id ? (string) $c->country_id : null,
-                ])
-                ->values();
+            ->orderBy('name')
+            ->get(['id', 'name', 'country_id'])
+            ->map(fn($c) => [
+                'id'         => (string) $c->id,
+                'name'       => $c->name,
+                'country_id' => $c->country_id ? (string) $c->country_id : null,
+            ])
+            ->values();
 
         $countryIds = $filterVenues->pluck('country_id')->filter()
             ->merge($cities->pluck('country_id'))
@@ -276,26 +319,30 @@ class PaymentService
         $countries = $countryIds->isEmpty()
             ? collect()
             : \Nnjeim\World\Models\Country::with('currency')
-                ->whereIn('id', $countryIds)
-                ->orderBy('name')
-                ->get()
-                ->map(fn ($c) => [
-                    'id'            => (string) $c->id,
-                    'name'          => $c->name,
-                    'iso_code'      => $c->iso2,
-                    'currency_code' => $c->currency?->code,
-                ])
-                ->values();
+            ->whereIn('id', $countryIds)
+            ->orderBy('name')
+            ->get()
+            ->map(fn($c) => [
+                'id'            => (string) $c->id,
+                'name'          => $c->name,
+                'iso_code'      => $c->iso2,
+                'currency_code' => $c->currency?->code,
+            ])
+            ->values();
 
         $adminUsers = \App\Models\User::query()
             ->with('roles:id,name')
-            ->whereHas('roles', fn ($q) => $q->whereIn('name', [
-                'super_admin', 'admin', 'country_admin', 'provider_admin',
-                'facility_admin', 'platform_staff',
+            ->whereHas('roles', fn($q) => $q->whereIn('name', [
+                'super_admin',
+                'admin',
+                'country_admin',
+                'provider_admin',
+                'facility_admin',
+                'platform_staff',
             ]))
             ->orderBy('name')
             ->get(['id', 'name', 'email'])
-            ->map(fn ($u) => [
+            ->map(fn($u) => [
                 'id'            => (string) $u->id,
                 'full_name'     => $u->name,
                 'business_name' => $u->name,
@@ -322,7 +369,7 @@ class PaymentService
             ->orderBy('recipient')
             ->pluck('recipient')
             ->filter()
-            ->map(fn ($r) => in_array($r, ['bookboll', '@bookboll'], true) ? '@bookboll' : $r)
+            ->map(fn($r) => in_array($r, ['bookboll', '@bookboll'], true) ? '@bookboll' : $r)
             ->unique()
             ->values();
 
@@ -336,7 +383,7 @@ class PaymentService
             )
             ->orderBy('name')
             ->get(['id', 'name', 'venue_id', 'status'])
-            ->map(fn (Listing $l) => [
+            ->map(fn(Listing $l) => [
                 'id'          => (string) $l->id,
                 'name'        => $l->name,
                 'location_id' => $l->venue_id ? (string) $l->venue_id : null,
@@ -371,13 +418,13 @@ class PaymentService
     {
         $asList = function ($value) {
             if (is_array($value)) {
-                return array_values(array_filter(array_map('strval', $value), fn ($v) => $v !== ''));
+                return array_values(array_filter(array_map('strval', $value), fn($v) => $v !== ''));
             }
             if ($value === null || $value === '') {
                 return [];
             }
 
-            return array_values(array_filter(array_map('trim', explode(',', (string) $value)), fn ($v) => $v !== ''));
+            return array_values(array_filter(array_map('trim', explode(',', (string) $value)), fn($v) => $v !== ''));
         };
 
         if ($request->filled('search')) {
@@ -451,13 +498,13 @@ class PaymentService
                         $q->orWhere(function ($qq) {
                             $qq->where(function ($x) {
                                 $x->whereNull('source_type')->orWhere('source_type', 'booking');
-                            })->whereHas('booking', fn ($b) => $b->where('origin', 'customer_game'));
+                            })->whereHas('booking', fn($b) => $b->where('origin', 'customer_game'));
                         });
                     } elseif ($src === 'venue') {
                         $q->orWhere(function ($qq) {
                             $qq->where(function ($x) {
                                 $x->whereNull('source_type')->orWhere('source_type', 'booking');
-                            })->whereHas('booking', fn ($b) => $b->where(function ($bo) {
+                            })->whereHas('booking', fn($b) => $b->where(function ($bo) {
                                 $bo->whereNull('origin')
                                     ->orWhereNotIn('origin', ['customer_game', 'class_program']);
                             }));
@@ -488,22 +535,22 @@ class PaymentService
 
         $venueIds = $asList($request->input('venue_id') ?? $request->input('location_id'));
         if ($venueIds) {
-            $query->whereHas('booking', fn ($b) => $b->whereIn('venue_id', $venueIds));
+            $query->whereHas('booking', fn($b) => $b->whereIn('venue_id', $venueIds));
         }
 
         $listingIds = $asList($request->input('listing_id'));
         if ($listingIds) {
-            $query->whereHas('booking', fn ($b) => $b->whereIn('listing_id', $listingIds));
+            $query->whereHas('booking', fn($b) => $b->whereIn('listing_id', $listingIds));
         }
 
         $cityIds = $asList($request->input('city_id'));
         if ($cityIds) {
-            $query->whereHas('booking.venue', fn ($v) => $v->whereIn('city_id', $cityIds));
+            $query->whereHas('booking.venue', fn($v) => $v->whereIn('city_id', $cityIds));
         }
 
         $countryIds = $asList($request->input('country_id'));
         if ($countryIds) {
-            $query->whereHas('booking.venue', fn ($v) => $v->whereIn('country_id', $countryIds));
+            $query->whereHas('booking.venue', fn($v) => $v->whereIn('country_id', $countryIds));
         }
 
         if ($request->filled('amount_min')) {
@@ -682,7 +729,7 @@ class PaymentService
             'booking.listing:id,name',
         ])
             ->latest()
-            ->when($search, fn ($query) => $this->applyPaymentSearch($query, $search))
+            ->when($search, fn($query) => $this->applyPaymentSearch($query, $search))
             ->when($method, function ($query, $method) {
                 $query->where('method', $method);
             })
@@ -873,7 +920,6 @@ class PaymentService
                 'payment_link_id'    => $paymentLink->id,
                 'due_bookings_count' => count($dueBookings),
             ]);
-
         } catch (Exception $e) {
             Log::error("Failed to generate payment link for booking #{$validated['booking_id']}: " . $e->getMessage(), [
                 'request'   => $request->all(),
@@ -1036,7 +1082,6 @@ class PaymentService
                         'status' => PaymentStatus::PAID,
                         'date'   => now()->format('Y-m-d'),
                     ]);
-
                 }
 
                 $bookingUpdates = [
@@ -1081,7 +1126,6 @@ class PaymentService
             ]);
 
             return sendSuccess('Payment confirmed successfully.', compact('booking'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Confirm payment failed: ' . $e->getMessage(), ['trace' => $e]);
@@ -1455,7 +1499,6 @@ class PaymentService
             ]);
 
             return sendSuccess('Booking payments updated successfully.', compact('booking'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Mark booking as paid failed: ' . $e->getMessage(), [
@@ -1724,7 +1767,6 @@ class PaymentService
                 'url' => $session->url,
                 'session_id' => $session->id,
             ]);
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Create checkout session error: ' . $e->getMessage(), [

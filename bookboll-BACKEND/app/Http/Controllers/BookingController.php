@@ -114,6 +114,11 @@ class BookingController extends Controller
         return $this->bookingService->bookingsForCalendar($request);
     }
 
+    public function calendarDashboard(Request $request)
+    {
+        return $this->bookingService->calendarDashboard($request);
+    }
+
     public function customerHistory($customerId)
     {
         return $this->bookingService->customerHistory($customerId);
