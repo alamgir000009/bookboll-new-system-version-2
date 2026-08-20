@@ -1,6 +1,5 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
-import { supabase } from '../lib/supabase.js'
 import { ChevronLeft, ChevronRight, Plus, CalendarDays, MapPin, X, Users, Mail, Phone, Clock, GraduationCap, GripVertical, Lock } from 'lucide-vue-next'
 import { useCurrentUser, activeUserId } from '../lib/currentUser.js'
 import { CAP } from '../lib/permissions.js'
@@ -8,11 +7,11 @@ import BookingDetailModal from '../components/BookingDetailModal.vue'
 import NewBookingDrawer from '../components/NewBookingDrawer.vue'
 import MultiSelect from '../components/MultiSelect.vue'
 import { CALENDAR_GRANULARITIES, toMinutes, endMinutes, toTimeStr, fmt12, fmtRange12 } from '../lib/slots.js'
-import { fetchSpecialDays, resolveSpecialDay } from '../lib/specialDays.js'
+import { resolveSpecialDay } from '../lib/specialDays.js'
+import { fetchCalendarDashboard } from '../lib/calendar.js'
 import { CalendarX, CalendarClock } from 'lucide-vue-next'
 import { createTouchReorder } from '../lib/touchReorder.js'
 import { generateProgramSessions, windDownMap } from '../lib/programSessions.js'
-import { askConfirm } from '../lib/confirm.js'
 import { pushToast } from '../lib/toast.js'
 
 const { isProviderScoped, currentOwnerUserId, can, scopeLocations, scopePrograms } = useCurrentUser()
@@ -33,43 +32,39 @@ const subscriptions = ref([])   // (program_id, status, next_billing_at) — for
 const viewingBookingId = ref(null)
 const selectedDate = ref(ymd(new Date()))
 const view = ref('day')
+const loading = ref(false)
 
 async function load() {
-  let locQ = supabase.from('locations').select('id, name').eq('status', 'active').order('sort_order')
-  let lstQ = supabase.from('listings').select('id, location_id, name, sport_category, booking_color').eq('status', 'active')
-  let bkQ  = supabase.from('bookings').select('id, listing_id, location_id, booking_date, start_time, end_time, booking_status, payment_status, payment_method, total, players, origin, notes, program_id')
+  loading.value = true
+  const range = visibleRangeForFetch()
+  const res = await fetchCalendarDashboard({
+    from: range.from,
+    to: range.to,
+  })
+  loading.value = false
 
-  if (isProviderScoped.value && currentOwnerUserId.value) {
-    locQ = locQ.eq('owner_user_id', currentOwnerUserId.value)
+  if (!res.success) {
+    pushToast(res.message || 'Could not load calendar.', 'error')
+    bookings.value = []
+    return
   }
 
-  // One-off cancelled program occurrences (the only program rows we still store).
-  const exQ = supabase.from('bookings')
-    .select('program_id, booking_date')
-    .eq('origin', 'class_program').eq('booking_status', 'cancelled')
-  // Subscriptions drive the wind-down window for paused/archived programs.
-  const subQ = supabase.from('class_subscriptions').select('program_id, status, trial_status, next_billing_at')
+  const d = res.data || {}
+  locations.value = d.locations || []
+  listings.value = d.listings || []
+  bookings.value = d.bookings || []
+  locationHours.value = d.location_hours || []
+  specialDays.value = d.special_days || []
+  programs.value = d.programs || []
+  subscriptions.value = d.subscriptions || []
+  programExceptions.value = new Set(
+    (d.program_exceptions || [])
+      .filter(r => r.program_id && r.booking_date)
+      .map(r => `${r.program_id}|${r.booking_date}`)
+  )
 
-  const [lo, ls, bk, ex, su] = await Promise.all([locQ, lstQ, bkQ, exQ, subQ])
-  locations.value = lo.data || []
-  listings.value  = ls.data || []
-  // Program sessions are derived from the recurrence now, so drop ALL class_program
-  // rows from the rendered set (legacy materialised blocks included).
-  bookings.value  = (bk.data || []).filter(b => b.origin !== 'class_program')
-  programExceptions.value = new Set((ex.data || []).map(r => `${r.program_id}|${r.booking_date}`))
-  subscriptions.value = su.data || []
-
-  // Programs = source of truth for reservations. `color` may not be migrated yet,
-  // so retry without it rather than failing the whole query.
-  const pgCols = 'id, name, owner_user_id, status, approval_status, eligibility_status, previous_snapshot, program_type, start_date, end_date, day_of_week_mask, session_time, session_duration_minutes, location_id, listing_ids, listing_id'
-  let pgRes = await supabase.from('class_programs').select(pgCols + ', color')
-  if (pgRes.error) pgRes = await supabase.from('class_programs').select(pgCols)
-  programs.value = pgRes.data || []
-
-  // Provider scope: locQ is already limited to owned venues. Drop any bookings,
-  // listings or programs that resolve to venues this user doesn't own.
+  // Provider scope: narrow to assigned venues, then cascade.
   if (isProviderScoped.value && currentOwnerUserId.value) {
-    // Narrow to the user's assigned venues first (Managers/Staff), then cascade.
     locations.value = scopeLocations(locations.value)
     const ownedLocIds = new Set(locations.value.map(l => l.id))
     bookings.value = bookings.value.filter(b => ownedLocIds.has(resolvedLocationId(b)))
@@ -77,22 +72,30 @@ async function load() {
     programs.value = scopePrograms(programs.value.filter(p =>
       p.owner_user_id === currentOwnerUserId.value && ownedLocIds.has(p.location_id)))
   }
+}
 
-  // Operating hours for the shown venues — used to shade closed slots in the day view.
-  const locIds = locations.value.map(l => l.id)
-  if (locIds.length) {
-    const [{ data: lh }, sd] = await Promise.all([
-      supabase.from('location_hours')
-        .select('location_id, day_of_week, is_open, open_time, close_time').in('location_id', locIds),
-      // Special days (closures / replacement hours) — override the weekly grid per date.
-      fetchSpecialDays({ locationIds: locIds }),
-    ])
-    locationHours.value = lh || []
-    specialDays.value = sd
-  } else {
-    locationHours.value = []
-    specialDays.value = []
+/** Visible date window for the current view (day / week / month). */
+function visibleRangeForFetch() {
+  if (view.value === 'week') {
+    const d = new Date(selectedDate.value + 'T00:00:00')
+    const monday = new Date(d)
+    monday.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+    const sunday = new Date(monday)
+    sunday.setDate(monday.getDate() + 6)
+    return { from: ymd(monday), to: ymd(sunday) }
   }
+  if (view.value === 'month') {
+    const d = new Date(selectedDate.value + 'T00:00:00')
+    const year = d.getFullYear(), month = d.getMonth()
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const startPad = (firstDay.getDay() + 6) % 7
+    const start = new Date(year, month, 1 - startPad)
+    const endPad = (7 - ((lastDay.getDay() + 6) % 7) - 1 + 7) % 7
+    const end = new Date(year, month, lastDay.getDate() + endPad)
+    return { from: ymd(start), to: ymd(end) }
+  }
+  return { from: selectedDate.value, to: selectedDate.value }
 }
 
 // ── Quick add booking (from the "Quick Booking" button or a calendar slot) ───
@@ -138,46 +141,21 @@ function onBookingSaved() {
 // ── Program session drill-down: show subscribers/attendees ───────────────────
 const sessionModal = ref(null)   // { bk, program, subscribers, loading }
 async function openProgramSession(bk) {
-  sessionModal.value = { bk, program: null, subscribers: [], loading: true }
-  const [pgRes, subRes] = await Promise.all([
-    bk.program_id ? supabase.from('class_programs').select('*').eq('id', bk.program_id).maybeSingle() : Promise.resolve({ data: null }),
-    bk.program_id ? supabase.from('class_subscriptions').select('*').eq('program_id', bk.program_id) : Promise.resolve({ data: [] }),
-  ])
-  // Active or in-trial subscribers will be attending
-  const subs = (subRes.data || []).filter(s => s.status === 'active' || s.trial_status === 'in_trial')
-  sessionModal.value = { bk, program: pgRes.data, subscribers: subs, loading: false }
+  // Class programs / subscriptions are not on Laravel yet — show an empty sheet.
+  sessionModal.value = {
+    bk,
+    program: programs.value.find(p => p.id === bk.program_id) || { name: bk.notes || 'Program' },
+    subscribers: (subscriptions.value || []).filter(s =>
+      s.program_id === bk.program_id && (s.status === 'active' || s.trial_status === 'in_trial')),
+    loading: false,
+  }
 }
 function closeSession() { sessionModal.value = null }
 
 const canManagePrograms = computed(() => can(CAP.MANAGE_LISTINGS))
-// Cancel a single occurrence: store one cancelled row; derivation skips that date.
+// Cancel a single occurrence — deferred until class programs live on Laravel.
 async function cancelProgramSession() {
-  const bk = sessionModal.value?.bk
-  if (!bk?.program_id || !bk.booking_date) return
-  const nice = new Date(bk.booking_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
-  if (!(await askConfirm({
-    title: 'Cancel this session?',
-    message: `The ${sessionModal.value.program?.name || 'program'} session on ${nice} will be removed from the calendar and that slot freed. The program keeps running on all other dates.`,
-    confirmText: 'Cancel session', cancelText: 'Keep it', danger: false,
-  }))) return
-  const { error } = await supabase.from('bookings').insert({
-    program_id: bk.program_id,
-    listing_id: bk.listing_id || null,
-    location_id: bk.location_id || null,
-    booking_date: bk.booking_date,
-    start_time: bk.start_time,
-    end_time: bk.end_time,
-    origin: 'class_program',
-    booking_status: 'cancelled',
-    payment_status: 'skipped',
-    payment_method: 'payment_skipped',
-    notes: sessionModal.value.program?.name || bk.notes || '',
-    players: 0, total: 0,
-  })
-  if (error) { pushToast('Could not cancel the session.', 'error'); return }
-  programExceptions.value = new Set([...programExceptions.value, `${bk.program_id}|${bk.booking_date}`])
-  pushToast('Session cancelled for that date', 'success')
-  closeSession()
+  pushToast('Program session cancel is not available until programs are migrated to Laravel.', 'error')
 }
 
 // Route a calendar click to the right modal: program block → session; else booking detail
@@ -189,6 +167,8 @@ onMounted(load)
 // Reload when the active user/business changes (demo role-switcher) so the
 // calendar never shows another business's venues or bookings.
 watch(currentOwnerUserId, load)
+// Refetch when the visible date window changes (day / week / month navigation).
+watch([selectedDate, view], () => { load() })
 
 // Day-view time granularity (60 / 30 / 15 min). The grid always covers the full
 // 24-hour day (00:00–24:00) so every slot is reachable; closed hours are shaded.
