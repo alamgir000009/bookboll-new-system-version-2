@@ -1,11 +1,19 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
 import { askConfirm } from '../lib/confirm.js'
 import { pushToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
 import { fmt12, fmtRange12, toMinutes, endMinutes } from '../lib/slots.js'
+import {
+  fetchSpecialDaysDashboard,
+  createSpecialDays,
+  updateSpecialDay,
+  deleteSpecialDay,
+  clearSpecialDays,
+  countSpecialDayConflicts,
+  firstError,
+} from '../lib/specialDays.js'
 import {
   CalendarDays, X, Trash2, Pencil as Edit2,
   ChevronLeft, ChevronRight, Ban, Clock,
@@ -14,7 +22,7 @@ import {
 import { useCurrentUser } from '../lib/currentUser.js'
 import MultiSelect from '../components/MultiSelect.vue'
 
-const { isSuperAdmin, isCountryAdmin, currentOwnerUserId } = useCurrentUser()
+const { isSuperAdmin, isCountryAdmin, currentOwnerUserId, isProviderScoped, scopeLocations } = useCurrentUser()
 const isPlatformAdmin = computed(() => isSuperAdmin.value || isCountryAdmin.value)
 
 // ── data ──────────────────────────────────────────────────────────────────────
@@ -123,15 +131,14 @@ async function runClear() {
   clearing.value = true
   try {
     const ids = rows.map(r => r.id)
-    for (let i = 0; i < ids.length; i += 100) {
-      const { error } = await supabase.from('special_days').delete().in('id', ids.slice(i, i + 100))
-      if (error) throw error
-    }
+    const res = await clearSpecialDays(ids)
+    if (!res.success) throw new Error(firstError(res, 'Could not clear special days.'))
     pushToast(`Cleared ${ids.length} special day${ids.length > 1 ? 's' : ''}.`, 'success')
     showClear.value = false
     await load()
-  } catch { pushToast('Could not clear special days.', 'error') }
-  finally { clearing.value = false }
+  } catch (e) {
+    pushToast(e?.message || 'Could not clear special days.', 'error')
+  } finally { clearing.value = false }
 }
 
 // ── existing-bookings conflict check (shown in the configure modal) ───────────
@@ -142,32 +149,38 @@ async function checkConflicts() {
   const locIds = modalMode.value === 'create' ? targetLocIds.value
     : (form.value.location_id ? [form.value.location_id] : [])
   if (!locIds.length) return
-  let q = supabase.from('bookings').select('id', { count: 'exact', head: true })
-    .in('booking_date', selDates.value).in('location_id', locIds)
-    .neq('booking_status', 'cancelled')
-  if (modalMode.value === 'create' && selListingIds.value.length) q = q.in('listing_id', selListingIds.value)
-  else if (modalMode.value === 'edit' && form.value.listing_id) q = q.eq('listing_id', form.value.listing_id)
-  const { count } = await q
-  conflictCount.value = count || 0
+  const listingIds = modalMode.value === 'create'
+    ? selListingIds.value
+    : (form.value.listing_id ? [form.value.listing_id] : [])
+  conflictCount.value = await countSpecialDayConflicts({
+    dates: selDates.value,
+    locationIds: locIds,
+    listingIds,
+  })
 }
 watch([showModal, selLocIds, selListingIds, () => form.value.location_id, () => form.value.listing_id], checkConflicts, { deep: true })
 
 // ── load ──────────────────────────────────────────────────────────────────────
 async function load() {
-  let locQ = supabase.from('locations').select('*').order('name')
-  let liQ  = supabase.from('listings').select('id, name, location_id, base_price, sport_category').order('name')
-  if (!isPlatformAdmin.value && currentOwnerUserId.value) {
-    locQ = locQ.eq('owner_user_id', currentOwnerUserId.value)
+  const res = await fetchSpecialDaysDashboard()
+  if (!res.success) {
+    pushToast(res.message || 'Could not load special days.', 'error')
+    days.value = []
+    locations.value = []
+    listings.value = []
+    return
   }
-  const [d, l, li] = await Promise.all([
-    supabase.from('special_days').select('*').order('date', { ascending: true }),
-    locQ, liQ,
-  ])
-  locations.value = l.data || []
+  const d = res.data || {}
+  let locs = d.locations || []
+  if (isProviderScoped.value) {
+    locs = scopeLocations(locs)
+  } else if (!isPlatformAdmin.value && currentOwnerUserId.value) {
+    locs = locs.filter(l => l.owner_user_id === currentOwnerUserId.value)
+  }
+  locations.value = locs
   const ownedLocIds = new Set(locations.value.map(x => x.id))
-  // Scope listings & special days to the provider's own locations
-  listings.value = (li.data || []).filter(x => isPlatformAdmin.value || ownedLocIds.has(x.location_id))
-  days.value = (d.data || []).filter(x => isPlatformAdmin.value || ownedLocIds.has(x.location_id))
+  listings.value = (d.listings || []).filter(x => isPlatformAdmin.value || ownedLocIds.has(x.location_id))
+  days.value = (d.special_days || []).filter(x => isPlatformAdmin.value || ownedLocIds.has(x.location_id))
 }
 const route = useRoute()
 // Arriving from the listing form's "Add a Special Day": this page is date-first
@@ -332,10 +345,11 @@ async function save() {
       is_closed: form.value.type === 'holiday',
       open_time: form.value.type === 'custom' ? form.value.open_time : null,
       close_time: form.value.type === 'custom' ? form.value.close_time : null,
-      ...pricing, country_id: null,
+      ...pricing,
     }
+    let res
     if (editing.value) {
-      await supabase.from('special_days').update({ ...base, date: selDates.value[0] }).eq('id', editing.value.id)
+      res = await updateSpecialDay(editing.value.id, { ...base, date: selDates.value[0] })
     } else if (selListingIds.value.length) {
       // Listing-specific rows: one per (listing × date); each row carries its
       // listing's own venue so precedence resolves correctly.
@@ -345,21 +359,22 @@ async function save() {
         if (!locId) continue
         for (const date of selDates.value) rows.push({ ...base, location_id: locId, listing_id: lid, date })
       }
-      await supabase.from('special_days').insert(rows)
+      res = await createSpecialDays(rows)
     } else {
       // Venue-wide rows: one per (venue × date). Empty venue selection = all.
       const rows = []
       for (const locId of targetLocIds.value)
         for (const date of selDates.value) rows.push({ ...base, location_id: locId, listing_id: null, date })
-      await supabase.from('special_days').insert(rows)
+      res = await createSpecialDays(rows)
     }
+    if (!res.success) throw new Error(firstError(res, 'Could not save the special day.'))
     clearDirty()
     pushToast(editing.value ? 'Special day updated' : `Special day${selDates.value.length > 1 ? 's' : ''} saved`, 'success')
     closeModal()
     clearSelection()
     await load()
   } catch (e) {
-    pushToast('Could not save the special day.', 'error')
+    pushToast(e?.message || 'Could not save the special day.', 'error')
   } finally { saving.value = false }
 }
 async function remove(id) {
@@ -368,8 +383,8 @@ async function remove(id) {
     message: 'This special day will be removed and the normal schedule will apply on that date.',
     confirmText: 'Delete',
   }))) return
-  const { error } = await supabase.from('special_days').delete().eq('id', id)
-  if (error) { pushToast('Could not delete special day.', 'error'); return }
+  const res = await deleteSpecialDay(id)
+  if (!res.success) { pushToast(firstError(res, 'Could not delete special day.'), 'error'); return }
   pushToast('Special day deleted', 'success')
   load()
 }

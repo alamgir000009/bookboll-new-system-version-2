@@ -1,6 +1,7 @@
 /**
  * specialDays.js — single source of truth for how Special Days affect
- * SLOT AVAILABILITY on a concrete date.
+ * SLOT AVAILABILITY on a concrete date, plus Laravel admin CRUD helpers
+ * for apps/admin SpecialDays.vue.
  *
  * A special_days row scopes to a whole venue (listing_id NULL) or to one
  * listing inside it. Two kinds:
@@ -13,16 +14,11 @@
  *   • price_multiplier ≠ 1    → the listing's resolved price (base or dynamic)
  *                               is multiplied (e.g. 1.25 = +25%).
  *   • neither                 → the listing form's base & dynamic pricing apply
- *                               unchanged (the default, and the only pre-2026-07
- *                               behavior). Apply via applySpecialDayPrice().
+ *                               unchanged.
  *
  * Precedence on a given date (most specific wins):
  *   1. listing-specific row  (closed beats custom)
  *   2. venue-wide row        (closed beats custom)
- *
- * The same rules are mirrored server-side in bb_available_slots /
- * bb_hold_slots (supabase/migrations/20260742000000_special_days_availability.sql)
- * so the WhatsApp bot and the hold gate stay consistent — keep them in sync.
  */
 import { apiFetch } from './api.js'
 import { toMinutes, endMinutes, generateSlots } from './slots.js'
@@ -31,6 +27,11 @@ import { toMinutes, endMinutes, generateSlots } from './slots.js'
 // the same 06:00–23:00 window generateSlots() defaults to.
 const DEFAULT_OPEN = 6 * 60
 const DEFAULT_CLOSE = 23 * 60
+
+/** Full Special Days page payload: locations, listings, special_days. */
+export async function fetchSpecialDaysDashboard() {
+  return apiFetch('/admin/special-days/dashboard')
+}
 
 /** Fetch special_days rows for one venue / a set of venues, optionally date-bounded. */
 export async function fetchSpecialDays({ locationId, locationIds, date, from, to, listingId } = {}) {
@@ -45,6 +46,59 @@ export async function fetchSpecialDays({ locationId, locationIds, date, from, to
     },
   })
   return res.success ? (res.data?.special_days || []) : []
+}
+
+/** Create / upsert many special-day rows (venue×date or listing×date). */
+export async function createSpecialDays(rows) {
+  return apiFetch('/admin/special-days/dashboard', {
+    method: 'POST',
+    body: { rows },
+  })
+}
+
+/** Update one special day (id may be composite `dayId-blockId`). */
+export async function updateSpecialDay(id, body) {
+  return apiFetch(`/admin/special-days/dashboard/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body,
+  })
+}
+
+/** Delete one special day (id may be composite). */
+export async function deleteSpecialDay(id) {
+  return apiFetch(`/admin/special-days/dashboard/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+/** Bulk delete by UI ids. */
+export async function clearSpecialDays(ids) {
+  return apiFetch('/admin/special-days/dashboard-clear', {
+    method: 'POST',
+    body: { ids },
+  })
+}
+
+/** Count non-cancelled bookings overlapping the configure scope. */
+export async function countSpecialDayConflicts({ dates, locationIds, listingIds } = {}) {
+  const res = await apiFetch('/admin/special-days/dashboard-conflicts', {
+    method: 'POST',
+    body: {
+      dates: dates || [],
+      location_ids: locationIds || [],
+      listing_ids: listingIds?.length ? listingIds : undefined,
+    },
+  })
+  if (!res.success) return 0
+  return Number(res.data?.count) || 0
+}
+
+export function firstError(res, fallback = 'Something went wrong.') {
+  if (!res) return fallback
+  const errors = res.errors || {}
+  const first = Object.values(errors).flat().find(Boolean)
+  if (first) return String(first)
+  return res.message || fallback
 }
 
 // A row is usable when it closes the day or carries a valid replacement window.
