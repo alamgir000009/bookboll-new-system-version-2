@@ -1,29 +1,29 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
+import { fetchPaymentsDashboard } from '../lib/payments.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
-import { Search, Download, DollarSign, TrendingUp, Wallet, RotateCcw, Check, X, Building2, SlidersHorizontal, ChevronUp, ChevronDown, ArrowUpDown, Eye, Printer, ChevronRight, GraduationCap, CalendarDays } from 'lucide-vue-next'
+import { Search, Download, DollarSign, TrendingUp, Wallet, RotateCcw, Check, X, Building2, SlidersHorizontal, ChevronUp, ChevronDown, ArrowUpDown, Eye, Printer, ChevronRight, GraduationCap, CalendarDays, Loader } from 'lucide-vue-next'
 import MultiSelect from '../components/MultiSelect.vue'
 import FilterBar from '../components/FilterBar.vue'
-import { idIn } from '../lib/geoFilter.js'
 import { bookingKind } from '../lib/bookingMeta.js'
 import PaginationBar from '../components/PaginationBar.vue'
-import { usePagination } from '../lib/usePagination.js'
 import { fmt12 } from '../lib/slots.js'
 import { downloadCSV } from '../lib/useExport.js'
 import { usePremium } from '../lib/premium.js'
 import { CAP } from '../lib/permissions.js'
 import BookingDetailModal from '../components/BookingDetailModal.vue'
+import { pushToast } from '../lib/toast.js'
 
 const router = useRouter()
 
-const { isSuperAdmin, isProviderScoped, currentOwnerUserId, currentUser, role, can, assignedLocationIds, assignedProgramIds } = useCurrentUser()
+const { isSuperAdmin, can } = useCurrentUser()
 const canExport = computed(() => can(CAP.EXPORT_PAYMENTS))
 const { isPremium, requirePremium } = usePremium()   // exports are a Premium feature for providers
 
 const payments = ref([])
+const relatedPayments = ref([])
 const bookings = ref([])
 const customers = ref([])
 const listings = ref([])
@@ -33,27 +33,19 @@ const countries = ref([])
 const adminUsers = ref([])
 const subscriptions = ref([])
 const programs = ref([])
+const loading = ref(false)
+const serverStats = ref({ total: [], to_bookboll: [], to_provider: [], pending: 0 })
+const filterOptionCurrencies = ref([])
+const filterOptionRecipients = ref([])
 
 // Platform jurisdiction (country_admin / platform_staff only see their countries' venues)
-const { allowedLocationIds, inJurisdictionOwner, scopeCountries, scopeCities } = useJurisdiction({ locations, cities })
+const { scopeCountries, scopeCities } = useJurisdiction({ locations, cities })
 // Filter dropdown options honour the jurisdiction too (a country admin's
 // filters must not advertise other countries).
 const jCountries = computed(() => scopeCountries(countries.value))
 const jCities = computed(() => scopeCities(cities.value))
-// FilterBar geo options derive from the payments actually visible to this viewer
-// (not the whole platform): a single-country provider sees only their country, a
-// country admin only geos where they have payment rows. Falls back to the
-// jurisdiction lists while loading so the controls aren't empty.
-const fbCountries = computed(() => {
-  const used = new Set(providerScopedPayments.value.map(paymentCountryId).filter(Boolean))
-  const rows = jCountries.value.filter(c => used.has(c.id))
-  return rows.length ? rows : jCountries.value
-})
-const fbCities = computed(() => {
-  const used = new Set(providerScopedPayments.value.map(paymentCityId).filter(Boolean))
-  const rows = jCities.value.filter(c => used.has(c.id))
-  return rows.length ? rows : jCities.value
-})
+const fbCountries = computed(() => jCountries.value)
+const fbCities = computed(() => jCities.value)
 
 // ── Filters ──────────────────────────────────────────────────────────────────
 const search = ref('')
@@ -74,42 +66,125 @@ const dateFrom = ref('')
 const dateTo = ref('')
 const filtersOpen = ref(true)
 
-// ── Sort ─────────────────────────────────────────────────────────────────────
+// ── Sort + Laravel pagination (Audit Logs pattern) ───────────────────────────
 const sortKey = ref('date')
 const sortDir = ref('desc')
+const pmtPage = ref(1)
+const pmtPerPage = ref(25)
+const pmtTotal = ref(0)
+const pmtTotalPages = computed(() => Math.max(1, Math.ceil(pmtTotal.value / pmtPerPage.value) || 1))
+const pmtVisiblePages = computed(() => {
+  const total = pmtTotalPages.value
+  const cur = pmtPage.value
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pages = new Set([1, total, cur])
+  if (cur > 1) pages.add(cur - 1)
+  if (cur < total) pages.add(cur + 1)
+  return Array.from(pages).sort((a, b) => a - b)
+})
 
 function setSort(key) {
   if (sortKey.value === key) sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
   else { sortKey.value = key; sortDir.value = 'desc' }
+  pmtPage.value = 1
+  load()
 }
 
 // ── Accept payment (delegates to BookingDetailModal's Accept Payment sheet) ───
 const collectPmtId = ref(null)   // pending installment to open the Accept sheet on
 
-async function load() {
-  const [p, b, c, l, lo, au, sb, pg, pg2, ct] = await Promise.all([
-    supabase.from('booking_payments').select('*'),
-    supabase.from('bookings').select('*'),
-    supabase.from('customers').select('*'),
-    supabase.from('listings').select('*'),
-    supabase.from('locations').select('*'),
-    supabase.from('admin_users').select('id, full_name, business_name, role, owner_user_id, username'),
-    supabase.from('class_subscriptions').select('*'),
-    supabase.from('class_programs').select('*'),
-    supabase.from('cities').select('id, name, country_id'),
-    supabase.from('countries').select('id, name, iso_code'),
-  ])
-  payments.value = p.data || []
-  bookings.value = b.data || []
-  customers.value = c.data || []
-  listings.value = l.data || []
-  locations.value = lo.data || []
-  adminUsers.value = au.data || []
-  subscriptions.value = sb.data || []
-  programs.value = pg.data || []
-  cities.value = pg2.data || []
-  countries.value = ct.data || []
+function csvParam(arr) {
+  if (!Array.isArray(arr) || !arr.length) return undefined
+  return arr.map(String).join(',')
 }
+
+let searchTimer
+async function load() {
+  loading.value = true
+  const res = await fetchPaymentsDashboard({
+    page: pmtPage.value,
+    records_per_page: pmtPerPage.value,
+    search: search.value.trim() || undefined,
+    status: csvParam(statusFilter.value),
+    method: csvParam(methodFilter.value),
+    type: csvParam(typeFilter.value),
+    source: csvParam(sourceFilter.value),
+    recipient: csvParam(recipientFilter.value),
+    currency: csvParam(currencyFilter.value),
+    location_id: csvParam(locationFilter.value),
+    listing_id: csvParam(listingFilter.value),
+    country_id: csvParam(filterCountry.value),
+    city_id: csvParam(filterCity.value),
+    amount_min: amountMin.value !== '' ? amountMin.value : undefined,
+    amount_max: amountMax.value !== '' ? amountMax.value : undefined,
+    from_date: dateFrom.value || undefined,
+    to_date: dateTo.value || undefined,
+    sort: sortKey.value,
+    sort_dir: sortDir.value,
+  })
+  loading.value = false
+
+  if (!res.success) {
+    pushToast(res.message || 'Could not load payments.', 'error')
+    payments.value = []
+    relatedPayments.value = []
+    pmtTotal.value = 0
+    return
+  }
+
+  const d = res.data || {}
+  const paginator = d.payments
+  const rows = Array.isArray(paginator?.data)
+    ? paginator.data
+    : (Array.isArray(paginator) ? paginator : [])
+  payments.value = rows
+  relatedPayments.value = d.related_payments || []
+  pmtTotal.value = Number(paginator?.total ?? rows.length) || 0
+  if (paginator?.current_page) pmtPage.value = Number(paginator.current_page)
+
+  bookings.value = d.bookings || []
+  customers.value = d.customers || []
+  listings.value = d.listings || []
+  locations.value = d.locations || []
+  adminUsers.value = d.admin_users || []
+  subscriptions.value = d.subscriptions || []
+  programs.value = d.programs || []
+  cities.value = d.cities || []
+  countries.value = d.countries || []
+  if (d.stats) serverStats.value = d.stats
+  const opts = d.filter_options || {}
+  if (Array.isArray(opts.currencies)) filterOptionCurrencies.value = opts.currencies
+  if (Array.isArray(opts.recipients)) filterOptionRecipients.value = opts.recipients
+}
+
+function scheduleLoad() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    pmtPage.value = 1
+    load()
+  }, 300)
+}
+
+function pmtGoTo(p) {
+  pmtPage.value = p
+  load()
+}
+
+function reloadFromFilters() {
+  pmtPage.value = 1
+  load()
+}
+
+watch([
+  statusFilter, sourceFilter, methodFilter, typeFilter, recipientFilter,
+  currencyFilter, locationFilter, listingFilter, programFilter,
+  filterCountry, filterCity, amountMin, amountMax, dateFrom, dateTo,
+], () => reloadFromFilters(), { deep: true })
+watch(search, () => scheduleLoad())
+watch(pmtPerPage, () => {
+  pmtPage.value = 1
+  load()
+})
 
 onMounted(load)
 
@@ -202,60 +277,52 @@ const paymentCountryId = (p) => {
   return cities.value.find(c => c.id === cityId)?.country_id || null
 }
 
-// ── Filter option lists (dynamic from data) ───────────────────────────────────
+// ── Filter option lists (from server lookups / filter_options) ────────────────
 const uniqueRecipients = computed(() => {
-  // Merge the legacy 'bookboll' and '@bookboll' spellings into ONE option (the
-  // predicate below expands it back to both raw values).
-  const set = new Set(payments.value.map(p => p.recipient).filter(Boolean)
-    .map(r => isBookbollRecipient(r) ? '@bookboll' : r))
+  const set = new Set(filterOptionRecipients.value.map(r => isBookbollRecipient(r) ? '@bookboll' : r))
   return [...set].sort().map(r => ({ value: r, label: r }))
 })
 
 const uniqueLocations = computed(() =>
   locations.value
-    .filter(l => providerScopedPayments.value.some(p => paymentLocationId(p) === l.id))
+    .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(l => ({ value: l.id, label: l.name }))
 )
 
 const uniqueCurrencies = computed(() => {
-  // Only currencies present in the rows THIS viewer can see — a UAE provider
-  // shouldn't be offered EGP just because another business uses it.
-  const set = new Set(providerScopedPayments.value.map(p => p.currency).filter(Boolean))
+  const set = new Set(filterOptionCurrencies.value.filter(Boolean))
   return [...set].sort().map(c => ({ value: c, label: c }))
 })
 
-const uniqueListings = computed(() => {
-  const ids = new Set(providerScopedPayments.value.map(paymentListingId).filter(Boolean))
-  return listings.value
-    .filter(l => ids.has(l.id))
+const uniqueListings = computed(() =>
+  listings.value
+    .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(l => ({ value: l.id, label: l.name }))
-})
+)
 
 const uniquePrograms = computed(() => {
-  const ids = new Set(providerScopedPayments.value.map(paymentProgramId).filter(Boolean))
+  const ids = new Set(payments.value.map(paymentProgramId).filter(Boolean))
   return programs.value
     .filter(p => ids.has(p.id))
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     .map(p => ({ value: p.id, label: p.name || 'Program' }))
 })
 
-const uniqueCities = computed(() => {
-  const usedCityIds = new Set(providerScopedPayments.value.map(paymentCityId).filter(Boolean))
-  return cities.value
-    .filter(c => usedCityIds.has(c.id))
+const uniqueCities = computed(() =>
+  jCities.value
+    .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(c => ({ value: c.id, label: c.name }))
-})
+)
 
-const uniqueCountries = computed(() => {
-  const usedCountryIds = new Set(providerScopedPayments.value.map(paymentCountryId).filter(Boolean))
-  return countries.value
-    .filter(c => usedCountryIds.has(c.id))
+const uniqueCountries = computed(() =>
+  jCountries.value
+    .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
     .map(c => ({ value: c.id, label: c.name }))
-})
+)
 
 // ── Active filter count ───────────────────────────────────────────────────────
 const activeFilterCount = computed(() => [
@@ -291,118 +358,18 @@ function clearAllFilters() {
   amountMax.value = ''
   dateFrom.value = ''
   dateTo.value = ''
+  pmtPage.value = 1
+  load()
 }
 
-// Payments the current user is allowed to see (provider scope only — before UI filters).
-// Filter-option lists derive from this so providers never see other businesses' data.
-const providerScopedPayments = computed(() => {
-  let list = payments.value
-  // Business scope: a provider only sees payments tied to their own venues/programs.
-  if (isProviderScoped.value && currentOwnerUserId.value) {
-    const myBookingIds = new Set(
-      bookings.value
-        .filter(b => {
-          const listing = listings.value.find(l => l.id === b.listing_id)
-          if (!listing) return false
-          const loc = locations.value.find(l => l.id === listing.location_id)
-          return loc?.owner_user_id === currentOwnerUserId.value
-        })
-        .map(b => b.id)
-    )
-    list = list.filter(p => p.source_type === 'subscription'
-      ? subOwnerUserId(p) === currentOwnerUserId.value
-      : myBookingIds.has(p.booking_id))
-  }
-  // Platform jurisdiction: country_admin / platform_staff only see payments at
-  // venues inside their scope (null = super admin / provider-side, no filter here).
-  const allowed = allowedLocationIds.value
-  if (allowed) list = list.filter(p => allowed.has(paymentLocationId(p)) || inJurisdictionOwner(paymentOwnerUserId(p)))
-  // Per-user scope: Managers/Staff pinned to specific locations / programs.
-  const locIds = assignedLocationIds.value
-  if (locIds.length) {
-    const set = new Set(locIds)
-    list = list.filter(p => set.has(paymentLocationId(p)))
-  }
-  const progIds = assignedProgramIds.value
-  if (progIds.length) {
-    const set = new Set(progIds)
-    list = list.filter(p => {
-      if (p.source_type !== 'subscription') return true
-      const sub = subscriptions.value.find(s => s.id === p.subscription_id)
-      return set.has(sub?.program_id)
-    })
-  }
-  return list
-})
-
-// ── Filtered + sorted list ────────────────────────────────────────────────────
-const filteredPayments = computed(() => {
-  let list = providerScopedPayments.value
-
-  const q = search.value.toLowerCase()
-  const minAmt = amountMin.value !== '' ? Number(amountMin.value) : null
-  const maxAmt = amountMax.value !== '' ? Number(amountMax.value) : null
-  const from = dateFrom.value ? new Date(dateFrom.value) : null
-  const to = dateTo.value ? new Date(dateTo.value + 'T23:59:59') : null
-
-  list = list.filter(p => {
-    if (q) {
-      const cname = paymentCustomer(p).toLowerCase()
-      const lname = paymentSource(p).toLowerCase()
-      const locn = paymentLocation(p).toLowerCase()
-      const ref = paymentRef(p).toLowerCase()
-      if (!cname.includes(q) && !lname.includes(q) && !locn.includes(q) && !ref.includes(q)) return false
-    }
-    if (statusFilter.value.length && !statusFilter.value.includes(p.status)) return false
-    if (sourceFilter.value.length && !sourceFilter.value.includes(paymentKind(p))) return false
-    if (methodFilter.value.length && !methodFilter.value.includes(p.method)) return false
-    if (typeFilter.value.length) {
-      if (!typeFilter.value.includes(normPaymentType(p.payment_type))) return false
-    }
-    if (recipientFilter.value.length) {
-      // '@bookboll' selection matches every legacy spelling of the platform recipient
-      const norm = isBookbollRecipient(p.recipient) ? '@bookboll' : p.recipient
-      if (!recipientFilter.value.includes(norm)) return false
-    }
-    if (currencyFilter.value.length && !currencyFilter.value.includes(p.currency)) return false
-    if (locationFilter.value.length && !locationFilter.value.includes(paymentLocationId(p))) return false
-    if (listingFilter.value.length && !listingFilter.value.includes(paymentListingId(p))) return false
-    if (programFilter.value.length && !programFilter.value.includes(paymentProgramId(p))) return false
-    if (!idIn(paymentCountryId(p), filterCountry.value)) return false
-    if (!idIn(paymentCityId(p), filterCity.value)) return false
-    if (minAmt !== null && Number(p.amount) < minAmt) return false
-    if (maxAmt !== null && Number(p.amount) > maxAmt) return false
-    const d = paymentDate(p)
-    if (from && d < from) return false
-    if (to && d > to) return false
-    return true
-  })
-
-  // Sort
-  list = [...list].sort((a, b) => {
-    let av, bv
-    if (sortKey.value === 'date') { av = paymentDate(a); bv = paymentDate(b) }
-    else if (sortKey.value === 'amount') { av = Number(a.amount); bv = Number(b.amount) }
-    else if (sortKey.value === 'customer') { av = paymentCustomer(a); bv = paymentCustomer(b) }
-    else if (sortKey.value === 'status') { av = a.status; bv = b.status }
-    else if (sortKey.value === 'method') { av = a.method; bv = b.method }
-    else if (sortKey.value === 'recipient') { av = a.recipient; bv = b.recipient }
-    else if (sortKey.value === 'source') { av = paymentSource(a); bv = paymentSource(b) }
-    else { av = paymentDate(a); bv = paymentDate(b) }
-    if (av < bv) return sortDir.value === 'asc' ? -1 : 1
-    if (av > bv) return sortDir.value === 'asc' ? 1 : -1
-    return 0
-  })
-
-  return list
-})
-
-const { page: pmtPage, perPage: pmtPerPage, totalPages: pmtTotalPages, paginated: paginatedPayments, visiblePages: pmtVisiblePages, goTo: pmtGoTo } = usePagination(filteredPayments)
+// Current page rows from Laravel (already filtered + sorted + paginated).
+const paginatedPayments = computed(() => payments.value)
 
 // ── Export ────────────────────────────────────────────────────────────────────
 const showExportModal = ref(false)
 function doExport(useFilters) {
-  const rows = useFilters ? filteredPayments.value : providerScopedPayments.value
+  // Export current page rows for now; full export stays on the Premium/old path later.
+  const rows = payments.value
   downloadCSV(rows, [
     { label: 'ID',         key: 'id' },
     { label: 'Date',       fn: r => (r.paid_at || r.created_at || '').slice(0,10) },
@@ -419,27 +386,13 @@ function doExport(useFilters) {
   showExportModal.value = false
 }
 
-// KPI totals are per-currency (money in different currencies is NEVER summed
-// into one number). Each KPI renders one line per currency present.
-function sumByCur(list) {
-  const m = new Map()
-  for (const p of list) {
-    const c = p.currency || 'AED'
-    m.set(c, (m.get(c) || 0) + Number(p.amount || 0))
-  }
-  return [...m.entries()].sort().map(([c, v]) => `${c} ${v.toLocaleString()}`)
-}
-const totals = computed(() => {
-  const list = filteredPayments.value
-  const paid = list.filter(p => p.status === 'paid')
-  return {
-    total:      sumByCur(paid),
-    toBookboll: sumByCur(paid.filter(p => isBookbollRecipient(p.recipient))),
-    toProvider: sumByCur(paid.filter(p => !isBookbollRecipient(p.recipient))),
-    pending:    list.filter(p => p.status === 'pending').length,
-  }
-})
-const kpiLines = (arr) => arr.length ? arr : ['—']
+const totals = computed(() => ({
+  total:      serverStats.value.total || [],
+  toBookboll: serverStats.value.to_bookboll || [],
+  toProvider: serverStats.value.to_provider || [],
+  pending:    serverStats.value.pending || 0,
+}))
+const kpiLines = (arr) => (arr && arr.length) ? arr : ['—']
 
 // ── Badge/label helpers ───────────────────────────────────────────────────────
 const typeBadge = (t) => ({ deposit:'badge-info', remaining:'badge-warning', full:'badge-success', booking:'badge-success', subscription_commission:'badge-info', subscription_earning:'badge-success' }[t] || 'badge-neutral')
@@ -447,7 +400,7 @@ const statusBadge = (s) => ({ paid:'badge-success', pending:'badge-warning', ref
 const recipientBadge = (r) => isBookbollRecipient(r) ? 'badge-info' : 'badge-neutral'
 const typeLabel = (t) => ({ deposit:'Deposit', remaining:'Remaining', full:'Full Payment', booking:'Full Payment', subscription_commission:'Commission', subscription_earning:'Subscription' }[t] || t)
 const statusLabel = (s) => ({ paid:'Paid', pending:'Pending', refunded:'Refunded', on_hold:'On Hold', available_for_payout:'Available for Payout' }[s] || s)
-const methodLabel = (m) => ({ online:'Online', cash:'Cash', card:'Card', cheque:'Cheque', wire_transfer:'Wire Transfer' }[m] || m)
+const methodLabel = (m) => ({ online:'Online', cash:'Cash', card:'Card', credit_card:'Card', cheque:'Cheque', wire_transfer:'Wire Transfer' }[m] || m)
 
 // ── Sort icon helper ──────────────────────────────────────────────────────────
 function sortIcon(key) { return sortKey.value === key ? (sortDir.value === 'asc' ? 'asc' : 'desc') : 'none' }
@@ -467,7 +420,8 @@ const detailSubscription = computed(() => {
 const detailRelatedPayments = computed(() => {
   const p = detailPayment.value
   if (!p) return []
-  return payments.value
+  const pool = relatedPayments.value.length ? relatedPayments.value : payments.value
+  return pool
     .filter(x => p.subscription_id ? x.subscription_id === p.subscription_id : (p.booking_id && x.booking_id === p.booking_id))
     .sort((a, b) => paymentDate(a) - paymentDate(b))
 })
@@ -535,24 +489,27 @@ function printReceipt(p) {
   w.document.close()
 }
 
-// ── Mark-as-paid ─────────────────────────────────────────────────────────────
+// ── Mark-as-paid / Accept payment ────────────────────────────────────────────
+// Pending offline booking installments can be collected via BookingDetailModal's
+// Accept Payment sheet → PUT /admin/bookings/{id}/payments/{paymentId}/collect.
 function canMarkPaid(payment) {
-  if (!can(CAP.ACCEPT_PAYMENTS)) return false   // junior employees & guards cannot collect
+  if (!can(CAP.ACCEPT_PAYMENTS)) return false
+  if (!payment?.booking_id) return false
   if (payment.source_type === 'subscription') return false
-  if (payment.status !== 'pending') return false
+  if (payment.status !== 'pending' && payment.status !== 'unpaid') return false
+  // Online rows are already charged via Stripe — staff collects cash/card/wire here.
   if (payment.method === 'online') return false
   if (isSuperAdmin.value) return true
-  if (isProviderScoped.value && payment.recipient === 'provider') return true
-  return false
+  // Provider / staff: collect when the money is not Bookboll platform revenue.
+  if (isBookbollRecipient(payment.recipient)) return false
+  return true
 }
 
-// Accept → the shared Accept Payment sheet (method chips + pay-online link/QR)
-// inside BookingDetailModal, opened directly at this pending installment. One
-// collect flow everywhere; canMarkPaid() guarantees a booking_id exists.
 function openMarkPaid(payment) {
+  if (!canMarkPaid(payment)) return
   detailPayment.value = null
-  collectPmtId.value = payment.id
-  bookingModalId.value = payment.booking_id
+  collectPmtId.value = String(payment.id)
+  bookingModalId.value = String(payment.booking_id)
 }
 </script>
 
@@ -807,7 +764,10 @@ function openMarkPaid(payment) {
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!filteredPayments.length">
+            <tr v-if="loading">
+              <td colspan="11" class="empty"><Loader :size="18" class="spin" /> Loading…</td>
+            </tr>
+            <tr v-else-if="!paginatedPayments.length">
               <td colspan="11" class="empty">No payment records match the current filters</td>
             </tr>
             <tr v-for="p in paginatedPayments" :key="p.id" class="pay-row" :class="{ 'row-sub': p.source_type === 'subscription' }" @click="openDetail(p)">
@@ -848,7 +808,7 @@ function openMarkPaid(payment) {
       </div>
       <PaginationBar
         :page="pmtPage" :perPage="pmtPerPage" :totalPages="pmtTotalPages"
-        :total="filteredPayments.length" :visiblePages="pmtVisiblePages"
+        :total="pmtTotal" :visiblePages="pmtVisiblePages"
         @update:perPage="pmtPerPage = $event"
         @goTo="pmtGoTo"
       />
@@ -943,11 +903,11 @@ function openMarkPaid(payment) {
         <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
           <button class="export-choice-btn" @click="doExport(true)">
             <Download :size="16"/>
-            <div><strong>Export with filters</strong><br><span>{{ filteredPayments.length }} payments</span></div>
+            <div><strong>Export with filters</strong><br><span>{{ pmtTotal }} payments</span></div>
           </button>
           <button class="export-choice-btn" @click="doExport(false)">
             <Download :size="16"/>
-            <div><strong>Export all payments</strong><br><span>{{ payments.length }} payments</span></div>
+            <div><strong>Export current page</strong><br><span>{{ payments.length }} payments</span></div>
           </button>
         </div>
         <div class="modal-footer"><button class="btn btn-secondary" @click="showExportModal=false">Cancel</button></div>
@@ -957,6 +917,8 @@ function openMarkPaid(payment) {
 </template>
 
 <style scoped>
+.spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 /* ── Export modal ─────────────────────────────────────────────────────────── */
 .export-choice-btn { display:flex;align-items:center;gap:14px;padding:13px 16px;background:var(--bg);border:1.5px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;width:100%;transition:all .15s; }
 .export-choice-btn:hover { border-color:var(--primary);background:#f0f9ff; }

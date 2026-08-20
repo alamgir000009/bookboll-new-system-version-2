@@ -16,6 +16,7 @@ import { CAP } from '../lib/permissions.js'
 import { recordRedemption, validatePromo } from '../lib/promocodes.js'
 import { hasActivePayoutMethodFor, isAutomaticPayout, isWalletReady } from '../lib/walletSetup.js'
 import { appBaseUrl } from '../lib/appBase.js'
+import { pushToast } from '../lib/toast.js'
 import QRCode from 'qrcode'
 
 const { can, role, isSuperAdmin, isCountryAdmin, currentOwnerUserId } = useCurrentUser()
@@ -333,6 +334,13 @@ const COLLECT_METHODS = [
   { value: 'wire_transfer', label: 'Wire Transfer' },
 ]
 
+// Pay-by-QR state must be declared before the bookingId watch (it resets these).
+const ownerWallets = ref([])
+const payQrImg = ref('')
+const linkCopied = ref(false)
+let payQrTimer = null
+const payLinkOverride = ref('')
+
 /** Stable display reference for any booking row (defined before the watch that uses it). */
 function makeRef(b) {
   return b ? `#BKN_${new Date(b.created_at).getFullYear()}_${b.id.slice(0, 2).toUpperCase()}${b.id.slice(-3).toUpperCase()}` : ''
@@ -393,50 +401,53 @@ function summarizeAmounts(items) {
 watch(() => props.bookingId, async (id) => {
   if (!id) { booking.value = null; return }
   loading.value = true
-  booking.value = null
-  payments.value = []
-  auditLogs.value = []
-  otherPendingSameCustomer.value = []
-  otherPendingBusiness.value = []
-  showBusinessPending.value = false
-  promoApplied.value = null
-  promoError.value = ''
-  promoCode.value = ''
-  existingPromo.value = null
-  collectFor.value = null
-  payQrImg.value = ''
-  ownerWallets.value = []
-  clearInterval(payQrTimer)
-  showHistory.value = false
-  editing.value = false
+  try {
+    booking.value = null
+    payments.value = []
+    auditLogs.value = []
+    otherPendingSameCustomer.value = []
+    otherPendingBusiness.value = []
+    showBusinessPending.value = false
+    promoApplied.value = null
+    promoError.value = ''
+    promoCode.value = ''
+    existingPromo.value = null
+    collectFor.value = null
+    payQrImg.value = ''
+    ownerWallets.value = []
+    clearInterval(payQrTimer)
+    showHistory.value = false
+    editing.value = false
 
-  const res = await fetchBookingCrm(id)
-  const d = res.success ? (res.data || {}) : {}
-  booking.value = d.booking || null
-  payments.value = d.payments || []
-  auditLogs.value = d.audit_logs || []
-  existingPromo.value = d.existing_promo || (d.booking && Number(d.booking.discount) > 0
-    ? { code: '', discount_amount: Number(d.booking.discount) || 0 }
-    : null)
-  customer.value = d.customer || null
-  listing.value = d.listing || null
-  location.value = d.location || null
-  ownerWallets.value = d.wallets || []
-  if (d.booking) {
-    try { await loadOtherPending(d.booking, d.other_pending || []) } catch { /* optional context */ }
-  }
+    const res = await fetchBookingCrm(id)
+    const d = res.success ? (res.data || {}) : {}
+    booking.value = d.booking || null
+    payments.value = d.payments || []
+    auditLogs.value = d.audit_logs || []
+    existingPromo.value = d.existing_promo || (d.booking && Number(d.booking.discount) > 0
+      ? { code: '', discount_amount: Number(d.booking.discount) || 0 }
+      : null)
+    customer.value = d.customer || null
+    listing.value = d.listing || null
+    location.value = d.location || null
+    ownerWallets.value = d.wallets || []
+    if (d.booking) {
+      try { await loadOtherPending(d.booking, d.other_pending || []) } catch { /* optional context */ }
+    }
 
-  loading.value = false
-
-  // If opened from the edit shortcut, jump straight into edit mode
-  if (props.startInEdit && booking.value) {
-    openEdit()
-  }
-  // Opened from the Payments table's Accept button → jump straight into the
-  // Accept Payment sheet for that pending installment.
-  if (props.collectPaymentId && booking.value) {
-    const row = payments.value.find(p => p.id === props.collectPaymentId && p.status === 'pending')
-    if (row) openCollect(row)
+    // If opened from the edit shortcut, jump straight into edit mode
+    if (props.startInEdit && booking.value) {
+      openEdit()
+    }
+    // Opened from the Payments table's Accept button → jump straight into the
+    // Accept Payment sheet for that pending installment.
+    if (props.collectPaymentId && booking.value) {
+      const want = String(props.collectPaymentId)
+      const row = payments.value.find(p => String(p.id) === want && (p.status === 'pending' || p.status === 'unpaid'))
+      if (row) openCollect(row)
+    }
+  } finally {
+    loading.value = false
   }
 }, { immediate: true })
 
@@ -624,17 +635,12 @@ const paidSoFar = computed(() =>
 // ── Pay by QR: the customer scans and pays the balance online ─────────────────
 // Available only when online money has somewhere to go: a Bookboll-run venue
 // (no owner), or a provider whose BOOKINGS wallet has an active Stripe rail.
-const ownerWallets = ref([])
-const payQrImg = ref('')
-const linkCopied = ref(false)
-let payQrTimer = null
 const qrPayAvailable = computed(() => {
   if (!(totalPending.value > 0) || !location.value || !can(CAP.ACCEPT_PAYMENTS)) return false
   if (!location.value.owner_user_id) return true   // Bookboll-run venue
   return hasActivePayoutMethodFor(ownerWallets.value, 'bookings')
     && ownerWallets.value.some(w => isWalletReady(w) && isAutomaticPayout(w))
 })
-const payLinkOverride = ref('')
 const payLink = computed(() => payLinkOverride.value || (booking.value ? `${appBaseUrl()}/pay/${booking.value.id}` : ''))
 // While the sheet is open the poll refreshes payments — when the customer pays
 // online, the row flips to paid and the sheet switches to its success state.
@@ -696,7 +702,7 @@ function collectAmountFor(pmt) {
 async function markPaid(pmtId) {
   markSaving.value = true
 
-  const pmtRow = payments.value.find(p => p.id === pmtId)
+  const pmtRow = payments.value.find(p => String(p.id) === String(pmtId))
   let deskDiscount = 0
   const codeUsed = promoApplied.value
   if (promoApplied.value && discountAmount.value > 0 && pmtRow) {
@@ -711,6 +717,7 @@ async function markPaid(pmtId) {
 
   if (!res.success) {
     markSaving.value = false
+    pushToast(firstError(res, 'Could not accept payment.'), 'error')
     return
   }
 
@@ -736,7 +743,7 @@ async function markPaid(pmtId) {
   const allPaid = payments.value.every(p => p.status === 'paid')
 
   {
-    const pmt = payments.value.find(p => p.id === pmtId)
+    const pmt = payments.value.find(p => String(p.id) === String(pmtId))
     if (pmt) {
       await logAudit({
         action: 'collected', entity_type: 'booking', entity_id: booking.value.id,
@@ -750,9 +757,10 @@ async function markPaid(pmtId) {
   collectFor.value = null
   clearInterval(payQrTimer)
   markSaving.value = false
+  pushToast('Payment accepted.', 'success')
   try {
     if (customer.value) {
-      const pmt = payments.value.find(p => p.id === pmtId)
+      const pmt = payments.value.find(p => String(p.id) === String(pmtId))
       notifyPaymentReceipt({
         ownerId: location.value?.owner_user_id || null,
         customer: { id: customer.value.id, name: customer.value.full_name, email: customer.value.email, phone: customer.value.phone },
