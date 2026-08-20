@@ -2,13 +2,16 @@
 namespace App\Services;
 
 use App\Models\Booking;
+use App\Models\Listing;
 use App\Models\Payment;
+use App\Models\Venue;
 use Barryvdh\DomPDF\Facade\Pdf;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
 use BookingStatus;
 use CompnayInfo;
 use Exception;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use PaymentMethod;
@@ -107,6 +110,560 @@ class PaymentService
         $payments = $query->paginate($records_per_page);
 
         return sendSuccess('Payments fetched successfully', compact('payments', 'stats'));
+    }
+
+    /**
+     * Dashboard payments page — Laravel pagination (same pattern as audit-logs):
+     * page + records_per_page, server filters, paginator + lookups for the page,
+     * plus KPI stats over the filtered set (not just the current page).
+     */
+    public function dashboard(Request $request)
+    {
+        $recordsPerPage = (int) ($request->input('records_per_page') ?? $request->query('records_per_page', 25));
+        if ($recordsPerPage < 1) {
+            $recordsPerPage = 25;
+        }
+        if ($recordsPerPage > 250) {
+            $recordsPerPage = 250;
+        }
+
+        $query = $this->paymentModel::query()
+            ->select([
+                'id', 'payment_id', 'booking_id', 'user_id', 'type', 'amount', 'currency',
+                'recipient', 'method', 'status', 'date', 'paid_at', 'notes', 'source_type',
+                'subscription_id', 'marked_paid_by', 'created_by', 'created_at', 'updated_at',
+            ]);
+
+        $query = applyVenueFilterToPayments($query);
+        $this->applyDashboardFilters($query, $request);
+        $this->applyDashboardSort($query, $request);
+
+        $statsQuery = clone $query;
+        $stats = $this->buildDashboardStats($statsQuery);
+
+        $paginator = $query->paginate($recordsPerPage);
+        $pagePayments = collect($paginator->items());
+
+        $bookingIds = $pagePayments->pluck('booking_id')->filter()->unique()->values();
+        // Sibling ledger rows for the detail drawer (deposit + remaining on same booking).
+        $siblingPayments = $bookingIds->isEmpty()
+            ? collect()
+            : $this->paymentModel::query()
+                ->select([
+                    'id', 'payment_id', 'booking_id', 'user_id', 'type', 'amount', 'currency',
+                    'recipient', 'method', 'status', 'date', 'paid_at', 'notes', 'source_type',
+                    'subscription_id', 'marked_paid_by', 'created_by', 'created_at', 'updated_at',
+                ])
+                ->whereIn('booking_id', $bookingIds)
+                ->get();
+
+        $allForLookups = $pagePayments->concat($siblingPayments)->unique('id');
+        $lookupBookingIds = $allForLookups->pluck('booking_id')->filter()->unique()->values();
+
+        $bookingsRaw = $lookupBookingIds->isEmpty()
+            ? collect()
+            : Booking::query()
+                ->select([
+                    'id', 'user_id', 'venue_id', 'listing_id', 'date', 'start_time', 'end_time',
+                    'status', 'payment_status', 'total_price', 'origin', 'players', 'created_at',
+                ])
+                ->whereIn('id', $lookupBookingIds)
+                ->get()
+                ->keyBy('id');
+
+        $venueIds = $bookingsRaw->pluck('venue_id')->filter()->unique()->values();
+        $venuesRaw = $venueIds->isEmpty()
+            ? collect()
+            : Venue::query()
+                ->select(['id', 'name', 'city_id', 'country_id', 'owner_user_id', 'status', 'currency_override'])
+                ->whereIn('id', $venueIds)
+                ->get()
+                ->keyBy('id');
+
+        $ownerIds = $venuesRaw->pluck('owner_user_id')->filter()->unique()->values();
+        $owners = $ownerIds->isEmpty()
+            ? collect()
+            : \App\Models\User::whereIn('id', $ownerIds)->get(['id', 'name', 'email'])->keyBy('id');
+
+        $countryIdsForCurrency = $venuesRaw->pluck('country_id')->filter()->unique()->values();
+        $currencyByCountry = $countryIdsForCurrency->isEmpty()
+            ? collect()
+            : \Nnjeim\World\Models\Country::with('currency')
+                ->whereIn('id', $countryIdsForCurrency)
+                ->get()
+                ->mapWithKeys(fn ($c) => [$c->id => $c->currency?->code ?: 'AED']);
+
+        $mapOne = function (Payment $p) use ($bookingsRaw, $venuesRaw, $owners, $currencyByCountry) {
+            $booking = $p->booking_id ? $bookingsRaw->get($p->booking_id) : null;
+            $venue = $booking?->venue_id ? $venuesRaw->get($booking->venue_id) : null;
+            $owner = $venue?->owner_user_id ? $owners->get($venue->owner_user_id) : null;
+            $currencyFallback = $venue?->currency_override
+                ?: ($venue?->country_id ? ($currencyByCountry[$venue->country_id] ?? null) : null)
+                ?: 'AED';
+
+            return $this->mapDashboardPayment($p, $currencyFallback, $owner);
+        };
+
+        $mappedPage = $pagePayments->map($mapOne)->values();
+        $mappedRelated = $siblingPayments->map($mapOne)->values();
+
+        $bookings = $bookingsRaw->values()->map(fn (Booking $b) => $this->mapDashboardBooking($b))->values();
+
+        $customerIds = $bookingsRaw->pluck('user_id')->filter()->unique()->values();
+        $customers = $customerIds->isEmpty()
+            ? collect()
+            : \App\Models\User::whereIn('id', $customerIds)
+                ->get(['id', 'name', 'email', 'phone'])
+                ->map(fn ($u) => [
+                    'id'        => (string) $u->id,
+                    'full_name' => $u->name,
+                    'email'     => $u->email,
+                    'phone'     => $u->phone,
+                ])
+                ->values();
+
+        $listingIds = $bookingsRaw->pluck('listing_id')->filter()->unique()->values();
+        $listings = $listingIds->isEmpty()
+            ? collect()
+            : Listing::whereIn('id', $listingIds)
+                ->get(['id', 'name', 'venue_id', 'status'])
+                ->map(fn (Listing $l) => [
+                    'id'          => (string) $l->id,
+                    'name'        => $l->name,
+                    'location_id' => $l->venue_id ? (string) $l->venue_id : null,
+                    'status'      => $l->status,
+                ])
+                ->values();
+
+        // Filter dropdowns: all venues the actor can see (not just this page).
+        $filterVenuesQuery = Venue::query()->orderBy('name');
+        $actor = $request->user();
+        if ($actor && ! $actor->hasAnyRole(['super_admin', 'admin'])) {
+            $allowedVenueIds = DB::table('user_venue')->where('user_id', $actor->id)->pluck('venue_id');
+            $filterVenuesQuery->whereIn('id', $allowedVenueIds);
+        }
+        $filterVenues = $filterVenuesQuery
+            ->get(['id', 'name', 'city_id', 'country_id', 'owner_user_id', 'status', 'currency_override']);
+
+        $locations = $filterVenues->map(fn (Venue $v) => [
+            'id'                => (string) $v->id,
+            'name'              => $v->name,
+            'city_id'           => $v->city_id ? (string) $v->city_id : null,
+            'country_id'        => $v->country_id ? (string) $v->country_id : null,
+            'owner_user_id'     => $v->owner_user_id ? (string) $v->owner_user_id : null,
+            'status'            => $v->status,
+            'currency_override' => $v->currency_override,
+        ])->values();
+
+        $cityIds = $filterVenues->pluck('city_id')->filter()->unique()->values();
+        $cities = $cityIds->isEmpty()
+            ? collect()
+            : \Nnjeim\World\Models\City::whereIn('id', $cityIds)
+                ->orderBy('name')
+                ->get(['id', 'name', 'country_id'])
+                ->map(fn ($c) => [
+                    'id'         => (string) $c->id,
+                    'name'       => $c->name,
+                    'country_id' => $c->country_id ? (string) $c->country_id : null,
+                ])
+                ->values();
+
+        $countryIds = $filterVenues->pluck('country_id')->filter()
+            ->merge($cities->pluck('country_id'))
+            ->filter()
+            ->unique()
+            ->values();
+        $countries = $countryIds->isEmpty()
+            ? collect()
+            : \Nnjeim\World\Models\Country::with('currency')
+                ->whereIn('id', $countryIds)
+                ->orderBy('name')
+                ->get()
+                ->map(fn ($c) => [
+                    'id'            => (string) $c->id,
+                    'name'          => $c->name,
+                    'iso_code'      => $c->iso2,
+                    'currency_code' => $c->currency?->code,
+                ])
+                ->values();
+
+        $adminUsers = \App\Models\User::query()
+            ->with('roles:id,name')
+            ->whereHas('roles', fn ($q) => $q->whereIn('name', [
+                'super_admin', 'admin', 'country_admin', 'provider_admin',
+                'facility_admin', 'platform_staff',
+            ]))
+            ->orderBy('name')
+            ->get(['id', 'name', 'email'])
+            ->map(fn ($u) => [
+                'id'            => (string) $u->id,
+                'full_name'     => $u->name,
+                'business_name' => $u->name,
+                'role'          => $u->roles->first()?->name,
+                'owner_user_id' => null,
+                'username'      => $u->email,
+            ])
+            ->values();
+
+        $filterQuery = $this->paymentModel::query();
+        $filterQuery = applyVenueFilterToPayments($filterQuery);
+
+        $currencies = (clone $filterQuery)
+            ->whereNotNull('currency')
+            ->distinct()
+            ->orderBy('currency')
+            ->pluck('currency')
+            ->filter()
+            ->values();
+
+        $recipients = (clone $filterQuery)
+            ->whereNotNull('recipient')
+            ->distinct()
+            ->orderBy('recipient')
+            ->pluck('recipient')
+            ->filter()
+            ->map(fn ($r) => in_array($r, ['bookboll', '@bookboll'], true) ? '@bookboll' : $r)
+            ->unique()
+            ->values();
+
+        $filterListings = Listing::query()
+            ->when(
+                $actor && ! $actor->hasAnyRole(['super_admin', 'admin']),
+                function ($q) use ($actor) {
+                    $allowedVenueIds = DB::table('user_venue')->where('user_id', $actor->id)->pluck('venue_id');
+                    $q->whereIn('venue_id', $allowedVenueIds);
+                }
+            )
+            ->orderBy('name')
+            ->get(['id', 'name', 'venue_id', 'status'])
+            ->map(fn (Listing $l) => [
+                'id'          => (string) $l->id,
+                'name'        => $l->name,
+                'location_id' => $l->venue_id ? (string) $l->venue_id : null,
+                'status'      => $l->status,
+            ])
+            ->values();
+
+        // Replace paginator items with mapped dashboard rows.
+        $paginator->setCollection($mappedPage);
+
+        return sendSuccess('Payments dashboard fetched', [
+            'payments'         => $paginator,
+            'related_payments' => $mappedRelated,
+            'bookings'         => $bookings,
+            'customers'        => $customers,
+            'listings'         => $listings->merge($filterListings)->unique('id')->values(),
+            'locations'        => $locations,
+            'cities'           => $cities,
+            'countries'        => $countries,
+            'admin_users'      => $adminUsers,
+            'subscriptions'    => [],
+            'programs'         => [],
+            'stats'            => $stats,
+            'filter_options'   => [
+                'currencies' => $currencies,
+                'recipients' => $recipients,
+            ],
+        ]);
+    }
+
+    protected function applyDashboardFilters($query, Request $request): void
+    {
+        $asList = function ($value) {
+            if (is_array($value)) {
+                return array_values(array_filter(array_map('strval', $value), fn ($v) => $v !== ''));
+            }
+            if ($value === null || $value === '') {
+                return [];
+            }
+
+            return array_values(array_filter(array_map('trim', explode(',', (string) $value)), fn ($v) => $v !== ''));
+        };
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('payment_id', 'LIKE', "%{$search}%")
+                    ->orWhere('notes', 'LIKE', "%{$search}%")
+                    ->orWhere('booking_id', 'LIKE', "%{$search}%")
+                    ->orWhereHas('booking.user', function ($uq) use ($search) {
+                        $uq->where('name', 'LIKE', "%{$search}%")
+                            ->orWhere('email', 'LIKE', "%{$search}%");
+                    })
+                    ->orWhereHas('booking.listing', function ($lq) use ($search) {
+                        $lq->where('name', 'LIKE', "%{$search}%");
+                    })
+                    ->orWhereHas('booking.venue', function ($vq) use ($search) {
+                        $vq->where('name', 'LIKE', "%{$search}%");
+                    });
+            });
+        }
+
+        $statuses = $asList($request->input('status'));
+        if ($statuses) {
+            $query->whereIn('status', $statuses);
+        }
+
+        $methods = $asList($request->input('method'));
+        if ($methods) {
+            $expanded = [];
+            foreach ($methods as $m) {
+                $expanded[] = $m;
+                if ($m === 'card') {
+                    $expanded[] = 'credit_card';
+                }
+            }
+            $query->whereIn('method', array_unique($expanded));
+        }
+
+        $types = $asList($request->input('type') ?? $request->input('payment_type'));
+        if ($types) {
+            $expanded = [];
+            foreach ($types as $t) {
+                if ($t === 'commission') {
+                    $expanded = array_merge($expanded, ['commission', 'booking_commission', 'subscription_commission']);
+                } elseif ($t === 'earning') {
+                    $expanded = array_merge($expanded, ['earning', 'booking_earning', 'subscription_earning']);
+                } elseif ($t === 'full') {
+                    $expanded = array_merge($expanded, ['full', 'booking']);
+                } elseif ($t === 'remaining') {
+                    $expanded = array_merge($expanded, ['remaining', 'balance']);
+                } else {
+                    $expanded[] = $t;
+                }
+            }
+            $query->whereIn('type', array_unique($expanded));
+        }
+
+        $sourceTypes = $asList($request->input('source_type'));
+        if ($sourceTypes) {
+            $query->whereIn('source_type', $sourceTypes);
+        }
+
+        // Product kind: venue / event / subscription (maps to booking.origin or source_type).
+        $sources = $asList($request->input('source'));
+        if ($sources) {
+            $query->where(function ($q) use ($sources) {
+                foreach ($sources as $src) {
+                    if ($src === 'subscription') {
+                        $q->orWhere('source_type', 'subscription');
+                    } elseif ($src === 'event') {
+                        $q->orWhere(function ($qq) {
+                            $qq->where(function ($x) {
+                                $x->whereNull('source_type')->orWhere('source_type', 'booking');
+                            })->whereHas('booking', fn ($b) => $b->where('origin', 'customer_game'));
+                        });
+                    } elseif ($src === 'venue') {
+                        $q->orWhere(function ($qq) {
+                            $qq->where(function ($x) {
+                                $x->whereNull('source_type')->orWhere('source_type', 'booking');
+                            })->whereHas('booking', fn ($b) => $b->where(function ($bo) {
+                                $bo->whereNull('origin')
+                                    ->orWhereNotIn('origin', ['customer_game', 'class_program']);
+                            }));
+                        });
+                    }
+                }
+            });
+        }
+
+        $currencies = $asList($request->input('currency'));
+        if ($currencies) {
+            $query->whereIn('currency', $currencies);
+        }
+
+        $recipients = $asList($request->input('recipient'));
+        if ($recipients) {
+            $query->where(function ($q) use ($recipients) {
+                foreach ($recipients as $r) {
+                    if (in_array($r, ['@bookboll', 'bookboll'], true)) {
+                        $q->orWhereIn('recipient', ['@bookboll', 'bookboll'])
+                            ->orWhereNull('recipient');
+                    } else {
+                        $q->orWhere('recipient', $r);
+                    }
+                }
+            });
+        }
+
+        $venueIds = $asList($request->input('venue_id') ?? $request->input('location_id'));
+        if ($venueIds) {
+            $query->whereHas('booking', fn ($b) => $b->whereIn('venue_id', $venueIds));
+        }
+
+        $listingIds = $asList($request->input('listing_id'));
+        if ($listingIds) {
+            $query->whereHas('booking', fn ($b) => $b->whereIn('listing_id', $listingIds));
+        }
+
+        $cityIds = $asList($request->input('city_id'));
+        if ($cityIds) {
+            $query->whereHas('booking.venue', fn ($v) => $v->whereIn('city_id', $cityIds));
+        }
+
+        $countryIds = $asList($request->input('country_id'));
+        if ($countryIds) {
+            $query->whereHas('booking.venue', fn ($v) => $v->whereIn('country_id', $countryIds));
+        }
+
+        if ($request->filled('amount_min')) {
+            $query->where('amount', '>=', (float) $request->amount_min);
+        }
+        if ($request->filled('amount_max')) {
+            $query->where('amount', '<=', (float) $request->amount_max);
+        }
+
+        $from = $request->input('from_date') ?? $request->input('date_from');
+        $to = $request->input('to_date') ?? $request->input('date_to');
+        if ($from) {
+            $query->where(function ($q) use ($from) {
+                $q->whereDate('paid_at', '>=', $from)
+                    ->orWhere(function ($qq) use ($from) {
+                        $qq->whereNull('paid_at')->whereDate('created_at', '>=', $from);
+                    });
+            });
+        }
+        if ($to) {
+            $query->where(function ($q) use ($to) {
+                $q->whereDate('paid_at', '<=', $to)
+                    ->orWhere(function ($qq) use ($to) {
+                        $qq->whereNull('paid_at')->whereDate('created_at', '<=', $to);
+                    });
+            });
+        }
+    }
+
+    protected function applyDashboardSort($query, Request $request): void
+    {
+        $sort = (string) ($request->input('sort') ?? 'date');
+        $dir = strtolower((string) ($request->input('sort_dir') ?? 'desc')) === 'asc' ? 'asc' : 'desc';
+
+        match ($sort) {
+            'amount' => $query->orderBy('amount', $dir)->orderByDesc('id'),
+            'status' => $query->orderBy('status', $dir)->orderByDesc('id'),
+            'method' => $query->orderBy('method', $dir)->orderByDesc('id'),
+            'recipient' => $query->orderBy('recipient', $dir)->orderByDesc('id'),
+            default => $query->orderByRaw('COALESCE(paid_at, created_at) ' . $dir)->orderByDesc('id'),
+        };
+    }
+
+    protected function buildDashboardStats($query): array
+    {
+        $clean = function ($q) {
+            $clone = clone $q;
+            $clone->getQuery()->columns = null;
+            $clone->getQuery()->orders = null;
+            $clone->getQuery()->groups = null;
+            $clone->getQuery()->havings = null;
+            $clone->getQuery()->unionOrders = null;
+
+            return $clone;
+        };
+
+        $base = $clean($query);
+        $paid = $clean($query)->where('status', 'paid');
+
+        $byCurrency = (clone $paid)
+            ->selectRaw("COALESCE(currency, 'AED') as currency_code, SUM(amount) as total")
+            ->groupBy('currency_code')
+            ->pluck('total', 'currency_code');
+
+        $toBookboll = (clone $paid)
+            ->where(function ($q) {
+                $q->whereNull('recipient')
+                    ->orWhereIn('recipient', ['bookboll', '@bookboll']);
+            })
+            ->selectRaw("COALESCE(currency, 'AED') as currency_code, SUM(amount) as total")
+            ->groupBy('currency_code')
+            ->pluck('total', 'currency_code');
+
+        $toProvider = (clone $paid)
+            ->whereNotNull('recipient')
+            ->whereNotIn('recipient', ['bookboll', '@bookboll'])
+            ->selectRaw("COALESCE(currency, 'AED') as currency_code, SUM(amount) as total")
+            ->groupBy('currency_code')
+            ->pluck('total', 'currency_code');
+
+        $fmt = function ($map) {
+            $out = [];
+            foreach ($map as $c => $v) {
+                $out[] = $c . ' ' . number_format((float) $v);
+            }
+            sort($out);
+
+            return $out ?: [];
+        };
+
+        return [
+            'total'       => $fmt($byCurrency),
+            'to_bookboll' => $fmt($toBookboll),
+            'to_provider' => $fmt($toProvider),
+            'pending'     => (int) $clean($query)->where('status', 'pending')->count(),
+        ];
+    }
+
+    protected function mapDashboardPayment(Payment $p, ?string $currencyFallback = 'AED', $owner = null): array
+    {
+        $method = (string) $p->method;
+        if ($method === 'credit_card') {
+            $method = 'card';
+        }
+
+        $currency = $p->currency ?: ($currencyFallback ?: 'AED');
+
+        $recipient = $p->recipient;
+        if (! $recipient) {
+            if (in_array($method, ['online', 'card'], true)) {
+                $recipient = '@bookboll';
+            } else {
+                $recipient = $owner
+                    ? ('@' . strtok((string) ($owner->email ?: $owner->name), '@'))
+                    : 'provider';
+            }
+        }
+
+        $paidAt = $p->paid_at;
+        if (! $paidAt && $p->status === PaymentStatus::PAID) {
+            $paidAt = $p->date ?: $p->created_at;
+        }
+
+        return [
+            'id'              => (string) $p->id,
+            'payment_id'      => $p->payment_id,
+            'booking_id'      => $p->booking_id ? (string) $p->booking_id : null,
+            'subscription_id' => $p->subscription_id ? (string) $p->subscription_id : null,
+            'source_type'     => $p->source_type ?: 'booking',
+            'payment_type'    => $p->type ?: 'full',
+            'method'          => $method,
+            'amount'          => (float) $p->amount,
+            'currency'        => $currency,
+            'recipient'       => $recipient,
+            'status'          => in_array((string) $p->status, ['pending', 'unpaid'], true) ? 'pending' : (string) $p->status,
+            'paid_at'         => $paidAt ? \Carbon\Carbon::parse($paidAt)->toIso8601String() : null,
+            'marked_paid_by'  => $p->marked_paid_by ? (string) $p->marked_paid_by : ($p->created_by ? (string) $p->created_by : null),
+            'notes'           => $p->notes ?: '',
+            'created_at'      => optional($p->created_at)?->toIso8601String(),
+            'updated_at'      => optional($p->updated_at)?->toIso8601String(),
+        ];
+    }
+
+    protected function mapDashboardBooking(Booking $b): array
+    {
+        return [
+            'id'             => (string) $b->id,
+            'customer_id'    => $b->user_id ? (string) $b->user_id : null,
+            'listing_id'     => $b->listing_id ? (string) $b->listing_id : null,
+            'location_id'    => $b->venue_id ? (string) $b->venue_id : null,
+            'booking_date'   => $b->date,
+            'start_time'     => $b->start_time,
+            'end_time'       => $b->end_time,
+            'players'        => $b->players,
+            'total'          => (float) ($b->total_price ?? 0),
+            'payment_status' => $b->payment_status,
+            'booking_status' => $b->status,
+            'origin'         => $b->origin,
+            'created_at'     => optional($b->created_at)?->toIso8601String(),
+        ];
     }
 
     public function getPaymentsForExport($request)

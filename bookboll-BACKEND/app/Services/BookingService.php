@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Models\AddOn;
@@ -285,7 +286,6 @@ class BookingService
             }
 
             return sendSuccess('Booking cancelled successfully.', compact('booking'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Booking cancellation error: ' . $e->getMessage(), ['exception' => $e]);
@@ -369,8 +369,10 @@ class BookingService
             "loyalties" => $loyalties,
         ];
 
-        return sendSuccess('Bookings fetched successfully',
-            compact('recentBookings', 'stats', 'venues', 'listings'));
+        return sendSuccess(
+            'Bookings fetched successfully',
+            compact('recentBookings', 'stats', 'venues', 'listings')
+        );
     }
 
     public function chartData($request)
@@ -763,7 +765,6 @@ class BookingService
             DB::commit();
 
             return sendSuccess('Bookings created successfully', compact('bookings'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Booking creation failed: ' . $e->getMessage(), ["Exception" => $e]);
@@ -1081,8 +1082,10 @@ class BookingService
             $listingSchedulesForDay = $listing->schedules()->where('day', $dayOfWeek)->where('is_open', true)->get();
             if ($listingSchedulesForDay->isEmpty()) {
                 $errors['date'] = "Listing closed on {$dayOfWeek}s";
-            } elseif (! isset($errors['start_time'])
-                && ! $this->bookingFitsInSchedules($listingSchedulesForDay, $bookingDate, $bookingStart, $bookingEnd)) {
+            } elseif (
+                ! isset($errors['start_time'])
+                && ! $this->bookingFitsInSchedules($listingSchedulesForDay, $bookingDate, $bookingStart, $bookingEnd)
+            ) {
                 $errors['start_time'] = 'Outside listing hours';
             }
         }
@@ -1165,7 +1168,9 @@ class BookingService
                 $weekEnd->format('Y-m-d'),
             ]);
         } else {
-            $query->when($request->date, fn($q) =>
+            $query->when(
+                $request->date,
+                fn($q) =>
                 $q->whereDate('date', $request->date)
             );
         }
@@ -1185,17 +1190,23 @@ class BookingService
                     $query->where('venue_id', $request->venue_id);
                 }
             } else {
-                $query->when($request->venue_id, fn($q) =>
+                $query->when(
+                    $request->venue_id,
+                    fn($q) =>
                     $q->where('venue_id', $request->venue_id)
                 );
             }
         }
 
-        $query->when($request->listing_id, fn($q) =>
+        $query->when(
+            $request->listing_id,
+            fn($q) =>
             $q->where('listing_id', $request->listing_id)
         );
 
-        $query->when($request->user_id, fn($q) =>
+        $query->when(
+            $request->user_id,
+            fn($q) =>
             $q->where('user_id', $request->user_id)
         );
 
@@ -1416,7 +1427,6 @@ class BookingService
                             DB::rollBack();
                             return sendError('Payment verification failed: No charge found');
                         }
-
                     } catch (\Stripe\Exception\InvalidRequestException $e) {
                         Log::error('Stripe payment verification error', [
                             'payment_intent_id' => $formData['payment_intent_id'],
@@ -1717,7 +1727,6 @@ class BookingService
             }
 
             return sendSuccess('Booking confirmed successfully', ['bookings' => $createdBookings]);
-
         } catch (Exception $e) {
 
             DB::rollBack();
@@ -2203,7 +2212,6 @@ class BookingService
             $this->sendBookingNotification($booking, 'updated');
 
             return sendSuccess('Booking updated successfully', compact('booking'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Failed to update booking #' . $bookingId . ': ' . $e->getMessage(), [
@@ -2319,7 +2327,6 @@ class BookingService
             }
 
             return sendSuccess($message, compact('booking', 'emailSent'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error("Failed to confirm booking #{$booking->id}: " . $e->getMessage(), [
@@ -2374,7 +2381,6 @@ class BookingService
             ]);
 
             return sendSuccess('Booking marked as completed successfully', compact('booking'));
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error("Failed to completed booking #{$booking->id}: " . $e->getMessage(), [
@@ -2437,7 +2443,6 @@ class BookingService
                     'Content-Disposition' => 'attachment; filename="' . $invoiceNumber . '_' . time() . '.pdf"',
                 ]
             );
-
         } catch (Exception $e) {
             DB::rollBack();
             Log::error("Failed to generate invoice for booking #{$booking->id}: " . $e->getMessage(), [
@@ -2571,15 +2576,15 @@ class BookingService
 
             $result = $isPaginated
                 ? $query->paginate($recordsPerPage)->through(fn($listing) => [
-                'id'    => $listing->id,
-                'name'  => $listing->name,
-                'venue' => $listing->venue?->name,
-            ])
+                    'id'    => $listing->id,
+                    'name'  => $listing->name,
+                    'venue' => $listing->venue?->name,
+                ])
                 : $query->get()->map(fn($listing) => [
-                'id'    => $listing->id,
-                'name'  => $listing->name,
-                'venue' => $listing->venue?->name,
-            ]);
+                    'id'    => $listing->id,
+                    'name'  => $listing->name,
+                    'venue' => $listing->venue?->name,
+                ]);
 
             $listings = $formatResponse($result, $isPaginated);
         }
@@ -2595,15 +2600,15 @@ class BookingService
 
             $result = $isPaginated
                 ? $query->paginate($recordsPerPage)->through(fn($venue) => [
-                'id'        => $venue->id,
-                'name'      => $venue->name,
-                'schedules' => $venue->schedules,
-            ])
+                    'id'        => $venue->id,
+                    'name'      => $venue->name,
+                    'schedules' => $venue->schedules,
+                ])
                 : $query->get()->map(fn($venue) => [
-                'id'        => $venue->id,
-                'name'      => $venue->name,
-                'schedules' => $venue->schedules,
-            ]);
+                    'id'        => $venue->id,
+                    'name'      => $venue->name,
+                    'schedules' => $venue->schedules,
+                ]);
 
             $venues = $formatResponse($result, $isPaginated);
         }
@@ -2618,15 +2623,15 @@ class BookingService
 
             $result = $isPaginated
                 ? $query->paginate($recordsPerPage)->through(fn($category) => [
-                'id'          => $category->id,
-                'name'        => $category->name,
-                'sports_type' => $category->sportsType?->title,
-            ])
+                    'id'          => $category->id,
+                    'name'        => $category->name,
+                    'sports_type' => $category->sportsType?->title,
+                ])
                 : $query->get()->map(fn($category) => [
-                'id'          => $category->id,
-                'name'        => $category->name,
-                'sports_type' => $category->sportsType?->title,
-            ]);
+                    'id'          => $category->id,
+                    'name'        => $category->name,
+                    'sports_type' => $category->sportsType?->title,
+                ]);
 
             $sportsCategories = $formatResponse($result, $isPaginated);
         }
@@ -2641,17 +2646,17 @@ class BookingService
 
             $result = $isPaginated
                 ? $query->paginate($recordsPerPage)->through(fn($user) => [
-                'id'    => $user->id,
-                'name'  => $user->name,
-                'email' => $user->email,
-                'phone' => $user->phone,
-            ])
+                    'id'    => $user->id,
+                    'name'  => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                ])
                 : $query->get()->map(fn($user) => [
-                'id'    => $user->id,
-                'name'  => $user->name,
-                'email' => $user->email,
-                'phone' => $user->phone,
-            ]);
+                    'id'    => $user->id,
+                    'name'  => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                ]);
 
             $users = $formatResponse($result, $isPaginated);
         }
@@ -3005,7 +3010,7 @@ class BookingService
             $booking->history()->create([
                 'user_id'     => $user->id,
                 'action'      => 'booking_created',
-                'description' => 'Booking created by '.(auth()->user() ? auth()->user()->name : $user->name),
+                'description' => 'Booking created by ' . (auth()->user() ? auth()->user()->name : $user->name),
             ]);
 
             if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
@@ -3048,7 +3053,6 @@ class BookingService
             unlockListingSlot($listing, $user, $booking);
 
             return $booking;
-
         } catch (Exception $e) {
             Log::error("Failed to create single booking: " . $e->getMessage(), [
                 'date'       => $date,
@@ -3204,7 +3208,6 @@ class BookingService
             return sendSuccess('Payment methods fetched successfully', [
                 'payment_methods' => $formattedMethods,
             ]);
-
         } catch (Exception $e) {
             Log::error('Get Payment Methods Error: ' . $e->getMessage(), ['Exception' => $e]);
             return sendError('Something went wrong while fetching payment methods');
@@ -3265,7 +3268,7 @@ class BookingService
             $query = applyVenueFilter($query, 'venue_id');
         }
 
-        $bookings = $query->get()->map(fn (Booking $b) => $this->mapDashboardBooking($b))->values();
+        $bookings = $query->get()->map(fn(Booking $b) => $this->mapDashboardBooking($b))->values();
 
         return sendSuccess('Bookings fetched', array_merge($lookups, [
             'bookings' => $bookings,
@@ -3305,14 +3308,14 @@ class BookingService
         $listing  = $this->mapDashboardListing($booking->listing);
         $location = $this->mapDashboardLocation($booking->venue);
 
-        $payments = $booking->payments->map(fn (Payment $p) => $this->mapDashboardPayment($p))->values();
+        $payments = $booking->payments->map(fn(Payment $p) => $this->mapDashboardPayment($p))->values();
 
         $auditLogs = AuditLog::query()
             ->where('resource', 'booking')
             ->where('resource_id', (string) $booking->id)
             ->orderBy('timestamp')
             ->get()
-            ->map(fn (AuditLog $log) => [
+            ->map(fn(AuditLog $log) => [
                 'id'         => (string) $log->id,
                 'action'     => $log->action,
                 'details'    => $log->details,
@@ -3358,15 +3361,20 @@ class BookingService
             ->whereDate('date', $data['date'])
             ->where('status', '!=', BookingStatus::CANCELLED)
             ->get(['id', 'start_time', 'end_time'])
-            ->map(fn (Booking $b) => [
+            ->map(fn(Booking $b) => [
                 'id'         => (string) $b->id,
                 'start_time' => $this->fmtTime($b->start_time),
                 'end_time'   => $this->fmtTime($b->end_time),
             ])->values();
 
         $dowMap = [
-            'sunday' => 0, 'monday' => 1, 'tuesday' => 2, 'wednesday' => 3,
-            'thursday' => 4, 'friday' => 5, 'saturday' => 6,
+            'sunday' => 0,
+            'monday' => 1,
+            'tuesday' => 2,
+            'wednesday' => 3,
+            'thursday' => 4,
+            'friday' => 5,
+            'saturday' => 6,
         ];
 
         $listingHours = $listing->schedules->map(function (Schedule $s) use ($dowMap) {
@@ -3381,8 +3389,8 @@ class BookingService
         })->values();
 
         $addOns = $listing->addOns
-            ->filter(fn ($a) => ($a->status ?? 'active') === 'active')
-            ->map(fn ($a) => [
+            ->filter(fn($a) => ($a->status ?? 'active') === 'active')
+            ->map(fn($a) => [
                 'id'          => (string) $a->id,
                 'name'        => $a->name,
                 'description' => $a->description,
@@ -3442,7 +3450,7 @@ class BookingService
             $durationHours = $endMins > $startMins ? (int) round(($endMins - $startMins) / 60) : 1;
 
             $addonRows = $this->normalizeDashboardAddons($data);
-            $addonTotal = collect($addonRows)->sum(fn ($r) => $r['subtotal']);
+            $addonTotal = collect($addonRows)->sum(fn($r) => $r['subtotal']);
             $basePrice  = max(0, $subtotal - $addonTotal);
 
             $booking = $this->bookingModel::create([
@@ -3682,6 +3690,9 @@ class BookingService
             $payment->status = PaymentStatus::PAID;
             $payment->method = $payMethod;
             $payment->date   = now()->format('Y-m-d');
+            $payment->paid_at = now();
+            $payment->marked_paid_by = auth()->id();
+            $payment->recipient = $payMethod === PaymentMethod::ONLINE ? '@bookboll' : 'provider';
             $payment->save();
 
             $remaining = $booking->payments()
@@ -3708,7 +3719,7 @@ class BookingService
                 ->where('resource_id', (string) $booking->id)
                 ->orderBy('timestamp')
                 ->get()
-                ->map(fn (AuditLog $log) => [
+                ->map(fn(AuditLog $log) => [
                     'id'         => (string) $log->id,
                     'action'     => $log->action,
                     'details'    => $log->details,
@@ -3718,7 +3729,7 @@ class BookingService
 
             return sendSuccess('Payment collected', [
                 'booking'    => $this->mapDashboardBooking($booking),
-                'payments'   => $booking->payments->map(fn (Payment $p) => $this->mapDashboardPayment($p))->values(),
+                'payments'   => $booking->payments->map(fn(Payment $p) => $this->mapDashboardPayment($p))->values(),
                 'audit_logs' => $auditLogs,
             ]);
         } catch (Exception $e) {
@@ -3786,7 +3797,7 @@ class BookingService
                     ]];
                 }
 
-                return $blocks->map(fn ($block) => [
+                return $blocks->map(fn($block) => [
                     'id'               => (string) $sd->id . '-' . $block->id,
                     'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
                     'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
@@ -3808,7 +3819,7 @@ class BookingService
         return Payment::query()
             ->where('status', PaymentStatus::PENDING)
             ->where('booking_id', '!=', $current->id)
-            ->whereHas('booking', fn ($q) => $q->where('status', '!=', BookingStatus::CANCELLED))
+            ->whereHas('booking', fn($q) => $q->where('status', '!=', BookingStatus::CANCELLED))
             ->with(['booking.venue.users', 'booking.listing'])
             ->latest('id')
             ->limit(80)
@@ -3859,18 +3870,18 @@ class BookingService
 
         $venues = Venue::with('users')->orderBy('name')->get($venueCols);
 
-        $locations = $venues->map(fn (Venue $v) => $this->mapDashboardLocation($v))->values();
+        $locations = $venues->map(fn(Venue $v) => $this->mapDashboardLocation($v))->values();
 
         $listings = Listing::with(['sportsCategory:id,name', 'addOns'])
             ->orderBy('name')
             ->get()
-            ->map(fn (Listing $l) => $this->mapDashboardListing($l))
+            ->map(fn(Listing $l) => $this->mapDashboardListing($l))
             ->values();
 
         $customers = User::role('customer')
             ->orderBy('name')
             ->get(['id', 'name', 'email', 'phone', 'status'])
-            ->map(fn (User $u) => [
+            ->map(fn(User $u) => [
                 'id'        => (string) $u->id,
                 'full_name' => $u->name,
                 'email'     => $u->email,
@@ -3882,22 +3893,22 @@ class BookingService
         $cities = ($cityIds->isEmpty() || ! class_exists(City::class))
             ? collect()
             : City::whereIn('id', $cityIds)->orderBy('name')->get(['id', 'name', 'country_id'])
-                ->map(fn (City $c) => [
-                    'id'         => (string) $c->id,
-                    'name'       => $c->name,
-                    'country_id' => $c->country_id ? (string) $c->country_id : null,
-                    'status'     => 'active',
-                ]);
+            ->map(fn(City $c) => [
+                'id'         => (string) $c->id,
+                'name'       => $c->name,
+                'country_id' => $c->country_id ? (string) $c->country_id : null,
+                'status'     => 'active',
+            ]);
 
         $countries = class_exists(Country::class)
             ? Country::with('currency')->orderBy('name')->get()
-                ->filter(fn (Country $c) => (int) ($c->status ?? 1) === 1)
-                ->map(fn (Country $c) => [
-                    'id'            => (string) $c->id,
-                    'name'          => $c->name,
-                    'currency_code' => $c->currency?->code ?: 'AED',
-                    'status'        => 'active',
-                ])->values()
+            ->filter(fn(Country $c) => (int) ($c->status ?? 1) === 1)
+            ->map(fn(Country $c) => [
+                'id'            => (string) $c->id,
+                'name'          => $c->name,
+                'currency_code' => $c->currency?->code ?: 'AED',
+                'status'        => 'active',
+            ])->values()
             : collect();
 
         return compact('locations', 'listings', 'customers', 'cities', 'countries');
@@ -3988,7 +3999,7 @@ class BookingService
             'sport_category' => $l->sportsCategory?->name,
             'online_payment' => (bool) ($l->online_payment ?? false),
             'add_ons'        => $l->relationLoaded('addOns')
-                ? $l->addOns->map(fn ($a) => [
+                ? $l->addOns->map(fn($a) => [
                     'id'     => (string) $a->id,
                     'name'   => $a->name,
                     'price'  => (float) $a->price,
@@ -4172,7 +4183,7 @@ class BookingService
             }
         }
 
-        $mapped = $query->get()->flatMap(fn (SpecialDay $sd) => $this->expandSpecialDayRow($sd))->values();
+        $mapped = $query->get()->flatMap(fn(SpecialDay $sd) => $this->expandSpecialDayRow($sd))->values();
 
         return sendSuccess('Special days fetched', ['special_days' => $mapped]);
     }
@@ -4204,7 +4215,7 @@ class BookingService
             ]];
         }
 
-        return $blocks->map(fn ($block) => [
+        return $blocks->map(fn($block) => [
             'id'               => (string) $sd->id . '-' . $block->id,
             'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
             'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
@@ -4222,8 +4233,13 @@ class BookingService
     protected function mapDashboardPricing(Listing $listing): array
     {
         $dowMap = [
-            'sunday' => 0, 'monday' => 1, 'tuesday' => 2, 'wednesday' => 3,
-            'thursday' => 4, 'friday' => 5, 'saturday' => 6,
+            'sunday' => 0,
+            'monday' => 1,
+            'tuesday' => 2,
+            'wednesday' => 3,
+            'thursday' => 4,
+            'friday' => 5,
+            'saturday' => 6,
         ];
         $slotMins = (int) round(((float) ($listing->slot_duration ?? 1)) * 60);
         if ($slotMins < 15) {
@@ -4328,5 +4344,4 @@ class BookingService
 
         return ((int) $h) * 60 + (int) $m;
     }
-
 }

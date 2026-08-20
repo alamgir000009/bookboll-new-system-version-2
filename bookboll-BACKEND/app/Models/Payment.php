@@ -17,17 +17,25 @@ class Payment extends Model
         'date',
         'notes',
         'amount',
+        'currency',
+        'recipient',
         'method',
         'status',
         'user_id',
         'charge_id',
         'payment_id',
         'booking_id',
+        'source_type',
+        'subscription_id',
+        'paid_at',
+        'marked_paid_by',
         'payment_intent_id',
     ];
 
     protected $casts = [
-        'amount' => 'decimal:2',
+        'amount'  => 'decimal:2',
+        'paid_at' => 'datetime',
+        'date'    => 'date',
     ];
 
     public function user()
@@ -38,6 +46,11 @@ class Payment extends Model
     public function booking()
     {
         return $this->belongsTo(Booking::class);
+    }
+
+    public function markedBy()
+    {
+        return $this->belongsTo(User::class, 'marked_paid_by');
     }
 
     public function scopeMethod($query, $method)
@@ -67,12 +80,18 @@ class Payment extends Model
             'date',
             'notes',
             'amount',
+            'currency',
+            'recipient',
             'method',
             'status',
             'user_id',
             'charge_id',
             'payment_id',
             'booking_id',
+            'source_type',
+            'subscription_id',
+            'paid_at',
+            'marked_paid_by',
             'payment_intent_id',
         ];
     }

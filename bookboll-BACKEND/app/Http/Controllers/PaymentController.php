@@ -26,6 +26,11 @@ class PaymentController extends Controller
         return $this->paymentService->list($request);
     }
 
+    public function dashboard(Request $request)
+    {
+        return $this->paymentService->dashboard($request);
+    }
+
     public function show($id)
     {
         return $this->paymentService->details($id);
