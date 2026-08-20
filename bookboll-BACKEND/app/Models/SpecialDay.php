@@ -17,6 +17,7 @@ class SpecialDay extends Model
         'date',
         'type',
         'price',
+        'price_multiplier',
         'status',
         'venue_id',
         'listing_id',
@@ -24,9 +25,10 @@ class SpecialDay extends Model
     ];
 
     protected $casts = [
-        'date'   => 'date',
-        'price'  => 'decimal:2',
-        'status' => 'string',
+        'date'             => 'date',
+        'price'            => 'decimal:2',
+        'price_multiplier' => 'decimal:4',
+        'status'           => 'string',
     ];
 
     public function timeBlocks()
@@ -99,6 +101,7 @@ class SpecialDay extends Model
             'date',
             'type',
             'price',
+            'price_multiplier',
             'status',
             'venue_id',
             'listing_id',

@@ -37,4 +37,34 @@ class SpecialDayController extends Controller
     {
         return $this->specialDayService->bulkCreate($request);
     }
+
+    public function dashboard(Request $request)
+    {
+        return $this->specialDayService->dashboardPage($request);
+    }
+
+    public function dashboardStore(Request $request)
+    {
+        return $this->specialDayService->dashboardStore($request);
+    }
+
+    public function dashboardUpdate(Request $request, $id)
+    {
+        return $this->specialDayService->dashboardUpdate($request, $id);
+    }
+
+    public function dashboardDestroy($id)
+    {
+        return $this->specialDayService->dashboardDestroy($id);
+    }
+
+    public function dashboardBulkClear(Request $request)
+    {
+        return $this->specialDayService->dashboardBulkClear($request);
+    }
+
+    public function dashboardConflicts(Request $request)
+    {
+        return $this->specialDayService->dashboardConflicts($request);
+    }
 }

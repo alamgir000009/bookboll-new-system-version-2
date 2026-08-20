@@ -209,9 +209,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice'])->name('payments.invoice');
         Route::apiResource('payments', PaymentController::class);
 
-        Route::apiResource('special-days', SpecialDayController::class);
+        Route::get('special-days/dashboard', [SpecialDayController::class, 'dashboard'])->name('special-days.dashboard');
+        Route::post('special-days/dashboard', [SpecialDayController::class, 'dashboardStore'])->name('special-days.dashboard.store');
+        Route::put('special-days/dashboard/{id}', [SpecialDayController::class, 'dashboardUpdate'])->name('special-days.dashboard.update');
+        Route::delete('special-days/dashboard/{id}', [SpecialDayController::class, 'dashboardDestroy'])->name('special-days.dashboard.destroy');
+        Route::post('special-days/dashboard-clear', [SpecialDayController::class, 'dashboardBulkClear'])->name('special-days.dashboard.clear');
+        Route::post('special-days/dashboard-conflicts', [SpecialDayController::class, 'dashboardConflicts'])->name('special-days.dashboard.conflicts');
         Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar'])->name('special-days.calendar');
         Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate'])->name('special-days.bulk');
+        Route::apiResource('special-days', SpecialDayController::class);
 
         Route::get('customers/dashboard', [CustomerController::class, 'dashboard'])->name('customers.dashboard');
         Route::get('customers/export', [CustomerController::class, 'export'])->name('customers.export');

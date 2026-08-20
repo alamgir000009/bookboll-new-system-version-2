@@ -4008,41 +4008,7 @@ class BookingService
                 $q->orWhere('listing_id', $listing->id);
             })
             ->get()
-            ->flatMap(function (SpecialDay $sd) {
-                $dateStr  = $sd->date instanceof \Carbon\CarbonInterface ? $sd->date->format('Y-m-d') : (string) $sd->date;
-                $isClosed = strtolower((string) $sd->type) === 'holiday';
-                $blocks   = $sd->timeBlocks;
-
-                if ($isClosed || $blocks->isEmpty()) {
-                    return [[
-                        'id'               => (string) $sd->id,
-                        'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
-                        'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
-                        'name'             => $sd->description ?: ($isClosed ? 'Closed' : 'Special schedule'),
-                        'date'             => $dateStr,
-                        'type'             => $sd->type,
-                        'is_closed'        => $isClosed,
-                        'open_time'        => null,
-                        'close_time'       => null,
-                        'custom_price'     => $sd->price !== null ? (float) $sd->price : null,
-                        'price_multiplier' => 1,
-                    ]];
-                }
-
-                return $blocks->map(fn($block) => [
-                    'id'               => (string) $sd->id . '-' . $block->id,
-                    'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
-                    'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
-                    'name'             => $sd->description ?: 'Special schedule',
-                    'date'             => $dateStr,
-                    'type'             => $sd->type,
-                    'is_closed'        => false,
-                    'open_time'        => $this->fmtTime($block->start_time),
-                    'close_time'       => $this->fmtTime($block->end_time),
-                    'custom_price'     => $block->price_per_hour !== null ? (float) $block->price_per_hour : ($sd->price !== null ? (float) $sd->price : null),
-                    'price_multiplier' => 1,
-                ])->all();
-            })
+            ->flatMap(fn (SpecialDay $sd) => $this->expandSpecialDayRow($sd))
             ->values();
     }
 
@@ -4427,39 +4393,7 @@ class BookingService
 
     protected function expandSpecialDayRow(SpecialDay $sd)
     {
-        $dateStr  = $sd->date instanceof \Carbon\CarbonInterface ? $sd->date->format('Y-m-d') : (string) $sd->date;
-        $isClosed = strtolower((string) $sd->type) === 'holiday';
-        $blocks   = $sd->timeBlocks;
-
-        if ($isClosed || $blocks->isEmpty()) {
-            return [[
-                'id'               => (string) $sd->id,
-                'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
-                'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
-                'name'             => $sd->description ?: ($isClosed ? 'Closed' : 'Special schedule'),
-                'date'             => $dateStr,
-                'type'             => $sd->type,
-                'is_closed'        => $isClosed,
-                'open_time'        => null,
-                'close_time'       => null,
-                'custom_price'     => $sd->price !== null ? (float) $sd->price : null,
-                'price_multiplier' => 1,
-            ]];
-        }
-
-        return $blocks->map(fn($block) => [
-            'id'               => (string) $sd->id . '-' . $block->id,
-            'location_id'      => $sd->venue_id ? (string) $sd->venue_id : null,
-            'listing_id'       => $sd->listing_id ? (string) $sd->listing_id : null,
-            'name'             => $sd->description ?: 'Special schedule',
-            'date'             => $dateStr,
-            'type'             => $sd->type,
-            'is_closed'        => false,
-            'open_time'        => $this->fmtTime($block->start_time),
-            'close_time'       => $this->fmtTime($block->end_time),
-            'custom_price'     => $block->price_per_hour !== null ? (float) $block->price_per_hour : ($sd->price !== null ? (float) $sd->price : null),
-            'price_multiplier' => 1,
-        ])->all();
+        return app(SpecialDayService::class)->mapToDashboard($sd);
     }
 
     protected function mapDashboardPricing(Listing $listing): array
