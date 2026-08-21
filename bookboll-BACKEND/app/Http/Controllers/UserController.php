@@ -29,6 +29,11 @@ class UserController extends Controller
         return $this->userService->loginWithGoogle($request);
     }
 
+    public function appleLogin(Request $request)
+    {
+        return $this->userService->loginWithApple($request);
+    }
+
     public function logout()
     {
         return $this->userService->logout();

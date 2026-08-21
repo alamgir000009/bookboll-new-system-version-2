@@ -368,6 +368,103 @@ class UserService
         }
     }
 
+    public function loginWithApple($request)
+    {
+        $request->validate([
+            'identity_token' => 'required|string',
+            'name'           => 'nullable|string|max:100',
+            'email'          => 'nullable|email',
+        ]);
+
+        try {
+            $payload = app(AppleTokenVerifier::class)->verify($request->identity_token);
+        } catch (Exception $e) {
+            Log::warning('Apple identity token verification failed: '.$e->getMessage());
+            throw ValidationException::withMessages([
+                'identity_token' => ['Invalid Apple token.'],
+            ]);
+        }
+
+        $appleId = $payload->sub;
+        $email   = $payload->email ?? $request->email;
+        $name    = trim((string) $request->name);
+
+        try {
+            DB::beginTransaction();
+
+            $user = $this->userModel->where(function ($query) use ($appleId, $email) {
+                $query->where(function ($inner) use ($appleId) {
+                    $inner->where('provider', 'apple')->where('provider_id', $appleId);
+                });
+
+                if ($email) {
+                    $query->orWhere('email', $email);
+                }
+            })->first();
+
+            if ($user && $user->status == User::BLOCKED) {
+                DB::rollBack();
+                return sendError('Your account is block by admin please contact for further details');
+            }
+
+            if (! $user) {
+                if (! $email) {
+                    DB::rollBack();
+                    return sendError('Apple did not share an email address. Please try again or use another sign-in method.');
+                }
+
+                if ($name === '') {
+                    $name = strstr($email, '@', true) ?: 'Apple User';
+                }
+
+                $user = $this->userModel->create([
+                    'name'              => $name,
+                    'email_verified_at' => now(),
+                    'email'             => $email,
+                    'provider'          => 'apple',
+                    'provider_id'       => $appleId,
+                    'password'          => 'bookboll-000009',
+                    'status'            => $this->userModel::ACTIVE,
+                ]);
+            } elseif (! $user->provider_id) {
+                $user->provider    = $user->provider ?: 'apple';
+                $user->provider_id = $appleId;
+                $user->save();
+            }
+
+            if (! $user->hasRole('customer')) {
+                $user->assignRole('customer');
+            }
+
+            if (! $user->preferences) {
+                Preference::create([
+                    'user_id'         => $user->id,
+                    'notifications'   => [
+                        'booking_emails'   => true,
+                        'sms_reminders'    => false,
+                        'marketing_emails' => true,
+                    ],
+                    'favorite_sports' => [],
+                    'language'        => 'english',
+                    'currency'        => 'QAR',
+                ]);
+            }
+
+            $token = $user->createToken('auth-token')->plainTextToken;
+
+            DB::commit();
+
+            $user->makeHidden(['roles']);
+
+            return sendSuccess('Logged in with Apple', compact('token', 'user'));
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Customer Apple Login Failed: '.$e->getMessage(), ['exception' => $e]);
+
+            return sendError('Something went wrong try again later');
+        }
+    }
+
     public function customerLogin($request)
     {
         try {

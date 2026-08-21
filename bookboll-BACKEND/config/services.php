@@ -52,4 +52,8 @@ return [
         'enabled' => env('TURNSTILE_ENABLED'),
     ],
 
+    'apple' => [
+        'client_id' => env('APPLE_CLIENT_ID', 'com.bookboll.app'),
+    ],
+
 ];
