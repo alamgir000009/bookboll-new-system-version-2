@@ -267,6 +267,7 @@ Route::prefix('customer')->group(function () {
     Route::get('reviews/my', [ReviewController::class, 'myReviews'])->name('customer.reviews.my');
     Route::post('login', [UserController::class, 'customerLogin'])->name('customer.login');
     Route::post('google-login', [UserController::class, 'googleLogin'])->name('customer.google-login');
+    Route::post('apple-login', [UserController::class, 'appleLogin'])->name('customer.apple-login');
     Route::post('forgot-password', [UserController::class, 'customerForgotPassword'])->name('customer.forgot-password');
     Route::post('reset-password', [UserController::class, 'customerResetPassword'])->name('customer.reset-password');
 
@@ -277,6 +278,7 @@ Route::prefix('customer')->group(function () {
         Route::post('update-profile', [UserController::class, 'updateCustomerProfile'])->name('customer.updateCustomerProfile');
         Route::post('update-profile-image', [UserController::class, 'updateProfileImage'])->name('customer.updateProfileImage');
         Route::get('payment-methods', [PaymentController::class, 'getPaymentMethods'])->name('customer.payment-methods');
+        Route::post('delete-account', [UserController::class, 'deleteCustomerAccount'])->name('customer.delete-account');
     });
 
 });

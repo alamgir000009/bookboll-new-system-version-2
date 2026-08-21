@@ -29,6 +29,11 @@ class UserController extends Controller
         return $this->userService->loginWithGoogle($request);
     }
 
+    public function appleLogin(Request $request)
+    {
+        return $this->userService->loginWithApple($request);
+    }
+
     public function logout()
     {
         return $this->userService->logout();
@@ -142,6 +147,11 @@ class UserController extends Controller
     public function deleteAdminAppAccount(Request $request)
     {
         return $this->userService->deleteAdminAppAccount($request);
+    }
+
+    public function deleteCustomerAccount(Request $request)
+    {
+        return $this->userService->deleteCustomerAccount($request);
     }
 
     public function listPendingUsers(Request $request)

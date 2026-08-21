@@ -203,7 +203,7 @@ if (! function_exists('sendSuccess')) {
     {
         $user = auth()->user();
 
-        if ($logActivity && $user && ! request()->is('api/login*', 'api/register*', 'api/business/register*', 'api/admin-app/register*', 'api/admin-app/forgot-password*', 'api/admin-app/reset-password*', 'api/forgot-password*', 'api/reset-password*', 'api/customer/login*', 'api/customer/google-login*', 'api/customer/forgot-password*', 'api/customer/reset-password*', 'api/health*', 'api/audit-logs*') && ! request()->isMethod('GET')) {
+        if ($logActivity && $user && ! request()->is('api/login*', 'api/register*', 'api/business/register*', 'api/admin-app/register*', 'api/admin-app/forgot-password*', 'api/admin-app/reset-password*', 'api/forgot-password*', 'api/reset-password*', 'api/customer/login*', 'api/customer/google-login*', 'api/customer/apple-login*', 'api/customer/forgot-password*', 'api/customer/reset-password*', 'api/health*', 'api/audit-logs*') && ! request()->isMethod('GET')) {
             try {
                 $routeName  = request()->route()?->getName();
                 $action     = getActionFromMethod(request()->method());
@@ -353,6 +353,7 @@ if (! function_exists('getResourceFromRoute')) {
             'customers.createCustomer'     => 'Customer',
             'customers.updateTags'         => 'Customer',
             'customers.updateStatus'       => 'Customer',
+            'customer.delete-account'      => 'Customer',
 
             'reviews.store'                => 'Review',
             'reviews.update'               => 'Review',
@@ -522,6 +523,7 @@ if (! function_exists('extractSuccessDetails')) {
                 'customers.createCustomer' => "Created customer #{$id}",
                 'customers.updateTags' => "Updated tags for customer #{$id}",
                 'customers.updateStatus' => "Updated status for customer #{$id}",
+                'customer.delete-account' => "Deleted customer account #{$id}",
 
                 'bookings.store' => "Created booking #{$id}",
                 'bookings.update' => "Updated booking #{$id}",

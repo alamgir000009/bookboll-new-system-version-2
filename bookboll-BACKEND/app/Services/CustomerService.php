@@ -507,13 +507,13 @@ class CustomerService
             } else {
                 $customer->tokens()->delete();
                 $customer->onesignalSubscriptions()->delete();
-                $customer->tags()->detach();
-
-                $customer->delete();
+                $customer->removeRole('customer');
+                $customer->status = User::INACTIVE;
+                $customer->save();
 
                 DB::commit();
 
-                Log::info("Customer deleted successfully", [
+                Log::info("Customer soft deleted successfully", [
                     'customer_id' => $id,
                     'deleted_by'  => auth()->id(),
                 ]);
