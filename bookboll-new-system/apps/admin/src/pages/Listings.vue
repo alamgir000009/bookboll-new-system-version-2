@@ -1,6 +1,15 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { supabase } from '../lib/supabase.js'
+import {
+  fetchVenuesDashboard, fetchVenueDashboard, deleteVenue, patchVenue, sortVenues,
+  firstError as venueFirstError,
+} from '../lib/venues.js'
+import {
+  fetchListingsDashboard, fetchListingDashboard, createListing, updateListing,
+  patchListing, deleteListing, sortListings,
+  firstError as listingFirstError,
+} from '../lib/listings.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { Search, Plus, Minus, Trash2, Pencil as Edit2, ChevronDown, ChevronUp, ChevronRight, Eye, EyeOff, ArrowLeft, Check, Info, Wallet, Clock, DollarSign, PackagePlus, Boxes, Image as ImgIcon, X, GripVertical, LayoutList, Layers, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, LocateFixed, MapPin as MapPinIcon, Landmark, Building2 as BldIcon, Upload, Download, SlidersHorizontal, Store, Globe, TrendingDown, ExternalLink, CircleCheck, ShieldCheck, Lock, Bell } from 'lucide-vue-next'
 import { useRouter, useRoute } from 'vue-router'
@@ -389,16 +398,14 @@ async function confirmAddType(catKey) {
 }
 
 async function loadList() {
-  let locQ = supabase.from('locations').select('*').order('sort_order').order('created_at')
-  let liQ = supabase.from('listings').select('*').order('sort_order').order('created_at')
+  const ownerQuery = (!isSuperAdmin.value && currentOwnerUserId.value)
+    ? { owner_user_id: currentOwnerUserId.value }
+    : {}
   let aQ = supabase.from('addons').select('*')
-  if (!isSuperAdmin.value && currentOwnerUserId.value) {
-    locQ = locQ.eq('owner_user_id', currentOwnerUserId.value)
-    aQ = aQ.eq('owner_user_id', currentOwnerUserId.value)
-  }
-  const [lo, li, ci, co, a, r, cr] = await Promise.all([
-    locQ,
-    liQ,
+  if (ownerQuery.owner_user_id) aQ = aQ.eq('owner_user_id', ownerQuery.owner_user_id)
+  const [venuesRes, listingsRes, ci, co, a, r, cr] = await Promise.all([
+    fetchVenuesDashboard(ownerQuery),
+    fetchListingsDashboard(ownerQuery),
     supabase.from('cities').select('*').eq('status', 'active').order('name'),
     supabase.from('countries').select('*').eq('status', 'active').order('name'),
     aQ,
@@ -408,12 +415,12 @@ async function loadList() {
   cities.value = ci.data || []
   countries.value = co.data || []
   // Narrow to the user's assigned venues (Managers/Staff); owners/admins unaffected.
-  locations.value = scopeLocations(lo.data || [])
+  locations.value = scopeLocations(venuesRes.data?.locations || [])
   // Platform jurisdiction: country_admin / platform_staff only keep venues in their scope.
   const allowed = allowedLocationIds.value
   if (allowed) locations.value = locations.value.filter(l => allowed.has(l.id))
   const ownedLocIds = new Set(locations.value.map(l => l.id))
-  listings.value = scopeListings((li.data || []).filter(x => isSuperAdmin.value || ownedLocIds.has(x.location_id)))
+  listings.value = scopeListings((listingsRes.data?.listings || []).filter(x => isSuperAdmin.value || ownedLocIds.has(x.location_id)))
   allAddons.value = a.data || []
   allResources.value = r.data || []
   const rates = {}
@@ -548,14 +555,15 @@ async function removeLoc(id) {
     message: `“${loc?.name || 'This location'}”${n ? ` and its ${n} listing${n > 1 ? 's' : ''}` : ''} will be permanently removed. This cannot be undone.`,
     confirmText: 'Delete',
   }))) return
-  const { error } = await supabase.from('locations').delete().eq('id', id)
-  if (error) { toast.error('Could not delete location. It may have bookings linked to it.'); return }
+  const res = await deleteVenue(id)
+  if (!res.success) { toast.error(venueFirstError(res, 'Could not delete location. It may have bookings linked to it.')); return }
   toast.success('Location deleted')
   loadList()
 }
 async function toggleLocStatus(loc) {
   const next = loc.status === 'active' ? 'inactive' : 'active'
-  await supabase.from('locations').update({ status: next }).eq('id', loc.id)
+  const res = await patchVenue(loc.id, { status: next })
+  if (!res.success) { toast.error(venueFirstError(res, 'Could not update location status.')); return }
   loadList()
 }
 
@@ -571,20 +579,38 @@ function openPause(table, row) {
 }
 async function savePause() {
   const { table, row } = pauseTarget.value
-  await supabase.from(table).update({
+  const payload = {
     eligibility_status: 'paused',
     admin_note: pauseNote.value,
     previous_snapshot: null,
-  }).eq('id', row.id)
+  }
+  const res = table === 'locations'
+    ? await patchVenue(row.id, payload)
+    : await patchListing(row.id, payload)
+  if (!res.success) {
+    toast.error(table === 'locations'
+      ? venueFirstError(res, 'Could not pause eligibility.')
+      : listingFirstError(res, 'Could not pause eligibility.'))
+    return
+  }
   pauseModal.value = false
   loadList()
 }
 async function resumeEligibility(table, row) {
-  await supabase.from(table).update({
+  const payload = {
     eligibility_status: 'eligible',
     admin_note: '',
     previous_snapshot: null,
-  }).eq('id', row.id)
+  }
+  const res = table === 'locations'
+    ? await patchVenue(row.id, payload)
+    : await patchListing(row.id, payload)
+  if (!res.success) {
+    toast.error(table === 'locations'
+      ? venueFirstError(res, 'Could not resume eligibility.')
+      : listingFirstError(res, 'Could not resume eligibility.'))
+    return
+  }
   loadList()
 }
 
@@ -907,41 +933,79 @@ async function openEditListing(l) {
   prevLocationId.value = form.value.location_id
   syncFixedFromTimes(form.value.fixed_start_times)
   await loadLocationHours(l.location_id)
-  const [h, g, c, p, la, lr] = await Promise.all([
-    supabase.from('listing_hours').select('*').eq('listing_id', l.id),
-    supabase.from('pricing_groups').select('*').eq('listing_id', l.id).order('sort_order'),
-    supabase.from('pricing_cells').select('*').eq('listing_id', l.id),
-    supabase.from('listing_payment_options').select('*').eq('listing_id', l.id).maybeSingle(),
-    supabase.from('listing_addons').select('*').eq('listing_id', l.id).order('sort_order'),
-    supabase.from('listing_resources').select('*').eq('listing_id', l.id),
-  ])
-  if (h.data && h.data.length) {
-    // Listings carry their own concrete hours. Any legacy "inherit" rows are
-    // resolved once here into a copy of the location's current hours for that day.
-    const map = new Map()
-    for (const r of h.data) {
-      if (!map.has(r.day_of_week)) map.set(r.day_of_week, { day_of_week: r.day_of_week, is_open: false, periods: [] })
-      const entry = map.get(r.day_of_week)
-      if (r.inherit_from_location) {
-        const loc = locationHoursGrouped.value.find(l => l.day_of_week === r.day_of_week)
-        if (loc && loc.is_open && loc.periods?.length) { entry.is_open = true; entry.periods = loc.periods.map(p => ({ ...p })) }
-      } else if (r.is_open) {
-        entry.is_open = true
-        entry.periods.push({ open_time: r.open_time, close_time: r.close_time })
+
+  const dash = await fetchListingDashboard(l.id)
+  if (dash.success && dash.data) {
+    const det = dash.data.listing
+    if (det) {
+      editing.value = { ...editing.value, ...det }
+      // Merge richer dashboard fields into the form, then re-apply pending overlay.
+      form.value = {
+        ...form.value,
+        ...det,
+        loyalty_points: det.loyalty_points ?? form.value.loyalty_points ?? 10,
+        booking_color: det.booking_color || form.value.booking_color || '#10b981',
+        listing_type: det.listing_type || form.value.listing_type || 'per_space',
+        max_bookings_per_slot: det.max_bookings_per_slot ?? form.value.max_bookings_per_slot ?? 1,
+        extension_max_slots: Math.max(1, Number(det.extension_max_slots ?? form.value.extension_max_slots) || 1),
+        show_on_marketplace: det.show_on_marketplace !== false,
+        show_on_provider_site: det.show_on_provider_site !== false,
+        photos: Array.isArray(det.photos) && det.photos.length ? [...det.photos] : (det.photo_url ? [det.photo_url] : (form.value.photos || [])),
       }
+      const pc2 = det.pending_content
+      contentUnderReview.value = !!(pc2 && (det.approval_status || 'approved') === 'approved')
+      if (contentUnderReview.value) {
+        if (pc2.name != null) form.value.name = pc2.name
+        if (pc2.description != null) form.value.description = pc2.description
+        if (Array.isArray(pc2.photos) && pc2.photos.length) form.value.photos = [...pc2.photos]
+        else if (pc2.photo_url) form.value.photos = [pc2.photo_url]
+      }
+      syncFixedFromTimes(form.value.fixed_start_times)
     }
-    hours.value = Array.from({ length: 7 }, (_, i) => map.get(i) || { day_of_week: i, is_open: false, periods: [] })
+
+    const apiHours = dash.data.hours || []
+    if (apiHours.length) {
+      // API returns period-shaped days (may include inherit_from_location).
+      hours.value = Array.from({ length: 7 }, (_, i) => {
+        const r = apiHours.find(h => Number(h.day_of_week) === i)
+        if (!r) return { day_of_week: i, is_open: false, periods: [] }
+        if (r.inherit_from_location) {
+          const loc = locationHoursGrouped.value.find(x => x.day_of_week === i)
+          if (loc && loc.is_open && loc.periods?.length) {
+            return { day_of_week: i, is_open: true, periods: loc.periods.map(p => ({ ...p })) }
+          }
+          return { day_of_week: i, is_open: false, periods: [] }
+        }
+        return {
+          day_of_week: i,
+          is_open: !!r.is_open,
+          periods: r.is_open && r.periods?.length
+            ? r.periods.map(p => ({ open_time: p.open_time, close_time: p.close_time }))
+            : [],
+        }
+      })
+    } else {
+      hours.value = hoursFromLocation()
+    }
+    groups.value = dash.data.pricing_groups || []
+    cells.value = dash.data.pricing_cells || []
+    pattern.value = cells.value.some(x => x.pricing_group_id) ? 'A' : (cells.value.length ? 'B' : 'A')
+    dynamicPricing.value = cells.value.length > 0 || groups.value.length > 0
+    pay.value = dash.data.payment ? { ...defaultPay(), ...dash.data.payment } : defaultPay()
+    connectedAddons.value = (dash.data.addons || []).map(x => ({ id: x.id, addon_id: x.addon_id, sort_order: x.sort_order }))
+    connectedResources.value = (dash.data.resources || []).map(x => ({ id: x.id, resource_id: x.resource_id, quantity: x.quantity }))
   } else {
-    // No saved hours yet → start from the location's schedule (copy).
     hours.value = hoursFromLocation()
+    groups.value = []
+    cells.value = []
+    pattern.value = 'A'
+    dynamicPricing.value = false
+    pay.value = defaultPay()
+    connectedAddons.value = []
+    connectedResources.value = []
+    if (!dash.success) toast.error(listingFirstError(dash, 'Could not load listing details.'))
   }
-  groups.value = g.data || []
-  cells.value = c.data || []
-  pattern.value = cells.value.some(x => x.pricing_group_id) ? 'A' : (cells.value.length ? 'B' : 'A')
-  dynamicPricing.value = cells.value.length > 0 || groups.value.length > 0
-  pay.value = p.data ? { ...defaultPay(), ...p.data } : defaultPay()
-  connectedAddons.value = (la.data || []).map(x => ({ id: x.id, addon_id: x.addon_id, sort_order: x.sort_order }))
-  connectedResources.value = (lr.data || []).map(x => ({ id: x.id, resource_id: x.resource_id, quantity: x.quantity }))
+
   await checkProviderOnline(l.location_id)
   openSection.value = ''   // editing → open with all cards collapsed
   payOpen.value = { mkt: false, site: false }   // payment panels collapsed (summaries show the facts)
@@ -1049,8 +1113,26 @@ async function deletePayAcct() {
 
 async function loadLocationHours(id) {
   if (!id) { locationHours.value = []; return }
-  const { data } = await supabase.from('location_hours').select('*').eq('location_id', id)
-  locationHours.value = data || []
+  const res = await fetchVenueDashboard(id)
+  if (!res.success) { locationHours.value = []; return }
+  const raw = res.data?.hours || []
+  // locationHoursGrouped expects flat rows (day_of_week, is_open, open_time, close_time).
+  // API may return that, or period-shaped days — flatten the latter.
+  if (raw.some(r => Array.isArray(r?.periods))) {
+    const flat = []
+    for (const d of raw) {
+      if (!d.is_open || !d.periods?.length) {
+        flat.push({ day_of_week: d.day_of_week, is_open: false, open_time: '09:00', close_time: '23:00' })
+      } else {
+        for (const p of d.periods) {
+          flat.push({ day_of_week: d.day_of_week, is_open: true, open_time: p.open_time, close_time: p.close_time })
+        }
+      }
+    }
+    locationHours.value = flat
+  } else {
+    locationHours.value = raw
+  }
 }
 
 async function onLocationChange() {
@@ -1348,7 +1430,8 @@ function togglePlacementMenu(id, surface) {
 }
 async function applyPlacement(row, surface, value) {
   const col = surface === 'marketplace' ? 'show_on_marketplace' : 'show_on_provider_site'
-  await supabase.from('listings').update({ [col]: value }).eq('id', row.id)
+  const res = await patchListing(row.id, { [col]: value })
+  if (!res.success) { toast.error(listingFirstError(res, 'Could not update placement.')); return }
   await loadList()
 }
 function setPlacement(row, surface, value) {
@@ -2002,8 +2085,11 @@ async function removeListing(id) {
     message: `“${l?.name || 'This listing'}” will be permanently removed. This cannot be undone.`,
     confirmText: 'Delete',
   }))) return
-  const { error } = await supabase.from('listings').delete().eq('id', id)
-  if (error) { toast.error('Could not delete listing. It may have bookings linked to it.'); return }
+  const res = await deleteListing(id)
+  if (!res.success) {
+    toast.error(listingFirstError(res, 'Could not delete listing. It may have bookings linked to it.'))
+    return
+  }
   toast.success('Listing deleted')
   loadList()
 }

@@ -1,6 +1,6 @@
 <script setup>
 /**
- * LocationModal.vue — the ONE shared "New / Edit Location" form.
+ * LocationModal.vue ΓÇö the ONE shared "New / Edit Location" form.
  *
  * Used by both Listings.vue and ClassesSubscriptions.vue so there is a single
  * source of truth for creating locations (no more duplicate quick-add form).
@@ -17,7 +17,10 @@
  * Emits : close, saved(savedRow)
  */
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import {
+  fetchVenueDashboard, createVenue, updateVenue, applyVenueHoursToListings, firstError,
+} from '../lib/venues.js'
+import { fetchGeographyCountries, fetchGeographyCities } from '../lib/geography.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty, pushDirtyScope, popDirtyScope, registerDraftSaver } from '../lib/unsavedGuard.js'
@@ -40,7 +43,7 @@ const emit = defineEmits(['close', 'saved'])
 const { isSuperAdmin, isCountryAdmin, isProviderScoped, currentOwnerUserId, currentCountryId, allBusinessOwners } = useCurrentUser()
 const toast = useToast()
 
-// ── Option lists (small + self-contained so the component is portable) ──
+// ΓöÇΓöÇ Option lists (small + self-contained so the component is portable) ΓöÇΓöÇ
 const COMMON_TIMEZONES = [
   'Africa/Cairo','Africa/Lagos','Africa/Nairobi','America/Chicago','America/Los_Angeles',
   'America/New_York','America/Sao_Paulo','America/Toronto','Asia/Baghdad','Asia/Bangkok',
@@ -63,7 +66,7 @@ const ISO_CURRENCIES = [
   { code:'CNY', name:'Chinese Yuan' },
 ]
 
-// ── State ──
+// ΓöÇΓöÇ State ΓöÇΓöÇ
 const countries = ref([])
 const cities = ref([])
 const form = ref(defaultForm())
@@ -74,7 +77,7 @@ const hours = ref(defaultHours())
 const saving = ref(false)
 const savedFlag = ref(false)
 const errorMsg = ref('')
-const triedSave = ref(false)   // failed save attempt → red-flag the missing required fields
+const triedSave = ref(false)   // failed save attempt ΓåÆ red-flag the missing required fields
 // Apply-schedule-to-listings prompt (shown after a schedule change on a location
 // that has connected listings).
 const connectedListings = ref([])
@@ -96,7 +99,7 @@ function defaultForm() {
   }
 }
 function defaultHours() {
-  // New venues start open 24/7 (close '00:00' = midnight at the END of the day) —
+  // New venues start open 24/7 (close '00:00' = midnight at the END of the day) ΓÇö
   // providers close days / trim hours from there, which is less work than building up.
   return Array.from({ length: 7 }, (_, i) => ({
     day_of_week: i, is_open: true, periods: [{ open_time: '00:00', close_time: '00:00' }],
@@ -104,17 +107,19 @@ function defaultHours() {
 }
 
 const citiesForCountry = computed(() =>
-  selectedCountryId.value ? cities.value.filter(c => c.country_id === selectedCountryId.value) : cities.value
+  selectedCountryId.value
+    ? cities.value.filter(c => String(c.country_id) === String(selectedCountryId.value))
+    : cities.value
 )
 
-// Providers can now operate in MULTIPLE countries — each country needs its own
+// Providers can now operate in MULTIPLE countries ΓÇö each country needs its own
 // wallet for full online payments (see My Wallet). The country picker is always
 // available; we just default a provider to their home country.
-const selectedCountryName = computed(() => countries.value.find(c => c.id === selectedCountryId.value)?.name || '')
+const selectedCountryName = computed(() => countries.value.find(c => String(c.id) === String(selectedCountryId.value))?.name || '')
 
 const resolvedGeo = computed(() => {
-  const city = cities.value.find(c => c.id === form.value.city_id)
-  const country = countries.value.find(c => c.id === city?.country_id)
+  const city = cities.value.find(c => String(c.id) === String(form.value.city_id))
+  const country = countries.value.find(c => String(c.id) === String(city?.country_id || selectedCountryId.value))
   return {
     timezone: form.value.timezone_override || city?.timezone || country?.timezone || null,
     currency: form.value.currency_override || country?.currency_code || null,
@@ -126,20 +131,64 @@ const resolvedGeo = computed(() => {
 
 const providerName = (id) => {
   const p = allBusinessOwners.value.find(x => x.id === id)
-  return p?.business_name || p?.full_name || '—'
+  return p?.business_name || p?.full_name || 'ΓÇö'
 }
 
 const canSave = computed(() => !!form.value.name && !!form.value.city_id)
 
+/** Track which country_ids already have cities fetched (lazy load). */
+const citiesLoadedFor = new Set()
+
+function mapCountry(c) {
+  return {
+    id: String(c.id),
+    name: c.name,
+    iso_code: c.iso_code || c.iso2 || '',
+    currency_code: c.currency_code || null,
+    currency_symbol: c.currency_symbol || null,
+    timezone: c.timezone || null,
+    status: c.status || 'active',
+  }
+}
+
+function mapCity(c) {
+  return {
+    id: String(c.id),
+    name: c.name,
+    country_id: String(c.country_id),
+    state_id: c.state_id != null ? String(c.state_id) : null,
+    timezone: c.timezone || null,
+    status: c.status || 'active',
+  }
+}
+
 async function loadRefData() {
-  if (!countries.value.length) {
-    const { data } = await supabase.from('countries').select('*').eq('status', 'active').order('name')
-    countries.value = data || []
-  }
-  if (!cities.value.length) {
-    const { data } = await supabase.from('cities').select('*').order('name')
-    cities.value = data || []
-  }
+  if (countries.value.length) return
+  const all = []
+  let page = 1
+  let lastPage = 1
+  do {
+    const res = await fetchGeographyCountries({ status: 'active', page, records_per_page: 250 })
+    if (!res.success) break
+    all.push(...(res.data?.countries || []).map(mapCountry))
+    lastPage = Number(res.data?.pagination?.last_page || 1)
+    page += 1
+  } while (page <= lastPage)
+  countries.value = all
+}
+
+async function ensureCities(countryId) {
+  if (!countryId) return
+  const cid = String(countryId)
+  if (citiesLoadedFor.has(cid)) return
+  const res = await fetchGeographyCities(cid)
+  if (!res.success) return
+  const mapped = (res.data?.cities || []).map(mapCity)
+  cities.value = [
+    ...cities.value.filter(c => String(c.country_id) !== cid),
+    ...mapped,
+  ]
+  citiesLoadedFor.add(cid)
 }
 
 function normalizePhotos(row) {
@@ -148,24 +197,42 @@ function normalizePhotos(row) {
   return []
 }
 
-async function loadHours(id) {
-  const { data } = await supabase.from('location_hours').select('*').eq('location_id', id).order('day_of_week')
-  if (data && data.length) {
-    const map = new Map()
-    for (const r of data) {
-      if (!map.has(r.day_of_week)) map.set(r.day_of_week, { day_of_week: r.day_of_week, is_open: false, periods: [] })
-      const e = map.get(r.day_of_week)
-      if (r.is_open) { e.is_open = true; e.periods.push({ open_time: r.open_time, close_time: r.close_time }) }
-    }
-    hours.value = Array.from({ length: 7 }, (_, i) => map.get(i) || { day_of_week: i, is_open: false, periods: [] })
-  } else {
-    hours.value = defaultHours()
+/** Normalize dashboard hours (flat rows or periods shape) → WeeklyHours UI shape. */
+function normalizeHoursFromApi(raw) {
+  if (!Array.isArray(raw) || !raw.length) return defaultHours()
+  if (raw.some(r => Array.isArray(r?.periods))) {
+    return Array.from({ length: 7 }, (_, i) => {
+      const found = raw.find(r => Number(r.day_of_week) === i)
+      if (!found) return { day_of_week: i, is_open: false, periods: [] }
+      return {
+        day_of_week: i,
+        is_open: !!found.is_open,
+        periods: found.is_open && found.periods?.length
+          ? found.periods.map(p => ({ open_time: p.open_time, close_time: p.close_time }))
+          : [],
+      }
+    })
   }
+  const map = new Map()
+  for (const r of raw) {
+    const dow = Number(r.day_of_week)
+    if (Number.isNaN(dow)) continue
+    if (!map.has(dow)) map.set(dow, { day_of_week: dow, is_open: false, periods: [] })
+    const e = map.get(dow)
+    if (r.is_open) {
+      e.is_open = true
+      e.periods.push({ open_time: r.open_time, close_time: r.close_time })
+    }
+  }
+  return Array.from({ length: 7 }, (_, i) => map.get(i) || { day_of_week: i, is_open: false, periods: [] })
 }
 
-function onCountryChange() { form.value.city_id = '' }
+async function onCountryChange() {
+  form.value.city_id = ''
+  await ensureCities(selectedCountryId.value)
+}
 
-// ── Open / close lifecycle ──
+// ΓöÇΓöÇ Open / close lifecycle ΓöÇΓöÇ
 watch(() => props.open, async (v) => {
   // This modal can open ON TOP of the listing editor ("Edit location schedule"),
   // so it gets its own dirty scope: closing it must not wipe the outer form's
@@ -181,34 +248,56 @@ watch(() => props.open, async (v) => {
   await loadRefData()
   if (props.editing) {
     editingExisting.value = true
-    form.value = { ...defaultForm(), ...props.editing, photos: normalizePhotos(props.editing) }
     editingId.value = props.editing.id
-    const city = cities.value.find(c => c.id === props.editing.city_id)
-    selectedCountryId.value = city?.country_id || ''
-    await loadHours(props.editing.id)
+    const res = await fetchVenueDashboard(props.editing.id)
+    if (!res.success) {
+      errorMsg.value = firstError(res, 'Could not load location.')
+      form.value = { ...defaultForm(), ...props.editing, photos: normalizePhotos(props.editing), owner_user_id: props.editing.owner_user_id || '' }
+      hours.value = defaultHours()
+      connectedListings.value = []
+      selectedCountryId.value = props.editing.country_id != null ? String(props.editing.country_id) : ''
+    } else {
+      const loc = res.data?.location || props.editing
+      form.value = {
+        ...defaultForm(),
+        ...loc,
+        photos: normalizePhotos(loc),
+        owner_user_id: loc.owner_user_id || '',
+        city_id: loc.city_id != null ? String(loc.city_id) : '',
+      }
+      hours.value = normalizeHoursFromApi(res.data?.hours)
+      connectedListings.value = res.data?.listings || []
+      selectedCountryId.value = loc.country_id != null ? String(loc.country_id) : ''
+    }
+    if (selectedCountryId.value) await ensureCities(selectedCountryId.value)
+    if (!selectedCountryId.value && form.value.city_id) {
+      const city = cities.value.find(c => String(c.id) === String(form.value.city_id))
+      selectedCountryId.value = city?.country_id || ''
+      if (selectedCountryId.value) await ensureCities(selectedCountryId.value)
+    }
     initialHoursJson.value = JSON.stringify(hours.value)
-    const { data: ls } = await supabase.from('listings').select('id, name, sport_category').eq('location_id', props.editing.id).order('name')
-    connectedListings.value = ls || []
   } else {
     editingExisting.value = false
     form.value = defaultForm()
     editingId.value = null
-    selectedCountryId.value = isProviderScoped.value ? (currentCountryId.value || '') : ''
+    selectedCountryId.value = isProviderScoped.value ? (currentCountryId.value ? String(currentCountryId.value) : '') : ''
     hours.value = defaultHours()
     connectedListings.value = []
     initialHoursJson.value = ''
     if (currentOwnerUserId.value) form.value.owner_user_id = currentOwnerUserId.value
+    if (selectedCountryId.value) await ensureCities(selectedCountryId.value)
   }
   clearDirty()   // preset population is programmatic; start clean
   // Local draft: offer an unfinished snapshot back, then arm the guard's
   // "Save draft" choice for this modal's own dirty scope.
   await offerLocationDraft()
+  if (selectedCountryId.value) await ensureCities(selectedCountryId.value)
   registerDraftSaver(() => saveFormDraft(locationDraftKey(), locationDraftSnapshot()))
   await nextTick()
   initMap()   // after any draft restore, so the map pin reflects the draft's coords
 })
 
-// ── Local "save as draft" for the location form ──────────────────────────────
+// ΓöÇΓöÇ Local "save as draft" for the location form ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 function locationDraftKey() { return props.editing?.id ? `location_${props.editing.id}` : 'location_new' }
 function locationDraftSnapshot() { return { form: form.value, hours: hours.value, selectedCountryId: selectedCountryId.value } }
 async function offerLocationDraft() {
@@ -224,7 +313,7 @@ async function offerLocationDraft() {
     if (d.data.form) form.value = { ...form.value, ...d.data.form }
     if (Array.isArray(d.data.hours)) hours.value = d.data.hours
     if (d.data.selectedCountryId !== undefined) selectedCountryId.value = d.data.selectedCountryId
-    markDirty()   // restored draft is still unsaved — keep the guard armed
+    markDirty()   // restored draft is still unsaved ΓÇö keep the guard armed
   } else {
     clearFormDraft(key)
   }
@@ -235,7 +324,7 @@ watch(tab, async (t) => {
   if (t === 'details') { await nextTick(); mapInst && mapInst.invalidateSize() }
 })
 
-// ── Leaflet map picker ──
+// ΓöÇΓöÇ Leaflet map picker ΓöÇΓöÇ
 const mapEl = ref(null)
 let mapInst = null
 let markerInst = null
@@ -281,7 +370,7 @@ function destroyMap() {
 }
 onBeforeUnmount(destroyMap)
 
-// ── Reverse geocode (OpenStreetMap Nominatim) → auto-fill country/city/address ──
+// ΓöÇΓöÇ Reverse geocode (OpenStreetMap Nominatim) ΓåÆ auto-fill country/city/address ΓöÇΓöÇ
 const geoStatus = ref('idle')   // idle | detecting | done | error
 async function reverseGeocode(lat, lng) {
   try {
@@ -296,9 +385,10 @@ async function reverseGeocode(lat, lng) {
       // A provider's country is fixed to their business — don't let a dropped pin change it.
       selectedCountryId.value = matchedCountry.id
       const activeCountryId = selectedCountryId.value
+      await ensureCities(activeCountryId)
       const cityNameRaw = addr.city || addr.town || addr.village || addr.county || ''
       const matchedCity = cities.value.find(c =>
-        c.country_id === activeCountryId &&
+        String(c.country_id) === String(activeCountryId) &&
         (c.name.toLowerCase() === cityNameRaw.toLowerCase() || cityNameRaw.toLowerCase().includes(c.name.toLowerCase()))
       )
       if (matchedCity) form.value.city_id = matchedCity.id
@@ -324,7 +414,7 @@ function detectGeoLocation() {
   )
 }
 
-// ── Google Maps share-link → try to extract coordinates ──
+// ΓöÇΓöÇ Google Maps share-link ΓåÆ try to extract coordinates ΓöÇΓöÇ
 const mapsLinkStatus = ref('')   // '' | 'ok' | 'nocoords'
 function applyMapsLink() {
   const url = (form.value.google_maps_url || '').trim()
@@ -344,7 +434,7 @@ function applyMapsLink() {
   }
 }
 
-// ── Multi-image upload (compress → imgbb) ──
+// ΓöÇΓöÇ Multi-image upload (compress ΓåÆ imgbb) ΓöÇΓöÇ
 const uploading = ref(false)
 const imgError = ref('')
 const fileInput = ref(null)
@@ -400,7 +490,7 @@ async function handleFiles(files) {
   const list = Array.from(files).filter(f => f.type.startsWith('image/'))
   if (!list.length) { imgError.value = 'Please choose image files.'; return }
   const apiKey = import.meta.env.VITE_IMGBB_KEY
-  if (!apiKey) { imgError.value = 'Image upload is not configured — add VITE_IMGBB_KEY to your .env file.'; return }
+  if (!apiKey) { imgError.value = 'Image upload is not configured ΓÇö add VITE_IMGBB_KEY to your .env file.'; return }
   uploading.value = true
   try {
     for (const f of list) {
@@ -418,16 +508,16 @@ function onDrop(e) { dropActive.value = false; if (e.dataTransfer?.files?.length
 function removePhoto(i) { form.value.photos.splice(i, 1) }
 function makePrimary(i) { if (i === 0) return; const [p] = form.value.photos.splice(i, 1); form.value.photos.unshift(p) }
 
-// ── Save ──
-// andClose = false → "Save & Continue": persist but keep the drawer open (advance to
-// the next card). andClose = true → final save: persist + close (emit 'saved').
+// ΓöÇΓöÇ Save ΓöÇΓöÇ
+// andClose = false ΓåÆ "Save & Continue": persist but keep the drawer open (advance to
+// the next card). andClose = true ΓåÆ final save: persist + close (emit 'saved').
 async function saveAndContinue() {
   await save(false)
   if (!errorMsg.value) tab.value = 'schedule'
 }
 async function save(andClose = true) {
   if (!canSave.value) {
-    // Red-flag the missing fields and bring the user TO them — a footer message
+    // Red-flag the missing fields and bring the user TO them ΓÇö a footer message
     // alone leaves the invalid inputs out of view on a long form.
     triedSave.value = true
     errorMsg.value = 'Venue name and city are required.'
@@ -459,30 +549,14 @@ async function save(andClose = true) {
       longitude: form.value.longitude || null,
       timezone_override: form.value.timezone_override || null,
       currency_override: form.value.currency_override || null,
+      hours: hours.value,
     }
-    let saved
-    if (editingId.value) {
-      const { data, error } = await supabase.from('locations').update(payload).eq('id', editingId.value).select().maybeSingle()
-      if (error) throw error
-      saved = data
-    } else {
-      const { data, error } = await supabase.from('locations').insert({ ...payload, approval_status: 'approved' }).select().maybeSingle()
-      if (error) throw error
-      saved = data
-    }
+    const res = editingId.value
+      ? await updateVenue(editingId.value, payload)
+      : await createVenue(payload)
+    if (!res.success) throw new Error(firstError(res, 'Could not save location.'))
+    const saved = res.data?.location
     const locId = saved?.id || editingId.value
-    if (locId) {
-      await supabase.from('location_hours').delete().eq('location_id', locId)
-      const rows = []
-      for (const h of hours.value) {
-        if (!h.is_open || !h.periods?.length) {
-          rows.push({ location_id: locId, day_of_week: h.day_of_week, is_open: false, open_time: '09:00', close_time: '23:00' })
-        } else {
-          for (const p of h.periods) rows.push({ location_id: locId, day_of_week: h.day_of_week, is_open: true, open_time: p.open_time, close_time: p.close_time })
-        }
-      }
-      if (rows.length) await supabase.from('location_hours').insert(rows)
-    }
     const wasNew = !editingId.value
     const scheduleChanged = JSON.stringify(hours.value) !== initialHoursJson.value
     initialHoursJson.value = JSON.stringify(hours.value)
@@ -491,7 +565,7 @@ async function save(andClose = true) {
     clearFormDraft(locationDraftKey())   // a real save supersedes any local draft
     savedFlag.value = true; setTimeout(() => { savedFlag.value = false }, 2000)
 
-    // Existing location whose schedule changed and that has listings → ask whether
+    // Existing location whose schedule changed and that has listings ΓåÆ ask whether
     // to push the new hours onto them. Hold off closing until they answer.
     if (!wasNew && scheduleChanged && connectedListings.value.length) {
       applySaved.value = saved
@@ -506,7 +580,7 @@ async function save(andClose = true) {
       toast.success(wasNew ? 'Location created' : 'Location updated')
       emit('saved', saved)
     } else {
-      toast.success(wasNew ? 'Location created — now set weekly hours' : 'Saved')
+      toast.success(wasNew ? 'Location created ΓÇö now set weekly hours' : 'Saved')
     }
   } catch (e) {
     errorMsg.value = e.message || 'Could not save location. Please try again.'
@@ -517,13 +591,13 @@ async function save(andClose = true) {
 }
 
 async function close() {
-  const res = await confirmDiscardIfDirty()   // false = stay · true = discard · 'draft' = saved a draft
+  const res = await confirmDiscardIfDirty()   // false = stay ┬╖ true = discard ┬╖ 'draft' = saved a draft
   if (!res) return
-  if (res === 'draft') toast.success('Draft saved — it will be offered when you reopen this form')
+  if (res === 'draft') toast.success('Draft saved ΓÇö it will be offered when you reopen this form')
   emit('close')
 }
 
-// ── Apply-schedule-to-listings prompt handlers ──
+// ΓöÇΓöÇ Apply-schedule-to-listings prompt handlers ΓöÇΓöÇ
 function toggleApplyTarget(id) {
   applyTargets.value = applyTargets.value.includes(id)
     ? applyTargets.value.filter(x => x !== id)
@@ -537,31 +611,17 @@ async function applyScheduleToSelected() {
   applying.value = true
   try {
     if (applyTargets.value.length) {
-      // Copy the location's (new) weekly schedule onto the selected listings as
-      // their own concrete hours. Listings stay independent afterwards — unticked
-      // listings are never touched, so they keep their current schedule.
-      const buildRows = (listingId) => {
-        const rows = []
-        for (const h of hours.value) {
-          if (!h.is_open || !h.periods?.length) {
-            rows.push({ listing_id: listingId, day_of_week: h.day_of_week, is_open: false, inherit_from_location: false, open_time: '09:00', close_time: '23:00' })
-          } else {
-            for (const p of h.periods) rows.push({ listing_id: listingId, day_of_week: h.day_of_week, is_open: true, inherit_from_location: false, open_time: p.open_time, close_time: p.close_time })
-          }
-        }
-        return rows
-      }
-      await supabase.from('listing_hours').delete().in('listing_id', applyTargets.value)
-      const allRows = applyTargets.value.flatMap(id => buildRows(id))
-      if (allRows.length) {
-        const { error } = await supabase.from('listing_hours').insert(allRows)
-        if (error) throw error
-      }
+      const locId = applySaved.value?.id || editingId.value
+      const res = await applyVenueHoursToListings(locId, {
+        listing_ids: applyTargets.value.map(id => Number(id) || id),
+        hours: hours.value,
+      })
+      if (!res.success) throw new Error(firstError(res, 'Could not update listings.'))
       const n = applyTargets.value.length
       toast.success(`Updated ${n} listing${n !== 1 ? 's' : ''} to the new schedule`)
     }
   } catch (e) {
-    toast.error('Could not update some listings.')
+    toast.error(e.message || 'Could not update some listings.')
   } finally {
     applying.value = false
     finishApply()
@@ -582,7 +642,7 @@ async function applyScheduleToSelected() {
       </div>
 
       <div class="bb-drawer-body lm-body">
-        <!-- ── DETAILS SECTION ── -->
+        <!-- ΓöÇΓöÇ DETAILS SECTION ΓöÇΓöÇ -->
         <section class="lm-section" :class="{ open: tab === 'details' }">
           <button type="button" class="lm-section-head" @click="tab = tab === 'details' ? '' : 'details'">
             <div class="lm-section-title"><div>Location Details</div><div class="lm-section-sub">Name, map, address &amp; photos</div></div>
@@ -599,7 +659,7 @@ async function applyScheduleToSelected() {
               </option>
             </select>
             <div v-if="!form.owner_user_id" class="form-hint">
-              This location belongs to Bookboll — 100% of revenue is retained by the platform. No provider payout applies.
+              This location belongs to Bookboll ΓÇö 100% of revenue is retained by the platform. No provider payout applies.
             </div>
             <div v-else class="form-hint">
               Payment will be split: platform commission to Bookboll, remaining balance collected by the provider.
@@ -622,11 +682,11 @@ async function applyScheduleToSelected() {
               <span class="map-hint">Click the map or drag the pin to set the exact spot.</span>
               <button class="btn btn-secondary btn-sm" :disabled="geoStatus === 'detecting'" @click="detectGeoLocation">
                 <LocateFixed :size="13" />
-                {{ geoStatus === 'detecting' ? 'Detecting…' : 'Use my location' }}
+                {{ geoStatus === 'detecting' ? 'DetectingΓÇª' : 'Use my location' }}
               </button>
             </div>
             <div ref="mapEl" class="bb-map"></div>
-            <div v-if="geoStatus === 'error'" class="geo-error" style="margin-top:6px;">Location access denied or unavailable — pin it manually on the map.</div>
+            <div v-if="geoStatus === 'error'" class="geo-error" style="margin-top:6px;">Location access denied or unavailable ΓÇö pin it manually on the map.</div>
             <div v-if="form.latitude && form.longitude" class="geo-success" style="margin-top:6px;">
               <Check :size="13" />Coordinates set: {{ form.latitude }}, {{ form.longitude }}
             </div>
@@ -636,15 +696,15 @@ async function applyScheduleToSelected() {
           <div class="form-group" style="margin-top:14px;">
             <label class="form-label">Google Maps link <span class="opt-tag">optional</span></label>
             <div class="maps-link-row">
-              <input v-model="form.google_maps_url" placeholder="Paste a Google Maps share link…" @blur="applyMapsLink" />
+              <input v-model="form.google_maps_url" placeholder="Paste a Google Maps share linkΓÇª" @blur="applyMapsLink" />
               <button class="btn btn-secondary btn-sm" @click="applyMapsLink" :disabled="!form.google_maps_url">Locate</button>
             </div>
             <div v-if="mapsLinkStatus === 'ok'" class="form-hint" style="color:#059669;">Pin moved to the link's coordinates.</div>
-            <div v-else-if="mapsLinkStatus === 'nocoords'" class="form-hint" style="color:#b45309;">Link saved, but it has no coordinates to read — pin it on the map above.</div>
-            <div v-else class="form-hint">Optional — good for getting Google reviews. Powers the customer "Open in Maps" button; if left blank we use the map pin's coordinates instead. Tip: links with coordinates auto-drop the pin.</div>
+            <div v-else-if="mapsLinkStatus === 'nocoords'" class="form-hint" style="color:#b45309;">Link saved, but it has no coordinates to read ΓÇö pin it on the map above.</div>
+            <div v-else class="form-hint">Optional ΓÇö good for getting Google reviews. Powers the customer "Open in Maps" button; if left blank we use the map pin's coordinates instead. Tip: links with coordinates auto-drop the pin.</div>
           </div>
 
-          <!-- Country → City -->
+          <!-- Country ΓåÆ City -->
           <div class="form-row" style="margin-top:14px;">
             <div class="form-group">
               <label class="form-label">Country <span style="color:#dc2626">*</span></label>
@@ -665,7 +725,7 @@ async function applyScheduleToSelected() {
           <!-- A payout wallet (any country) enables full online payments anywhere; a local
                wallet for this country is created automatically so earnings stay in local currency. -->
           <p v-if="isProviderScoped && selectedCountryId" class="lm-country-hint">
-            Once you have a payout wallet, full online payments work here too — a {{ selectedCountryName }} wallet is set up automatically using your payout method, so you're paid in local currency.
+            Once you have a payout wallet, full online payments work here too ΓÇö a {{ selectedCountryName }} wallet is set up automatically using your payout method, so you're paid in local currency.
           </p>
 
           <!-- Inherited geo preview -->
@@ -677,7 +737,7 @@ async function applyScheduleToSelected() {
               <span v-if="resolvedGeo.countryName" class="geo-pill geo-pill-muted">{{ resolvedGeo.countryName }}</span>
             </div>
             <!-- Currency is the only override that changes anything (listing/program prices).
-                 The old free-text timezone override drove nothing, so it's gone — timezone
+                 The old free-text timezone override drove nothing, so it's gone ΓÇö timezone
                  simply follows the city/country shown above. -->
             <details style="margin-top:10px;">
               <summary style="font-size:12px; color:var(--text-muted); cursor:pointer;">Charge prices in a different currency</summary>
@@ -685,8 +745,8 @@ async function applyScheduleToSelected() {
                 <div class="form-group">
                   <label class="form-label">Price currency</label>
                   <select v-model="form.currency_override">
-                    <option :value="null">{{ resolvedGeo.currency ? `${resolvedGeo.currency} — ${resolvedGeo.countryName || 'country'} default` : 'Country default' }}</option>
-                    <option v-for="c in ISO_CURRENCIES" :key="c.code" :value="c.code">{{ c.code }} — {{ c.name }}</option>
+                    <option :value="null">{{ resolvedGeo.currency ? `${resolvedGeo.currency} ΓÇö ${resolvedGeo.countryName || 'country'} default` : 'Country default' }}</option>
+                    <option v-for="c in ISO_CURRENCIES" :key="c.code" :value="c.code">{{ c.code }} ΓÇö {{ c.name }}</option>
                   </select>
                   <div class="form-hint">All listing &amp; program prices at this venue use this currency.</div>
                 </div>
@@ -713,11 +773,11 @@ async function applyScheduleToSelected() {
             >
               <input ref="fileInput" type="file" accept="image/*" multiple style="display:none" @change="onFileChange" />
               <template v-if="uploading">
-                <Loader :size="20" class="spin" /><span>Uploading &amp; compressing…</span>
+                <Loader :size="20" class="spin" /><span>Uploading &amp; compressingΓÇª</span>
               </template>
               <template v-else>
                 <Upload :size="20" /><span>Drag &amp; drop images here, or <strong>click to browse</strong></span>
-                <span class="img-sub">Multiple allowed · auto-compressed before upload</span>
+                <span class="img-sub">Multiple allowed ┬╖ auto-compressed before upload</span>
               </template>
             </div>
             <div v-if="imgError" class="geo-error" style="margin-top:6px;">{{ imgError }}</div>
@@ -736,20 +796,20 @@ async function applyScheduleToSelected() {
           <!-- Description -->
           <div class="form-group" style="margin-top:14px;">
             <label class="form-label">Description <span class="opt-tag">optional</span></label>
-            <textarea v-model="form.description" rows="3" placeholder="Describe the facility, parking, amenities…"></textarea>
+            <textarea v-model="form.description" rows="3" placeholder="Describe the facility, parking, amenitiesΓÇª"></textarea>
           </div>
 
           <div class="lm-foot">
             <div v-if="errorMsg" class="geo-error lm-foot-err"><TriangleAlert :size="13" /> {{ errorMsg }}</div>
             <div class="lm-foot-btns">
               <button class="btn btn-secondary" @click="close">Cancel</button>
-              <button class="btn btn-primary" :disabled="saving" @click="editingExisting ? save() : saveAndContinue()">{{ saving ? 'Saving…' : (editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue') }}</button>
+              <button class="btn btn-primary" :disabled="saving" @click="editingExisting ? save() : saveAndContinue()">{{ saving ? 'SavingΓÇª' : (editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue') }}</button>
             </div>
           </div>
           </div>
         </section>
 
-        <!-- ── WEEKLY SCHEDULE SECTION ── -->
+        <!-- ΓöÇΓöÇ WEEKLY SCHEDULE SECTION ΓöÇΓöÇ -->
         <section class="lm-section" :class="{ open: tab === 'schedule' }">
           <button type="button" class="lm-section-head" @click="tab = tab === 'schedule' ? '' : 'schedule'">
             <div class="lm-section-title"><div>Weekly Schedule</div><div class="lm-section-sub">Operating hours that listings inherit by default</div></div>
@@ -764,7 +824,7 @@ async function applyScheduleToSelected() {
               <div class="lm-foot-btns">
                 <button class="btn btn-secondary" @click="close">Cancel</button>
                 <button class="btn btn-primary" :disabled="!canSave || saving" @click="save()">
-                  {{ saving ? 'Saving…' : (editingExisting ? 'Save &amp; Close' : 'Create location') }}
+                  {{ saving ? 'SavingΓÇª' : (editingExisting ? 'Save &amp; Close' : 'Create location') }}
                 </button>
               </div>
             </div>
@@ -779,7 +839,7 @@ async function applyScheduleToSelected() {
     <div class="modal apply-modal">
       <div class="apply-icon"><Clock :size="26" /></div>
       <div class="apply-title">Update connected listings too?</div>
-      <p class="apply-text">You changed this location's weekly schedule. Pick which listings should copy the new hours — unticked ones keep their current schedule. Listings stay independent either way.</p>
+      <p class="apply-text">You changed this location's weekly schedule. Pick which listings should copy the new hours ΓÇö unticked ones keep their current schedule. Listings stay independent either way.</p>
       <div class="apply-list">
         <label v-for="l in connectedListings" :key="l.id" class="apply-item" :class="{ on: applyTargets.includes(l.id) }">
           <input type="checkbox" :checked="applyTargets.includes(l.id)" @change="toggleApplyTarget(l.id)" />
@@ -792,7 +852,7 @@ async function applyScheduleToSelected() {
       </div>
       <div class="apply-actions">
         <button class="btn btn-secondary" :disabled="applying" @click="finishApply">Skip</button>
-        <button class="btn btn-primary" :disabled="applying || !applyTargets.length" @click="applyScheduleToSelected">{{ applying ? 'Updating…' : (applyTargets.length ? `Update ${applyTargets.length} listing${applyTargets.length !== 1 ? 's' : ''}` : 'Update') }}</button>
+        <button class="btn btn-primary" :disabled="applying || !applyTargets.length" @click="applyScheduleToSelected">{{ applying ? 'UpdatingΓÇª' : (applyTargets.length ? `Update ${applyTargets.length} listing${applyTargets.length !== 1 ? 's' : ''}` : 'Update') }}</button>
       </div>
     </div>
   </div>
@@ -876,12 +936,12 @@ async function applyScheduleToSelected() {
 .assigned-chip { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--text-muted); background:var(--bg-subtle, #f1f5f9); padding:6px 12px; border-radius:8px; }
 .form-hint { font-size:12px; color:var(--text-muted); margin-top:5px; }
 
-/* ── Phone (≤600px) — 360px-wide fixes, desktop untouched ── */
+/* ΓöÇΓöÇ Phone (Γëñ600px) ΓÇö 360px-wide fixes, desktop untouched ΓöÇΓöÇ */
 @media (max-width: 600px) {
   /* Map toolbar: hint + "Use my location" no longer share one crushed row */
   .map-toolbar { flex-wrap: wrap; align-items: flex-start; gap: 6px; }
 
-  /* Photo tile actions: no hover on touch — always visible + 36px touch targets */
+  /* Photo tile actions: no hover on touch ΓÇö always visible + 36px touch targets */
   .img-cell-actions { opacity: 1; }
   .img-mini-btn { width: 36px; height: 36px; }
 
