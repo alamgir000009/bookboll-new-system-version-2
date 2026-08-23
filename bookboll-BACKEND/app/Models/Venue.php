@@ -9,6 +9,17 @@ use Nnjeim\World\Models\City;
 use Nnjeim\World\Models\Country;
 use Nnjeim\World\Models\State;
 
+/**
+ * Venue (= Supabase / Postgres `locations`).
+ *
+ * Column mapping from Postgres `public.locations`:
+ *   google_maps_url  → maps_url
+ *   city_id (uuid)   → city_id (world package bigint) + country_id / state_id
+ *   photos / previous_snapshot (jsonb) → JSON columns
+ *
+ * Laravel-only fields kept for the existing admin / booking APIs:
+ *   state_id, country_id, min_advance_booking, max_bookings_per_slot, created_by
+ */
 class Venue extends Model
 {
     use LogsModelActivity, TracksCreator;
@@ -16,28 +27,70 @@ class Venue extends Model
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
 
+    public const APPROVAL_PENDING  = 'pending';
+    public const APPROVAL_APPROVED = 'approved';
+    public const APPROVAL_REJECTED = 'rejected';
+
+    public const ELIGIBILITY_ELIGIBLE   = 'eligible';
+    public const ELIGIBILITY_INELIGIBLE = 'ineligible';
+    /** Dashboard UI pause state (Listings eligibility toggle). */
+    public const ELIGIBILITY_PAUSED     = 'paused';
+
     protected $fillable = [
+        // Core (shared with Postgres locations)
         'name',
         'status',
-        'city_id',
-        'state_id',
-        'maps_url',
-        'country_id',
-        'sort_order',
-        'created_by',
+        'address',
+        'phone',
         'description',
+        'photo_url',
+        'photos',
+        'approval_status',
+        'eligibility_status',
+        'admin_note',
+        'previous_snapshot',
+        'owner_user_id',
+        'latitude',
+        'longitude',
+        'timezone_override',
+        'currency_override',
+        'maps_url', // Postgres: google_maps_url
+        'submitted_at',
+        'submitted_by_name',
+        'sort_order',
+
+        // Geo (Laravel world package; Postgres only had city_id uuid)
+        'country_id',
+        'state_id',
+        'city_id',
+
+        // Existing Laravel booking / admin fields
         'min_advance_booking',
         'max_bookings_per_slot',
-        'city_id',
-        'country_id',
-        'currency_override',
+        'created_by',
     ];
 
-    protected $appends = ['location_label'];
+    protected $casts = [
+        'photos'             => 'array',
+        'previous_snapshot'  => 'array',
+        'latitude'           => 'decimal:7',
+        'longitude'          => 'decimal:7',
+        'submitted_at'       => 'datetime',
+        'sort_order'         => 'integer',
+        'min_advance_booking'=> 'integer',
+        'max_bookings_per_slot' => 'integer',
+    ];
+
+    protected $appends = ['location_label', 'google_maps_url'];
 
     public function scopeActive($query)
     {
-        return $query->where("status", self::ACTIVE);
+        return $query->where('status', self::ACTIVE);
+    }
+
+    public function scopeApproved($query)
+    {
+        return $query->where('approval_status', self::APPROVAL_APPROVED);
     }
 
     public function country()
@@ -55,6 +108,12 @@ class Venue extends Model
         return $this->belongsTo(City::class);
     }
 
+    /** Provider / facility owner (Postgres locations.owner_user_id). */
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_user_id');
+    }
+
     public function getLocationLabelAttribute(): ?string
     {
         $parts = array_filter([
@@ -66,9 +125,26 @@ class Venue extends Model
         return $parts ? implode(', ', $parts) : null;
     }
 
+    /** Alias for dashboard UI that still speaks `google_maps_url`. */
+    public function getGoogleMapsUrlAttribute(): ?string
+    {
+        return $this->maps_url;
+    }
+
+    public function setGoogleMapsUrlAttribute(?string $value): void
+    {
+        $this->attributes['maps_url'] = $value;
+    }
+
     public function schedules()
     {
         return $this->hasMany(Schedule::class)->whereNull('listing_id');
+    }
+
+    /** Dashboard venue hours (= Postgres location_hours / venue_hour_periods). */
+    public function hourPeriods()
+    {
+        return $this->hasMany(VenueHourPeriod::class);
     }
 
     public function users()
@@ -91,14 +167,27 @@ class Venue extends Model
         return [
             'name',
             'status',
+            'address',
+            'phone',
+            'description',
+            'photo_url',
+            'approval_status',
+            'eligibility_status',
+            'admin_note',
+            'owner_user_id',
+            'latitude',
+            'longitude',
+            'timezone_override',
+            'currency_override',
+            'maps_url',
             'city_id',
             'state_id',
-            'maps_url',
             'country_id',
             'sort_order',
-            'description',
             'min_advance_booking',
             'max_bookings_per_slot',
+            'submitted_at',
+            'submitted_by_name',
         ];
     }
 }

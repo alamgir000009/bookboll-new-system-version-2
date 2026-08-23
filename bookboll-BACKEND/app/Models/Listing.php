@@ -30,19 +30,66 @@ class Listing extends Model
         'calendar_color',
         'payment_options',
         'sports_category_id',
+        'sport_category',
         'max_bookings_per_slot',
         'max_multiple_bookings',
         'allow_multiple_bookings',
+
+        // Postgres / dashboard locations→listings parity
+        'photo_url',
+        'photos',
+        'approval_status',
+        'eligibility_status',
+        'admin_note',
+        'previous_snapshot',
+        'pending_content',
+        'listing_type',
+        'category',
+        'show_on_marketplace',
+        'show_on_provider_site',
+        'buffer_time',
+        'start_time_mode',
+        'fixed_start_times',
+        'booking_hold_minutes',
+        'extension_pricing',
+        'extension_value',
+        'extension_max_slots',
+        'commission_rate',
+        'submitted_at',
+        'submitted_by_name',
     ];
 
     protected $casts = [
-        'payment_options'        => 'array',
-        'images_urls'            => 'array',
-        'amenities'              => 'array',
-        'tags'                   => 'array',
-        'base_price'             => 'decimal:2',
+        'payment_options'         => 'array',
+        'images_urls'             => 'array',
+        'amenities'               => 'array',
+        'tags'                    => 'array',
+        'photos'                  => 'array',
+        'previous_snapshot'       => 'array',
+        'pending_content'         => 'array',
+        'fixed_start_times'       => 'array',
+        'base_price'              => 'decimal:2',
+        'extension_value'         => 'decimal:2',
+        'commission_rate'         => 'decimal:2',
         'allow_multiple_bookings' => 'boolean',
+        'online_payment'          => 'boolean',
+        'show_on_marketplace'     => 'boolean',
+        'show_on_provider_site'   => 'boolean',
+        'buffer_time'             => 'integer',
+        'booking_hold_minutes'    => 'integer',
+        'extension_max_slots'     => 'integer',
+        'submitted_at'            => 'datetime',
     ];
+
+    protected $appends = ['location_id', 'booking_color'];
+
+    public const APPROVAL_PENDING  = 'pending';
+    public const APPROVAL_APPROVED = 'approved';
+    public const APPROVAL_REJECTED = 'rejected';
+
+    public const ELIGIBILITY_ELIGIBLE   = 'eligible';
+    public const ELIGIBILITY_PAUSED     = 'paused';
+    public const ELIGIBILITY_INELIGIBLE = 'ineligible';
 
     public function sportsCategory()
     {
@@ -54,9 +101,41 @@ class Listing extends Model
         return $this->belongsTo(Venue::class);
     }
 
+    /** Alias for dashboard UI that still speaks `location_id` (Postgres). */
+    public function getLocationIdAttribute()
+    {
+        return $this->attributes['venue_id'] ?? null;
+    }
+
+    public function setLocationIdAttribute($value): void
+    {
+        $this->attributes['venue_id'] = $value;
+    }
+
+    /** Alias for Postgres `booking_color` → calendar_color. */
+    public function getBookingColorAttribute(): ?string
+    {
+        return $this->attributes['calendar_color'] ?? null;
+    }
+
+    public function setBookingColorAttribute(?string $value): void
+    {
+        $this->attributes['calendar_color'] = $value;
+    }
+
+    public function scopeApproved($query)
+    {
+        return $query->where('approval_status', self::APPROVAL_APPROVED);
+    }
+
     public function pricingGroups()
     {
         return $this->hasMany(PricingGroup::class);
+    }
+
+    public function pricingCells()
+    {
+        return $this->hasMany(PricingCell::class);
     }
 
     public function addOns()
@@ -268,16 +347,31 @@ class Listing extends Model
             'sort_order',
             'base_price',
             'images_urls',
+            'photo_url',
             'description',
             'slot_duration',
+            'buffer_time',
             'online_payment',
             'loyalty_points',
             'calendar_color',
             'payment_options',
             'sports_category_id',
+            'sport_category',
             'max_bookings_per_slot',
             'max_multiple_bookings',
             'allow_multiple_bookings',
+            'approval_status',
+            'eligibility_status',
+            'listing_type',
+            'category',
+            'show_on_marketplace',
+            'show_on_provider_site',
+            'extension_pricing',
+            'extension_value',
+            'extension_max_slots',
+            'commission_rate',
+            'submitted_at',
+            'submitted_by_name',
         ];
     }
 

@@ -3,12 +3,15 @@ namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Services\ListingService;
+use App\Services\ListingDashboardService;
 use Illuminate\Http\Request;
 
 class ListingController extends Controller
 {
-    public function __construct(protected ListingService $listingService)
-    {}
+    public function __construct(
+        protected ListingService $listingService,
+        protected ListingDashboardService $listingDashboardService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -108,5 +111,42 @@ class ListingController extends Controller
     public function mobileListingsList(Request $request)
     {
         return $this->listingService->mobileListingsList($request);
+    }
+
+    // ── New admin dashboard (apps/admin Listings.vue) ─────────────────────────
+
+    public function dashboard(Request $request)
+    {
+        return $this->listingDashboardService->index($request);
+    }
+
+    public function dashboardShow($id)
+    {
+        return $this->listingDashboardService->show($id);
+    }
+
+    public function dashboardStore(Request $request)
+    {
+        return $this->listingDashboardService->store($request);
+    }
+
+    public function dashboardUpdate(Request $request, $id)
+    {
+        return $this->listingDashboardService->update($request, $id);
+    }
+
+    public function dashboardDestroy($id)
+    {
+        return $this->listingDashboardService->destroy($id);
+    }
+
+    public function dashboardPatch(Request $request, $id)
+    {
+        return $this->listingDashboardService->patch($request, $id);
+    }
+
+    public function dashboardSort(Request $request)
+    {
+        return $this->listingDashboardService->sort($request);
     }
 }

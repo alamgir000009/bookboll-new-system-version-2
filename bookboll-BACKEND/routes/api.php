@@ -105,10 +105,26 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::delete('{role}', [RolePermissionController::class, 'destroy'])->name('destroy');
         });
 
+        Route::get('venues/dashboard', [VenueController::class, 'dashboard'])->name('venues.dashboard');
+        Route::post('venues/dashboard', [VenueController::class, 'dashboardStore'])->name('venues.dashboard.store');
+        Route::post('venues/dashboard/sort', [VenueController::class, 'dashboardSort'])->name('venues.dashboard.sort');
+        Route::get('venues/dashboard/{id}', [VenueController::class, 'dashboardShow'])->name('venues.dashboard.show');
+        Route::put('venues/dashboard/{id}', [VenueController::class, 'dashboardUpdate'])->name('venues.dashboard.update');
+        Route::patch('venues/dashboard/{id}', [VenueController::class, 'dashboardPatch'])->name('venues.dashboard.patch');
+        Route::delete('venues/dashboard/{id}', [VenueController::class, 'dashboardDestroy'])->name('venues.dashboard.destroy');
+        Route::post('venues/dashboard/{id}/apply-hours', [VenueController::class, 'dashboardApplyHours'])->name('venues.dashboard.apply-hours');
         Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
         Route::post('venues/{id}/move', [VenueController::class, 'move'])->name('venues.move');
         Route::get('fetch-venues', [VenueController::class, 'adminFetchVenues'])->name('fetch-venues');
         Route::apiResource('venues', VenueController::class);
+
+        Route::get('listings/dashboard', [ListingController::class, 'dashboard'])->name('listings.dashboard');
+        Route::post('listings/dashboard', [ListingController::class, 'dashboardStore'])->name('listings.dashboard.store');
+        Route::post('listings/dashboard/sort', [ListingController::class, 'dashboardSort'])->name('listings.dashboard.sort');
+        Route::get('listings/dashboard/{id}', [ListingController::class, 'dashboardShow'])->name('listings.dashboard.show');
+        Route::put('listings/dashboard/{id}', [ListingController::class, 'dashboardUpdate'])->name('listings.dashboard.update');
+        Route::patch('listings/dashboard/{id}', [ListingController::class, 'dashboardPatch'])->name('listings.dashboard.patch');
+        Route::delete('listings/dashboard/{id}', [ListingController::class, 'dashboardDestroy'])->name('listings.dashboard.destroy');
 
         Route::get('registrations/requests', [UserController::class, 'listPendingUsers'])->name('users.pending');
         Route::post('registrations/{id}/approve', [UserController::class, 'approveUser'])->name('users.approve');

@@ -1380,7 +1380,7 @@ class BookingService
 
     /**
      * Opening hours for calendar closed-slot shading.
-     * Prefer venue_hour_periods; fall back to schedules (venue-level rows).
+     * Prefer venue_hour_periods when rows exist; fall back to schedules (venue-level).
      */
     protected function calendarLocationHours(array $venueIds): array
     {
@@ -1388,68 +1388,30 @@ class BookingService
             return [];
         }
 
-        $dayIndex = [
-            'sunday' => 0,
-            'monday' => 1,
-            'tuesday' => 2,
-            'wednesday' => 3,
-            'thursday' => 4,
-            'friday' => 5,
-            'saturday' => 6,
-        ];
-
-        $fmt = function ($t) {
-            if ($t instanceof \DateTimeInterface) {
-                return $t->format('H:i');
-            }
-            if (! $t) {
-                return null;
-            }
-            $s = (string) $t;
-
-            return strlen($s) >= 5 ? substr($s, 0, 5) : $s;
-        };
-
         if (Schema::hasTable('venue_hour_periods') && class_exists(\App\Models\VenueHourPeriod::class)) {
-            return \App\Models\VenueHourPeriod::query()
+            $fromPeriods = \App\Models\VenueHourPeriod::query()
                 ->whereIn('venue_id', $venueIds)
                 ->orderBy('venue_id')
                 ->orderBy('day')
                 ->get()
-                ->map(function ($row) use ($dayIndex, $fmt) {
-                    $day = strtolower((string) $row->day);
-
-                    return [
-                        'location_id' => (string) $row->venue_id,
-                        'day_of_week' => $dayIndex[$day] ?? null,
-                        'is_open'     => (bool) $row->is_open,
-                        'open_time'   => $fmt($row->open_time),
-                        'close_time'  => $fmt($row->close_time),
-                    ];
-                })
-                ->filter(fn($r) => $r['day_of_week'] !== null)
+                ->map(fn ($row) => $row->toDashboardRow())
+                ->filter(fn ($r) => $r['day_of_week'] !== null)
                 ->values()
                 ->all();
+
+            if ($fromPeriods) {
+                return $fromPeriods;
+            }
         }
 
         return Schedule::query()
             ->whereIn('venue_id', $venueIds)
-            ->whereNull('listing_id')
+            ->forVenueHours()
             ->orderBy('venue_id')
             ->orderBy('day')
             ->get()
-            ->map(function (Schedule $row) use ($dayIndex, $fmt) {
-                $day = strtolower((string) $row->day);
-
-                return [
-                    'location_id' => (string) $row->venue_id,
-                    'day_of_week' => $dayIndex[$day] ?? null,
-                    'is_open'     => (bool) $row->is_open,
-                    'open_time'   => $fmt($row->start_time),
-                    'close_time'  => $fmt($row->end_time),
-                ];
-            })
-            ->filter(fn($r) => $r['day_of_week'] !== null)
+            ->map(fn (Schedule $row) => $row->toDashboardLocationHour())
+            ->filter(fn ($r) => $r['day_of_week'] !== null)
             ->values()
             ->all();
     }

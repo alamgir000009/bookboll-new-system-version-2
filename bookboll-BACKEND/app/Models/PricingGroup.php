@@ -13,16 +13,20 @@ class PricingGroup extends Model
     protected $fillable = [
         'created_by',
         'name',
+        'color',
         'days',
         'end_time',
         'start_time',
         'listing_id',
         'price_per_hour',
+        'currency',
+        'sort_order',
     ];
 
     protected $casts = [
         'price_per_hour' => 'decimal:2',
         'days'           => 'array',
+        'sort_order'     => 'integer',
     ];
 
     public function getStartTimeAttribute($start_time)

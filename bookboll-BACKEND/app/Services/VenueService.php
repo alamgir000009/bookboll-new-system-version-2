@@ -372,4 +372,592 @@ class VenueService
             $schedule1['start_time'] === $schedule2['start_time'] &&
             $schedule1['end_time'] === $schedule2['end_time'];
     }
+
+    // ── New admin dashboard (apps/admin LocationModal / Listings) ──────────────
+
+    public const DAY_NAMES = [
+        0 => 'sunday',
+        1 => 'monday',
+        2 => 'tuesday',
+        3 => 'wednesday',
+        4 => 'thursday',
+        5 => 'friday',
+        6 => 'saturday',
+    ];
+
+    public function dashboardIndex($request)
+    {
+        $user = auth()->user();
+        $query = $this->venueModel::query()
+            ->orderBy('sort_order')
+            ->orderBy('created_at');
+
+        if ($user && ! $user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
+            $allowed = DB::table('user_venue')->where('user_id', $user->id)->pluck('venue_id');
+            $query->whereIn('id', $allowed);
+        }
+
+        if ($request->filled('owner_user_id')) {
+            $query->where('owner_user_id', $request->owner_user_id);
+        }
+        if ($request->filled('country_id')) {
+            $query->where('country_id', $request->country_id);
+        }
+        if ($request->filled('city_id')) {
+            $query->where('city_id', $request->city_id);
+        }
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+        if ($request->filled('approval_status')) {
+            $query->where('approval_status', $request->approval_status);
+        }
+        if ($request->filled('search')) {
+            $s = $request->search;
+            $query->where(function ($q) use ($s) {
+                $q->where('name', 'LIKE', "%{$s}%")
+                    ->orWhere('address', 'LIKE', "%{$s}%")
+                    ->orWhere('phone', 'LIKE', "%{$s}%");
+            });
+        }
+
+        $locations = $query->get()->map(fn (Venue $v) => $this->mapDashboardVenue($v))->values();
+
+        return sendSuccess('Venues dashboard fetched', compact('locations'));
+    }
+
+    public function dashboardShow($id)
+    {
+        $venue = $this->venueModel::with(['hourPeriods', 'listings.sportsCategory'])->find($id);
+        if (! $venue) {
+            return sendError('Venue not found', [], 404);
+        }
+        if ($err = $this->assertDashboardVenueAccess((int) $venue->id)) {
+            return $err;
+        }
+
+        $location = $this->mapDashboardVenue($venue);
+        $hours = $venue->hourPeriods
+            ->map(fn ($row) => $row->toDashboardRow())
+            ->filter(fn ($r) => $r['day_of_week'] !== null)
+            ->values()
+            ->all();
+
+        if (! $hours) {
+            $hours = $venue->schedules()
+                ->get()
+                ->map(fn ($row) => $row->toDashboardLocationHour())
+                ->filter(fn ($r) => $r['day_of_week'] !== null)
+                ->values()
+                ->all();
+        }
+
+        $listings = $venue->listings->map(fn ($l) => [
+            'id'             => (string) $l->id,
+            'name'           => $l->name,
+            'sport_category' => $l->sport_category ?: ($l->sportsCategory?->name ?? ''),
+        ])->values()->all();
+
+        return sendSuccess('Venue fetched', [
+            'location' => $location,
+            'hours'    => $hours,
+            'listings' => $listings,
+        ]);
+    }
+
+    public function dashboardStore($request)
+    {
+        $validated = $this->validateDashboardVenue($request);
+        if ($validated instanceof \Illuminate\Http\JsonResponse) {
+            return $validated;
+        }
+
+        DB::beginTransaction();
+        try {
+            $attrs = $this->normalizeDashboardVenueAttrs($validated);
+            $attrs['sort_order'] = (int) ($this->venueModel->max('sort_order') ?? 0) + 1;
+            $attrs['approval_status'] = $attrs['approval_status'] ?? Venue::APPROVAL_APPROVED;
+            $attrs['eligibility_status'] = $attrs['eligibility_status'] ?? Venue::ELIGIBILITY_ELIGIBLE;
+            $attrs['min_advance_booking'] = $attrs['min_advance_booking'] ?? 2;
+            $attrs['max_bookings_per_slot'] = $attrs['max_bookings_per_slot'] ?? 1;
+            if (empty($attrs['status'])) {
+                $attrs['status'] = Venue::ACTIVE;
+            }
+
+            $venue = $this->venueModel::create($attrs);
+            $this->syncDashboardHours($venue, $validated['hours'] ?? []);
+
+            DB::commit();
+
+            $venue->load('hourPeriods');
+
+            return sendSuccess('Venue created', [
+                'location' => $this->mapDashboardVenue($venue),
+                'hours'    => $venue->hourPeriods->map(fn ($r) => $r->toDashboardRow())->values()->all(),
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Log::error('dashboardStore venue failed: ' . $e->getMessage(), ['exception' => $e]);
+
+            return sendError('Failed to create venue');
+        }
+    }
+
+    public function dashboardUpdate($request, $id)
+    {
+        $venue = $this->venueModel::find($id);
+        if (! $venue) {
+            return sendError('Venue not found', [], 404);
+        }
+        if ($err = $this->assertDashboardVenueAccess((int) $venue->id)) {
+            return $err;
+        }
+
+        $validated = $this->validateDashboardVenue($request, false);
+        if ($validated instanceof \Illuminate\Http\JsonResponse) {
+            return $validated;
+        }
+
+        DB::beginTransaction();
+        try {
+            $attrs = $this->normalizeDashboardVenueAttrs($validated);
+            // Keep intentional nulls (e.g. Bookboll-owned owner_user_id) while
+            // dropping keys that were never part of the payload defaults.
+            $keepNull = [
+                'owner_user_id', 'maps_url', 'latitude', 'longitude',
+                'timezone_override', 'currency_override',
+            ];
+            $attrs = array_filter(
+                $attrs,
+                fn ($v, $k) => $v !== null || in_array($k, $keepNull, true),
+                ARRAY_FILTER_USE_BOTH
+            );
+            $venue->update($attrs);
+            if (array_key_exists('hours', $validated)) {
+                $this->syncDashboardHours($venue, $validated['hours'] ?? []);
+            }
+
+            DB::commit();
+
+            $venue->load('hourPeriods');
+
+            return sendSuccess('Venue updated', [
+                'location' => $this->mapDashboardVenue($venue->fresh()),
+                'hours'    => $venue->hourPeriods->map(fn ($r) => $r->toDashboardRow())->values()->all(),
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Log::error('dashboardUpdate venue failed: ' . $e->getMessage(), ['exception' => $e]);
+
+            return sendError('Failed to update venue');
+        }
+    }
+
+    public function dashboardDestroy($id)
+    {
+        $venue = $this->venueModel::find($id);
+        if (! $venue) {
+            return sendError('Venue not found', [], 404);
+        }
+        if ($err = $this->assertDashboardVenueAccess((int) $venue->id)) {
+            return $err;
+        }
+
+        DB::beginTransaction();
+        try {
+            $venue->hourPeriods()->delete();
+            $venue->schedules()->delete();
+            $venue->delete();
+            DB::commit();
+
+            return sendSuccess('Venue deleted');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Log::error('dashboardDestroy venue failed: ' . $e->getMessage(), ['exception' => $e]);
+
+            return sendError('Failed to delete venue');
+        }
+    }
+
+    public function dashboardPatch($request, $id)
+    {
+        $venue = $this->venueModel::find($id);
+        if (! $venue) {
+            return sendError('Venue not found', [], 404);
+        }
+        if ($err = $this->assertDashboardVenueAccess((int) $venue->id)) {
+            return $err;
+        }
+
+        $data = $request->validate([
+            'status'             => 'sometimes|in:active,inactive',
+            'eligibility_status' => 'sometimes|in:eligible,paused,ineligible',
+            'admin_note'         => 'nullable|string',
+            'previous_snapshot'  => 'nullable|array',
+            'sort_order'         => 'sometimes|integer|min:0',
+        ]);
+
+        $venue->update($data);
+
+        return sendSuccess('Venue patched', [
+            'location' => $this->mapDashboardVenue($venue->fresh()),
+        ]);
+    }
+
+    public function dashboardSort($request)
+    {
+        $request->validate([
+            'updates'              => 'required|array|min:1',
+            'updates.*.id'         => 'required|integer|exists:venues,id',
+            'updates.*.sort_order' => 'required|integer|min:0',
+        ]);
+
+        foreach ($request->input('updates') as $update) {
+            if ($err = $this->assertDashboardVenueAccess((int) $update['id'])) {
+                return $err;
+            }
+        }
+
+        DB::beginTransaction();
+        try {
+            foreach ($request->input('updates') as $update) {
+                $this->venueModel::where('id', $update['id'])->update(['sort_order' => $update['sort_order']]);
+            }
+            DB::commit();
+
+            return sendSuccess('Sort order updated');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return sendError('Failed to update sort order');
+        }
+    }
+
+    public function applyHoursToListings($request, $id)
+    {
+        $venue = $this->venueModel::with('hourPeriods')->find($id);
+        if (! $venue) {
+            return sendError('Venue not found', [], 404);
+        }
+        if ($err = $this->assertDashboardVenueAccess((int) $venue->id)) {
+            return $err;
+        }
+
+        $data = $request->validate([
+            'listing_ids'   => 'required|array|min:1',
+            'listing_ids.*' => 'required|integer|exists:listings,id',
+            'hours'         => 'nullable|array',
+        ]);
+
+        $hoursUi = $data['hours'] ?? null;
+        if ($hoursUi === null) {
+            // Rebuild UI shape from current venue hour periods.
+            $byDay = [];
+            foreach ($venue->hourPeriods as $row) {
+                $dow = $row->day_of_week;
+                if ($dow === null) {
+                    continue;
+                }
+                if (! isset($byDay[$dow])) {
+                    $byDay[$dow] = ['day_of_week' => $dow, 'is_open' => false, 'periods' => []];
+                }
+                if ($row->is_open) {
+                    $byDay[$dow]['is_open'] = true;
+                    $byDay[$dow]['periods'][] = [
+                        'open_time'  => $this->fmtHm($row->open_time) ?? '09:00',
+                        'close_time' => $this->fmtHm($row->close_time) ?? '23:00',
+                    ];
+                }
+            }
+            $hoursUi = array_values($byDay);
+        }
+
+        $listingIds = $data['listing_ids'];
+        $owned = \App\Models\Listing::where('venue_id', $venue->id)->whereIn('id', $listingIds)->pluck('id')->all();
+        if (count($owned) !== count($listingIds)) {
+            return sendError('One or more listings do not belong to this venue.', [], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            foreach ($owned as $listingId) {
+                \App\Models\Schedule::where('listing_id', $listingId)->delete();
+                foreach ($this->expandHoursToScheduleRows($hoursUi, (int) $venue->id, (int) $listingId) as $row) {
+                    \App\Models\Schedule::create($row);
+                }
+            }
+            DB::commit();
+
+            return sendSuccess('Hours applied to listings', ['listing_ids' => $owned]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Log::error('applyHoursToListings failed: ' . $e->getMessage(), ['exception' => $e]);
+
+            return sendError('Failed to apply hours to listings');
+        }
+    }
+
+    protected function validateDashboardVenue($request, bool $requireHours = true)
+    {
+        $rules = [
+            'name'               => 'required|string|max:255',
+            'city_id'            => 'required|integer|exists:cities,id',
+            'country_id'         => 'nullable|integer|exists:countries,id',
+            'state_id'           => 'nullable|integer|exists:states,id',
+            'owner_user_id'      => 'nullable|integer|exists:users,id',
+            'address'            => 'nullable|string|max:255',
+            'phone'              => 'nullable|string|max:40',
+            'description'        => 'nullable|string',
+            'google_maps_url'    => 'nullable|string|max:2048',
+            'maps_url'           => 'nullable|string|max:2048',
+            'photos'             => 'nullable|array',
+            'photos.*'           => 'nullable|string',
+            'photo_url'          => 'nullable|string|max:1024',
+            'status'             => 'nullable|in:active,inactive',
+            'approval_status'    => 'nullable|in:pending,approved,rejected',
+            'eligibility_status' => 'nullable|in:eligible,paused,ineligible',
+            'latitude'           => 'nullable|numeric',
+            'longitude'          => 'nullable|numeric',
+            'timezone_override'  => 'nullable|string|max:64',
+            'currency_override'  => 'nullable|string|max:8',
+            'min_advance_booking'=> 'nullable|integer|min:0',
+            'max_bookings_per_slot' => 'nullable|integer|min:1',
+            'hours'              => ($requireHours ? 'nullable' : 'nullable') . '|array',
+            'hours.*.day_of_week'=> 'required_with:hours|integer|min:0|max:6',
+            'hours.*.is_open'    => 'required_with:hours|boolean',
+            'hours.*.periods'    => 'nullable|array',
+            'hours.*.periods.*.open_time'  => 'nullable|string',
+            'hours.*.periods.*.close_time' => 'nullable|string',
+        ];
+
+        return $request->validate($rules);
+    }
+
+    protected function normalizeDashboardVenueAttrs(array $validated): array
+    {
+        $cityId = (int) $validated['city_id'];
+        $city = \Nnjeim\World\Models\City::find($cityId);
+
+        $mapsUrl = $validated['google_maps_url'] ?? $validated['maps_url'] ?? null;
+        if ($mapsUrl === '') {
+            $mapsUrl = null;
+        }
+
+        $photos = $validated['photos'] ?? [];
+        if (! is_array($photos)) {
+            $photos = [];
+        }
+        $photoUrl = $validated['photo_url'] ?? ($photos[0] ?? '');
+
+        return [
+            'name'                  => $validated['name'],
+            'city_id'               => $cityId,
+            'state_id'              => $validated['state_id'] ?? $city?->state_id,
+            'country_id'            => $validated['country_id'] ?? $city?->country_id,
+            'owner_user_id'         => $validated['owner_user_id'] ?? null,
+            'address'               => $validated['address'] ?? '',
+            'phone'                 => $validated['phone'] ?? '',
+            'description'           => $validated['description'] ?? '',
+            'maps_url'              => $mapsUrl,
+            'photos'                => $photos,
+            'photo_url'             => $photoUrl ?: '',
+            'status'                => $validated['status'] ?? Venue::ACTIVE,
+            'approval_status'       => $validated['approval_status'] ?? null,
+            'eligibility_status'    => $validated['eligibility_status'] ?? null,
+            'latitude'              => $validated['latitude'] ?? null,
+            'longitude'             => $validated['longitude'] ?? null,
+            'timezone_override'     => $validated['timezone_override'] ?? null,
+            'currency_override'     => $validated['currency_override'] ?? null,
+            'min_advance_booking'   => $validated['min_advance_booking'] ?? null,
+            'max_bookings_per_slot' => $validated['max_bookings_per_slot'] ?? null,
+        ];
+    }
+
+    /**
+     * Replace venue_hour_periods + venue-level schedules from UI hours payload.
+     */
+    public function syncDashboardHours(Venue $venue, array $hoursUi): void
+    {
+        $venue->hourPeriods()->delete();
+        $venue->schedules()->whereNull('listing_id')->delete();
+
+        if (! $hoursUi) {
+            // Default 24/7 like LocationModal new venue.
+            $hoursUi = [];
+            for ($i = 0; $i < 7; $i++) {
+                $hoursUi[] = [
+                    'day_of_week' => $i,
+                    'is_open'     => true,
+                    'periods'     => [['open_time' => '00:00', 'close_time' => '00:00']],
+                ];
+            }
+        }
+
+        foreach ($hoursUi as $day) {
+            $dow = (int) ($day['day_of_week'] ?? -1);
+            $dayName = self::DAY_NAMES[$dow] ?? null;
+            if (! $dayName) {
+                continue;
+            }
+            $isOpen = (bool) ($day['is_open'] ?? false);
+
+            if (! $isOpen) {
+                $venue->hourPeriods()->create([
+                    'day'        => $dayName,
+                    'is_open'    => false,
+                    'open_time'  => '09:00',
+                    'close_time' => '23:00',
+                ]);
+                $venue->schedules()->create([
+                    'day'                   => $dayName,
+                    'is_open'               => false,
+                    'start_time'            => null,
+                    'end_time'              => null,
+                    'inherit_from_location' => true,
+                ]);
+                continue;
+            }
+
+            $periods = $day['periods'] ?? [];
+            if (! $periods) {
+                $periods = [['open_time' => '09:00', 'close_time' => '23:00']];
+            }
+
+            foreach ($periods as $p) {
+                $open  = $this->normalizeHm($p['open_time'] ?? '09:00');
+                $close = $this->normalizeHm($p['close_time'] ?? '23:00');
+                $venue->hourPeriods()->create([
+                    'day'        => $dayName,
+                    'is_open'    => true,
+                    'open_time'  => $open,
+                    'close_time' => $close,
+                ]);
+                $venue->schedules()->create([
+                    'day'                   => $dayName,
+                    'is_open'               => true,
+                    'start_time'            => $open,
+                    'end_time'              => $close,
+                    'inherit_from_location' => true,
+                ]);
+            }
+        }
+    }
+
+    protected function expandHoursToScheduleRows(array $hoursUi, int $venueId, int $listingId): array
+    {
+        $rows = [];
+        foreach ($hoursUi as $day) {
+            $dow = (int) ($day['day_of_week'] ?? -1);
+            $dayName = self::DAY_NAMES[$dow] ?? null;
+            if (! $dayName) {
+                continue;
+            }
+            $isOpen = (bool) ($day['is_open'] ?? false);
+            if (! $isOpen) {
+                $rows[] = [
+                    'venue_id'              => $venueId,
+                    'listing_id'            => $listingId,
+                    'day'                   => $dayName,
+                    'is_open'               => false,
+                    'start_time'            => null,
+                    'end_time'              => null,
+                    'inherit_from_location' => false,
+                ];
+                continue;
+            }
+            $periods = $day['periods'] ?? [['open_time' => '09:00', 'close_time' => '23:00']];
+            foreach ($periods as $p) {
+                $rows[] = [
+                    'venue_id'              => $venueId,
+                    'listing_id'            => $listingId,
+                    'day'                   => $dayName,
+                    'is_open'               => true,
+                    'start_time'            => $this->normalizeHm($p['open_time'] ?? '09:00'),
+                    'end_time'              => $this->normalizeHm($p['close_time'] ?? '23:00'),
+                    'inherit_from_location' => false,
+                ];
+            }
+        }
+
+        return $rows;
+    }
+
+    protected function mapDashboardVenue(Venue $v): array
+    {
+        $photos = $v->photos;
+        if (! is_array($photos)) {
+            $photos = [];
+        }
+
+        return [
+            'id'                 => (string) $v->id,
+            'name'               => $v->name,
+            'owner_user_id'      => $v->owner_user_id ? (string) $v->owner_user_id : null,
+            'city_id'            => $v->city_id ? (string) $v->city_id : null,
+            'country_id'         => $v->country_id ? (string) $v->country_id : null,
+            'state_id'           => $v->state_id ? (string) $v->state_id : null,
+            'address'            => $v->address ?? '',
+            'phone'              => $v->phone ?? '',
+            'description'        => $v->description ?? '',
+            'photos'             => $photos,
+            'photo_url'          => $v->photo_url ?? ($photos[0] ?? ''),
+            'google_maps_url'    => $v->maps_url,
+            'status'             => $v->status,
+            'approval_status'    => $v->approval_status ?? Venue::APPROVAL_APPROVED,
+            'eligibility_status' => $v->eligibility_status ?? Venue::ELIGIBILITY_ELIGIBLE,
+            'admin_note'         => $v->admin_note ?? '',
+            'previous_snapshot'  => $v->previous_snapshot,
+            'latitude'           => $v->latitude !== null ? (float) $v->latitude : null,
+            'longitude'          => $v->longitude !== null ? (float) $v->longitude : null,
+            'timezone_override'  => $v->timezone_override,
+            'currency_override'  => $v->currency_override,
+            'sort_order'         => (int) ($v->sort_order ?? 0),
+            'submitted_at'       => $v->submitted_at?->toIso8601String(),
+            'submitted_by_name'  => $v->submitted_by_name,
+            'created_at'         => $v->created_at?->toIso8601String(),
+        ];
+    }
+
+    protected function assertDashboardVenueAccess(int $venueId)
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return sendError('Unauthorized', [], 401);
+        }
+        if ($user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
+            return null;
+        }
+        $ok = DB::table('user_venue')
+            ->where('user_id', $user->id)
+            ->where('venue_id', $venueId)
+            ->exists();
+
+        return $ok ? null : sendError('You do not have access to this venue.', [], 403);
+    }
+
+    protected function normalizeHm(?string $t): string
+    {
+        if (! $t) {
+            return '09:00';
+        }
+        $t = trim($t);
+        if (strlen($t) >= 5) {
+            return substr($t, 0, 5);
+        }
+
+        return $t;
+    }
+
+    protected function fmtHm($value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('H:i');
+        }
+        $s = (string) $value;
+
+        return strlen($s) >= 5 ? substr($s, 0, 5) : $s;
+    }
 }
