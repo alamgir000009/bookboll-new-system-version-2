@@ -16,6 +16,7 @@ import Dashboard from './pages/Dashboard.vue'
 import Bookings from './pages/Bookings.vue'
 import Calendar from './pages/Calendar.vue'
 import Listings from './pages/Listings.vue'
+import ClassesSubscriptions from './pages/ClassesSubscriptions.vue'
 import Customers from './pages/Customers.vue'
 import Payments from './pages/Payments.vue'
 import Promocodes from './pages/Promocodes.vue'
@@ -62,6 +63,7 @@ const router = createRouter({
     admin('/checkin', CheckIn),
     admin('/calendar', Calendar),
     admin('/listings', Listings),
+    admin('/memberships', ClassesSubscriptions),
     admin('/customers', Customers),
     admin('/payments', Payments),
     admin('/promocodes', Promocodes),
@@ -87,7 +89,8 @@ const router = createRouter({
     admin('/subscriptions', Subscriptions),
 
     { path: '/', redirect: '/admin' },
-    { path: '/classes', redirect: '/listings' },
+    { path: '/classes', redirect: '/memberships' },
+    { path: '/classes-subscriptions', redirect: '/memberships' },
     { path: '/subscribers', redirect: '/subscriptions' },
     { path: '/venue-requests', redirect: '/approvals' },
     { path: '/loyalty', redirect: '/countries' },

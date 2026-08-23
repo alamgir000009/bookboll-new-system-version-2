@@ -106,7 +106,8 @@ function go() {
 }
 function pickType(kind) {
   choosingType.value = false
-  router.push(`/listings?add=${kind}`)
+  if (kind === 'program') router.push({ path: '/memberships', query: { new: '1' } })
+  else router.push(`/listings?add=${kind}`)
 }
 watch(current, () => { choosingType.value = false })
 

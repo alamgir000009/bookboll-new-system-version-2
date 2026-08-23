@@ -18,7 +18,7 @@
  *
  * `desc` is the one-liner on the group landing page cards.
  */
-import { LayoutDashboard, Calendar, BookOpen, Users, Wallet, ArrowLeftRight, Building2, CalendarDays, Globe as Globe2, SquareCheck as CheckSquare, ScrollText, Settings, Bell, UsersRound, Store, Flag, Home, Megaphone, ShieldCheck, Repeat, Newspaper, LineChart, Images, Code2, Banknote, Link2, MailCheck, QrCode, Ticket } from 'lucide-vue-next'
+import { LayoutDashboard, Calendar, BookOpen, Users, Wallet, ArrowLeftRight, Building2, CalendarDays, Globe as Globe2, SquareCheck as CheckSquare, ScrollText, Settings, Bell, UsersRound, Store, Flag, Home, Megaphone, ShieldCheck, Repeat, Newspaper, LineChart, Images, Code2, Banknote, Link2, MailCheck, QrCode, Ticket, GraduationCap } from 'lucide-vue-next'
 import WhatsappIcon from '../components/WhatsappIcon.vue'
 
 export const NAV_GROUPS = [
@@ -27,13 +27,15 @@ export const NAV_GROUPS = [
   { key: 'calendar', label: 'Calendar', icon: Calendar, to: '/calendar' },
   { key: 'bookings', label: 'Bookings', icon: BookOpen, to: '/bookings' },
   { key: 'listings', label: 'Listings', icon: Building2,
-    blurb: 'What you sell — your bookable courts, spaces and activities, plus one-off exceptions to their schedules like holidays and special hours.',
+    blurb: 'What you sell — bookable courts and spaces, membership programs, plus special days and closures.',
     tips: [
-      'Each listing carries its own weekly schedule, slot length, pricing and payment options.',
-      'Special days override the weekly schedule for one date — close a holiday, or run different hours & prices.',
+      'Venue listings carry schedule, slot length, pricing and payment options.',
+      'Memberships are on their own page — classes and recurring programs.',
+      'Special days override the weekly schedule for one date.',
     ],
     items: [
-    { path: '/listings', label: 'All listings', icon: Building2, desc: 'Courts, spaces, pricing & schedules' },
+    { path: '/listings', label: 'All listings', icon: Building2, desc: 'Locations, courts, spaces & schedules' },
+    { path: '/memberships', label: 'Memberships', icon: GraduationCap, desc: 'Classes, programs, trials & billing' },
     { path: '/special-days', label: 'Special days & closures', icon: CalendarDays, desc: 'Holiday hours, closures & special pricing' },
   ]},
   { key: 'customers', label: 'Customers', icon: Users,

@@ -2,8 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { supabase } from '../lib/supabase.js'
 import { appBaseUrl } from '../lib/appBase.js'
-import { Search, Plus, Minus, Trash2, Pencil as Edit2, ChevronDown, ChevronUp, ChevronRight, Eye, EyeOff, ArrowLeft, Check, Info, Wallet, Clock, DollarSign, PackagePlus, Boxes, Image as ImgIcon, X, GripVertical, LayoutList, Layers, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, GraduationCap, LocateFixed, MapPin as MapPinIcon, Landmark, Building2 as BldIcon, Upload, Download, SlidersHorizontal, Store, Globe, TrendingDown, ExternalLink, CircleCheck, ShieldCheck, Lock, Copy, Share2, QrCode, Bell } from 'lucide-vue-next'
-import QRCode from 'qrcode'
+import { Search, Plus, Minus, Trash2, Pencil as Edit2, ChevronDown, ChevronUp, ChevronRight, Eye, EyeOff, ArrowLeft, Check, Info, Wallet, Clock, DollarSign, PackagePlus, Boxes, Image as ImgIcon, X, GripVertical, LayoutList, Layers, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, LocateFixed, MapPin as MapPinIcon, Landmark, Building2 as BldIcon, Upload, Download, SlidersHorizontal, Store, Globe, TrendingDown, ExternalLink, CircleCheck, ShieldCheck, Lock, Bell } from 'lucide-vue-next'
 import { useRouter, useRoute } from 'vue-router'
 import { VENUE_CATEGORIES, subcategoriesFor, normCategory, categoryLabel } from '../lib/venueCategories.js'
 import { loadApprovedTypes, approvedTypesFor, addPendingType } from '../lib/customTypes.js'
@@ -14,7 +13,6 @@ import { askConfirm } from '../lib/confirm.js'
 import { idIn } from '../lib/geoFilter.js'
 import { contentChanged } from '../lib/approvalState.js'
 import MultiSelectDropdown from '../components/MultiSelectDropdown.vue'
-import ClassesSubscriptions from './ClassesSubscriptions.vue'
 const router = useRouter()
 
 const COMMON_TIMEZONES = [
@@ -94,7 +92,7 @@ import { useToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty, registerDraftSaver, formDirty } from '../lib/unsavedGuard.js'
 import { saveFormDraft, loadFormDraft, clearFormDraft, draftAgeLabel } from '../lib/formDrafts.js'
 
-const { isSuperAdmin, isCountryAdmin, currentOwnerUserId, allBusinessOwners, role: actorRole, can, scopeLocations, scopeListings, scopePrograms, currentUser } = useCurrentUser()
+const { isSuperAdmin, isCountryAdmin, currentOwnerUserId, allBusinessOwners, role: actorRole, can, scopeLocations, scopeListings, currentUser } = useCurrentUser()
 const confirm = useConfirm()
 const toast = useToast()
 const listingTriedSave = ref(false)
@@ -160,7 +158,6 @@ function saveListingDraftNow() {
 // Platform staff manage the platform catalog (their cap is MANAGE_PLATFORM_CATALOG,
 // not the provider-side MANAGE_LISTINGS) — either cap unlocks this page's editing.
 const canManageListings = computed(() => can(CAP.MANAGE_LISTINGS) || can(CAP.MANAGE_PLATFORM_CATALOG))
-const canManagePrograms = computed(() => can(CAP.MANAGE_LISTINGS) || can(CAP.MANAGE_PLATFORM_CATALOG))
 
 // "Add" dropdown options (single button → polished menu, instead of crowded buttons).
 const pageAddItems = computed(() => {
@@ -169,15 +166,13 @@ const pageAddItems = computed(() => {
     items.push({ key: 'location', label: 'Location', desc: 'A venue or site that holds your listings', icon: Landmark })
     items.push({ key: 'listing', label: 'Booking Listing', desc: 'Any space people can book by the hour — court, studio, hall, room or desk', icon: Boxes })
   }
-  if (canManagePrograms.value) items.push({ key: 'program', label: 'Membership Listing', desc: 'A recurring class or membership program', icon: GraduationCap })
   return items
 })
 function onPageAdd(key) {
   if (key === 'location') openNewLoc()
-  else if (key === 'program') addAcademyProgram(null)
   else openNewListing(null)
 }
-// Listings & programs live inside a location — block creating one until a location
+// Listings live inside a location — block creating one until a location
 // exists, with a friendly prompt instead of an empty form.
 const needLocationModal = ref(false)
 const hasUsableLocation = computed(() => listingFormLocations.value.length > 0)
@@ -201,10 +196,9 @@ function toggleExtension(on) {
 const locAddItems = computed(() => {
   const items = []
   if (canManageListings.value) items.push({ key: 'listing', label: 'Booking Listing', desc: 'Any space people can book by the hour — court, studio, hall, room or desk', icon: Boxes })
-  if (canManagePrograms.value) items.push({ key: 'program', label: 'Membership Listing', desc: 'A recurring class or membership program', icon: GraduationCap })
   return items
 })
-function onLocAdd(key, locId) { if (key === 'listing') openNewListing(locId); else addAcademyProgram(locId) }
+function onLocAdd(key, locId) { if (key === 'listing') openNewListing(locId) }
 
 /* view = 'list' | 'editor' */
 const view = ref('list')
@@ -220,7 +214,6 @@ const selectedLocBookbollOwned = computed(() => {
 
 const locations = ref([])
 const listings = ref([])
-const programs = ref([])
 const cities = ref([])
 
 // Platform jurisdiction (country_admin / platform_staff only see their countries' venues)
@@ -234,7 +227,6 @@ const filterCountry = ref([])       // multi-select country ids
 const filterCity = ref([])          // multi-select city ids
 const filterCategory = ref('all')   // 'all' | venue category key (sports/hangout/work)
 const filterType = ref('all')       // 'all' | sport_category value
-const filterKind = ref('all')       // 'all' | 'venue' | 'academy' (venue listing vs membership program)
 const filterLocation = ref('')      // '' | location id
 const showFilters = ref(false)
 const expanded = ref(new Set())
@@ -242,11 +234,11 @@ const expanded = ref(new Set())
 // Country/City filter options (multi-select). City options narrow to the chosen
 // countries (all cities when none chosen).
 // Options honour the jurisdiction (country admin filters only list their countries).
-// …and to geos where this viewer actually HAS listings/programs — a provider in
+// …and to geos where this viewer actually HAS listings — a provider in
 // one city isn't offered the whole platform's countries.
 const usedGeo = computed(() => {
   // Venue CARDS render even before their first listing — geo options must cover
-  // every venue in view, not just venues that already have listings/programs.
+  // every venue in view, not just venues that already have listings.
   const cityIds = new Set(locations.value.map(l => l.city_id).filter(Boolean))
   const countryIds = new Set(cities.value.filter(c => cityIds.has(c.id)).map(c => c.country_id).filter(Boolean))
   return { cityIds, countryIds }
@@ -274,11 +266,10 @@ function setFilterCountries(ids) {
 // Type chips are the distinct sport_category values actually present for the
 // chosen category, so admins only ever see real, matching options.
 watch(filterCategory, () => { filterType.value = 'all' })
-watch(filterKind, k => { if (k === 'academy') { filterCategory.value = 'all'; filterType.value = 'all' } })
 const hasListingFilter = computed(() => filterCategory.value !== 'all' || filterType.value !== 'all')
 const activeFilterCount = computed(() =>
   (filterCountry.value.length ? 1 : 0) + (filterCity.value.length ? 1 : 0) +
-  (filterLocation.value ? 1 : 0) + (filterKind.value !== 'all' ? 1 : 0) +
+  (filterLocation.value ? 1 : 0) +
   (filterCategory.value !== 'all' ? 1 : 0) + (filterType.value !== 'all' ? 1 : 0) +
   (flatFilterStatus.value ? 1 : 0)
 )
@@ -307,7 +298,7 @@ const typeOptionsForFilter = computed(() => {
 })
 function clearListingFilters() {
   filterCountry.value = []; filterCity.value = []
-  filterLocation.value = ''; filterKind.value = 'all'
+  filterLocation.value = ''
   filterCategory.value = 'all'; filterType.value = 'all'
   flatFilterStatus.value = ''
 }
@@ -321,7 +312,6 @@ function listingMatchesFilters(l) {
   return true
 }
 // Placement filter (Bookboll marketplace), shared by the flat + grouped views.
-// Works for both listings and programs (both carry show_on_marketplace + rowState).
 function placementMatches(row) {
   if (!flatFilterStatus.value) return true
   const onMkt = row.show_on_marketplace !== false
@@ -406,14 +396,13 @@ async function loadList() {
     locQ = locQ.eq('owner_user_id', currentOwnerUserId.value)
     aQ = aQ.eq('owner_user_id', currentOwnerUserId.value)
   }
-  const [lo, li, ci, co, a, r, pg, cr] = await Promise.all([
+  const [lo, li, ci, co, a, r, cr] = await Promise.all([
     locQ,
     liQ,
     supabase.from('cities').select('*').eq('status', 'active').order('name'),
     supabase.from('countries').select('*').eq('status', 'active').order('name'),
     aQ,
     supabase.from('resources').select('*'),
-    supabase.from('class_programs').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: false }),
     supabase.from('commission_rates').select('*'),
   ])
   cities.value = ci.data || []
@@ -427,10 +416,6 @@ async function loadList() {
   listings.value = scopeListings((li.data || []).filter(x => isSuperAdmin.value || ownedLocIds.has(x.location_id)))
   allAddons.value = a.data || []
   allResources.value = r.data || []
-  // Pre-migration fallback: if sort_order doesn't exist yet, re-fetch without it.
-  let pgData = pg.data
-  if (pg.error) { const r2 = await supabase.from('class_programs').select('*').order('created_at', { ascending: false }); pgData = r2.data }
-  programs.value = scopePrograms((pgData || []).filter(p => isSuperAdmin.value || ownedLocIds.has(p.location_id)))
   const rates = {}
   for (const row of (cr.data || [])) {
     if (!rates[row.country_id]) rates[row.country_id] = { facility: 20, program: 20 }
@@ -452,13 +437,17 @@ onMounted(() => loadApprovedTypes())
 // not just on this page). Waits for the list load so the location gate
 // (openNewListing needs a usable location) evaluates real data. Watched, not
 // just mounted — the coach can fire it while already on this page.
+// Memberships live at /memberships — add=program redirects there.
 const route = useRoute()
 async function handleAddQuery(a) {
   if (!a) return
+  if (a === 'program') {
+    router.replace({ path: '/memberships', query: { new: '1' } })
+    return
+  }
   await loadList()
   router.replace({ query: { ...route.query, add: undefined } })
   if (a === 'location') openNewLoc()
-  else if (a === 'program') addAcademyProgram(null)
   else if (a === 'listing') openNewListing(null)
 }
 onMounted(() => handleAddQuery(route.query.add))
@@ -470,125 +459,17 @@ const filteredLocations = computed(() => {
     if (!idIn(countryOfLocation(l), filterCountry.value)) return false
     if (!idIn(cityOfLocation(l), filterCity.value)) return false
     if (filterLocation.value && l.id !== filterLocation.value) return false
-    const nMatch = listingsByLocation(l.id).length + programsByLocation(l.id).length
+    const nMatch = listingsByLocation(l.id).length
     // When any content filter is active, only show locations that still have a
     // matching row (location-name search alone shouldn't surface them).
-    if (hasListingFilter.value || flatFilterStatus.value || filterKind.value !== 'all') return nMatch > 0
+    if (hasListingFilter.value || flatFilterStatus.value) return nMatch > 0
     if (!q) return true
     if (l.name.toLowerCase().includes(q)) return true
     return nMatch > 0
   })
 })
 
-const programsByLocation = (id) => {
-  if (filterKind.value === 'venue') return []
-  if (filterCategory.value !== 'all') return []   // a venue-category filter excludes programs
-  const q = search.value.toLowerCase()
-  return programs.value.filter(p => p.location_id === id).filter(p => {
-    if (!placementMatches(p)) return false
-    if (!q) return true
-    return (p.name || '').toLowerCase().includes(q) ||
-      (p.sport_category || '').toLowerCase().includes(q) ||
-      (p.description || '').toLowerCase().includes(q)
-  })
-}
-// Membership programs are created/edited via the program form embedded on THIS page
-// (the standalone Membership Programs page was removed).
-const programForm = ref(null)
-function addAcademyProgram(locId) {
-  if (!locId && !hasUsableLocation.value) { needLocationModal.value = true; return }
-  programForm.value?.openNewProgram(locId || '')
-}
-function openProgram(id) {
-  const p = programs.value.find(x => x.id === id)
-  if (p) programForm.value?.openEditProgram(p)
-}
-// Clone a program as a fresh new one (delegates to the embedded program editor).
-function openDuplicate(p) {
-  programForm.value?.openDuplicateProgram(p)
-}
-
-// ── Share a listing / program: copy link + QR from the row ─────────────────────
-// Give providers a one-click direct link and a printable QR for a single listing or
-// program — to drop into an Instagram bio, a WhatsApp broadcast, or a door poster.
-const shareRow = ref(null)      // { id, name, kind, url }
-const shareQr = ref('')         // QR data-URL for the current link
-const shareCopied = ref(false)
-async function openShare(row, kind = 'venue') {
-  shareCopied.value = false
-  const url = listingUrl(row, 'marketplace', kind)   // canonical public page
-  shareRow.value = { id: row.id, name: row.name, kind, url }
-  shareQr.value = ''
-  try { shareQr.value = await QRCode.toDataURL(url, { width: 320, margin: 1, errorCorrectionLevel: 'M' }) } catch { shareQr.value = '' }
-}
-function closeShare() { shareRow.value = null; shareQr.value = ''; shareCopied.value = false }
-async function copyShareLink() {
-  if (!shareRow.value) return
-  try { await navigator.clipboard.writeText(shareRow.value.url); shareCopied.value = true; setTimeout(() => { shareCopied.value = false }, 1800) }
-  catch { /* clipboard blocked — the link is visible to copy manually */ }
-}
-function downloadQr() {
-  if (!shareQr.value || !shareRow.value) return
-  const a = document.createElement('a')
-  a.href = shareQr.value
-  a.download = `${(shareRow.value.name || 'bookboll').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-qr.png`
-  a.click()
-}
-// Delete a program from the listings page. With active members the provider chooses:
-// archive (graceful wind-down) or delete immediately (taking responsibility for refunds).
-const progDelModal = ref(null)
-const progForceAck = ref(false)
-function closeProgDelModal() { progDelModal.value = null; progForceAck.value = false }
-
-async function removeProgram(p) {
-  const { data: subs } = await supabase.from('class_subscriptions')
-    .select('id, status, trial_status').eq('program_id', p.id)
-  const active = (subs || []).filter(s => s.status === 'active' || s.trial_status === 'in_trial')
-  if (active.length) {
-    progForceAck.value = false
-    progDelModal.value = { program: p, activeCount: active.length }
-    return
-  }
-  if (!(await confirm({
-    title: 'Delete program?',
-    message: `“${p.name || 'This program'}” will be permanently removed (it has no active members). This cannot be undone.`,
-    confirmText: 'Delete',
-  }))) return
-  await hardDeleteProgram(p)
-}
-
-// Hard delete: program-origin bookings, then the program (class_subscriptions +
-// attendance are removed automatically via ON DELETE CASCADE).
-async function hardDeleteProgram(p) {
-  await supabase.from('bookings').delete().eq('program_id', p.id).eq('origin', 'class_program')
-  const { error } = await supabase.from('class_programs').delete().eq('id', p.id)
-  if (error) { toast.error('Could not delete program. It may have bookings linked to it.'); return false }
-  return true
-}
-
-async function archiveProgramFromModal() {
-  const p = progDelModal.value?.program
-  closeProgDelModal()
-  if (!p) return
-  const { error } = await supabase.from('class_programs').update({ status: 'inactive' }).eq('id', p.id)
-  if (error) { toast.error('Could not archive the program.'); return }
-  toast.success(`“${p.name}” archived — winding down.`)
-  loadList()
-}
-
-async function forceDeleteProgramFromModal() {
-  const p = progDelModal.value?.program
-  if (!p || !progForceAck.value) return
-  const n = progDelModal.value.activeCount
-  closeProgDelModal()
-  if (await hardDeleteProgram(p)) {
-    toast.success(`“${p.name}” deleted — ${n} member${n !== 1 ? 's' : ''} cancelled immediately.`)
-    loadList()
-  }
-}
-
 const listingsByLocation = (id) => {
-  if (filterKind.value === 'academy') return []
   const q = search.value.toLowerCase()
   return listings.value.filter(l => l.location_id === id).filter(l => {
     if (!listingMatchesFilters(l)) return false
@@ -747,25 +628,24 @@ function statusIcon(k) {
 function placementHidden(l) {
   return l.show_on_marketplace === false && l.show_on_provider_site === false
 }
-// Public URL for a live row, for the "open in new tab" buttons. Works for both
-// venue listings (/listings/:id) and membership programs (/programs/:id).
+// Public URL for a live listing, for the "open in new tab" buttons.
 //  - marketplace: the Bookboll storefront page
 //  - site: the owner's white-label site (?b=<slug> works in every environment)
-function listingUrl(row, surface, kind = 'venue') {
+function listingUrl(row, surface) {
   const origin = appBaseUrl()
-  const path = kind === 'academy' ? `programs/${row.id}` : `listings/${row.id}`
+  const path = `listings/${row.id}`
   if (surface === 'marketplace') return `${origin}/${path}`
   const loc = locations.value.find(x => x.id === row.location_id)
   const owner = allBusinessOwners.value.find(u => u.id === loc?.owner_user_id)
   const slug = (owner?.brand_subdomain || owner?.username || '').toLowerCase()
   return slug ? `${origin}/${path}?b=${encodeURIComponent(slug)}` : `${origin}/${path}`
 }
-// The two placement channels for a row (listing or program), ready to render as chips.
-function placementChannels(row, kind = 'venue') {
+// The two placement channels for a listing, ready to render as chips.
+function placementChannels(row) {
   const m = marketplaceState(row), s = siteState(row)
   return [
-    { key: 'marketplace', name: 'Bookboll',  ...m, url: m.live ? listingUrl(row, 'marketplace', kind) : null },
-    { key: 'site',        name: 'Your site', ...s, url: s.live ? listingUrl(row, 'site', kind) : null },
+    { key: 'marketplace', name: 'Bookboll',  ...m, url: m.live ? listingUrl(row, 'marketplace') : null },
+    { key: 'site',        name: 'Your site', ...s, url: s.live ? listingUrl(row, 'site') : null },
   ]
 }
 
@@ -1381,7 +1261,7 @@ async function onToggleDynamic() {
 // Placement: warn before a provider/admin turns OFF the recommended Bookboll
 // marketplace placement (icon-led modal below). Works from the listing form AND
 // from the inline chip dropdown on the listings page.
-const mktConfirm = ref(null)   // null | { source:'form' } | { source:'list', row, kind }
+const mktConfirm = ref(null)   // null | { source:'form' } | { source:'list', row }
 function onMarketplaceToggle() {   // form toggle
   if (!form.value.show_on_marketplace) {
     // Selling off-marketplace (own website only) is a PREMIUM feature — free
@@ -1398,7 +1278,7 @@ function keepOnMarketplace() {
 async function confirmMarketplaceOff() {
   const ctx = mktConfirm.value
   mktConfirm.value = null
-  if (ctx?.source === 'list' && ctx.row) await applyPlacement(ctx.row, 'marketplace', false, ctx.kind || 'venue')
+  if (ctx?.source === 'list' && ctx.row) await applyPlacement(ctx.row, 'marketplace', false)
   // form: the toggle is already off and will persist on Save.
 }
 
@@ -1466,22 +1346,21 @@ function togglePlacementMenu(id, surface) {
   const key = `${id}:${surface}`
   placementMenuKey.value = placementMenuKey.value === key ? null : key
 }
-async function applyPlacement(row, surface, value, kind = 'venue') {
+async function applyPlacement(row, surface, value) {
   const col = surface === 'marketplace' ? 'show_on_marketplace' : 'show_on_provider_site'
-  const table = kind === 'academy' ? 'class_programs' : 'listings'
-  await supabase.from(table).update({ [col]: value }).eq('id', row.id)
+  await supabase.from('listings').update({ [col]: value }).eq('id', row.id)
   await loadList()
 }
-function setPlacement(row, surface, value, kind = 'venue') {
+function setPlacement(row, surface, value) {
   placementMenuKey.value = null
   // Turning Bookboll marketplace OFF is premium-gated, then routes through the
   // are-you-sure modal.
   if (surface === 'marketplace' && value === false) {
     if (!requirePremium('own_site_only')) return
-    mktConfirm.value = { source: 'list', row, kind }
+    mktConfirm.value = { source: 'list', row }
     return
   }
-  applyPlacement(row, surface, value, kind)
+  applyPlacement(row, surface, value)
 }
 function closePopovers() { placementMenuKey.value = null; showFilters.value = false }
 onMounted(() => document.addEventListener('click', closePopovers))
@@ -2264,9 +2143,7 @@ function toggleFlatSort(key) {
   else { flatSortKey.value = key; flatSortDir.value = 'asc' }
 }
 
-// Venue listings and memberships are different entities (different customer-site
-// pages), so the flat view shows them as TWO separate tables, each ordered on its
-// own. Shared search / geo / placement / sort filters apply to both.
+// Flat view: venue listings only, ordered by the shared sort controls.
 function flatRowMatches(row) {
   const q = search.value.toLowerCase()
   const loc = locations.value.find(x => x.id === row.location_id)
@@ -2286,8 +2163,8 @@ function sortFlatList(list) {
     if (flatSortKey.value === 'name')                 { av = a.name || ''; bv = b.name || '' }
     else if (flatSortKey.value === 'sport_category')  { av = a.sport_category || ''; bv = b.sport_category || '' }
     else if (flatSortKey.value === 'base_price') {
-      av = Number((a._kind === 'academy' ? a.monthly_price : a.base_price) || 0)
-      bv = Number((b._kind === 'academy' ? b.monthly_price : b.base_price) || 0)
+      av = Number(a.base_price || 0)
+      bv = Number(b.base_price || 0)
     }
     else { av = Number(a.sort_order ?? 9999); bv = Number(b.sort_order ?? 9999) }
     if (av < bv) return flatSortDir.value === 'asc' ? -1 : 1
@@ -2295,21 +2172,14 @@ function sortFlatList(list) {
     return 0
   })
 }
-const flatVenues = computed(() => {
-  if (filterKind.value === 'academy') return []
-  return sortFlatList(listings.value.map(l => ({ ...l, _kind: 'venue' })).filter(l => listingMatchesFilters(l) && flatRowMatches(l)))
-})
-const flatMemberships = computed(() => {
-  if (filterKind.value === 'venue') return []
-  if (filterCategory.value !== 'all') return []   // venue-category chip excludes programs
-  return sortFlatList(programs.value.map(p => ({ ...p, _kind: 'academy' })).filter(p => flatRowMatches(p)))
-})
-// Combined list, used only by the CSV export.
-const allListingsFlat = computed(() => [...flatVenues.value, ...flatMemberships.value])
+const flatVenues = computed(() =>
+  sortFlatList(listings.value.filter(l => listingMatchesFilters(l) && flatRowMatches(l)))
+)
+// Used by the CSV export.
+const allListingsFlat = computed(() => flatVenues.value)
 
-// Each table paginates on its own.
+// Paginate the flat venue table.
 const { page: venuePage, perPage: venuePerPage, totalPages: venueTotalPages, paginated: paginatedVenues, visiblePages: venueVisiblePages, goTo: venueGoTo } = usePagination(flatVenues)
-const { page: memPage, perPage: memPerPage, totalPages: memTotalPages, paginated: paginatedMemberships, visiblePages: memVisiblePages, goTo: memGoTo } = usePagination(flatMemberships)
 
 // Export for listings
 const canExport = computed(() => can(CAP.EXPORT_CATALOG))
@@ -2415,60 +2285,12 @@ async function onListingDrop(e, targetId) {
 }
 function onListingDragEnd() { dragListingId.value = null; dragOverListingId.value = null }
 
-/* ---- drag-to-reorder: membership PROGRAMS (flat view = global, grouped = per location) ---- */
-const dragFlatProgId = ref(null)
-const dragOverFlatProgId = ref(null)
-function onProgFlatDragStart(e, id) { dragFlatProgId.value = id; e.dataTransfer.effectAllowed = 'move' }
-function onProgFlatDragOver(e, id) { e.preventDefault(); dragOverFlatProgId.value = id }
-function onProgFlatDragLeave() { dragOverFlatProgId.value = null }
-async function onProgFlatDrop(e, targetId) {
-  e.preventDefault()
-  dragOverFlatProgId.value = null
-  if (!dragFlatProgId.value || dragFlatProgId.value === targetId) { dragFlatProgId.value = null; return }
-  const arr = [...programs.value]
-  const fromIdx = arr.findIndex(p => p.id === dragFlatProgId.value)
-  const toIdx = arr.findIndex(p => p.id === targetId)
-  if (fromIdx < 0 || toIdx < 0) { dragFlatProgId.value = null; return }
-  arr.splice(toIdx, 0, arr.splice(fromIdx, 1)[0])
-  arr.forEach((p, i) => { p.sort_order = i })   // keep local order in sync (flat view sorts by sort_order)
-  programs.value = arr
-  dragFlatProgId.value = null
-  await Promise.all(arr.map((p, i) => supabase.from('class_programs').update({ sort_order: i }).eq('id', p.id)))
-}
-function onProgFlatDragEnd() { dragFlatProgId.value = null; dragOverFlatProgId.value = null }
-
-const dragProgId = ref(null)
-const dragOverProgId = ref(null)
-const dragProgLocId = ref(null)
-function onProgDragStart(e, progId, locId) { dragProgId.value = progId; dragProgLocId.value = locId; e.dataTransfer.effectAllowed = 'move' }
-function onProgDragOver(e, progId) { e.preventDefault(); dragOverProgId.value = progId }
-function onProgDragLeave() { dragOverProgId.value = null }
-async function onProgDrop(e, targetId) {
-  e.preventDefault()
-  dragOverProgId.value = null
-  if (!dragProgId.value || dragProgId.value === targetId) { dragProgId.value = null; return }
-  const locId = dragProgLocId.value
-  const arr = programs.value.filter(p => p.location_id === locId)
-  const others = programs.value.filter(p => p.location_id !== locId)
-  const fromIdx = arr.findIndex(p => p.id === dragProgId.value)
-  const toIdx = arr.findIndex(p => p.id === targetId)
-  if (fromIdx < 0 || toIdx < 0) { dragProgId.value = null; return }
-  arr.splice(toIdx, 0, arr.splice(fromIdx, 1)[0])
-  arr.forEach((p, i) => { p.sort_order = i })
-  programs.value = [...others, ...arr]
-  dragProgId.value = null
-  await Promise.all(arr.map((p, i) => supabase.from('class_programs').update({ sort_order: i }).eq('id', p.id)))
-}
-function onProgDragEnd() { dragProgId.value = null; dragOverProgId.value = null }
-
 /* ---- touch reordering: HTML5 drag events never fire on touch screens, so the
    grip handles route touch gestures through the same handlers (see touchReorder.js).
    Rows carry a matching data-tr-* attribute for the finger-position hit test. ---- */
 const locTR = createTouchReorder({ attr: 'data-tr-loc', start: onLocDragStart, over: onLocDragOver, leave: onLocDragLeave, drop: onLocDrop, end: onLocDragEnd })
 const listingTR = createTouchReorder({ attr: 'data-tr-listing', start: onListingDragStart, over: onListingDragOver, leave: onListingDragLeave, drop: onListingDrop, end: onListingDragEnd })
-const progTR = createTouchReorder({ attr: 'data-tr-prog', start: onProgDragStart, over: onProgDragOver, leave: onProgDragLeave, drop: onProgDrop, end: onProgDragEnd })
 const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart, over: onFlatDragOver, leave: onFlatDragLeave, drop: onFlatDrop, end: onFlatDragEnd })
-const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlatDragStart, over: onProgFlatDragOver, leave: onProgFlatDragLeave, drop: onProgFlatDrop, end: onProgFlatDragEnd })
 </script>
 
 <template>
@@ -2478,7 +2300,7 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
       <div class="page-header">
         <div>
           <div class="page-title">Listings</div>
-          <div class="page-subtitle">Manage your locations and their sports listings</div>
+          <div class="page-subtitle">Manage your locations and venue listings</div>
         </div>
         <div style="display:flex; gap:8px; align-items:center;">
           <AddMenu v-if="pageAddItems.length" label="Add" variant="primary" align="right" :items="pageAddItems" @select="onPageAdd" />
@@ -2527,20 +2349,11 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
               </div>
             </div>
             <div class="lf-row">
-              <span class="lf-label">Type</span>
-              <div class="lf-chips">
-                <button type="button" :class="{ on: filterKind === 'all' }" @click="filterKind = 'all'">All</button>
-                <button type="button" :class="{ on: filterKind === 'venue' }" @click="filterKind = 'venue'">Venues</button>
-                <button type="button" :class="{ on: filterKind === 'academy' }" @click="filterKind = 'academy'">Memberships</button>
-              </div>
-            </div>
-            <div v-if="filterKind !== 'academy'" class="lf-row">
               <span class="lf-label">Category</span>
               <div class="lf-chips">
                 <button type="button" :class="{ on: filterCategory === 'all' }" @click="setFilterCategory('all')">All</button>
                 <button type="button" v-for="c in VENUE_CATEGORIES" :key="c.key" :class="{ on: filterCategory === c.key }" @click="setFilterCategory(c.key)">{{ c.label }}</button>
               </div>
-              <div v-if="filterCategory !== 'all'" class="lf-note">Categories apply to venues — membership programs are hidden while one is picked.</div>
             </div>
             <div class="lf-row">
               <span class="lf-label">Sport</span>
@@ -2582,7 +2395,7 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
       <!-- FLAT LIST VIEW -->
       <template v-if="layout === 'flat'">
         <!-- VENUE LISTINGS TABLE -->
-        <div v-if="filterKind !== 'academy'" class="flat-section">
+        <div class="flat-section">
           <div class="flat-section-head"><Boxes :size="15" /><span>Venue Listings</span><span class="flat-section-count">{{ flatVenues.length }}</span></div>
           <div class="flat-list">
             <div class="flat-header">
@@ -2640,73 +2453,6 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
             <div v-if="!flatVenues.length" class="flat-empty">No venue listings found.</div>
           </div>
           <PaginationBar v-if="flatVenues.length > 0" :page="venuePage" :perPage="venuePerPage" :totalPages="venueTotalPages" :total="flatVenues.length" :visiblePages="venueVisiblePages" @update:perPage="venuePerPage = $event" @goTo="venueGoTo" />
-        </div>
-
-        <!-- MEMBERSHIPS TABLE -->
-        <div v-if="filterKind !== 'venue'" class="flat-section">
-          <div class="flat-section-head"><GraduationCap :size="15" /><span>Memberships</span><span class="flat-section-count">{{ flatMemberships.length }}</span></div>
-          <div class="flat-list">
-            <div class="flat-header">
-              <span class="flat-col-grip"></span>
-              <span class="flat-col-color"></span>
-              <span class="flat-col-name">Program</span>
-              <span class="flat-col-loc">Location</span>
-              <span class="flat-col-sport">Sport</span>
-              <span class="flat-col-price">Price /mo</span>
-              <span class="flat-col-status">Placement</span>
-              <span class="flat-col-actions"></span>
-            </div>
-            <div v-for="l in paginatedMemberships" :key="l.id" class="flat-row"
-              :class="{ 'drag-over': dragOverFlatProgId === l.id, 'dragging': dragFlatProgId === l.id, 'is-hidden': placementHidden(l) }"
-              :draggable="canManagePrograms ? 'true' : 'false'" :data-tr-pflat="l.id"
-              @dragstart="onProgFlatDragStart($event, l.id)" @dragover="onProgFlatDragOver($event, l.id)" @dragleave="onProgFlatDragLeave" @drop="onProgFlatDrop($event, l.id)" @dragend="onProgFlatDragEnd">
-              <span v-if="canManagePrograms" class="drag-handle flat-grip" title="Drag to reorder"
-                @touchstart.stop="progFlatTR.onTouchstart($event, l.id)" @touchmove="progFlatTR.onTouchmove($event)"
-                @touchend="progFlatTR.onTouchend($event)" @touchcancel="progFlatTR.onTouchend($event)"><GripVertical :size="15" /></span>
-              <span v-else class="drag-handle flat-grip" style="visibility:hidden"><GripVertical :size="15" /></span>
-              <div class="flat-color-dot" :style="{ background: l.color || '#0e7490' }"></div>
-              <div class="flat-name"><button class="listing-name-btn" @click="openProgram(l.id)">{{ l.name }}</button></div>
-              <div class="flat-loc">{{ locationName(l.location_id) }}</div>
-              <div class="flat-sport muted">{{ l.sport_category || '—' }}</div>
-              <div class="flat-price muted">{{ l.currency || currencyForLocation(l.location_id) }} {{ l.monthly_price }}/mo</div>
-              <div class="flat-status">
-                <div class="placement-chips">
-                  <span v-for="ch in placementChannels(l, 'academy')" :key="ch.key" class="chan-wrap">
-                    <button type="button" class="chan" :class="['chan-'+ch.cls, { 'chan-btn': canManagePrograms }]" :title="ch.tip" @click.stop="canManagePrograms && togglePlacementMenu(l.id, ch.key)">
-                      <component :is="statusIcon(ch.icon)" :size="12" />
-                      <span class="chan-name">{{ ch.name }}</span>
-                      <span v-if="ch.suffix" class="chan-suffix">· {{ ch.suffix }}</span>
-                      <ChevronDown v-if="canManagePrograms" :size="11" class="chan-caret" />
-                    </button>
-                    <a v-if="ch.live && ch.url" class="chan-open" :href="ch.url" target="_blank" rel="noopener" title="Open in new tab" @click.stop><ExternalLink :size="12" /></a>
-                    <div v-if="placementMenuKey === l.id+':'+ch.key" class="placement-menu" @click.stop>
-                      <div class="pm-title"><component :is="ch.key==='marketplace' ? Store : Globe" :size="13" />{{ ch.key==='marketplace' ? 'Bookboll Marketplace' : 'Your website' }}</div>
-                      <label class="pm-row">
-                        <span class="dp-switch"><input type="checkbox" :checked="ch.on" @change="setPlacement(l, ch.key, $event.target.checked, 'academy')" /><span class="dp-slider"></span></span>
-                        <span>{{ ch.on ? (ch.suffix || 'Visible') : 'Hidden' }}</span>
-                      </label>
-                      <div class="pm-note">{{ ch.tip }}</div>
-                      <div v-if="ch.key==='marketplace' && l.admin_note && (rowState(l)==='paused' || rowState(l)==='resubmitted')" class="pm-adminnote"><AlertTriangle :size="12" /><span><strong>Bookboll note:</strong> {{ l.admin_note }}</span></div>
-                      <a v-if="ch.live && ch.url" class="pm-open" :href="ch.url" target="_blank" rel="noopener"><ExternalLink :size="13" />Open in new tab</a>
-                    </div>
-                  </span>
-                </div>
-              </div>
-              <div class="flat-actions listing-actions">
-                <template v-if="userRole === 'admin'">
-                  <button v-if="l.eligibility_status !== 'paused'" class="btn-icon" title="Pause eligibility" @click="openPause('class_programs', l)"><PauseCircle :size="15" /></button>
-                  <button v-else class="btn-icon paused-icon" title="Resume eligibility" @click="resumeEligibility('class_programs', l)"><PlayCircle :size="15" /></button>
-                </template>
-                <button v-if="canManagePrograms" class="btn-icon" @click="openProgram(l.id)" title="Edit program"><Edit2 :size="15" /></button>
-                <button v-if="canManagePrograms" class="btn-icon" @click="openDuplicate(l)" title="Duplicate program"><Copy :size="15" /></button>
-                <button class="btn-icon" @click="openShare(l, 'academy')" title="Share program (link + QR)"><Share2 :size="15" /></button>
-                <button v-if="canManagePrograms" class="btn-icon danger" @click="removeProgram(l)" title="Delete program"><Trash2 :size="15" /></button>
-                <span v-if="!canManagePrograms" class="muted" style="font-size:12px">View only</span>
-              </div>
-            </div>
-            <div v-if="!flatMemberships.length" class="flat-empty">No memberships found.</div>
-          </div>
-          <PaginationBar v-if="flatMemberships.length > 0" :page="memPage" :perPage="memPerPage" :totalPages="memTotalPages" :total="flatMemberships.length" :visiblePages="memVisiblePages" @update:perPage="memPerPage = $event" @goTo="memGoTo" />
         </div>
 
         <!-- Export modal -->
@@ -2805,8 +2551,6 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
           </template>
 
           <div v-if="expanded.has(loc.id)" class="loc-body">
-            <!-- Venue listings — hidden when filtering Memberships only -->
-            <template v-if="filterKind !== 'academy'">
             <div
               v-for="l in listingsByLocation(loc.id)" :key="l.id"
               class="listing-row"
@@ -2862,86 +2606,10 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
                 <button v-if="canManageListings" class="btn-icon danger" @click="removeListing(l.id)"><Trash2 :size="16" /></button>
               </div>
             </div>
-            <!-- Nothing at all in this location → ONE sentence + ONE Add menu (same as the
-                 page-level Add), instead of two separate buttons fighting for attention. -->
-            <div v-if="!listingsByLocation(loc.id).length && !programsByLocation(loc.id).length" class="empty-sub">
-              <span>No bookable venue or membership program has been added for this location yet.</span>
-              <AddMenu v-if="canManageListings || canManagePrograms" size="sm" label="Add" align="left" :items="locAddItems" @select="k => onLocAdd(k, loc.id)" />
+            <div v-if="!listingsByLocation(loc.id).length" class="empty-sub">
+              <span>No booking listings yet for this location.</span>
+              <AddMenu v-if="canManageListings" size="sm" label="Add" align="left" :items="locAddItems" @select="k => onLocAdd(k, loc.id)" />
             </div>
-            <div v-else-if="!listingsByLocation(loc.id).length" class="empty-sub">
-              <span>No booking listings yet.</span>
-              <button v-if="canManageListings" class="btn btn-secondary btn-sm" @click="openNewListing(loc.id)">
-                <Plus :size="14" />Add a Booking Listing
-              </button>
-            </div>
-            </template>
-
-            <!-- Membership programs — hidden when filtering Venue listings only -->
-            <template v-if="filterKind !== 'venue' && (programsByLocation(loc.id).length || canManagePrograms)">
-              <div class="programs-subhead">
-                <GraduationCap :size="14" />
-                <span>Membership Programs</span>
-                <span v-if="programsByLocation(loc.id).length" class="count-sub">{{ programsByLocation(loc.id).length }}</span>
-              </div>
-              <div
-                v-for="p in programsByLocation(loc.id)" :key="p.id"
-                class="listing-row program-row"
-                :class="{ 'drag-over': dragOverProgId === p.id, 'dragging': dragProgId === p.id, 'is-hidden': placementHidden(p) }"
-                :draggable="canManagePrograms ? 'true' : 'false'" :data-tr-prog="p.id"
-                @dragstart="onProgDragStart($event, p.id, loc.id)" @dragover="onProgDragOver($event, p.id)" @dragleave="onProgDragLeave" @drop="onProgDrop($event, p.id)" @dragend="onProgDragEnd"
-              >
-                <span v-if="canManagePrograms" class="drag-handle listing-drag" title="Drag to reorder"
-                  @touchstart.stop="progTR.onTouchstart($event, p.id, loc.id)" @touchmove="progTR.onTouchmove($event)"
-                  @touchend="progTR.onTouchend($event)" @touchcancel="progTR.onTouchend($event)"><GripVertical :size="15" /></span>
-                <span v-else class="drag-handle listing-drag" style="visibility:hidden"><GripVertical :size="15" /></span>
-                <div class="dot program-dot" style="flex-shrink:0"><GraduationCap :size="13" /></div>
-                <div class="listing-info">
-                  <button class="listing-name-btn" @click="openProgram(p.id)">{{ p.name }}</button>
-                  <div class="muted">{{ p.sport_category || '—' }} &middot; {{ p.currency || currencyForLocation(p.location_id) }} {{ p.monthly_price }}/month &middot; cap {{ p.capacity }}</div>
-                </div>
-                <div class="listing-pause-block">
-                  <div class="placement-chips">
-                    <span v-for="ch in placementChannels(p, 'academy')" :key="ch.key" class="chan-wrap">
-                      <button type="button" class="chan" :class="['chan-'+ch.cls, { 'chan-btn': canManagePrograms }]" :title="ch.tip" @click.stop="canManagePrograms && togglePlacementMenu(p.id, ch.key)">
-                        <component :is="statusIcon(ch.icon)" :size="12" />
-                        <span class="chan-name">{{ ch.name }}</span>
-                        <span v-if="ch.suffix" class="chan-suffix">· {{ ch.suffix }}</span>
-                        <ChevronDown v-if="canManagePrograms" :size="11" class="chan-caret" />
-                      </button>
-                      <a v-if="ch.live && ch.url" class="chan-open" :href="ch.url" target="_blank" rel="noopener" title="Open in new tab" @click.stop><ExternalLink :size="12" /></a>
-                      <div v-if="placementMenuKey === p.id+':'+ch.key" class="placement-menu" @click.stop>
-                        <div class="pm-title"><component :is="ch.key==='marketplace' ? Store : Globe" :size="13" />{{ ch.key==='marketplace' ? 'Bookboll Marketplace' : 'Your website' }}</div>
-                        <label class="pm-row">
-                          <span class="dp-switch"><input type="checkbox" :checked="ch.on" @change="setPlacement(p, ch.key, $event.target.checked, 'academy')" /><span class="dp-slider"></span></span>
-                          <span>{{ ch.on ? (ch.suffix || 'Visible') : 'Hidden' }}</span>
-                        </label>
-                        <div class="pm-note">{{ ch.tip }}</div>
-                        <div v-if="ch.key==='marketplace' && p.admin_note && (rowState(p)==='paused' || rowState(p)==='resubmitted')" class="pm-adminnote"><AlertTriangle :size="12" /><span><strong>Bookboll note:</strong> {{ p.admin_note }}</span></div>
-                        <a v-if="ch.live && ch.url" class="pm-open" :href="ch.url" target="_blank" rel="noopener"><ExternalLink :size="13" />Open in new tab</a>
-                      </div>
-                    </span>
-                  </div>
-                </div>
-                <div class="listing-actions">
-                  <template v-if="userRole === 'admin'">
-                    <button v-if="p.eligibility_status !== 'paused'" class="btn-icon" title="Pause eligibility" @click="openPause('class_programs', p)"><PauseCircle :size="16" /></button>
-                    <button v-else class="btn-icon paused-icon" title="Resume eligibility" @click="resumeEligibility('class_programs', p)"><PlayCircle :size="16" /></button>
-                  </template>
-                  <button v-if="canManagePrograms" class="btn-icon" @click="openProgram(p.id)" title="Edit program"><Edit2 :size="16" /></button>
-                  <button v-if="canManagePrograms" class="btn-icon" @click="openDuplicate(p)" title="Duplicate program"><Copy :size="16" /></button>
-                  <button class="btn-icon" @click="openShare(p, 'academy')" title="Share program (link + QR)"><Share2 :size="16" /></button>
-                  <button v-if="canManagePrograms" class="btn-icon danger" @click="removeProgram(p)" title="Delete program"><Trash2 :size="16" /></button>
-                </div>
-              </div>
-              <!-- Only shown when the location HAS venue listings (the fully-empty case is the
-                   single combined message + Add menu above). -->
-              <div v-if="!programsByLocation(loc.id).length && listingsByLocation(loc.id).length" class="empty-sub">
-                <span>No membership listings yet.</span>
-                <button v-if="canManagePrograms" class="btn btn-secondary btn-sm" @click="addAcademyProgram(loc.id)">
-                  <Plus :size="14" />Add a Membership Listing
-                </button>
-              </div>
-            </template>
           </div>
         </div>
         <div v-if="filteredLocations.length && canManageListings" class="loc-add-foot">
@@ -3730,34 +3398,6 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
     <!-- Shared location form (new / edit) -->
     <LocationModal :open="locModal" :editing="locEditing" @close="locModal=false; locFromListingForm=false" @saved="onLocationSaved" />
 
-    <!-- Membership program form (embedded, form-only) — opened by Add → Program / edit -->
-    <ClassesSubscriptions embedded ref="programForm" @saved="loadList" />
-
-    <!-- SHARE: copy link + QR for one listing / program -->
-    <div v-if="shareRow" class="modal-backdrop" style="z-index:3600" @click.self="closeShare">
-      <div class="modal share-modal">
-        <div class="modal-header">
-          <div class="modal-title"><Share2 :size="16" /> Share “{{ shareRow.name }}”</div>
-          <button class="btn-icon" @click="closeShare"><X :size="18" /></button>
-        </div>
-        <div class="modal-body share-body">
-          <p class="share-hint">Anyone with this link lands straight on the {{ shareRow.kind === 'academy' ? 'membership' : 'listing' }} page — paste it in your Instagram bio or a WhatsApp broadcast, or print the QR for a door poster or flyer.</p>
-          <div class="share-linkrow">
-            <input class="share-link" :value="shareRow.url" readonly @focus="$event.target.select()" />
-            <button class="btn btn-primary btn-sm share-copy" @click="copyShareLink">
-              <component :is="shareCopied ? Check : Copy" :size="14" />{{ shareCopied ? 'Copied' : 'Copy' }}
-            </button>
-          </div>
-          <div class="share-qr-wrap">
-            <img v-if="shareQr" :src="shareQr" alt="QR code for this page" class="share-qr" />
-            <div v-else class="share-qr share-qr-empty"><QrCode :size="34" /></div>
-            <button v-if="shareQr" class="btn btn-secondary btn-sm" @click="downloadQr"><Download :size="14" />Download QR</button>
-          </div>
-          <a :href="shareRow.url" target="_blank" rel="noopener" class="share-open"><ExternalLink :size="13" />Open the page</a>
-        </div>
-      </div>
-    </div>
-
     <!-- MARKETPLACE-OFF CONFIRM (icon-led) -->
     <div v-if="mktConfirm" class="modal-backdrop" style="z-index:3600" @click.self="keepOnMarketplace">
       <div class="modal mkt-modal">
@@ -3780,10 +3420,10 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
       <div class="modal need-loc-modal">
         <div class="nlm-icon"><Landmark :size="26" /></div>
         <div class="nlm-title">Create a location first</div>
-        <p class="nlm-text">Listings and membership programs live inside a location (your venue, club or site). Add your first location, then you can create listings and programs inside it.</p>
+        <p class="nlm-text">Listings live inside a location (your venue, club or site). Add your first location, then you can create venue listings inside it.</p>
         <div class="nlm-steps">
           <div class="nlm-step"><span class="nlm-step-n">1</span><div><strong>Add a location</strong><span>Name, address &amp; opening hours</span></div></div>
-          <div class="nlm-step muted"><span class="nlm-step-n">2</span><div><strong>Add listings &amp; programs</strong><span>Bookable courts, classes &amp; more</span></div></div>
+          <div class="nlm-step muted"><span class="nlm-step-n">2</span><div><strong>Add venue listings</strong><span>Bookable courts, studios &amp; more</span></div></div>
         </div>
         <div class="nlm-actions">
           <button class="btn btn-secondary" @click="needLocationModal=false">Not now</button>
@@ -3855,7 +3495,7 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
         <div class="modal-body">
           <div class="pause-info">
             <AlertTriangle :size="18" />
-            <div>This will mark the <strong>{{ pauseTarget?.table === 'locations' ? 'location' : (pauseTarget?.table === 'class_programs' ? 'program' : 'listing') }}</strong> as ineligible and notify the provider with your note. The provider must edit and resubmit for your approval before it goes live again.</div>
+            <div>This will mark the <strong>{{ pauseTarget?.table === 'locations' ? 'location' : 'listing' }}</strong> as ineligible and notify the provider with your note. The provider must edit and resubmit for your approval before it goes live again.</div>
           </div>
           <div class="form-group" style="margin-top:14px;">
             <label class="form-label">Note for provider <span class="req">*</span></label>
@@ -3865,43 +3505,6 @@ const progFlatTR = createTouchReorder({ attr: 'data-tr-pflat', start: onProgFlat
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="pauseModal=false">Cancel</button>
           <button class="btn btn-danger" :disabled="!pauseNote.trim()" @click="savePause"><PauseCircle :size="15" />Pause &amp; Notify</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- DELETE PROGRAM (active members): archive or delete immediately -->
-    <div v-if="progDelModal" class="modal-backdrop" style="z-index:3600" @click.self="closeProgDelModal">
-      <div class="modal del-modal" style="max-width:540px;">
-        <div class="del-head">
-          <div class="del-ic"><AlertTriangle :size="22" /></div>
-          <div>
-            <div class="del-title">“{{ progDelModal.program?.name }}” has {{ progDelModal.activeCount }} active member{{ progDelModal.activeCount !== 1 ? 's' : '' }}</div>
-            <div class="del-subtitle">Choose how to remove this program.</div>
-          </div>
-        </div>
-
-        <div class="del-option">
-          <div class="del-option-text">
-            <div class="del-option-name">Archive <span class="del-rec">Recommended</span></div>
-            <p>Stops new sign-ups and renewals. Current members keep their reserved slots until their next billing date, then their subscription is cancelled — no further charges. All records are kept.</p>
-          </div>
-          <button class="btn btn-secondary del-option-btn" @click="archiveProgramFromModal"><GraduationCap :size="14" />Archive program</button>
-        </div>
-
-        <div class="del-option del-option-danger">
-          <div class="del-option-text">
-            <div class="del-option-name">Delete immediately</div>
-            <p>Permanently deletes the program now. All {{ progDelModal.activeCount }} member{{ progDelModal.activeCount !== 1 ? 's' : '' }} lose access right away and their subscriptions are cancelled. This cannot be undone.</p>
-          </div>
-          <label class="del-ack">
-            <input type="checkbox" v-model="progForceAck" />
-            <span>I understand members lose access immediately, and I take responsibility for issuing any refunds myself.</span>
-          </label>
-          <button class="btn del-delete-btn" :disabled="!progForceAck" @click="forceDeleteProgramFromModal"><Trash2 :size="14" />Delete immediately</button>
-        </div>
-
-        <div class="del-foot">
-          <button class="btn btn-ghost" @click="closeProgDelModal">Keep active</button>
         </div>
       </div>
     </div>

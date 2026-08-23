@@ -925,7 +925,7 @@ function hasPendingPayment(bk) {
                     </span>
                   </div>
                 </div>
-                <a v-if="sessionModal.program" :href="`/classes?edit=${sessionModal.program.id}`" class="sess-link" @click="closeSession">
+                <a v-if="sessionModal.program" :href="`/memberships?edit=${sessionModal.program.id}`" class="sess-link" @click="closeSession">
                   Open in Membership Programs →
                 </a>
                 <button v-if="canManagePrograms" class="sess-cancel-btn" @click="cancelProgramSession">

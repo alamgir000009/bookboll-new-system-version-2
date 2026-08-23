@@ -306,7 +306,7 @@ async function copyFrameCode() {
               </label>
               <div class="em-hint">Drop the button anywhere, or embed the iframe to show this one membership’s checkout in-page. Both stay locked to this program.</div>
             </template>
-            <div v-else class="em-hint em-empty">You have no live memberships yet. Create one under <router-link to="/classes-subscriptions">Memberships</router-link>, then it’ll appear here.</div>
+            <div v-else class="em-hint em-empty">You have no live memberships yet. Create one under <router-link to="/memberships">Memberships</router-link>, then it’ll appear here.</div>
           </template>
 
           <!-- iframe height -->

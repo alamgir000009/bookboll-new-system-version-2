@@ -1078,7 +1078,7 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
         <router-link to="/bookings" class="quick-card"><div class="qc-icon" style="background:#dbeafe;color:#2563eb"><BookOpen :size="18"/></div>Bookings</router-link>
         <router-link to="/calendar" class="quick-card"><div class="qc-icon" style="background:#fef3c7;color:#d97706"><Calendar :size="18"/></div>Calendar</router-link>
         <router-link v-if="can(CAP.MANAGE_LISTINGS)" to="/listings" class="quick-card"><div class="qc-icon" style="background:#f5f3ff;color:#7c3aed"><MapPin :size="18"/></div>Listings</router-link>
-        <router-link v-if="can(CAP.MANAGE_LISTINGS)" to="/classes" class="quick-card"><div class="qc-icon" style="background:#ecfeff;color:#0891b2"><GraduationCap :size="18"/></div>Memberships</router-link>
+        <router-link v-if="can(CAP.MANAGE_LISTINGS)" to="/memberships" class="quick-card"><div class="qc-icon" style="background:#ecfeff;color:#0891b2"><GraduationCap :size="18"/></div>Memberships</router-link>
         <router-link v-if="can(CAP.VIEW_WALLET)" to="/wallet" class="quick-card"><div class="qc-icon" style="background:#ecfdf5;color:#059669"><WalletIcon :size="18"/></div>Earnings &amp; Payouts</router-link>
       </div>
 
