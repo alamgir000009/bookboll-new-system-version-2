@@ -8,9 +8,8 @@
  *               (a derived notice appears in their bell, see notifications.js).
  *   • Restore → back to active / live.
  *
- * Moderation state lives on hosted_games (moderation_status/reason/at/by). The
- * customer data layer treats a missing column as 'active', so the public site keeps
- * working before the migration is applied.
+ * Events moderation state lives on Laravel hosted_games (dual-written to Supabase
+ * so the customer storefront stays in sync). Communities stay on Supabase for now.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { supabase } from '../lib/supabase.js'
@@ -28,11 +27,23 @@ import {
 import FilterBar from '../components/FilterBar.vue'
 import { matchesCityGeo } from '../lib/geoFilter.js'
 import { fmt12, fmtRange12 } from '../lib/slots.js'
+import {
+  fetchEventModerationDashboard,
+  flagEvent as apiFlagEvent,
+  removeEvent as apiRemoveEvent,
+  restoreEvent as apiRestoreEvent,
+  firstError as modErr,
+} from '../lib/moderationEvents.js'
 
 const { currentUser, isSuperAdmin, isCountryAdmin, currentOwnerUserId, role } = useCurrentUser()
 // Platform roles see events in their jurisdiction (super admin: everywhere);
 // providers see only events held at their own venues.
-const isPlatformAdmin = computed(() => isSuperAdmin.value || isCountryAdmin.value || role.value === 'platform_staff')
+const isPlatformAdmin = computed(() =>
+  isSuperAdmin.value
+  || isCountryAdmin.value
+  || role.value === 'platform_staff'
+  || role.value === 'admin'
+)
 const confirm = useConfirm()
 const inputPrompt = useInputPrompt()
 const toast = useToast()
@@ -83,16 +94,26 @@ async function load() {
     }
   }
 
-  let gamesQuery = supabase.from('hosted_games').select('*').order('created_at', { ascending: false })
-  if (scopedLocationIds) gamesQuery = gamesQuery.in('location_id', scopedLocationIds)
-  const [g, ci, co] = await Promise.all([
-    gamesQuery,
+  const [dash, ci, co] = await Promise.all([
+    fetchEventModerationDashboard(),
     supabase.from('cities').select('id, name, country_id'),
     supabase.from('countries').select('id, name').order('name'),
   ])
   cities.value = ci.data || []
   countries.value = co.data || []
-  let games = g.error ? [] : (g.data || [])
+
+  let games = []
+  const joinStats = dash.success ? (dash.data?.join_stats || {}) : {}
+  if (!dash.success) {
+    toast.error(modErr(dash, 'Could not load events.'))
+  } else {
+    games = dash.data?.games || []
+  }
+
+  if (scopedLocationIds) {
+    const allow = new Set(scopedLocationIds.map(String))
+    games = games.filter(x => x.location_id && allow.has(String(x.location_id)))
+  }
 
   // Jurisdiction (country_admin / platform_staff): only events at venues in scope,
   // plus custom-location events whose city is inside the jurisdiction's countries.
@@ -106,26 +127,26 @@ async function load() {
       : cSet.has(cities.value.find(c => c.id === x.city_id)?.country_id))
   }
 
-  // venue names + accepted-join counts (one round-trip each)
+  // venue names (geo still Supabase)
   const locIds = [...new Set(games.map(x => x.location_id).filter(Boolean))]
-  const gameIds = games.map(x => x.id)
-  const [locsRes, reqRes] = await Promise.all([
-    locIds.length ? supabase.from('locations').select('id, name').in('id', locIds) : Promise.resolve({ data: [] }),
-    gameIds.length ? supabase.from('game_join_requests').select('game_id, status').in('game_id', gameIds) : Promise.resolve({ data: [] }),
-  ])
+  const locsRes = locIds.length
+    ? await supabase.from('locations').select('id, name').in('id', locIds)
+    : { data: [] }
   const locName = id => (locsRes.data || []).find(l => l.id === id)?.name || ''
-  const reqs = reqRes.data || []
 
-  rows.value = games.map(x => ({
-    ...x,
-    moderation_status: x.moderation_status || 'active',
-    locationName: locName(x.location_id),
-    cityName: cities.value.find(c => c.id === x.city_id)?.name || '',
-    joinedCount: reqs.filter(r => r.game_id === x.id && r.status === 'accepted').length,
-    pendingCount: reqs.filter(r => r.game_id === x.id && r.status === 'pending').length,
-  }))
+  rows.value = games.map(x => {
+    const stats = joinStats[x.id] || joinStats[String(x.id)] || {}
+    return {
+      ...x,
+      moderation_status: x.moderation_status || 'active',
+      locationName: locName(x.location_id),
+      cityName: cities.value.find(c => c.id === x.city_id)?.name || '',
+      joinedCount: stats.accepted || 0,
+      pendingCount: stats.pending || 0,
+    }
+  })
 
-  // Communities (platform admins; best-effort — the module may not be migrated yet).
+  // Communities (platform admins; still Supabase — migrated later).
   if (isPlatformAdmin.value) {
     try {
       const [cRes, mRes] = await Promise.all([
@@ -257,17 +278,27 @@ function onLbKey(e) {
 function openDetail(g) { detail.value = g }
 function closeDetail() { detail.value = null }
 
-// ── moderation actions ──────────────────────────────────────────────────────
+// ── moderation actions (events → Laravel; dual-writes Supabase on the server) ─
 async function applyModeration(g, status, reason) {
-  const patch = {
-    moderation_status: status,
-    moderation_reason: reason ?? null,
-    moderated_at: new Date().toISOString(),
-    moderated_by: currentUser.value?.id || currentUser.value?.full_name || 'admin',
+  let res
+  if (status === 'flagged') res = await apiFlagEvent(g.id, reason)
+  else if (status === 'removed') res = await apiRemoveEvent(g.id, reason)
+  else res = await apiRestoreEvent(g.id)
+
+  if (!res.success) {
+    toast.error(modErr(res, "Couldn't save — please try again."))
+    return false
   }
-  const { error } = await supabase.from('hosted_games').update(patch).eq('id', g.id)
-  if (error) { toast.error("Couldn't save — please try again."); return false }
-  Object.assign(g, patch)   // reflect in the list + the open modal (same ref)
+  const updated = res.data?.game || {}
+  Object.assign(g, {
+    moderation_status: updated.moderation_status ?? status,
+    moderation_reason: updated.moderation_reason ?? (reason ?? null),
+    moderated_at: updated.moderated_at ?? new Date().toISOString(),
+    moderated_by: updated.moderated_by ?? (currentUser.value?.id || currentUser.value?.full_name || 'admin'),
+  })
+  if (res.data?.supabase_synced === false) {
+    toast.info('Saved in Bookboll — storefront sync lagged; refresh if needed.')
+  }
   return true
 }
 
