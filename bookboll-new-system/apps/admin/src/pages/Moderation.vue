@@ -8,8 +8,8 @@
  *               (a derived notice appears in their bell, see notifications.js).
  *   • Restore → back to active / live.
  *
- * Events moderation state lives on Laravel hosted_games (dual-written to Supabase
- * so the customer storefront stays in sync). Communities stay on Supabase for now.
+ * Events + Communities moderation state lives on Laravel (dual-written to Supabase
+ * so the customer storefront stays in sync). Owner/city labels still use Supabase.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { supabase } from '../lib/supabase.js'
@@ -34,6 +34,13 @@ import {
   restoreEvent as apiRestoreEvent,
   firstError as modErr,
 } from '../lib/moderationEvents.js'
+import {
+  fetchCommunityModerationDashboard,
+  flagCommunity as apiFlagCommunity,
+  removeCommunity as apiRemoveCommunity,
+  restoreCommunity as apiRestoreCommunity,
+  firstError as commErr,
+} from '../lib/communityModeration.js'
 
 const { currentUser, isSuperAdmin, isCountryAdmin, currentOwnerUserId, role } = useCurrentUser()
 // Platform roles see events in their jurisdiction (super admin: everywhere);
@@ -146,32 +153,39 @@ async function load() {
     }
   })
 
-  // Communities (platform admins; still Supabase — migrated later).
+  // Communities (platform admins) — Laravel + owner names from Supabase customers.
   if (isPlatformAdmin.value) {
     try {
-      const [cRes, mRes] = await Promise.all([
-        supabase.from('communities').select('*').order('created_at', { ascending: false }),
-        supabase.from('community_members').select('community_id, status'),
-      ])
-      if (!cRes.error) {
-        let comms = cRes.data || []
+      const cDash = await fetchCommunityModerationDashboard()
+      if (!cDash.success) {
+        toast.error(commErr(cDash, 'Could not load communities.'))
+        commRows.value = []
+      } else {
+        let comms = cDash.data?.communities || []
+        const memberStats = cDash.data?.member_stats || {}
         if (!isSuperAdmin.value) {
           const cSet = jurisdictionCountryIds.value
           comms = comms.filter(x => !x.country_id || cSet.has(x.country_id))
         }
-        const mems = mRes.data || []
         const ownerIds = [...new Set(comms.map(x => x.owner_customer_id).filter(Boolean))]
-        const owners = ownerIds.length ? (await supabase.from('customers').select('id, full_name').in('id', ownerIds)).data || [] : []
+        const owners = ownerIds.length
+          ? (await supabase.from('customers').select('id, full_name').in('id', ownerIds)).data || []
+          : []
         const ownerName = id => owners.find(o => o.id === id)?.full_name || 'Player'
-        commRows.value = comms.map(x => ({
-          ...x,
-          moderation_status: x.moderation_status || 'active',
-          cityName: cities.value.find(c => c.id === x.city_id)?.name || '',
-          ownerName: ownerName(x.owner_customer_id),
-          memberCount: mems.filter(m => m.community_id === x.id && m.status === 'accepted').length,
-        }))
+        commRows.value = comms.map(x => {
+          const stats = memberStats[x.id] || memberStats[String(x.id)] || {}
+          return {
+            ...x,
+            moderation_status: x.moderation_status || 'active',
+            cityName: cities.value.find(c => c.id === x.city_id)?.name || '',
+            ownerName: ownerName(x.owner_customer_id),
+            memberCount: stats.accepted || 0,
+          }
+        })
       }
-    } catch { commRows.value = [] }
+    } catch {
+      commRows.value = []
+    }
   }
   loading.value = false
 }
@@ -335,17 +349,27 @@ async function restoreEvent(g) {
   if (await applyModeration(g, 'active', null)) toast.success('Event restored — it’s live again.')
 }
 
-// ── community moderation (same flow, communities table) ─────────────────────
+// ── community moderation (Laravel; dual-writes Supabase on the server) ───────
 async function applyCommunityMod(c, status, reason) {
-  const patch = {
-    moderation_status: status,
-    moderation_reason: reason ?? null,
-    moderated_at: new Date().toISOString(),
-    moderated_by: currentUser.value?.id || currentUser.value?.full_name || 'admin',
+  let res
+  if (status === 'flagged') res = await apiFlagCommunity(c.id, reason)
+  else if (status === 'removed') res = await apiRemoveCommunity(c.id, reason)
+  else res = await apiRestoreCommunity(c.id)
+
+  if (!res.success) {
+    toast.error(commErr(res, "Couldn't save — please try again."))
+    return false
   }
-  const { error } = await supabase.from('communities').update(patch).eq('id', c.id)
-  if (error) { toast.error("Couldn't save — please try again."); return false }
-  Object.assign(c, patch)
+  const updated = res.data?.community || {}
+  Object.assign(c, {
+    moderation_status: updated.moderation_status ?? status,
+    moderation_reason: updated.moderation_reason ?? (reason ?? null),
+    moderated_at: updated.moderated_at ?? new Date().toISOString(),
+    moderated_by: updated.moderated_by ?? (currentUser.value?.id || currentUser.value?.full_name || 'admin'),
+  })
+  if (res.data?.supabase_synced === false) {
+    toast.info('Saved in Bookboll — storefront sync lagged; refresh if needed.')
+  }
   return true
 }
 async function flagCommunity(c) {
