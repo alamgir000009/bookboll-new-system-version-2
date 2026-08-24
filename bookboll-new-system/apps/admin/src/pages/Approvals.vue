@@ -22,6 +22,13 @@ import { askConfirm } from '../lib/confirm.js'
 import { askInput } from '../lib/inputPrompt.js'
 import { pushToast } from '../lib/toast.js'
 import MultiSelect from '../components/MultiSelect.vue'
+import {
+  firstError,
+  fetchApprovalsDashboard,
+  approveContent,
+  requestContentChanges,
+  bulkApproveContent,
+} from '../lib/approvals.js'
 
 const { isSuperAdmin, role: actorRole, currentCountryId, assignedCountryIds, assignedLocationIds, currentUser, can } = useCurrentUser()
 
@@ -39,9 +46,8 @@ const tab = ref('all')   // 'all' | 'content' (listings & programs) | 'money' (w
 const search = ref('')
 
 async function load() {
-  const [li, pg, wd, ap, lo, ci, co, wl] = await Promise.all([
-    supabase.from('listings').select('*').eq('approval_status', 'pending'),
-    supabase.from('class_programs').select('*').eq('approval_status', 'pending'),
+  const [dash, wd, ap, lo, ci, co, wl] = await Promise.all([
+    fetchApprovalsDashboard(),
     supabase.from('withdrawal_requests').select('*').in('status', ['pending', 'approved']).order('requested_at', { ascending: false }),
     supabase.from('admin_users').select('*').eq('role', 'provider_admin'),
     supabase.from('locations').select('*'),
@@ -49,19 +55,22 @@ async function load() {
     supabase.from('countries').select('*').eq('status', 'active'),
     supabase.from('provider_wallets').select('*'),
   ])
-  // Content-update items: approved & live rows whose title/description/photos are staged in
-  // pending_content awaiting review. Guarded so the page still loads pre-migration.
-  const [liC, pgC] = await Promise.all([
-    supabase.from('listings').select('*').not('pending_content', 'is', null),
-    supabase.from('class_programs').select('*').not('pending_content', 'is', null),
-  ])
-  const mergeById = (a, b) => { const m = new Map(); [...a, ...b].forEach(r => m.set(r.id, r)); return [...m.values()] }
-  const liContent = liC.error ? [] : (liC.data || []).filter(r => r.pending_content)
-  const pgContent = pgC.error ? [] : (pgC.data || []).filter(r => r.pending_content)
-  listings.value = mergeById(li.data || [], liContent)
-  programs.value = mergeById(pg.data || [], pgContent)
+  if (!dash.success) {
+    pushToast(firstError(dash, 'Could not load approvals queue.'), 'error')
+    listings.value = []
+    programs.value = []
+  } else {
+    listings.value = dash.data?.listings || []
+    programs.value = dash.data?.programs || []
+  }
   withdrawals.value = wd.data || []
-  allProviders.value = ap.data || []
+  // Prefer Supabase provider_admin rows for business_status / contact; merge Laravel owners if missing.
+  const fromSb = ap.data || []
+  const fromApi = dash.success ? (dash.data?.providers || []) : []
+  const byId = new Map()
+  for (const p of fromApi) byId.set(String(p.id), p)
+  for (const p of fromSb) byId.set(String(p.id), p)
+  allProviders.value = [...byId.values()]
   allLocations.value = lo.data || []
   allCities.value = ci.data || []
   allCountries.value = co.data || []
@@ -284,78 +293,49 @@ const { page: appPage, perPage: appPerPage, totalPages: appTotalPages, paginated
 
 // --- listing actions ---
 async function approveListing(li) {
-  // Content-only update: the listing is already live — copy the staged title/description/
-  // photos into the live columns and clear the staged copy. No status change.
-  if (isContentUpdate(li)) {
-    const pc = li.pending_content || {}
-    await supabase.from('listings').update({
-      name: pc.name ?? li.name,
-      description: pc.description ?? li.description,
-      photo_url: pc.photo_url ?? li.photo_url,
-      photos: Array.isArray(pc.photos) ? pc.photos : (li.photos || []),
-    }).eq('id', li.id)
-    await supabase.from('listings').update({ pending_content: null }).eq('id', li.id)
-    logAudit({ action: AUDIT.APPROVED, entity_type: 'listing', entity_id: li.id, details: `Approved content update for “${pc.name || li.name}” (${providerName(li.owner_user_id)})` })
-    notifyBusiness({
-      ownerUserId: ownerOfItem({ ...li, _type: 'listing' }), kind: 'approval', tone: 'ok',
-      title: `Content approved — “${pc.name || li.name}”`,
-      sub: 'Your updated title, description and photos are now live', link: '/listings',
-    })
-    load()
-    return
+  const res = await approveContent('listing', li.id)
+  if (!res.success) {
+    pushToast(firstError(res, 'Could not approve listing.'), 'error')
+    return false
   }
-  await supabase.from('listings').update({
-    approval_status: 'approved',
-    eligibility_status: 'eligible',
-    admin_note: '',
-    previous_snapshot: null,
-  }).eq('id', li.id)
-  // If this listing introduced a brand-new type, promote it into the shared catalog.
-  await promoteTypesFor({ domain: 'venue', name: li.sport_category, category: li.category })
-  logAudit({ action: AUDIT.APPROVED, entity_type: 'listing', entity_id: li.id, details: `Approved listing “${li.name}” (${providerName(li.owner_user_id)})` })
+  const contentOnly = isContentUpdate(li)
+  const name = contentOnly ? (li.pending_content?.name || li.name) : li.name
+  // Server promotes custom_types; keep FE call best-effort for Supabase catalog cache.
+  if (!contentOnly) {
+    try { await promoteTypesFor({ domain: 'venue', name: li.sport_category, category: li.category }) } catch { /* ignore */ }
+  }
+  logAudit({ action: AUDIT.APPROVED, entity_type: 'listing', entity_id: li.id, details: contentOnly ? `Approved content update for “${name}” (${providerName(li.owner_user_id)})` : `Approved listing “${name}” (${providerName(li.owner_user_id)})` })
   notifyBusiness({
     ownerUserId: ownerOfItem({ ...li, _type: 'listing' }), kind: 'approval', tone: 'ok',
-    title: `“${li.name}” was approved 🎉`,
-    sub: 'It is now live on the Bookboll marketplace', link: '/listings',
+    title: contentOnly ? `Content approved — “${name}”` : `“${name}” was approved 🎉`,
+    sub: contentOnly ? 'Your updated title, description and photos are now live' : 'It is now live on the Bookboll marketplace',
+    link: '/listings',
   })
-  load()
+  await load()
+  return true
 }
 
 // --- program actions ---
 async function approveProgram(pg) {
-  // Content-only update (already live) → swap staged content into the live columns.
-  if (isContentUpdate(pg)) {
-    const pc = pg.pending_content || {}
-    await supabase.from('class_programs').update({
-      name: pc.name ?? pg.name,
-      description: pc.description ?? pg.description,
-      photo_url: pc.photo_url ?? pg.photo_url,
-      images: Array.isArray(pc.images) ? pc.images : (pg.images || []),
-    }).eq('id', pg.id)
-    await supabase.from('class_programs').update({ pending_content: null }).eq('id', pg.id)
-    logAudit({ action: AUDIT.APPROVED, entity_type: 'program', entity_id: pg.id, details: `Approved content update for “${pc.name || pg.name}” (${providerName(pg.owner_user_id)})` })
-    notifyBusiness({
-      ownerUserId: ownerOfItem({ ...pg, _type: 'program' }), kind: 'approval', tone: 'ok',
-      title: `Content approved — “${pc.name || pg.name}”`,
-      sub: 'Your updated title, description and photo are now live', link: '/listings',
-    })
-    load()
-    return
+  const res = await approveContent('program', pg.id)
+  if (!res.success) {
+    pushToast(firstError(res, 'Could not approve program.'), 'error')
+    return false
   }
-  await supabase.from('class_programs').update({
-    approval_status: 'approved',
-    eligibility_status: 'eligible',
-    admin_note: '',
-    previous_snapshot: null,
-  }).eq('id', pg.id)
-  await promoteTypesFor({ domain: 'program', name: pg.sport_category, category: pg.category })
-  logAudit({ action: AUDIT.APPROVED, entity_type: 'program', entity_id: pg.id, details: `Approved program “${pg.name}” (${providerName(pg.owner_user_id)})` })
+  const contentOnly = isContentUpdate(pg)
+  const name = contentOnly ? (pg.pending_content?.name || pg.name) : pg.name
+  if (!contentOnly) {
+    try { await promoteTypesFor({ domain: 'program', name: pg.sport_category, category: pg.category }) } catch { /* ignore */ }
+  }
+  logAudit({ action: AUDIT.APPROVED, entity_type: 'program', entity_id: pg.id, details: contentOnly ? `Approved content update for “${name}” (${providerName(pg.owner_user_id)})` : `Approved program “${name}” (${providerName(pg.owner_user_id)})` })
   notifyBusiness({
     ownerUserId: ownerOfItem({ ...pg, _type: 'program' }), kind: 'approval', tone: 'ok',
-    title: `“${pg.name}” was approved 🎉`,
-    sub: 'It is now live on the Bookboll marketplace', link: '/listings',
+    title: contentOnly ? `Content approved — “${name}”` : `“${name}” was approved 🎉`,
+    sub: contentOnly ? 'Your updated title, description and photo are now live' : 'It is now live on the Bookboll marketplace',
+    link: '/listings',
   })
-  load()
+  await load()
+  return true
 }
 
 async function approveItem(item) {
@@ -368,8 +348,8 @@ async function approveItem(item) {
       : `It goes live on the Bookboll marketplace immediately, and ${providerName(ownerOfItem(item))} gets a notification.`,
     danger: false, confirmText: contentOnly ? 'Approve content' : 'Approve & publish', cancelText: 'Not yet',
   }))) return
-  if (item._type === 'listing') await approveListing(item)
-  else await approveProgram(item)
+  const ok = item._type === 'listing' ? await approveListing(item) : await approveProgram(item)
+  if (!ok) return
   pushToast(contentOnly ? `“${item.name}” content approved — now live` : `“${item.name}” approved — it's live on the marketplace`, 'success')
   if (previewItem.value?.id === item.id) previewModal.value = false
 }
@@ -387,33 +367,29 @@ function openSendBack(item) {
 async function confirmSendBack() {
   const item = sendBackTarget.value
   if (!sendBackNote.value.trim()) return
-  const table = item._type === 'listing' ? 'listings' : 'class_programs'
-  // Content-only update → just DISCARD the staged content; the live listing stays
-  // approved & online (never pause a live listing over a rejected content tweak).
-  if (isContentUpdate(item)) {
-    await supabase.from(table).update({ pending_content: null }).eq('id', item.id)
-    logAudit({ action: AUDIT.CHANGES_REQUESTED, entity_type: item._type, entity_id: item.id, details: `Rejected content update on “${item.name}”: ${sendBackNote.value.trim()}` })
-    notifyBusiness({
-      ownerUserId: ownerOfItem(item), kind: 'approval', tone: 'warn',
-      title: `Content changes not approved — “${item.name}”`,
-      sub: `${sendBackNote.value.trim()} · Your listing stays live on its current content.`, link: '/listings',
-    })
-    sendBackModal.value = false
-    if (previewModal.value) previewModal.value = false
-    load()
+  const contentOnly = isContentUpdate(item)
+  const res = await requestContentChanges(item._type, item.id, {
+    admin_note: sendBackNote.value.trim(),
+  })
+  if (!res.success) {
+    pushToast(firstError(res, 'Could not request changes.'), 'error')
     return
   }
-  await supabase.from(table).update({
-    eligibility_status: 'paused',
-    admin_note: sendBackNote.value.trim(),
-    approval_status: 'approved',
-    previous_snapshot: null,
-  }).eq('id', item.id)
-  logAudit({ action: AUDIT.CHANGES_REQUESTED, entity_type: item._type, entity_id: item.id, details: `Requested changes on “${item.name}”: ${sendBackNote.value.trim()}` })
+  logAudit({
+    action: AUDIT.CHANGES_REQUESTED,
+    entity_type: item._type,
+    entity_id: item.id,
+    details: contentOnly
+      ? `Rejected content update on “${item.name}”: ${sendBackNote.value.trim()}`
+      : `Requested changes on “${item.name}”: ${sendBackNote.value.trim()}`,
+  })
   notifyBusiness({
     ownerUserId: ownerOfItem(item), kind: 'approval', tone: 'warn',
-    title: `Changes requested — “${item.name}”`,
-    sub: sendBackNote.value.trim(), link: '/listings',
+    title: contentOnly ? `Content changes not approved — “${item.name}”` : `Changes requested — “${item.name}”`,
+    sub: contentOnly
+      ? `${sendBackNote.value.trim()} · Your listing stays live on its current content.`
+      : sendBackNote.value.trim(),
+    link: '/listings',
   })
   sendBackModal.value = false
   if (previewModal.value) previewModal.value = false
@@ -424,38 +400,32 @@ async function confirmSendBack() {
 const bulkModal = ref(false)
 async function confirmBulkApprove() {
   const items = filteredContent.value
+  const res = await bulkApproveContent(items.map(i => ({ type: i._type, id: String(i.id) })))
+  if (!res.success) {
+    pushToast(firstError(res, 'Bulk approve failed.'), 'error')
+    return
+  }
   for (const item of items) {
-    const table = item._type === 'listing' ? 'listings' : 'class_programs'
-    // Content-only update → swap staged content into the live columns (no status change).
-    if (isContentUpdate(item)) {
-      const pc = item.pending_content || {}
-      const cols = item._type === 'listing'
-        ? { name: pc.name ?? item.name, description: pc.description ?? item.description, photo_url: pc.photo_url ?? item.photo_url, photos: Array.isArray(pc.photos) ? pc.photos : (item.photos || []) }
-        : { name: pc.name ?? item.name, description: pc.description ?? item.description, photo_url: pc.photo_url ?? item.photo_url, images: Array.isArray(pc.images) ? pc.images : (item.images || []) }
-      await supabase.from(table).update(cols).eq('id', item.id)
-      await supabase.from(table).update({ pending_content: null }).eq('id', item.id)
-      notifyBusiness({
-        ownerUserId: ownerOfItem(item), kind: 'approval', tone: 'ok',
-        title: `Content approved — “${pc.name || item.name}”`,
-        sub: 'Your updated content is now live', link: '/listings',
-      })
-      continue
+    const contentOnly = isContentUpdate(item)
+    if (!contentOnly) {
+      try {
+        await promoteTypesFor({
+          domain: item._type === 'listing' ? 'venue' : 'program',
+          name: item.sport_category,
+          category: item.category,
+        })
+      } catch { /* ignore */ }
     }
-    await supabase.from(table).update({
-      approval_status: 'approved',
-      eligibility_status: 'eligible',
-      admin_note: '',
-      previous_snapshot: null,
-    }).eq('id', item.id)
-    await promoteTypesFor({ domain: item._type === 'listing' ? 'venue' : 'program', name: item.sport_category, category: item.category })
     notifyBusiness({
       ownerUserId: ownerOfItem(item), kind: 'approval', tone: 'ok',
-      title: `“${item.name}” was approved 🎉`,
-      sub: 'It is now live on the Bookboll marketplace', link: '/listings',
+      title: contentOnly ? `Content approved — “${item.pending_content?.name || item.name}”` : `“${item.name}” was approved 🎉`,
+      sub: contentOnly ? 'Your updated content is now live' : 'It is now live on the Bookboll marketplace',
+      link: '/listings',
     })
   }
   logAudit({ action: AUDIT.APPROVED, entity_type: 'content', details: `Bulk-approved ${items.length} pending item${items.length === 1 ? '' : 's'}` })
   bulkModal.value = false
+  pushToast(`${res.data?.count ?? items.length} item(s) approved`, 'success')
   load()
 }
 
