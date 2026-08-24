@@ -1,15 +1,21 @@
 /**
  * blog.js — data + helpers for the marketplace blog.
  *
- * Public storefront uses the read helpers (published posts only, enforced by RLS).
- * The super-admin dashboard uses the CRUD helpers. Body is markdown, rendered by a small
- * XSS-safe subset renderer (no dependency): the source is HTML-escaped first, then a fixed
- * set of inline/block transforms are applied, so authored content can never inject tags.
- *
- * Best-effort: if the `blog_posts` table isn't migrated yet, reads return [] / null and the
- * pages render an empty state instead of throwing.
+ * Platform admin CRUD (/blog-posts) uses Laravel /admin/posts.
+ * Provider white-label blog (WebsiteBlog) still uses Supabase blog_posts until
+ * owner scoping exists on Laravel. Public storefront helpers remain Supabase.
  */
 import { supabase } from './supabase.js'
+import {
+  audienceToType,
+  listAdminPosts,
+  createAdminPost,
+  updateAdminPost,
+  deleteAdminPost,
+  mapPostFromApi,
+  toApiPayload,
+  firstError as blogApiError,
+} from './blogApi.js'
 
 // ── Slug ─────────────────────────────────────────────────────────────────────
 export function slugify(s) {
@@ -95,8 +101,18 @@ export async function countPublishedPosts(ownerId = null) {
 }
 
 // ── CRUD (admin) ─────────────────────────────────────────────────────────────
-// `ownerId` set → a provider's own posts; null → a Bookboll blog picked by `audience`.
+// Platform (ownerId null) → Laravel posts filtered by type (main|business).
+// Provider (ownerId set) → Supabase blog_posts (WebsiteBlog white-label).
 export async function loadAllPosts(ownerId = null, audience = 'marketplace') {
+  if (!ownerId) {
+    const type = audienceToType(audience)
+    const res = await listAdminPosts({ type, records_per_page: 100 })
+    if (!res.success) return { error: blogApiError(res, 'Could not load posts.') }
+    const page = res.data?.posts
+    const rows = Array.isArray(page?.data) ? page.data : (Array.isArray(page) ? page : [])
+    return { data: rows.map(mapPostFromApi) }
+  }
+
   const base = () => supabase.from('blog_posts').select('*').order('created_at', { ascending: false })
   try {
     let { data, error } = await scopeAudience(scopeOwner(base(), ownerId), ownerId, audience)
@@ -111,6 +127,15 @@ export async function loadAllPosts(ownerId = null, audience = 'marketplace') {
 }
 
 export async function savePost(post, ownerId = null, audience = 'marketplace') {
+  if (!ownerId) {
+    const payload = toApiPayload(post, audience)
+    const res = post.id
+      ? await updateAdminPost(post.id, payload)
+      : await createAdminPost(payload)
+    if (!res.success) return { error: blogApiError(res, 'Could not save post.') }
+    return { data: mapPostFromApi(res.data?.post) }
+  }
+
   const now = new Date().toISOString()
   const row = {
     title: (post.title || '').trim(),
@@ -153,7 +178,13 @@ export async function savePost(post, ownerId = null, audience = 'marketplace') {
   } catch (e) { return { error: e.message } }
 }
 
-export async function deletePost(id) {
+export async function deletePost(id, ownerId = null) {
+  if (ownerId == null) {
+    // Platform blog — Laravel. WebsiteBlog passes ownerId so stays on Supabase.
+    const res = await deleteAdminPost(id)
+    if (!res.success) return { error: blogApiError(res, 'Could not delete post.') }
+    return { ok: true }
+  }
   try {
     const { error } = await supabase.from('blog_posts').delete().eq('id', id)
     if (error) return { error: error.message }

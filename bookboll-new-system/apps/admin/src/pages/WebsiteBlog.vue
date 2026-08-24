@@ -102,7 +102,7 @@ async function save(publish) {
 
 async function remove(p) {
   if (!confirm(`Delete "${p.title}"? This cannot be undone.`)) return
-  const res = await deletePost(p.id)
+  const res = await deletePost(p.id, ownerId.value)
   if (res.error) { alert(res.error); return }
   await load()
 }

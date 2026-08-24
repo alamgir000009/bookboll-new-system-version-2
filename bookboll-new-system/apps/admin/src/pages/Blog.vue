@@ -1,10 +1,9 @@
 <script setup>
 /**
  * Blog.vue — super-admin blog manager for BOTH Bookboll blogs, switched by tab:
- *   • Marketplace  → customer-facing posts at /blog
- *   • For Business → posts on the for-businesses landing at /for-business/blog
- * Same table (blog_posts), split by the `audience` column. Body is rich HTML
- * (sanitized, see lib/blog.js).
+ *   • Marketplace  → Laravel posts type=main (customer /blog)
+ *   • For Business → Laravel posts type=business (/for-business/blog)
+ * Body is rich HTML (sanitized, see lib/blog.js). Provider WebsiteBlog stays on Supabase.
  */
 import { ref, computed, onMounted } from 'vue'
 import { loadAllPosts, savePost, deletePost, slugify, fmtPostDate, renderMarkdown, sanitizeHtml } from '../lib/blog.js'
@@ -112,7 +111,7 @@ async function remove(p) {
         <button class="blogadm-tab" :class="{ on: isBiz }" role="tab" :aria-selected="isBiz" @click="switchAudience('business')"><Briefcase :size="15" /> For Business blog</button>
       </div>
 
-      <div v-if="loadErr" class="blogadm-warn">{{ loadErr }} — run the <code>blog_posts</code> migration if you haven't.</div>
+      <div v-if="loadErr" class="blogadm-warn">{{ loadErr }}</div>
       <div v-if="loading" class="blogadm-empty">Loading…</div>
       <div v-else-if="!posts.length" class="blogadm-empty"><FileText :size="34" /><p>No {{ isBiz ? 'For Business' : 'marketplace' }} posts yet. Write your first article.</p></div>
 
