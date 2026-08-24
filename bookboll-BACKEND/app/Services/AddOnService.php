@@ -33,9 +33,10 @@ class AddOnService
             'price'           => 'required|numeric|min:0',
             'hours_extension' => 'nullable|integer|min:0',
             'status'          => 'required|in:active,inactive',
+            'image'           => 'nullable|string|max:2048',
         ]);
 
-        $formData['sort_order'] = $this->addOnModel->max('id') + 1;
+        $formData['sort_order'] = ($this->addOnModel->max('sort_order') ?? 0) + 1;
 
         $addOn = $this->addOnModel::create($formData);
 
@@ -52,11 +53,15 @@ class AddOnService
             'price'           => 'sometimes|required|numeric|min:0',
             'hours_extension' => 'nullable|integer|min:0',
             'status'          => 'required|in:active,inactive',
-            'image'           => 'exclude_if:image,null|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'image'           => 'nullable',
         ]);
 
         if ($request->hasFile('image')) {
             $formData['image'] = $request->file('image')->store('addons', 'public');
+        } elseif ($request->filled('image') && is_string($request->input('image'))) {
+            $formData['image'] = $request->input('image');
+        } else {
+            unset($formData['image']);
         }
 
         $addOn->update($formData);

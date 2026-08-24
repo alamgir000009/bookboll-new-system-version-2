@@ -124,6 +124,12 @@ class ListingDashboardService
             if (empty($attrs['status'])) {
                 $attrs['status'] = 'active';
             }
+            // MySQL listings.payment_options has no default — seed before insert; syncChildren may overwrite.
+            if (! array_key_exists('payment_options', $attrs) || $attrs['payment_options'] === null) {
+                $paySeed = $this->mapPaymentIn($validated['payment'] ?? []);
+                $attrs['online_payment'] = $paySeed['online_payment'];
+                $attrs['payment_options'] = $paySeed['payment_options'];
+            }
 
             $listing = $this->listingModel::create($attrs);
             $this->syncChildren($listing, $validated);
@@ -612,7 +618,7 @@ class ListingDashboardService
             'approval_status'       => $v['approval_status'] ?? null,
             'eligibility_status'    => $v['eligibility_status'] ?? null,
             'admin_note'            => $v['admin_note'] ?? null,
-            'previous_snapshot'     => $v['previous_snapshot'] ?? null,
+            'previous_snapshot'     => array_key_exists('previous_snapshot', $v) ? $v['previous_snapshot'] : null,
             'pending_content'       => array_key_exists('pending_content', $v) ? $v['pending_content'] : null,
             'show_on_marketplace'   => array_key_exists('show_on_marketplace', $v) ? (bool) $v['show_on_marketplace'] : true,
             'show_on_provider_site' => array_key_exists('show_on_provider_site', $v) ? (bool) $v['show_on_provider_site'] : true,
@@ -620,9 +626,21 @@ class ListingDashboardService
             'extension_value'       => $v['extension_value'] ?? 0,
             'extension_max_slots'   => $v['extension_max_slots'] ?? 1,
             'booking_hold_minutes'  => $v['booking_hold_minutes'] ?? null,
-            'submitted_at'          => $v['submitted_at'] ?? null,
-            'submitted_by_name'     => $v['submitted_by_name'] ?? null,
+            'submitted_at'          => array_key_exists('submitted_at', $v) ? $v['submitted_at'] : null,
+            'submitted_by_name'     => array_key_exists('submitted_by_name', $v) ? $v['submitted_by_name'] : null,
         ];
+
+        // On partial updates, omit nullable fields the client did not send so we
+        // do not wipe previous_snapshot / submitted_* / etc.
+        foreach ([
+            'previous_snapshot', 'pending_content', 'submitted_at', 'submitted_by_name',
+            'admin_note', 'approval_status', 'eligibility_status', 'commission_rate',
+            'booking_hold_minutes', 'sport_category',
+        ] as $optionalKey) {
+            if (! array_key_exists($optionalKey, $v)) {
+                unset($attrs[$optionalKey]);
+            }
+        }
 
         return array_filter(
             $attrs,

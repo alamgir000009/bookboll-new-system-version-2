@@ -158,6 +158,8 @@ if (! class_exists('PaymentType')) {
         public const FULL      = 'full';
         public const DEPOSIT   = 'deposit';
         public const REMAINING = 'remaining';
+        public const SUBSCRIPTION_COMMISSION = 'subscription_commission';
+        public const SUBSCRIPTION_EARNING    = 'subscription_earning';
 
         public static function list()
         {
@@ -165,6 +167,8 @@ if (! class_exists('PaymentType')) {
                 self::FULL,
                 self::DEPOSIT,
                 self::REMAINING,
+                self::SUBSCRIPTION_COMMISSION,
+                self::SUBSCRIPTION_EARNING,
             ];
         }
     }
@@ -1052,6 +1056,32 @@ if (! function_exists('venueNotificationRecipientIds')) {
                 'exception' => $e,
             ]);
             return [];
+        }
+    }
+}
+
+if (! function_exists('notifyUserRefresh')) {
+    /**
+     * Broadcast a private "refresh" event to a single user.
+     * Channel: private-refresh.{userId} · event: refresh
+     */
+    function notifyUserRefresh(int $userId, array $payload = []): bool
+    {
+        try {
+            if ($userId <= 0) {
+                return false;
+            }
+            broadcast(new \App\Events\AdminAppRefresh($userId, $payload));
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('notifyUserRefresh failed: ' . $e->getMessage(), [
+                'user_id'  => $userId,
+                'payload'  => $payload,
+                'exception'=> $e,
+            ]);
+
+            return false;
         }
     }
 }

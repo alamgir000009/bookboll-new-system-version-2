@@ -764,6 +764,16 @@ class BookingService
 
             DB::commit();
 
+            foreach ($bookings as $createdBooking) {
+                notifyVenueStaffRefresh($createdBooking->venue_id, [
+                    'event'      => 'booking_created',
+                    'booking_id' => $createdBooking->id,
+                    'venue_id'   => $createdBooking->venue_id,
+                    'listing_id' => $createdBooking->listing_id,
+                    'bell'       => true,
+                ]);
+            }
+
             return sendSuccess('Bookings created successfully', compact('bookings'));
         } catch (Exception $e) {
             DB::rollBack();
@@ -3245,6 +3255,14 @@ class BookingService
 
             $booking->load(['listing:id,name', 'venue:id,name', 'user:id,name', 'invoices']);
             unlockListingSlot($listing, $user, $booking);
+
+            notifyVenueStaffRefresh($booking->venue_id, [
+                'event'      => 'booking_created',
+                'booking_id' => $booking->id,
+                'venue_id'   => $booking->venue_id,
+                'listing_id' => $booking->listing_id,
+                'bell'       => true,
+            ]);
 
             return $booking;
         } catch (Exception $e) {

@@ -11,6 +11,7 @@ use App\Http\Controllers\BusinessNotificationTemplateController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
+use App\Http\Controllers\ClassMembershipController;
 use App\Http\Controllers\LocationCityController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\LocationCountryController;
@@ -125,6 +126,21 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::put('listings/dashboard/{id}', [ListingController::class, 'dashboardUpdate'])->name('listings.dashboard.update');
         Route::patch('listings/dashboard/{id}', [ListingController::class, 'dashboardPatch'])->name('listings.dashboard.patch');
         Route::delete('listings/dashboard/{id}', [ListingController::class, 'dashboardDestroy'])->name('listings.dashboard.destroy');
+
+        Route::get('subscriptions/dashboard', [ClassMembershipController::class, 'dashboard'])->name('subscriptions.dashboard');
+        Route::post('subscriptions/dashboard', [ClassMembershipController::class, 'store'])->name('subscriptions.dashboard.store');
+        Route::post('subscriptions/dashboard/bulk-cancel', [ClassMembershipController::class, 'bulkCancel'])->name('subscriptions.dashboard.bulk-cancel');
+        Route::delete('subscriptions/programs/{id}', [ClassMembershipController::class, 'destroyProgram'])->name('subscriptions.programs.destroy');
+        Route::get('subscriptions/dashboard/{id}', [ClassMembershipController::class, 'show'])->name('subscriptions.dashboard.show');
+        Route::get('subscriptions/dashboard/{id}/payments', [ClassMembershipController::class, 'payments'])->name('subscriptions.dashboard.payments');
+        Route::post('subscriptions/dashboard/{id}/charge', [ClassMembershipController::class, 'charge'])->name('subscriptions.dashboard.charge');
+        Route::post('subscriptions/dashboard/{id}/retry-charge', [ClassMembershipController::class, 'retryCharge'])->name('subscriptions.dashboard.retry-charge');
+        Route::post('subscriptions/dashboard/{id}/cancel', [ClassMembershipController::class, 'cancel'])->name('subscriptions.dashboard.cancel');
+        Route::post('subscriptions/dashboard/{id}/pause', [ClassMembershipController::class, 'pause'])->name('subscriptions.dashboard.pause');
+        Route::post('subscriptions/dashboard/{id}/resume', [ClassMembershipController::class, 'resume'])->name('subscriptions.dashboard.resume');
+        Route::post('subscriptions/dashboard/{id}/mark-past-due', [ClassMembershipController::class, 'markPastDue'])->name('subscriptions.dashboard.mark-past-due');
+        Route::post('subscriptions/dashboard/{id}/retention/month-off', [ClassMembershipController::class, 'retentionMonthOff'])->name('subscriptions.dashboard.retention');
+        Route::post('subscriptions/dashboard/{id}/winback', [ClassMembershipController::class, 'winback'])->name('subscriptions.dashboard.winback');
 
         Route::get('registrations/requests', [UserController::class, 'listPendingUsers'])->name('users.pending');
         Route::post('registrations/{id}/approve', [UserController::class, 'approveUser'])->name('users.approve');

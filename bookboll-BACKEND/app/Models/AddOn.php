@@ -34,7 +34,14 @@ class AddOn extends Model
 
     public function getImageAttribute($image)
     {
-        return $image ? url("storage/{$image}") : null;
+        if (! $image) {
+            return null;
+        }
+        if (str_starts_with($image, 'http://') || str_starts_with($image, 'https://')) {
+            return $image;
+        }
+
+        return url("storage/{$image}");
     }
     protected function activityLogName(): string
     {
