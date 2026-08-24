@@ -14,6 +14,7 @@ use App\Http\Controllers\ListingController;
 use App\Http\Controllers\ClassMembershipController;
 use App\Http\Controllers\ApprovalsController;
 use App\Http\Controllers\WalletPayoutController;
+use App\Http\Controllers\EventModerationController;
 use App\Http\Controllers\LocationCityController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\LocationCountryController;
@@ -133,6 +134,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('approvals/bulk-approve', [ApprovalsController::class, 'bulkApprove'])->name('approvals.bulk-approve');
         Route::post('approvals/{type}/{id}/approve', [ApprovalsController::class, 'approve'])->name('approvals.approve');
         Route::post('approvals/{type}/{id}/request-changes', [ApprovalsController::class, 'requestChanges'])->name('approvals.request-changes');
+
+        Route::get('moderation/events/dashboard', [EventModerationController::class, 'dashboard'])->name('moderation.events.dashboard');
+        Route::post('moderation/events/{id}/flag', [EventModerationController::class, 'flag'])->name('moderation.events.flag');
+        Route::post('moderation/events/{id}/remove', [EventModerationController::class, 'remove'])->name('moderation.events.remove');
+        Route::post('moderation/events/{id}/restore', [EventModerationController::class, 'restore'])->name('moderation.events.restore');
 
         Route::get('wallet-payouts/dashboard', [WalletPayoutController::class, 'dashboard'])->name('wallet-payouts.dashboard');
         Route::get('wallet-payouts/owners/{ownerUserId}/review', [WalletPayoutController::class, 'ownerReview'])->name('wallet-payouts.owners.review');

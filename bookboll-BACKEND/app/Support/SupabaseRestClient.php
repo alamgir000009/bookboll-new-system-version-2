@@ -132,4 +132,28 @@ class SupabaseRestClient
 
         return $all;
     }
+
+    /**
+     * PATCH a single row by primary key (id=eq.{id}).
+     *
+     * @param  array<string, mixed>  $patch
+     */
+    public function updateById(string $table, string $id, array $patch): void
+    {
+        $response = Http::withHeaders([
+            'apikey'        => $this->apiKey,
+            'Authorization' => 'Bearer ' . $this->apiKey,
+            'Accept'        => 'application/json',
+            'Content-Type'  => 'application/json',
+            'Prefer'        => 'return=minimal',
+        ])
+            ->timeout(30)
+            ->patch("{$this->baseUrl}/rest/v1/{$table}?id=eq.{$id}", $patch);
+
+        if (! $response->successful()) {
+            throw new RuntimeException(
+                "Supabase {$table} update failed ({$response->status()}) id={$id}: " . $response->body()
+            );
+        }
+    }
 }
