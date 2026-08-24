@@ -189,6 +189,62 @@ class SettingTableSeeder extends Seeder
                 'type'        => 'boolean',
                 'description' => 'Daily summary emails',
             ],
+
+            // Marketplace + admin chrome brand (apps/admin /brand)
+            [
+                'key'         => 'brand_name',
+                'value'       => 'Bookboll',
+                'type'        => 'string',
+                'description' => 'Marketplace display name',
+            ],
+            [
+                'key'         => 'brand_tagline',
+                'value'       => '',
+                'type'        => 'string',
+                'description' => 'Marketplace tagline',
+            ],
+            [
+                'key'         => 'brand_logo_url',
+                'value'       => '',
+                'type'        => 'string',
+                'description' => 'Marketplace logo URL',
+            ],
+            [
+                'key'         => 'brand_primary',
+                'value'       => '#0f766e',
+                'type'        => 'string',
+                'description' => 'Marketplace primary color',
+            ],
+            [
+                'key'         => 'brand_accent',
+                'value'       => '#14b8a6',
+                'type'        => 'string',
+                'description' => 'Marketplace accent color',
+            ],
+            [
+                'key'         => 'brand_meta_title',
+                'value'       => '',
+                'type'        => 'string',
+                'description' => 'Marketplace SEO title',
+            ],
+            [
+                'key'         => 'brand_meta_description',
+                'value'       => '',
+                'type'        => 'text',
+                'description' => 'Marketplace SEO description',
+            ],
+            [
+                'key'         => 'admin_logo_url',
+                'value'       => '',
+                'type'        => 'string',
+                'description' => 'Admin dashboard logo URL',
+            ],
+            [
+                'key'         => 'admin_primary',
+                'value'       => '',
+                'type'        => 'string',
+                'description' => 'Admin dashboard primary color',
+            ],
         ];
 
         foreach ($defaults as $setting) {
