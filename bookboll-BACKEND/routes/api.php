@@ -12,6 +12,7 @@ use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
 use App\Http\Controllers\ClassMembershipController;
+use App\Http\Controllers\ApprovalsController;
 use App\Http\Controllers\LocationCityController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\LocationCountryController;
@@ -126,6 +127,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::put('listings/dashboard/{id}', [ListingController::class, 'dashboardUpdate'])->name('listings.dashboard.update');
         Route::patch('listings/dashboard/{id}', [ListingController::class, 'dashboardPatch'])->name('listings.dashboard.patch');
         Route::delete('listings/dashboard/{id}', [ListingController::class, 'dashboardDestroy'])->name('listings.dashboard.destroy');
+
+        Route::get('approvals/dashboard', [ApprovalsController::class, 'dashboard'])->name('approvals.dashboard');
+        Route::post('approvals/bulk-approve', [ApprovalsController::class, 'bulkApprove'])->name('approvals.bulk-approve');
+        Route::post('approvals/{type}/{id}/approve', [ApprovalsController::class, 'approve'])->name('approvals.approve');
+        Route::post('approvals/{type}/{id}/request-changes', [ApprovalsController::class, 'requestChanges'])->name('approvals.request-changes');
 
         Route::get('subscriptions/dashboard', [ClassMembershipController::class, 'dashboard'])->name('subscriptions.dashboard');
         Route::post('subscriptions/dashboard', [ClassMembershipController::class, 'store'])->name('subscriptions.dashboard.store');
