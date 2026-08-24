@@ -8,6 +8,11 @@
 // as the fully-wired option). (PayPal Hyperwallet was removed as a payout option.)
 
 import { supabase } from './supabase.js'
+import {
+  fetchWallets,
+  createWallet as apiCreateWallet,
+  createPaidWithdrawal,
+} from './walletPayouts.js'
 
 // ISO-3166 alpha-2 codes where Stripe Connect can pay out to a local bank.
 export const STRIPE_CONNECT_COUNTRIES = new Set([
@@ -190,26 +195,20 @@ export function isAutomaticPayout(wallet) {
 }
 
 // Record an AUTOMATIC payout (Stripe split): the money was disbursed at checkout, so we log a
-// PAID withdrawal_requests row per earning. Best-effort + resilient to missing optional columns.
+// PAID withdrawal_requests row per earning without moving wallet balances.
 export async function recordAutoPayout({ ownerUserId, wallet, amount, currency, sourceLabel }) {
   if (!ownerUserId || !wallet?.id || !(Number(amount) > 0)) return
-  const payload = {
-    owner_user_id: ownerUserId,
-    country_id: wallet.country_id || null,
-    wallet_id: wallet.id,
-    amount: Number(amount),
-    currency: currency || wallet.currency || 'AED',
-    payout_method: 'stripe_connect',
-    payout_details: 'Automatic Stripe Connect payout (split at checkout)',
-    status: 'paid',
-    notes: sourceLabel ? `Auto-payout · ${sourceLabel}` : 'Automatic payout',
-  }
   try {
-    const ins = await supabase.from('withdrawal_requests').insert(payload)
-    if (ins.error) {
-      const { notes, country_id, wallet_id, payout_details, ...min } = payload
-      await supabase.from('withdrawal_requests').insert(min)
-    }
+    await createPaidWithdrawal({
+      owner_user_id: ownerUserId,
+      country_id: wallet.country_id || null,
+      wallet_id: wallet.id,
+      amount: Number(amount),
+      currency: currency || wallet.currency || 'AED',
+      payout_method: 'stripe_connect',
+      payout_details: 'Automatic Stripe Connect payout (split at checkout)',
+      notes: sourceLabel ? `Auto-payout · ${sourceLabel}` : 'Automatic payout',
+    })
   } catch { /* ignore */ }
 }
 
@@ -220,29 +219,22 @@ export async function recordAutoPayout({ ownerUserId, wallet, amount, currency, 
 export async function ensureCountryWallet(ownerUserId, countryId, fallbackCurrency, purpose = 'subscription') {
   if (!ownerUserId) return null
   const want = normWalletPurpose(purpose)
-  const { data: wallets } = await supabase.from('provider_wallets').select('*').eq('owner_user_id', ownerUserId)
-  const list = wallets || []
+  const listRes = await fetchWallets({ owner_user_id: ownerUserId })
+  const list = listRes.success ? (listRes.data?.wallets || []) : []
   const existing = countryId ? walletForCountry(list, countryId, want) : null
   if (existing) return existing
-  // Template to inherit the payout method from — a SAME-PURPOSE usable wallet (so a bookings
-  // wallet never inherits a Bookboll method, which isn't allowed for bookings).
   const samePurpose = list.filter(w => normWalletPurpose(w.purpose) === want)
   const template = samePurpose.find(w => w.is_current !== false && isWalletUsable(w)) || samePurpose.find(isWalletUsable) || samePurpose[0] || null
-  // The new wallet earns in the country's own currency.
   let currency = fallbackCurrency || template?.currency || 'AED'
   if (countryId) {
     const { data: country } = await supabase.from('countries').select('currency_code').eq('id', countryId).maybeSingle()
     if (country?.currency_code) currency = country.currency_code
   }
-  const seed = { owner_user_id: ownerUserId, country_id: countryId || null, currency, is_current: true, purpose: want }
-  // Inherit method + bank details from the template (only fields that exist on its row).
-  // payout_paused is inherited too — an auto-created wallet must not silently resurrect
-  // a payout method the super admin paused.
+  const seed = { owner_user_id: ownerUserId, country_id: countryId || null, currency, is_current: true, purpose: want, status: 'current' }
   const INHERIT = ['setup_method', 'setup_status', 'setup_completed_at', 'hold_days', 'payout_paused',
     'payout_bank_country', 'payout_bank_name', 'payout_account_holder', 'payout_iban',
     'payout_account_number', 'payout_routing_number', 'payout_swift', 'payout_account_type']
   if (template) for (const f of INHERIT) if (template[f] != null) seed[f] = template[f]
-  let { data: created, error } = await supabase.from('provider_wallets').insert(seed).select().maybeSingle()
-  if (error) { const { purpose: _p, ...base } = seed; ({ data: created } = await supabase.from('provider_wallets').insert(base).select().maybeSingle()) }  // pre-migration fallback
-  return created || template || null
+  const created = await apiCreateWallet(seed)
+  return (created.success && created.data?.wallet) ? created.data.wallet : (template || null)
 }

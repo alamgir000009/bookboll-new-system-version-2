@@ -31,6 +31,9 @@ export const realAuthEmail = ref('')
 /** Pick the best Spatie role name for the admin shell. */
 export function pickPrimaryRole(roles = []) {
   const list = (Array.isArray(roles) ? roles : []).map(String)
+  // Spatie legacy `admin` = full platform owner (same powers as Supabase `super_admin`).
+  // Without this, admin@bookboll.com gets an empty provider Wallet/Approvals view.
+  if (list.includes('super_admin') || list.includes('admin')) return 'super_admin'
   for (const r of STAFF_ROLE_PRIORITY) {
     if (list.includes(r)) return r
   }
@@ -101,7 +104,7 @@ export function canActAs(row) {
   if (!email) return false
   const own = allUsers.value.filter(u => (u.email || '').toLowerCase() === email)
   if ((row.email || '').toLowerCase() === email) return true
-  if (own.some(u => u.role === 'super_admin')) return true
+  if (own.some(u => u.role === 'super_admin' || u.role === 'admin')) return true
   if (own.some(u => u.role === 'country_admin' || u.role === 'platform_staff')) return row.role !== 'super_admin'
   return false
 }

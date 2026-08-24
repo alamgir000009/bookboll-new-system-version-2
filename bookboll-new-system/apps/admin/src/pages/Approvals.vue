@@ -1,7 +1,6 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { supabase } from '../lib/supabase.js'
-import { applyWalletDelta } from '../lib/walletLedger.js'
 import {
   CircleCheck as CheckCircle, Boxes,
   TriangleAlert as AlertTriangle, ArrowRight, RefreshCw, CirclePause as PauseCircle,
@@ -29,6 +28,15 @@ import {
   requestContentChanges,
   bulkApproveContent,
 } from '../lib/approvals.js'
+import {
+  firstError as moneyErr,
+  fetchWalletPayoutsDashboard,
+  approvePayoutKyc,
+  rejectPayoutKyc,
+  approveWithdrawal,
+  markWithdrawalPaid,
+  rejectWithdrawal,
+} from '../lib/walletPayouts.js'
 
 const { isSuperAdmin, role: actorRole, currentCountryId, assignedCountryIds, assignedLocationIds, currentUser, can } = useCurrentUser()
 
@@ -46,14 +54,13 @@ const tab = ref('all')   // 'all' | 'content' (listings & programs) | 'money' (w
 const search = ref('')
 
 async function load() {
-  const [dash, wd, ap, lo, ci, co, wl] = await Promise.all([
+  const [dash, money, ap, lo, ci, co] = await Promise.all([
     fetchApprovalsDashboard(),
-    supabase.from('withdrawal_requests').select('*').in('status', ['pending', 'approved']).order('requested_at', { ascending: false }),
+    fetchWalletPayoutsDashboard(),
     supabase.from('admin_users').select('*').eq('role', 'provider_admin'),
     supabase.from('locations').select('*'),
     supabase.from('cities').select('*'),
     supabase.from('countries').select('*').eq('status', 'active'),
-    supabase.from('provider_wallets').select('*'),
   ])
   if (!dash.success) {
     pushToast(firstError(dash, 'Could not load approvals queue.'), 'error')
@@ -63,7 +70,15 @@ async function load() {
     listings.value = dash.data?.listings || []
     programs.value = dash.data?.programs || []
   }
-  withdrawals.value = wd.data || []
+  if (!money.success) {
+    pushToast(moneyErr(money, 'Could not load payouts / withdrawals.'), 'error')
+    withdrawals.value = []
+    wallets.value = []
+  } else {
+    const open = (money.data?.withdrawals || []).filter(w => w.status === 'pending' || w.status === 'approved')
+    withdrawals.value = open
+    wallets.value = money.data?.wallets || []
+  }
   // Prefer Supabase provider_admin rows for business_status / contact; merge Laravel owners if missing.
   const fromSb = ap.data || []
   const fromApi = dash.success ? (dash.data?.providers || []) : []
@@ -74,7 +89,6 @@ async function load() {
   allLocations.value = lo.data || []
   allCities.value = ci.data || []
   allCountries.value = co.data || []
-  wallets.value = wl.error ? [] : (wl.data || [])
 }
 onMounted(load)
 watch(() => currentUser.value?.id, load)
@@ -181,13 +195,8 @@ async function approvePayoutSetup(entry) {
     message: `Bank: ${entry.template?.payout_bank_name || '—'} · ${entry.template?.payout_iban || entry.template?.payout_account_number || 'no account'}. Their payouts go ACTIVE — online membership money starts flowing to this account.`,
     danger: false, confirmText: 'Approve — activate payouts',
   }))) return
-  const now = new Date().toISOString()
-  // updated_at is bumped so the bell's derived "payouts are live" item can date
-  // the decision (no trigger maintains it server-side).
-  const patch = { setup_status: 'active', setup_completed_at: now, updated_at: now, kyc_reviewed_at: now, kyc_reviewed_by: currentUser.value?.id || null, kyc_rejection_reason: null }
-  let upd = await supabase.from('provider_wallets').update(patch).eq('owner_user_id', entry.ownerId).eq('setup_status', 'pending_review')
-  if (upd.error) { const { kyc_reviewed_by, ...min } = patch; upd = await supabase.from('provider_wallets').update(min).eq('owner_user_id', entry.ownerId).eq('setup_status', 'pending_review') }
-  if (upd.error) return
+  const res = await approvePayoutKyc(entry.ownerId, { kyc_reviewed_by: currentUser.value?.id || null })
+  if (!res.success) { pushToast(moneyErr(res, 'Could not approve payout method.'), 'error'); return }
   logAudit({ action: AUDIT.APPROVED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Approved manual payout method for ${entry.business}` })
   notifyBusiness({
     ownerUserId: entry.ownerId, kind: 'wallet', tone: 'ok',
@@ -201,17 +210,18 @@ const payoutRejectReason = ref('')
 function openPayoutReject(entry) { payoutRejectModal.value = entry; payoutRejectReason.value = '' }
 async function confirmPayoutReject() {
   const entry = payoutRejectModal.value; if (!entry) return
-  const now = new Date().toISOString()
-  const patch = { setup_status: 'rejected', updated_at: now, kyc_reviewed_at: now, kyc_reviewed_by: currentUser.value?.id || null, kyc_rejection_reason: payoutRejectReason.value.trim() || 'Your details could not be verified — please review and resubmit.' }
-  let upd = await supabase.from('provider_wallets').update(patch).eq('owner_user_id', entry.ownerId).eq('setup_status', 'pending_review')
-  if (upd.error) { const { kyc_reviewed_by, ...min } = patch; upd = await supabase.from('provider_wallets').update(min).eq('owner_user_id', entry.ownerId).eq('setup_status', 'pending_review') }
+  const reason = payoutRejectReason.value.trim() || 'Your details could not be verified — please review and resubmit.'
+  const res = await rejectPayoutKyc(entry.ownerId, {
+    reason,
+    kyc_reviewed_by: currentUser.value?.id || null,
+  })
   payoutRejectModal.value = null
-  if (upd.error) return
-  logAudit({ action: AUDIT.REJECTED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Rejected payout setup for ${entry.business}: ${patch.kyc_rejection_reason}` })
+  if (!res.success) { pushToast(moneyErr(res, 'Could not reject payout method.'), 'error'); return }
+  logAudit({ action: AUDIT.REJECTED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Rejected payout setup for ${entry.business}: ${reason}` })
   notifyBusiness({
     ownerUserId: entry.ownerId, kind: 'wallet', tone: 'warn',
     title: 'Payout method needs attention',
-    sub: patch.kyc_rejection_reason, link: '/wallet',
+    sub: reason, link: '/wallet',
   })
   load()
 }
@@ -452,11 +462,9 @@ async function approveWithdrawalA(wd) {
     danger: false, confirmText: 'Approve payout',
   }))) return
   wdBusy.value = wd.id
-  const patch = { status: 'approved', approved_at: new Date().toISOString(), processed_by: currentUser.value?.full_name || 'Admin' }
-  let { error } = await supabase.from('withdrawal_requests').update(patch).eq('id', wd.id)
-  if (error) { delete patch.approved_at; ({ error } = await supabase.from('withdrawal_requests').update(patch).eq('id', wd.id)) }
+  const res = await approveWithdrawal(wd.id, { processed_by: currentUser.value?.full_name || 'Admin' })
   wdBusy.value = ''
-  if (error) { pushToast('Could not approve the request.', 'error'); return }
+  if (!res.success) { pushToast(moneyErr(res, 'Could not approve the request.'), 'error'); return }
   logAudit({ action: AUDIT.APPROVED, entity_type: 'withdrawal', entity_id: wd.id, details: `Approved withdrawal of ${fmtMoney(wd.amount, wd.currency)} for ${providerName(wd.owner_user_id)}` })
   pushToast('Payout approved — mark it Paid once the transfer is sent.', 'success')
   load()
@@ -469,26 +477,13 @@ async function markWithdrawalPaidA(wd) {
     danger: false, confirmText: 'Mark as Paid',
   }))) return
   wdBusy.value = wd.id
-  // CLAIM the request (only while still open) — if another admin/tab already
-  // settled it, zero rows match and we must NOT move the balance a second time.
-  const claim = await supabase.from('withdrawal_requests').update({
-    status: 'paid', processed_at: new Date().toISOString(), processed_by: currentUser.value?.full_name || 'Admin',
-  }).eq('id', wd.id).in('status', ['pending', 'approved']).select()
-  if (claim.error || !claim.data?.length) {
-    wdBusy.value = ''
-    pushToast(claim.error ? 'Could not update the request.' : 'This request was already processed elsewhere.', 'error')
+  const res = await markWithdrawalPaid(wd.id, { processed_by: currentUser.value?.full_name || 'Admin' })
+  wdBusy.value = ''
+  if (!res.success) {
+    pushToast(moneyErr(res, 'Could not update the request.'), 'error')
     load()
     return
   }
-  const wl = walletForW(wd)
-  if (wl) await applyWalletDelta(wl.id, { pending: -Number(wd.amount), withdrawn: Number(wd.amount) })
-  await supabase.from('wallet_transactions').insert({
-    owner_user_id: wd.owner_user_id, country_id: wd.country_id, wallet_id: wd.wallet_id, type: 'withdrawal', direction: 'debit',
-    amount: wd.amount, provider_share: wd.amount, platform_fee: 0,
-    source_id: wd.id, source_label: `Withdrawal #${String(wd.id).slice(0, 8).toUpperCase()}`,
-    description: `Withdrawal paid via ${wd.payout_method}`, status: 'completed', currency: wd.currency,
-  })
-  wdBusy.value = ''
   logAudit({ action: 'paid', entity_type: 'withdrawal', entity_id: wd.id, details: `Marked withdrawal of ${fmtMoney(wd.amount, wd.currency)} paid for ${providerName(wd.owner_user_id)}` })
   pushToast(`Withdrawal of ${fmtMoney(wd.amount, wd.currency)} marked as paid`, 'success')
   load()
@@ -503,20 +498,16 @@ async function rejectWithdrawalA(wd) {
   })
   if (reason === null) return
   wdBusy.value = wd.id
-  // Claim while still open — an already-settled request must not be refunded.
-  const claim = await supabase.from('withdrawal_requests').update({
-    status: 'rejected', rejection_reason: reason || '',
-    processed_at: new Date().toISOString(), processed_by: currentUser.value?.full_name || 'Admin',
-  }).eq('id', wd.id).in('status', ['pending', 'approved']).select()
-  if (claim.error || !claim.data?.length) {
-    wdBusy.value = ''
-    pushToast(claim.error ? 'Could not reject the request.' : 'This request was already processed elsewhere.', 'error')
+  const res = await rejectWithdrawal(wd.id, {
+    reason: reason || '',
+    processed_by: currentUser.value?.full_name || 'Admin',
+  })
+  wdBusy.value = ''
+  if (!res.success) {
+    pushToast(moneyErr(res, 'Could not reject the request.'), 'error')
     load()
     return
   }
-  const wl = walletForW(wd)
-  if (wl) await applyWalletDelta(wl.id, { pending: -Number(wd.amount), available: Number(wd.amount) })
-  wdBusy.value = ''
   logAudit({ action: AUDIT.REJECTED, entity_type: 'withdrawal', entity_id: wd.id, details: `Rejected withdrawal of ${fmtMoney(wd.amount, wd.currency)} for ${providerName(wd.owner_user_id)}: ${reason}` })
   pushToast('Withdrawal request rejected — money returned to the provider balance', 'success')
   load()
@@ -935,7 +926,7 @@ function previewFields(item) {
               <span><b>Address:</b> {{ e.template?.kyc_address || '—' }}</span>
               <span v-if="e.template?.kyc_contact"><b>Contact:</b> {{ e.template.kyc_contact }}</span>
               <span><b>Bank:</b> {{ e.template?.payout_bank_name || '—' }}</span>
-              <span v-if="e.template?.payout_account_name"><b>Account holder:</b> {{ e.template.payout_account_name }}</span>
+              <span v-if="e.template?.payout_account_holder || e.template?.payout_account_name"><b>Account holder:</b> {{ e.template.payout_account_holder || e.template.payout_account_name }}</span>
               <span v-if="e.template?.payout_iban" class="req-copyable">
                 <b>IBAN:</b> <code>{{ e.template.payout_iban }}</code>
                 <button type="button" class="req-copy" title="Copy IBAN" @click="copyText(e.template.payout_iban)"><Copy :size="12" /></button>
@@ -997,7 +988,7 @@ function previewFields(item) {
             <!-- Bank destination (from the wallet's verified payout details) -->
             <div v-if="walletForW(w)" class="req-detail">
               <span v-if="walletForW(w).payout_bank_name"><b>Bank:</b> {{ walletForW(w).payout_bank_name }}</span>
-              <span v-if="walletForW(w).payout_account_name"><b>Account holder:</b> {{ walletForW(w).payout_account_name }}</span>
+              <span v-if="walletForW(w).payout_account_holder || walletForW(w).payout_account_name"><b>Account holder:</b> {{ walletForW(w).payout_account_holder || walletForW(w).payout_account_name }}</span>
               <span v-if="walletForW(w).payout_iban" class="req-copyable">
                 <b>IBAN:</b> <code>{{ walletForW(w).payout_iban }}</code>
                 <button type="button" class="req-copy" title="Copy IBAN" @click="copyText(walletForW(w).payout_iban)"><Copy :size="12" /></button>

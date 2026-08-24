@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { supabase } from '../lib/supabase.js'
 import { askConfirm } from '../lib/confirm.js'
@@ -17,6 +17,25 @@ import { CAP } from '../lib/permissions.js'
 import { logAudit, AUDIT } from '../lib/audit.js'
 import { methodsForCountry, isWalletReady, isWalletUsable, isWalletPaused, isAutomaticPayout, payoutSetupState, WALLET_METHOD_LABELS, normWalletPurpose, WALLET_PURPOSE_LABELS, walletForCountry } from '../lib/walletSetup.js'
 import { applyWalletDelta } from '../lib/walletLedger.js'
+import {
+  firstError as wpErr,
+  fetchWalletPayoutsDashboard,
+  createWallet as apiCreateWallet,
+  updateWallet as apiUpdateWallet,
+  deleteWallet as apiDeleteWallet,
+  applyMethodToWallets,
+  approveWithdrawal as apiApproveWithdrawal,
+  markWithdrawalPaid as apiMarkWithdrawalPaid,
+  rejectWithdrawal as apiRejectWithdrawal,
+  cancelWithdrawal as apiCancelWithdrawal,
+  createWithdrawal as apiCreateWithdrawal,
+  createWalletTransaction,
+  updateWalletTransaction,
+  fetchTransactions,
+  fetchWithdrawals,
+  fetchWallets,
+  fetchOwnerWalletReview,
+} from '../lib/walletPayouts.js'
 import { uploadImage, imageUploadConfigured } from '../lib/imageUpload.js'
 import PaginationBar from '../components/PaginationBar.vue'
 import PayoutBankForm from '../components/PayoutBankForm.vue'
@@ -26,7 +45,12 @@ const { isSuperAdmin, isCountryAdmin, role: actorRole, currentOwnerUserId, curre
   assignedCountryIds, assignedLocationIds, allBusinessOwners, currentUser, can } = useCurrentUser()
 // Platform roles (super admin, country admin, platform staff) get the ADMIN view —
 // scoped to their jurisdiction (see rowInJurisdiction). Everyone else is a provider.
-const isPlatformAdmin = computed(() => isSuperAdmin.value || isCountryAdmin.value || actorRole.value === 'platform_staff')
+const isPlatformAdmin = computed(() =>
+  isSuperAdmin.value
+  || isCountryAdmin.value
+  || actorRole.value === 'platform_staff'
+  || actorRole.value === 'admin'
+)
 const role = computed(() => isPlatformAdmin.value ? 'admin' : 'provider')
 // Provider wallet sub-permissions (Owner has all; Manager can withdraw but not edit
 // payout unless granted; others only view).
@@ -36,7 +60,6 @@ const route = useRoute()
 const router = useRouter()
 
 // ── Core data ──────────────────────────────────────────────────────────────────
-const providers    = computed(() => allBusinessOwners.value.map(u => ({ id: u.id, business_name: u.business_name || u.full_name })))
 const countries    = ref([])
 const wallets      = ref([])
 const transactions = ref([])
@@ -47,6 +70,43 @@ const citiesData    = ref([])
 const selectedProvider = ref('')
 const selectedCountryId = ref('')   // country context (for add-wallet + currency)
 const selectedWalletId  = ref('')   // the specific wallet row being viewed (current or legacy)
+const requestOwners = ref({})   // id → { business_name, full_name, email }
+// Business owners for labels / provider-scoped views. Prefer Supabase provider_admin
+// rows (UUID ids matching seeded provider_wallets.owner_user_id) — same as Approvals.
+const providerDirectory = ref([])   // { id, business_name, full_name, email, country_id }[]
+const providers = computed(() => {
+  const byId = new Map()
+  for (const u of allBusinessOwners.value || []) {
+    byId.set(String(u.id), {
+      id: String(u.id),
+      business_name: u.business_name || u.full_name || u.email || '—',
+      email: u.email || '',
+      country_id: u.country_id || null,
+    })
+  }
+  for (const u of providerDirectory.value) {
+    byId.set(String(u.id), {
+      id: String(u.id),
+      business_name: u.business_name || u.full_name || u.email || '—',
+      email: u.email || '',
+      country_id: u.country_id || null,
+    })
+  }
+  for (const w of wallets.value) {
+    const id = String(w.owner_user_id || '')
+    if (!id || byId.has(id)) continue
+    byId.set(id, {
+      id,
+      business_name: requestOwners.value[id]?.business_name
+        || requestOwners.value[id]?.full_name
+        || requestOwners.value[id]?.email
+        || `Business ${id.slice(0, 8)}`,
+      email: requestOwners.value[id]?.email || '',
+      country_id: w.country_id || null,
+    })
+  }
+  return [...byId.values()].sort((a, b) => String(a.business_name).localeCompare(String(b.business_name)))
+})
 // Providers now keep TWO kinds of wallet: a Subscription wallet (memberships; Stripe + Bookboll
 // Wallet) and a Bookings wallet (venue full-online; Stripe only — Bookboll Wallet is beta and
 // shown disabled). The landing toggles between them; everything below is scoped to this purpose.
@@ -81,7 +141,8 @@ function currencyForOwner(ownerId) {
   const cur  = city && countries.value.find(c => c.id === city.country_id)?.currency_code
   if (cur) return cur
   // last resort: provider's own country_id
-  const pu = allBusinessOwners.value.find(u => u.id === ownerId)
+  const pu = providers.value.find(u => String(u.id) === String(ownerId))
+    || allBusinessOwners.value.find(u => u.id === ownerId)
   return countries.value.find(c => c.id === pu?.country_id)?.currency_code || 'AED'
 }
 
@@ -94,15 +155,16 @@ function currencyForCountry(countryId) {
 // Countries the given provider operates in (has at least one location).
 function operatingCountryIdsFor(ownerId) {
   const ids = new Set()
+  const oid = ownerId != null ? String(ownerId) : ''
   for (const l of locationsData.value) {
-    if (l.owner_user_id !== ownerId) continue
+    if (String(l.owner_user_id) !== oid) continue
     const city = citiesData.value.find(c => c.id === l.city_id)
     if (city?.country_id) ids.add(city.country_id)
   }
   return ids
 }
 // All wallet rows belonging to the selected provider.
-const providerWalletList = computed(() => wallets.value.filter(w => w.owner_user_id === selectedProvider.value))
+const providerWalletList = computed(() => wallets.value.filter(w => String(w.owner_user_id) === String(selectedProvider.value)))
 // …and just those for the currently-selected PURPOSE (bookings vs subscription). Rows missing
 // the purpose column (pre-migration) are treated as 'subscription'.
 const purposeWalletList = computed(() => providerWalletList.value.filter(w => normWalletPurpose(w.purpose) === selectedPurpose.value))
@@ -111,7 +173,8 @@ const purposeWalletList = computed(() => providerWalletList.value.filter(w => no
 const walletCountryOptions = computed(() => {
   const ids = new Set(providerWalletList.value.map(w => w.country_id).filter(Boolean))
   for (const id of operatingCountryIdsFor(selectedProvider.value)) ids.add(id)
-  const home = allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
+  const home = providers.value.find(u => String(u.id) === String(selectedProvider.value))?.country_id
+    || allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
   if (home) ids.add(home)
   return Array.from(ids).map(id => {
     const w = walletForCountry(purposeWalletList.value, id, selectedPurpose.value)
@@ -130,7 +193,8 @@ watch([walletCountryOptions, selectedProvider], () => {
   if (!opts.length) return
   if (selectedCountryId.value && opts.some(o => o.id === selectedCountryId.value)) return
   const wanted = String(route.query.country || '')
-  const home = allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
+  const home = providers.value.find(u => String(u.id) === String(selectedProvider.value))?.country_id
+    || allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
   selectedCountryId.value =
     (wanted && opts.find(o => o.id === wanted)?.id) ||
     (home && opts.find(o => o.id === home)?.id) ||
@@ -191,15 +255,19 @@ async function changePayoutMethod() {
   }))) return
   const old = currentWallet.value
   if (old?.id) {
-    await supabase.from('provider_wallets').update({ is_current: false, status: 'legacy', updated_at: new Date().toISOString() }).eq('id', old.id)
-    const row = wallets.value.find(w => w.id === old.id); if (row) { row.is_current = false; row.status = 'legacy' }
+    const upd = await apiUpdateWallet(old.id, { is_current: false, status: 'legacy' })
+    if (upd.success) {
+      const row = wallets.value.find(w => w.id === old.id); if (row) { row.is_current = false; row.status = 'legacy' }
+    }
   }
   const currency = currencyForCountry(selectedCountryId.value)
   const seed = { owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, currency, is_current: true, status: 'current', purpose: selectedPurpose.value }
-  let { data } = await supabase.from('provider_wallets').insert(seed).select().maybeSingle()
-  if (!data) { const { purpose: _p, ...noPurpose } = seed; ({ data } = await supabase.from('provider_wallets').insert(noPurpose).select().maybeSingle()) }
-  if (data) { wallets.value.push(data); selectedWalletId.value = data.id }
-  bookbollSetupOpen.value = false   // the setup picker now shows for the fresh wallet
+  const created = await apiCreateWallet(seed)
+  if (created.success && created.data?.wallet) {
+    wallets.value.push(created.data.wallet)
+    selectedWalletId.value = created.data.wallet.id
+  }
+  bookbollSetupOpen.value = false
   loadAll()
 }
 
@@ -224,7 +292,7 @@ async function deleteWallet() {
     message: `You won't be able to take full online payments or run subscription programs in ${ctry} until you set up a wallet there again. Your transaction history is kept.`,
     danger: true, confirmText: 'Delete wallet',
   }))) return
-  await supabase.from('provider_wallets').delete().eq('id', w.id)
+  await apiDeleteWallet(w.id)
   wallets.value = wallets.value.filter(x => x.id !== w.id)
   selectedWalletId.value = ''
   walletView.value = 'list'
@@ -389,10 +457,13 @@ async function ensureCurrentWallet() {
   const w = currentWallet.value
   if (w?.id) return w
   const currency = currencyForCountry(selectedCountryId.value)
-  const { data } = await supabase.from('provider_wallets')
-    .insert({ owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, currency })
-    .select().maybeSingle()
-  if (data) { wallets.value.push(data); return data }
+  const res = await apiCreateWallet({
+    owner_user_id: selectedProvider.value,
+    country_id: selectedCountryId.value,
+    currency,
+    purpose: selectedPurpose.value,
+  })
+  if (res.success && res.data?.wallet) { wallets.value.push(res.data.wallet); return res.data.wallet }
   return null
 }
 
@@ -411,9 +482,9 @@ async function writePayoutDetails() {
     payout_swift:          f.payout_swift.replace(/\s/g,'').toUpperCase() || null,
     payout_account_type:   f.payout_account_type      || null,
   }
-  const res = await supabase.from('provider_wallets').update(patch).eq('id', w.id)
-  if (!res.error) Object.assign(w, patch)
-  return res
+  const res = await apiUpdateWallet(w.id, patch)
+  if (res.success) Object.assign(w, patch)
+  return res.success ? { error: null } : { error: { message: wpErr(res, 'Could not save') } }
 }
 
 function startPayoutEdit() {
@@ -454,42 +525,28 @@ async function openRequest(wd) {
   reqLoading.value = true
   reqTxns.value = []; reqLedger.value = []; reqEarnings.value = []
   reqHistory.value = []; reqPrograms.value = []; reqMembers.value = 0
-  const [txRes, wlRes, provRes, wdRes, pgRes] = await Promise.all([
-    // FULL ledger for this wallet — credits AND debits, so the reviewer sees every
-    // payment in and out of the membership wallet, not just earnings.
-    (wd.wallet_id
-      ? supabase.from('wallet_transactions').select('*').eq('wallet_id', wd.wallet_id).order('created_at', { ascending: false })
-      : supabase.from('wallet_transactions').select('*').eq('owner_user_id', wd.owner_user_id).order('created_at', { ascending: false })),
-    (wd.wallet_id
-      ? supabase.from('provider_wallets').select('*').eq('id', wd.wallet_id).maybeSingle()
-      : supabase.from('provider_wallets').select('*').eq('owner_user_id', wd.owner_user_id).eq('country_id', wd.country_id).eq('is_current', true).maybeSingle()),
-    supabase.from('admin_users').select('*')
-      .eq('id', wd.owner_user_id).maybeSingle(),
-    // The provider's withdrawal track record — repeated rejections or an unusual
-    // cadence is exactly what a reviewer wants to see before approving.
-    supabase.from('withdrawal_requests').select('*').eq('owner_user_id', wd.owner_user_id).order('requested_at', { ascending: false }).limit(30),
-    // Their membership business at a glance: programs + live member count below.
-    supabase.from('class_programs').select('id, name, status, approval_status, monthly_price, currency, billing_interval').eq('owner_user_id', wd.owner_user_id),
+  const [txRes, wdRes, reviewRes, provRes] = await Promise.all([
+    fetchTransactions(wd.wallet_id
+      ? { wallet_id: wd.wallet_id, limit: 500 }
+      : { owner_user_id: wd.owner_user_id, limit: 500 }),
+    fetchWithdrawals({ owner_user_id: wd.owner_user_id, limit: 30 }),
+    fetchOwnerWalletReview(wd.owner_user_id),
+    supabase.from('admin_users').select('*').eq('id', wd.owner_user_id).maybeSingle(),
   ])
-  reqLedger.value  = txRes.data || []
+  const txs = txRes.success ? (txRes.data?.transactions || []) : []
+  reqLedger.value  = txs
   reqTxns.value    = reqLedger.value.filter(t => t.direction === 'credit')
-  reqWallet.value  = wlRes.data
+  reqWallet.value = wd.wallet_id
+    ? (wallets.value.find(x => x.id === wd.wallet_id) || null)
+    : (wallets.value.find(x => x.owner_user_id === wd.owner_user_id && x.country_id === wd.country_id && x.is_current !== false) || null)
   reqProvider.value = provRes.data
-  reqHistory.value = (wdRes.data || []).filter(r => r.id !== wd.id)
-  reqPrograms.value = pgRes.error ? [] : (pgRes.data || [])
-  // Reconcile the provider's wallet credits against recorded subscription earnings.
-  const subIds = [...new Set(reqTxns.value.filter(t => t.source_id).map(t => t.source_id))]
-  if (subIds.length) {
-    const er = await supabase.from('booking_payments').select('subscription_id, amount')
-      .in('subscription_id', subIds).eq('payment_type', 'subscription_earning')
-    reqEarnings.value = er.error ? [] : (er.data || [])
-  }
-  // Live members across the provider's programs (active or in trial).
-  if (reqPrograms.value.length) {
-    const { data: subs } = await supabase.from('class_subscriptions')
-      .select('id, status, trial_status').in('program_id', reqPrograms.value.map(p => p.id))
-    reqMembers.value = (subs || []).filter(s => s.status === 'active' || s.trial_status === 'in_trial').length
-  }
+  reqHistory.value = (wdRes.success ? (wdRes.data?.withdrawals || []) : []).filter(r => r.id !== wd.id)
+  reqPrograms.value = reviewRes.success ? (reviewRes.data?.programs || []) : []
+  reqMembers.value = reviewRes.success ? (reviewRes.data?.member_count || 0) : 0
+  // Reconcile wallet credits against Laravel subscription_earning payments (by subscription_id).
+  const earnRows = reviewRes.success ? (reviewRes.data?.earnings || []) : []
+  const subIds = new Set(reqTxns.value.filter(t => t.source_id).map(t => String(t.source_id)))
+  reqEarnings.value = earnRows.filter(e => subIds.has(String(e.subscription_id)))
   reqLoading.value = false
 }
 
@@ -560,12 +617,10 @@ async function approveWithdrawal(wd) {
     confirmText: 'Approve payout',
   }))) return
   approvingReq.value = true
-  const patch = { status: 'approved', approved_at: new Date().toISOString(), processed_by: 'Super Admin' }
-  let { error } = await supabase.from('withdrawal_requests').update(patch).eq('id', wd.id)
-  if (error) { delete patch.approved_at; ({ error } = await supabase.from('withdrawal_requests').update(patch).eq('id', wd.id)) } // pre-migration fallback
+  const res = await apiApproveWithdrawal(wd.id, { processed_by: currentUser.value?.full_name || 'Super Admin' })
   approvingReq.value = false
-  if (error) { pushToast('Could not approve the request.', 'error'); return }
-  Object.assign(wd, patch)
+  if (!res.success) { pushToast(wpErr(res, 'Could not approve the request.'), 'error'); return }
+  Object.assign(wd, res.data?.withdrawal || { status: 'approved' })
   if (viewingRequest.value?.id === wd.id) viewingRequest.value = { ...wd }
   pushToast(`Payout approved — mark it Paid once the transfer is sent.`, 'success')
   loadAll()
@@ -580,26 +635,13 @@ async function markWithdrawalPaid(wd) {
     confirmText: 'Mark as Paid',
   }))) return
   markingPaid.value = true
-  // CLAIM the request (only while still open) — if another admin/tab already
-  // settled it, zero rows match and we must NOT move the balance a second time.
-  const claim = await supabase.from('withdrawal_requests').update({
-    status: 'paid', processed_at: new Date().toISOString(), processed_by: 'Super Admin',
-  }).eq('id', wd.id).in('status', ['pending', 'approved']).select()
-  if (claim.error || !claim.data?.length) {
-    markingPaid.value = false
-    pushToast(claim.error ? 'Could not update the request.' : 'This request was already processed elsewhere.', 'error')
+  const res = await apiMarkWithdrawalPaid(wd.id, { processed_by: currentUser.value?.full_name || 'Super Admin' })
+  markingPaid.value = false
+  if (!res.success) {
+    pushToast(wpErr(res, 'Could not update the request.'), 'error')
     loadAll()
     return
   }
-  const wl = (wallets.value.find(x => x.id === wd.wallet_id) || wallets.value.find(x => x.owner_user_id === wd.owner_user_id && x.country_id === wd.country_id && x.is_current !== false))
-  if (wl) await applyWalletDelta(wl.id, { pending: -Number(wd.amount), withdrawn: Number(wd.amount) })
-  await supabase.from('wallet_transactions').insert({
-    owner_user_id: wd.owner_user_id, country_id: wd.country_id, wallet_id: wd.wallet_id, type: 'withdrawal', direction: 'debit',
-    amount: wd.amount, provider_share: wd.amount, platform_fee: 0,
-    source_id: wd.id, source_label: `Withdrawal #${String(wd.id).slice(0,8).toUpperCase()}`,
-    description: `Withdrawal paid via ${wd.payout_method}`, status: 'completed', currency: wd.currency,
-  })
-  markingPaid.value = false
   closeRequest()
   pushToast(`Withdrawal of ${fmtMoney(wd.amount, wd.currency)} marked as paid`, 'success')
   loadAll()
@@ -616,21 +658,16 @@ async function rejectFromPanel(wd) {
   })
   if (reason === null) return   // cancelled
   rejectingReq.value = true
-  // Claim while still open — a request already settled/rejected elsewhere must
-  // not have its escrow refunded a second time.
-  const claim = await supabase.from('withdrawal_requests').update({
-    status: 'rejected', rejection_reason: reason || '',
-    processed_at: new Date().toISOString(), processed_by: 'Super Admin',
-  }).eq('id', wd.id).in('status', ['pending', 'approved']).select()
-  if (claim.error || !claim.data?.length) {
-    rejectingReq.value = false
-    pushToast(claim.error ? 'Could not reject the request.' : 'This request was already processed elsewhere.', 'error')
+  const res = await apiRejectWithdrawal(wd.id, {
+    reason: reason || '',
+    processed_by: currentUser.value?.full_name || 'Super Admin',
+  })
+  rejectingReq.value = false
+  if (!res.success) {
+    pushToast(wpErr(res, 'Could not reject the request.'), 'error')
     loadAll()
     return
   }
-  const wl = (wallets.value.find(x => x.id === wd.wallet_id) || wallets.value.find(x => x.owner_user_id === wd.owner_user_id && x.country_id === wd.country_id && x.is_current !== false))
-  if (wl) await applyWalletDelta(wl.id, { pending: -Number(wd.amount), available: Number(wd.amount) })
-  rejectingReq.value = false
   closeRequest()
   pushToast('Withdrawal request rejected', 'success')
   loadAll()
@@ -646,15 +683,8 @@ async function cancelWithdrawal(wd) {
     danger: true,
     confirmText: 'Cancel request',
   }))) return
-  // Claim while still 'pending' — a double-tap (or an admin processing it in the
-  // same moment) must not refund the reservation twice.
-  const patch = { status: 'cancelled', cancelled_at: new Date().toISOString() }
-  let claim = await supabase.from('withdrawal_requests').update(patch).eq('id', wd.id).eq('status', 'pending').select()
-  if (claim.error) { delete patch.cancelled_at; claim = await supabase.from('withdrawal_requests').update(patch).eq('id', wd.id).eq('status', 'pending').select() } // pre-migration fallback
-  if (claim.error) { pushToast('Could not cancel the request.', 'error'); return }
-  if (!claim.data?.length) { pushToast('This request was already processed.', 'error'); loadAll(); return }
-  const w = (wallets.value.find(x => x.id === wd.wallet_id) || wallets.value.find(x => x.owner_user_id === wd.owner_user_id && x.country_id === wd.country_id && x.is_current !== false))
-  if (w?.id) await applyWalletDelta(w.id, { pending: -Number(wd.amount), available: Number(wd.amount) })
+  const res = await apiCancelWithdrawal(wd.id, { processed_by: currentUser.value?.full_name || 'Admin' })
+  if (!res.success) { pushToast(wpErr(res, 'Could not cancel the request.'), 'error'); return }
   pushToast('Withdrawal cancelled — funds are back in your available balance.', 'success')
   loadAll()
 }
@@ -662,23 +692,19 @@ async function cancelWithdrawal(wd) {
 // ── Holds release ─────────────────────────────────────────────────────────────
 async function releaseDueHolds() {
   const today = new Date().toISOString().slice(0, 10)
-  const { data: due } = await supabase.from('wallet_transactions').select('id')
-    .eq('status', 'on_hold').lte('available_on', today)
-  if (!due?.length) return
-  // CLAIM the due holds: the update only matches rows still 'on_hold', and
-  // .select() returns exactly the rows THIS run flipped. Two admins opening the
-  // page at the same moment used to release the same holds twice (double
-  // moving pending → available — the classic cause of wallet drift); now the
-  // second run claims zero rows and moves nothing.
+  const txRes = await fetchTransactions({ status: 'on_hold', limit: 500 })
+  const due = (txRes.success ? (txRes.data?.transactions || []) : [])
+    .filter(t => t.status === 'on_hold' && t.available_on && String(t.available_on).slice(0, 10) <= today)
+  if (!due.length) return
   const releasedAt = new Date().toISOString()
-  const claim = await supabase.from('wallet_transactions')
-    .update({ status: 'completed', released_at: releasedAt })
-    .in('id', due.map(t => t.id)).eq('status', 'on_hold').select()
-  if (claim.error || !claim.data?.length) return   // claim failed → leave balances untouched
-  // Group the CLAIMED holds by the wallet they belong to so each wallet clears
-  // its own funds (a country can have current + legacy wallets).
+  const claimed = []
+  for (const t of due) {
+    const upd = await updateWalletTransaction(t.id, { status: 'completed', released_at: releasedAt })
+    if (upd.success) claimed.push({ ...t, ...(upd.data?.transaction || {}) })
+  }
+  if (!claimed.length) return
   const byWallet = new Map()
-  for (const t of claim.data) {
+  for (const t of claimed) {
     const k = t.wallet_id || `oc:${t.owner_user_id}|${t.country_id || ''}`
     byWallet.set(k, (byWallet.get(k) || 0) + Number(t.provider_share || 0))
   }
@@ -686,10 +712,8 @@ async function releaseDueHolds() {
     let walletId = null
     if (String(k).startsWith('oc:')) {
       const [pid, cid] = k.slice(3).split('|')
-      let q = supabase.from('provider_wallets').select('id').eq('owner_user_id', pid)
-      if (cid) q = q.eq('country_id', cid).eq('is_current', true)
-      const { data: wrows } = await q
-      walletId = (wrows || [])[0]?.id || null
+      const list = await fetchWallets({ owner_user_id: pid, country_id: cid || undefined, is_current: true })
+      walletId = (list.data?.wallets || [])[0]?.id || null
     } else {
       walletId = k
     }
@@ -731,67 +755,121 @@ function rowInJurisdiction(row) {
 // ── Load ──────────────────────────────────────────────────────────────────────
 async function loadAll() {
   await releaseDueHolds()
-  const reqs = [
-    supabase.from('provider_wallets').select('*'),
-    supabase.from('wallet_transactions').select('*').order('created_at', { ascending: false }),
-    supabase.from('withdrawal_requests').select('*').order('requested_at', { ascending: false }),
+  const [money, co, lo, ci, ap] = await Promise.all([
+    fetchWalletPayoutsDashboard(),
     supabase.from('countries').select('id, name, iso_code, currency_code'),
     supabase.from('locations').select('id, owner_user_id, city_id, currency_override'),
     supabase.from('cities').select('id, country_id'),
-    supabase.from('class_subscriptions').select('wallet_id, status'),
-  ]
-  const results = await Promise.all(reqs)
-  wallets.value      = results[0].data || []
-  transactions.value = results[1].data || []
-  withdrawals.value  = results[2].data || []
-  countries.value    = results[3].data || []
-  locationsData.value = results[4].data || []
-  citiesData.value    = results[5].data || []
-  // Count active subscriptions bound to each wallet (gates wallet deletion).
-  const subsRows = results[6].error ? [] : (results[6].data || [])
-  const subMap = {}
-  for (const s of subsRows) if (s.wallet_id && s.status === 'active') subMap[s.wallet_id] = (subMap[s.wallet_id] || 0) + 1
-  activeSubsByWallet.value = subMap
+    // Same source as pre-Laravel Wallet / Approvals — UUID ids match provider_wallets.owner_user_id
+    supabase.from('admin_users').select('id, business_name, full_name, email, country_id, role').eq('role', 'provider_admin'),
+  ])
+  if (!money.success) {
+    pushToast(wpErr(money, 'Could not load wallets.'), 'error')
+    wallets.value = []
+    transactions.value = []
+    withdrawals.value = []
+    activeSubsByWallet.value = {}
+  } else {
+    wallets.value = money.data?.wallets || []
+    transactions.value = money.data?.transactions || []
+    withdrawals.value = money.data?.withdrawals || []
+    activeSubsByWallet.value = money.data?.active_subs_by_wallet || {}
+  }
+  countries.value = co.data || []
+  locationsData.value = lo.data || []
+  citiesData.value = ci.data || []
+  providerDirectory.value = (ap.error ? [] : (ap.data || [])).map(u => ({
+    id: String(u.id),
+    business_name: u.business_name || u.full_name || u.email || '—',
+    full_name: u.full_name || '',
+    email: u.email || '',
+    country_id: u.country_id || null,
+  }))
 
-  // Make sure every provider has at least their HOME-country wallet row (others are
-  // created on demand). Super-admin only — a country admin shouldn't seed wallets for
-  // providers outside their jurisdiction.
+  // Seed missing HOME-country wallets only for known Supabase providers (super admin).
+  // Require a home country — same as pre-Laravel Wallet (no blank country rows).
   if (isSuperAdmin.value) {
-    for (const p of providers.value) {
-      if (!wallets.value.find(w => w.owner_user_id === p.id)) {
-        const homeCountry = allBusinessOwners.value.find(u => u.id === p.id)?.country_id || null
-        const currency = countries.value.find(c => c.id === homeCountry)?.currency_code || currencyForOwner(p.id)
-        const { data } = await supabase.from('provider_wallets').insert({ owner_user_id: p.id, country_id: homeCountry, currency }).select().maybeSingle()
-        if (data) wallets.value.push(data)
-      }
+    for (const p of providerDirectory.value) {
+      const homeCountry = p.country_id || null
+      if (!homeCountry) continue
+      if (wallets.value.find(w => String(w.owner_user_id) === String(p.id))) continue
+      const currency = countries.value.find(c => c.id === homeCountry)?.currency_code || currencyForOwner(p.id) || 'AED'
+      const created = await apiCreateWallet({ owner_user_id: p.id, country_id: homeCountry, currency })
+      if (created.success && created.data?.wallet) wallets.value.push(created.data.wallet)
     }
   }
-  // Scope the admin-view datasets to the platform user's jurisdiction (super admin
-  // keeps everything; providers are already narrowed by owner in the computeds).
   if (isPlatformAdmin.value && !isSuperAdmin.value) {
-    wallets.value      = wallets.value.filter(rowInJurisdiction)
+    wallets.value = wallets.value.filter(rowInJurisdiction)
     transactions.value = transactions.value.filter(rowInJurisdiction)
-    withdrawals.value  = withdrawals.value.filter(rowInJurisdiction)
+    withdrawals.value = withdrawals.value.filter(rowInJurisdiction)
   }
-  if (!isPlatformAdmin.value && currentOwnerUserId.value) selectedProvider.value = currentOwnerUserId.value
-  else if (!selectedProvider.value && providers.value.length) selectedProvider.value = providers.value[0].id
 
-  // Load the actual requester identity for every withdrawal owner in one query —
-  // the reviewer must always see WHO is asking, even if the cached owner list lags.
-  const wdOwnerIds = [...new Set(withdrawals.value.map(w => w.owner_user_id).filter(Boolean))]
-  if (wdOwnerIds.length) {
+  // Resolve which business context the page is scoped to
+  resolveSelectedProvider()
+
+  const ownerIds = [...new Set([
+    ...withdrawals.value.map(w => w.owner_user_id),
+    ...wallets.value.map(w => w.owner_user_id),
+  ].filter(Boolean).map(String))]
+  if (ownerIds.length) {
     const { data: owners } = await supabase.from('admin_users')
-      .select('id, business_name, full_name, email').in('id', wdOwnerIds)
-    const map = {}
-    for (const o of (owners || [])) map[o.id] = o
+      .select('id, business_name, full_name, email').in('id', ownerIds)
+    const map = { ...requestOwners.value }
+    for (const o of (owners || [])) map[String(o.id)] = o
+    for (const p of providerDirectory.value) {
+      if (!map[p.id]) map[p.id] = p
+    }
     requestOwners.value = map
   }
 }
+
+function resolveSelectedProvider() {
+  if (!isPlatformAdmin.value) {
+    const email = (currentUser.value?.email || '').toLowerCase()
+    const laravelId = currentOwnerUserId.value ? String(currentOwnerUserId.value) : ''
+    if (laravelId && wallets.value.some(w => String(w.owner_user_id) === laravelId)) {
+      selectedProvider.value = laravelId
+      return
+    }
+    if (email) {
+      const match = providerDirectory.value.find(p => (p.email || '').toLowerCase() === email)
+      if (match) {
+        selectedProvider.value = match.id
+        return
+      }
+    }
+    if (laravelId) {
+      selectedProvider.value = laravelId
+      return
+    }
+  }
+  if (!selectedProvider.value && providers.value.length) {
+    // Prefer a provider that already has wallets
+    const withWallets = providers.value.find(p => wallets.value.some(w => String(w.owner_user_id) === String(p.id)))
+    selectedProvider.value = (withWallets || providers.value[0]).id
+  } else if (selectedProvider.value && !providers.value.some(p => String(p.id) === String(selectedProvider.value))) {
+    const withWallets = providers.value.find(p => wallets.value.some(w => String(w.owner_user_id) === String(p.id)))
+    if (withWallets) selectedProvider.value = withWallets.id
+  }
+}
+
 let loaded = false
-watch(allBusinessOwners, owners => { if (!loaded && owners.length) { loaded = true; loadAll() } }, { immediate: true })
-watch(currentOwnerUserId, id => { if (!isPlatformAdmin.value && id) { selectedProvider.value = id; loadAll() } })
-// Reload + re-scope whenever the active user changes (covers switching between platform roles).
-watch(() => currentUser.value?.id, () => { if (loaded) loadAll() })
+async function ensureLoaded() {
+  if (!currentUser.value && !getAdminTokenSafe()) return
+  loaded = true
+  await loadAll()
+}
+function getAdminTokenSafe() {
+  try { return !!localStorage.getItem('bb_admin_token') } catch { return false }
+}
+onMounted(() => { ensureLoaded() })
+watch(() => currentUser.value?.id, () => { ensureLoaded() })
+watch(currentOwnerUserId, id => {
+  if (!isPlatformAdmin.value && id) {
+    resolveSelectedProvider()
+    if (loaded) loadAll()
+  }
+})
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 // The wallet being viewed in detail: the specific row by id, else the country's CURRENT
@@ -803,13 +881,11 @@ const currentWallet = computed(() => {
   return list.find(w => w.is_current !== false) || list[0] ||
     { available_balance: 0, pending_balance: 0, lifetime_earnings: 0, lifetime_withdrawn: 0, currency: currencyForCountry(selectedCountryId.value), hold_days: 7, country_id: selectedCountryId.value, purpose: selectedPurpose.value }
 })
-// Requester rows loaded straight from admin_users for every withdrawal owner —
-// the cached business-owners list can lag or miss a row, and the reviewer must
-// ALWAYS see who is asking for money.
-const requestOwners = ref({})   // id → { business_name, full_name, email }
+// Requester identity for labels (filled in loadAll from admin_users).
 const providerName = id => {
-  const o = requestOwners.value[id]
-  return providers.value.find(p => p.id === id)?.business_name
+  const key = id != null ? String(id) : ''
+  const o = requestOwners.value[key]
+  return providers.value.find(p => String(p.id) === key)?.business_name
     || o?.business_name || o?.full_name || o?.email || '—'
 }
 const countryName  = id => countries.value.find(c => c.id === id)?.name || '—'
@@ -850,27 +926,14 @@ async function persistWalletSetup(patch) {
   const w = currentWallet.value
   if (!w?.id) {
     const currency = currencyForCountry(selectedCountryId.value)
-    const base = { owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, currency, purpose: selectedPurpose.value }
-    let ins = await supabase.from('provider_wallets').insert({ ...base, ...patch }).select().maybeSingle()
-    if (ins.error) {
-      const { setup_completed_at, ...min } = patch
-      ins = await supabase.from('provider_wallets').insert({ ...base, ...min }).select().maybeSingle()
-    }
-    if (ins.error) {   // pre-migration: no purpose column
-      const { purpose: _p, ...noPurpose } = base
-      const { setup_completed_at, ...min } = patch
-      ins = await supabase.from('provider_wallets').insert({ ...noPurpose, ...min }).select().maybeSingle()
-    }
-    if (ins.data) wallets.value.push(ins.data)
-    return ins
+    const base = { owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, currency, purpose: selectedPurpose.value, ...patch }
+    const ins = await apiCreateWallet(base)
+    if (ins.success && ins.data?.wallet) wallets.value.push(ins.data.wallet)
+    return ins.success ? { error: null, data: ins.data?.wallet } : { error: { message: wpErr(ins) } }
   }
-  let upd = await supabase.from('provider_wallets').update(patch).eq('id', w.id)
-  if (upd.error) {
-    const { setup_completed_at, ...min } = patch
-    upd = await supabase.from('provider_wallets').update(min).eq('id', w.id)
-  }
-  if (!upd.error) { const row = wallets.value.find(x => x.id === w.id); if (row) Object.assign(row, patch) }
-  return upd
+  const upd = await apiUpdateWallet(w.id, patch)
+  if (upd.success) Object.assign(w, patch)
+  return upd.success ? { error: null } : { error: { message: wpErr(upd) } }
 }
 
 // ── Account-level payout METHOD (one choice for the whole business) ───────────
@@ -960,27 +1023,25 @@ function initAccountPayoutForm() {
 async function applyMethodToAllWallets(patch) {
   const ids = new Set(purposeWalletList.value.filter(w => w.is_current !== false).map(w => w.country_id).filter(Boolean))
   for (const id of operatingCountryIdsFor(selectedProvider.value)) ids.add(id)
-  const home = allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
+  const home = providers.value.find(u => String(u.id) === String(selectedProvider.value))?.country_id
+    || allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
   if (home) ids.add(home)
   if (!ids.size) return { error: { message: 'Add a location first so we know which country to pay you in.' } }
-  const want = selectedPurpose.value
-  let lastErr = null
-  for (const cid of ids) {
-    const w = purposeWalletList.value.find(x => x.country_id === cid && x.is_current !== false)
-    if (w) {
-      let upd = await supabase.from('provider_wallets').update(patch).eq('id', w.id)
-      if (upd.error) { const { setup_completed_at, ...min } = patch; upd = await supabase.from('provider_wallets').update(min).eq('id', w.id) }
-      if (upd.error) lastErr = upd.error; else Object.assign(w, patch)
-    } else {
-      const base = { owner_user_id: selectedProvider.value, country_id: cid, currency: currencyForCountry(cid), is_current: true, status: 'current', purpose: want }
-      let ins = await supabase.from('provider_wallets').insert({ ...base, ...patch }).select().maybeSingle()
-      // Fallbacks: drop setup_completed_at, then drop purpose (pre-migration DBs).
-      if (ins.error) { const { setup_completed_at, ...min } = patch; ins = await supabase.from('provider_wallets').insert({ ...base, ...min }).select().maybeSingle() }
-      if (ins.error) { const { purpose: _p, ...noPurpose } = base; const { setup_completed_at, ...min } = patch; ins = await supabase.from('provider_wallets').insert({ ...noPurpose, ...min }).select().maybeSingle() }
-      if (ins.error) lastErr = ins.error; else if (ins.data) wallets.value.push(ins.data)
-    }
+  const res = await applyMethodToWallets({
+    owner_user_id: selectedProvider.value,
+    purpose: selectedPurpose.value,
+    country_ids: [...ids],
+    patch,
+  })
+  if (!res.success) return { error: { message: wpErr(res) } }
+  // Refresh local wallet list from response
+  const returned = res.data?.wallets || []
+  for (const nw of returned) {
+    const i = wallets.value.findIndex(x => x.id === nw.id)
+    if (i >= 0) wallets.value[i] = nw
+    else wallets.value.push(nw)
   }
-  return { error: lastErr }
+  return { error: null }
 }
 
 // Open / close the account payout-method editor (lives on the My Wallets landing).
@@ -994,6 +1055,7 @@ function openMethodEditor() {
   payoutCountryId.value = accountState.value === 'none' ? '' : (
     countries.value.find(c => c.iso_code === accountWallet.value?.payout_bank_country)?.id
     || accountWallet.value?.country_id
+    || providers.value.find(u => String(u.id) === String(selectedProvider.value))?.country_id
     || allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
     || walletCountryOptions.value[0]?.id || '')
   initAccountPayoutForm()
@@ -1309,39 +1371,22 @@ async function submitWithdrawal() {
     u.payout_account_type && u.payout_account_type !== 'checking' ? u.payout_account_type : '',
   ].filter(Boolean).join(' | ')
 
-  // Create the request FIRST and confirm it persisted — only then move the money.
-  // (Previously the balance was debited even if the insert failed, stranding funds.)
-  const payload = {
+  const res = await apiCreateWithdrawal({
     owner_user_id:  selectedProvider.value,
     country_id:     currentWallet.value.country_id || selectedCountryId.value,
-    wallet_id:      currentWallet.value.id,        // bind the payout to THIS wallet (current or legacy)
+    wallet_id:      currentWallet.value.id,
     amount:         amt,
     currency:       currentWallet.value.currency || 'AED',
     payout_method:  'bank_transfer',
     payout_details: details,
-    status:         'pending',
     notes:          wdForm.value.notes.trim() || null,
-  }
-  let ins = await supabase.from('withdrawal_requests').insert(payload).select().maybeSingle()
-  if (ins.error) {
-    // Resilient fallback: drop optional columns the DB may not have yet (notes, country_id, wallet_id).
-    const { notes, country_id, wallet_id, ...minimal } = payload
-    ins = await supabase.from('withdrawal_requests').insert(minimal).select().maybeSingle()
-  }
-  if (ins.error || !ins.data) {
-    wdError.value = "Couldn't submit the request — your balance was not touched. Please try again."
-    return
-  }
-  const w = currentWallet.value
-  const upd = await applyWalletDelta(w.id, { available: -amt, pending: amt })
-  if (upd.error) {
-    // Roll back the request so we never show a payout that didn't reserve funds.
-    await supabase.from('withdrawal_requests').delete().eq('id', ins.data.id)
-    wdError.value = "Couldn't reserve the funds — please try again."
+  })
+  if (!res.success) {
+    wdError.value = wpErr(res, "Couldn't submit the request — your balance was not touched. Please try again.")
     return
   }
   wdModal.value = false
-  pushToast(`Withdrawal request for ${fmtMoney(amt, w.currency)} submitted.`, 'success')
+  pushToast(`Withdrawal request for ${fmtMoney(amt, currentWallet.value.currency)} submitted.`, 'success')
   loadAll()
 }
 
@@ -1355,7 +1400,7 @@ function openPolicy(w) {
 }
 async function savePolicy() {
   const days = Math.max(0, Math.min(90, Number(policyDays.value) || 0))
-  await supabase.from('provider_wallets').update({ hold_days: days, updated_at: new Date().toISOString() }).eq('id', policyTarget.value.id)
+  await apiUpdateWallet(policyTarget.value.id, { hold_days: days })
   policyModal.value = false; loadAll()
 }
 
@@ -1369,23 +1414,31 @@ async function releaseEarly(t) {
   }))) return
   let w = null
   if (t.wallet_id) {
-    const { data } = await supabase.from('provider_wallets').select('*').eq('id', t.wallet_id).maybeSingle()
-    w = data
+    w = wallets.value.find(x => x.id === t.wallet_id) || null
+    if (!w) {
+      const list = await fetchWallets({})
+      w = (list.data?.wallets || []).find(x => x.id === t.wallet_id) || null
+    }
   } else {
-    let rw = supabase.from('provider_wallets').select('*').eq('owner_user_id', t.owner_user_id)
-    if (t.country_id) rw = rw.eq('country_id', t.country_id).eq('is_current', true)
-    const { data: rwrows } = await rw
-    w = (rwrows || [])[0]
+    w = wallets.value.find(x => x.owner_user_id === t.owner_user_id && (!t.country_id || x.country_id === t.country_id) && x.is_current !== false) || null
   }
   if (!w) { pushToast('Could not find the provider wallet.', 'error'); return }
-  // Claim the hold (only while still on hold) — if the auto-release or another
-  // admin got there first, do NOT move the balance again.
   const releasedAt = new Date().toISOString()
-  const claim = await supabase.from('wallet_transactions')
-    .update({ status: 'completed', released_at: releasedAt })
-    .eq('id', t.id).eq('status', 'on_hold').select()
-  if (claim.error || !claim.data?.length) {
-    pushToast(claim.error ? 'Could not release the hold.' : 'This hold was already released.', 'error')
+  const claim = await updateWalletTransaction(t.id, { status: 'completed', released_at: releasedAt })
+  if (!claim.success || claim.data?.transaction?.status !== 'completed') {
+    // If already completed, treat as already released
+    if (t.status !== 'on_hold') {
+      pushToast('This hold was already released.', 'error')
+    } else {
+      pushToast(wpErr(claim, 'Could not release the hold.'), 'error')
+    }
+    loadAll()
+    return
+  }
+  // Only move balance if we flipped from on_hold — server update doesn't enforce status claim;
+  // re-check via local row
+  if (t.status !== 'on_hold') {
+    pushToast('This hold was already released.', 'error')
     loadAll()
     return
   }
@@ -1416,12 +1469,10 @@ async function togglePayoutPause(w) {
   const patch = pausing
     ? { payout_paused: true, payout_paused_at: new Date().toISOString() }
     : { payout_paused: false, payout_paused_at: null }
-  const { error } = await supabase.from('provider_wallets').update(patch).eq('id', w.id)
+  const res = await apiUpdateWallet(w.id, patch)
   pauseBusyId.value = ''
-  if (error) {
-    pushToast(/could not find|does not exist|schema cache/i.test(error.message || '')
-      ? 'Run the payout-pause migration (20260721010000_wallet_payout_pause.sql) first.'
-      : (error.message || 'Could not update the payout method.'), 'error')
+  if (!res.success) {
+    pushToast(wpErr(res, 'Could not update the payout method.'), 'error')
     return
   }
   const row = wallets.value.find(x => x.id === w.id)
@@ -1441,10 +1492,21 @@ async function seedPayment(type) {
   const holdDays = type === 'subscription_online' ? (Number(w.hold_days) || 7) : 0
   if (holdDays > 0) {
     const avail = new Date(); avail.setDate(avail.getDate() + holdDays)
-    await supabase.from('wallet_transactions').insert({ owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, wallet_id: w.id, type, direction: 'credit', amount: gross, provider_share: share, platform_fee: platform, source_label: 'Subscription (simulated)', description: 'Monthly subscription charge (online)', status: 'on_hold', currency: w.currency || 'AED', available_on: avail.toISOString().slice(0,10), hold_days_snapshot: holdDays })
+    await createWalletTransaction({
+      owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, wallet_id: w.id, type, direction: 'credit',
+      amount: gross, provider_share: share, platform_fee: platform,
+      source_label: 'Subscription (simulated)', description: 'Monthly subscription charge (online)',
+      status: 'on_hold', currency: w.currency || 'AED',
+      available_on: avail.toISOString().slice(0, 10), hold_days_snapshot: holdDays,
+    })
     await applyWalletDelta(w.id, { pending: share, earned: share })
   } else {
-    await supabase.from('wallet_transactions').insert({ owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, wallet_id: w.id, type, direction: 'credit', amount: gross, provider_share: share, platform_fee: platform, source_label: 'Online booking', description: 'Online booking payment', status: 'completed', currency: w.currency || 'AED' })
+    await createWalletTransaction({
+      owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, wallet_id: w.id, type, direction: 'credit',
+      amount: gross, provider_share: share, platform_fee: platform,
+      source_label: 'Online booking', description: 'Online booking payment',
+      status: 'completed', currency: w.currency || 'AED',
+    })
     await applyWalletDelta(w.id, { available: share, earned: share })
   }
   loadAll()

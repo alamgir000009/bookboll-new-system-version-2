@@ -101,6 +101,8 @@ const COUNTRY_ADMIN_CAPS = ALL.filter(c => !COUNTRY_ADMIN_EXCLUDE.includes(c))
 const ROLE_CAPS = {
   // ── Platform (Bookboll) ──
   super_admin:    ALL,
+  // Spatie seed role used by admin@bookboll.com — same as super_admin in the shell.
+  admin:          ALL,
   country_admin:  COUNTRY_ADMIN_CAPS,
   // Full platform powers (per the matrix), scoped to assigned venues/countries.
   // Owner-business website/blog/team/payouts and audit logs are NOT included;
@@ -129,7 +131,7 @@ export const PROVIDER_ROLES = ['provider_admin', 'facility_admin', 'provider_sup
  * super_admin always passes (overrides can't lock the owner out).
  */
 export function can(cap, role, overrides = null) {
-  if (role === 'super_admin') return true
+  if (role === 'super_admin' || role === 'admin') return true
   const base = ROLE_CAPS[role]
   if (!Array.isArray(base)) return false
   const revoke = overrides?.revoke || []
@@ -141,14 +143,14 @@ export function can(cap, role, overrides = null) {
 
 /** The role's BASE capability list (no per-user overrides). */
 export function roleBaseCaps(role) {
-  if (role === 'super_admin') return [...ALL]
+  if (role === 'super_admin' || role === 'admin') return [...ALL]
   const base = ROLE_CAPS[role]
   return Array.isArray(base) ? [...base] : []
 }
 
 /** The effective capability list for a role + overrides (handy for the UI). */
 export function effectiveCaps(role, overrides = null) {
-  if (role === 'super_admin') return [...ALL]
+  if (role === 'super_admin' || role === 'admin') return [...ALL]
   const base = ROLE_CAPS[role]
   if (!Array.isArray(base)) return []
   const revoke = new Set(overrides?.revoke || [])
