@@ -13,6 +13,7 @@ use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
 use App\Http\Controllers\ClassMembershipController;
 use App\Http\Controllers\ApprovalsController;
+use App\Http\Controllers\WalletPayoutController;
 use App\Http\Controllers\LocationCityController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\LocationCountryController;
@@ -132,6 +133,25 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('approvals/bulk-approve', [ApprovalsController::class, 'bulkApprove'])->name('approvals.bulk-approve');
         Route::post('approvals/{type}/{id}/approve', [ApprovalsController::class, 'approve'])->name('approvals.approve');
         Route::post('approvals/{type}/{id}/request-changes', [ApprovalsController::class, 'requestChanges'])->name('approvals.request-changes');
+
+        Route::get('wallet-payouts/dashboard', [WalletPayoutController::class, 'dashboard'])->name('wallet-payouts.dashboard');
+        Route::get('wallet-payouts/wallets', [WalletPayoutController::class, 'listWallets'])->name('wallet-payouts.wallets.index');
+        Route::post('wallet-payouts/wallets', [WalletPayoutController::class, 'createWallet'])->name('wallet-payouts.wallets.store');
+        Route::put('wallet-payouts/wallets/{id}', [WalletPayoutController::class, 'updateWallet'])->name('wallet-payouts.wallets.update');
+        Route::delete('wallet-payouts/wallets/{id}', [WalletPayoutController::class, 'deleteWallet'])->name('wallet-payouts.wallets.destroy');
+        Route::post('wallet-payouts/wallets/apply-method', [WalletPayoutController::class, 'applyMethod'])->name('wallet-payouts.wallets.apply-method');
+        Route::post('wallet-payouts/kyc/{ownerUserId}/approve', [WalletPayoutController::class, 'approveKyc'])->name('wallet-payouts.kyc.approve');
+        Route::post('wallet-payouts/kyc/{ownerUserId}/reject', [WalletPayoutController::class, 'rejectKyc'])->name('wallet-payouts.kyc.reject');
+        Route::get('wallet-payouts/withdrawals', [WalletPayoutController::class, 'listWithdrawals'])->name('wallet-payouts.withdrawals.index');
+        Route::post('wallet-payouts/withdrawals', [WalletPayoutController::class, 'createWithdrawal'])->name('wallet-payouts.withdrawals.store');
+        Route::post('wallet-payouts/withdrawals/{id}/approve', [WalletPayoutController::class, 'approveWithdrawal'])->name('wallet-payouts.withdrawals.approve');
+        Route::post('wallet-payouts/withdrawals/{id}/mark-paid', [WalletPayoutController::class, 'markWithdrawalPaid'])->name('wallet-payouts.withdrawals.mark-paid');
+        Route::post('wallet-payouts/withdrawals/{id}/reject', [WalletPayoutController::class, 'rejectWithdrawal'])->name('wallet-payouts.withdrawals.reject');
+        Route::post('wallet-payouts/withdrawals/{id}/cancel', [WalletPayoutController::class, 'cancelWithdrawal'])->name('wallet-payouts.withdrawals.cancel');
+        Route::post('wallet-payouts/delta', [WalletPayoutController::class, 'applyDelta'])->name('wallet-payouts.delta');
+        Route::get('wallet-payouts/transactions', [WalletPayoutController::class, 'listTransactions'])->name('wallet-payouts.transactions.index');
+        Route::post('wallet-payouts/transactions', [WalletPayoutController::class, 'createTransaction'])->name('wallet-payouts.transactions.store');
+        Route::put('wallet-payouts/transactions/{id}', [WalletPayoutController::class, 'updateTransaction'])->name('wallet-payouts.transactions.update');
 
         Route::get('subscriptions/dashboard', [ClassMembershipController::class, 'dashboard'])->name('subscriptions.dashboard');
         Route::post('subscriptions/dashboard', [ClassMembershipController::class, 'store'])->name('subscriptions.dashboard.store');
