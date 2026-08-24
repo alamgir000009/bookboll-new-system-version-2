@@ -135,6 +135,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('approvals/{type}/{id}/request-changes', [ApprovalsController::class, 'requestChanges'])->name('approvals.request-changes');
 
         Route::get('wallet-payouts/dashboard', [WalletPayoutController::class, 'dashboard'])->name('wallet-payouts.dashboard');
+        Route::get('wallet-payouts/owners/{ownerUserId}/review', [WalletPayoutController::class, 'ownerReview'])->name('wallet-payouts.owners.review');
         Route::get('wallet-payouts/wallets', [WalletPayoutController::class, 'listWallets'])->name('wallet-payouts.wallets.index');
         Route::post('wallet-payouts/wallets', [WalletPayoutController::class, 'createWallet'])->name('wallet-payouts.wallets.store');
         Route::put('wallet-payouts/wallets/{id}', [WalletPayoutController::class, 'updateWallet'])->name('wallet-payouts.wallets.update');
@@ -144,6 +145,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('wallet-payouts/kyc/{ownerUserId}/reject', [WalletPayoutController::class, 'rejectKyc'])->name('wallet-payouts.kyc.reject');
         Route::get('wallet-payouts/withdrawals', [WalletPayoutController::class, 'listWithdrawals'])->name('wallet-payouts.withdrawals.index');
         Route::post('wallet-payouts/withdrawals', [WalletPayoutController::class, 'createWithdrawal'])->name('wallet-payouts.withdrawals.store');
+        Route::post('wallet-payouts/withdrawals/paid-record', [WalletPayoutController::class, 'createPaidWithdrawal'])->name('wallet-payouts.withdrawals.paid-record');
         Route::post('wallet-payouts/withdrawals/{id}/approve', [WalletPayoutController::class, 'approveWithdrawal'])->name('wallet-payouts.withdrawals.approve');
         Route::post('wallet-payouts/withdrawals/{id}/mark-paid', [WalletPayoutController::class, 'markWithdrawalPaid'])->name('wallet-payouts.withdrawals.mark-paid');
         Route::post('wallet-payouts/withdrawals/{id}/reject', [WalletPayoutController::class, 'rejectWithdrawal'])->name('wallet-payouts.withdrawals.reject');

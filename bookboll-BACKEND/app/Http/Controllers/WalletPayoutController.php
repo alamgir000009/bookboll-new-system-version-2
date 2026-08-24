@@ -15,6 +15,11 @@ class WalletPayoutController extends Controller
         return $this->service->dashboard($request);
     }
 
+    public function ownerReview(string $ownerUserId)
+    {
+        return $this->service->ownerReview($ownerUserId);
+    }
+
     public function listWallets(Request $request)
     {
         return $this->service->listWallets($request);
@@ -73,6 +78,11 @@ class WalletPayoutController extends Controller
     public function createWithdrawal(Request $request)
     {
         return $this->service->createWithdrawal($request);
+    }
+
+    public function createPaidWithdrawal(Request $request)
+    {
+        return $this->service->createPaidWithdrawal($request);
     }
 
     public function applyDelta(Request $request)

@@ -21,14 +21,18 @@ class WalletTransactionsFromSupabaseSeeder extends Seeder
         try {
             $client = SupabaseRestClient::fromConfig();
         } catch (Throwable $e) {
-            $this->command?->warn($e->getMessage());
+            $this->command?->error($e->getMessage());
 
             return;
         }
 
+        if (! $client->usingServiceRole()) {
+            $this->command?->warn('SUPABASE_SERVICE_ROLE_KEY empty — wallet_transactions may return 0 under RLS.');
+        }
+
         try {
             $this->command?->info('Fetching wallet_transactions…');
-            $rows = $client->fetchAll('wallet_transactions', 'created_at.desc');
+            $rows = $client->fetchAll('wallet_transactions', 'created_at.desc', 500, ['id.asc']);
             $ok = 0;
             $skipped = 0;
             foreach ($rows as $row) {

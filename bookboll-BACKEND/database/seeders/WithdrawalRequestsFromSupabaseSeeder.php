@@ -21,14 +21,18 @@ class WithdrawalRequestsFromSupabaseSeeder extends Seeder
         try {
             $client = SupabaseRestClient::fromConfig();
         } catch (Throwable $e) {
-            $this->command?->warn($e->getMessage());
+            $this->command?->error($e->getMessage());
 
             return;
         }
 
+        if (! $client->usingServiceRole()) {
+            $this->command?->warn('SUPABASE_SERVICE_ROLE_KEY empty — withdrawal_requests may return 0 under RLS.');
+        }
+
         try {
             $this->command?->info('Fetching withdrawal_requests…');
-            $rows = $client->fetchAll('withdrawal_requests', 'requested_at.desc');
+            $rows = $client->fetchAll('withdrawal_requests', 'requested_at.desc', 500, ['created_at.desc', 'id.asc']);
             $ok = 0;
             $skipped = 0;
             foreach ($rows as $row) {

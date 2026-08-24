@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\ClassProgram;
+use App\Models\ClassSubscription;
+use App\Models\Payment;
 use App\Models\ProviderWallet;
 use App\Models\WalletTransaction;
 use App\Models\WithdrawalRequest;
@@ -33,10 +36,83 @@ class WalletPayoutService
             ->all();
 
         return sendSuccess('Wallet payouts dashboard fetched', [
-            'wallets'      => $wallets,
-            'withdrawals'  => $withdrawals,
-            'transactions' => $transactions,
+            'wallets'               => $wallets,
+            'withdrawals'           => $withdrawals,
+            'transactions'          => $transactions,
+            'active_subs_by_wallet' => $this->activeSubsByWallet(),
         ]);
+    }
+
+    public function ownerReview(string $ownerUserId)
+    {
+        $programs = ClassProgram::query()
+            ->where('owner_user_id', $ownerUserId)
+            ->orderBy('name')
+            ->get(['id', 'name', 'status', 'approval_status', 'monthly_price', 'currency', 'billing_interval'])
+            ->map(fn ($p) => [
+                'id'               => $p->id,
+                'name'             => $p->name,
+                'status'           => $p->status,
+                'approval_status'  => $p->approval_status,
+                'monthly_price'    => $p->monthly_price !== null ? (float) $p->monthly_price : null,
+                'currency'         => $p->currency,
+                'billing_interval' => $p->billing_interval,
+            ])
+            ->values()
+            ->all();
+
+        $programIds = array_column($programs, 'id');
+        $memberCount = 0;
+        if ($programIds !== []) {
+            $memberCount = ClassSubscription::query()
+                ->whereIn('program_id', $programIds)
+                ->where(function ($q) {
+                    $q->where('status', 'active')
+                        ->orWhere('trial_status', 'in_trial');
+                })
+                ->count();
+        }
+
+        $earnings = Payment::query()
+            ->where('type', 'subscription_earning')
+            ->whereNotNull('subscription_id')
+            ->orderByDesc('id')
+            ->limit(500)
+            ->get(['subscription_id', 'amount'])
+            ->map(fn ($p) => [
+                'subscription_id' => (string) $p->subscription_id,
+                'amount'          => (float) $p->amount,
+            ])
+            ->values()
+            ->all();
+
+        return sendSuccess('Owner wallet review fetched', [
+            'programs'     => $programs,
+            'member_count' => $memberCount,
+            'earnings'     => $earnings,
+        ]);
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    protected function activeSubsByWallet(): array
+    {
+        $map = [];
+        $rows = ClassSubscription::query()
+            ->where('status', 'active')
+            ->whereNotNull('wallet_id')
+            ->get(['wallet_id']);
+
+        foreach ($rows as $row) {
+            $wid = (string) $row->wallet_id;
+            if ($wid === '') {
+                continue;
+            }
+            $map[$wid] = ($map[$wid] ?? 0) + 1;
+        }
+
+        return $map;
     }
 
     public function listWallets($request)
@@ -446,6 +522,41 @@ class WalletPayoutService
 
             return sendSuccess('Withdrawal requested', ['withdrawal' => $this->mapWithdrawal($wd->fresh())]);
         });
+    }
+
+    /**
+     * Log an already-paid automatic payout (Stripe Connect) without touching balances.
+     */
+    public function createPaidWithdrawal($request)
+    {
+        $data = $request->validate([
+            'owner_user_id'  => 'required|string|max:36',
+            'amount'         => 'required|numeric|min:0.01',
+            'currency'       => 'nullable|string|max:16',
+            'payout_method'  => 'nullable|string|max:64',
+            'payout_details' => 'nullable|string',
+            'country_id'     => 'nullable|string|max:36',
+            'wallet_id'      => 'nullable|string|max:36',
+            'notes'          => 'nullable|string',
+        ]);
+
+        $wd = WithdrawalRequest::query()->create([
+            'owner_user_id'  => $data['owner_user_id'],
+            'amount'         => round((float) $data['amount'], 2),
+            'currency'       => $data['currency'] ?? 'AED',
+            'payout_method'  => $data['payout_method'] ?? 'stripe_connect',
+            'payout_details' => $data['payout_details'] ?? '',
+            'status'         => 'paid',
+            'country_id'     => $data['country_id'] ?? null,
+            'wallet_id'      => $data['wallet_id'] ?? null,
+            'notes'          => $data['notes'] ?? null,
+            'requested_at'   => now(),
+            'processed_at'   => now(),
+            'approved_at'    => now(),
+            'processed_by'   => 'stripe_connect',
+        ]);
+
+        return sendSuccess('Paid withdrawal recorded', ['withdrawal' => $this->mapWithdrawal($wd)]);
     }
 
     public function applyWalletDelta($request)
