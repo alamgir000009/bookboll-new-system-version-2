@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 class Community extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     public $timestamps = false;
@@ -66,5 +70,34 @@ class Community extends Model
     public function posts(): HasMany
     {
         return $this->hasMany(CommunityPost::class, 'community_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'community';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'owner_customer_id',
+            'name',
+            'description',
+            'sport',
+            'sports',
+            'city_id',
+            'country_id',
+            'cover_image',
+            'images',
+            'is_private',
+            'settings',
+            'moderation_status',
+            'moderation_reason',
+            'moderated_at',
+            'moderated_by',
+            'avatar_image',
+            'created_at',
+        ];
     }
 }

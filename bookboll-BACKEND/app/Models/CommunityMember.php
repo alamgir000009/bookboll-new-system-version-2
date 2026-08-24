@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
 
 class CommunityMember extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     public $timestamps = false;
@@ -46,5 +50,23 @@ class CommunityMember extends Model
     public function community(): BelongsTo
     {
         return $this->belongsTo(Community::class, 'community_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'community_member';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'community_id',
+            'customer_id',
+            'role',
+            'status',
+            'last_read_at',
+            'joined_at',
+        ];
     }
 }

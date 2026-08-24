@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ClassProgram extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     protected $keyType = 'string';
@@ -109,5 +113,70 @@ class ClassProgram extends Model
     public function sessions(): HasMany
     {
         return $this->hasMany(ClassSession::class, 'program_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'class_program';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'provider_id',
+            'listing_id',
+            'listing_ids',
+            'location_id',
+            'venue_id',
+            'owner_user_id',
+            'mapped_owner_user_id',
+            'name',
+            'description',
+            'sport_category',
+            'coach_name',
+            'monthly_price',
+            'currency',
+            'sessions_per_week',
+            'session_duration_minutes',
+            'day_of_week_mask',
+            'session_time',
+            'capacity',
+            'commission_percentage',
+            'status',
+            'photo_url',
+            'images',
+            'color',
+            'sort_order',
+            'billing_interval',
+            'program_type',
+            'duration_weeks',
+            'start_date',
+            'end_date',
+            'bonus_months',
+            'free_trial_days',
+            'free_trial_enabled',
+            'free_trial_sessions',
+            'discount_months',
+            'joining_fee',
+            'is_draft',
+            'show_on_marketplace',
+            'show_on_provider_site',
+            'category',
+            'audience',
+            'gender_policy',
+            'signup_form',
+            'approval_status',
+            'eligibility_status',
+            'admin_note',
+            'previous_snapshot',
+            'pending_content',
+            'trial_terms_accepted_at',
+            'trial_terms_version',
+            'submitted_at',
+            'submitted_by_name',
+            'created_at',
+            'updated_at',
+        ];
     }
 }

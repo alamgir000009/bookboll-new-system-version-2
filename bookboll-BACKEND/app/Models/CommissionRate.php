@@ -2,10 +2,14 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class CommissionRate extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'country_id',
         'listing_type',
@@ -16,6 +20,20 @@ class CommissionRate extends Model
     {
         return [
             'rate_percent' => 'float',
+        ];
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'commission_rate';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'country_id',
+            'listing_type',
+            'rate_percent',
         ];
     }
 }

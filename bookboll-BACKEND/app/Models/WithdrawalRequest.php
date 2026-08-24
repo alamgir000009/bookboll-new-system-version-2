@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
 
 class WithdrawalRequest extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     protected $keyType = 'string';
@@ -56,5 +60,32 @@ class WithdrawalRequest extends Model
     public function wallet(): BelongsTo
     {
         return $this->belongsTo(ProviderWallet::class, 'wallet_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'withdrawal_request';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'owner_user_id',
+            'amount',
+            'currency',
+            'payout_method',
+            'payout_details',
+            'status',
+            'rejection_reason',
+            'requested_at',
+            'processed_at',
+            'processed_by',
+            'approved_at',
+            'cancelled_at',
+            'notes',
+            'country_id',
+            'wallet_id',
+        ];
     }
 }

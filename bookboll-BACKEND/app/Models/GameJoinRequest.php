@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
 
 class GameJoinRequest extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     public $timestamps = false;
@@ -52,5 +56,28 @@ class GameJoinRequest extends Model
     public function game(): BelongsTo
     {
         return $this->belongsTo(HostedGame::class, 'game_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'game_join_request';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'game_id',
+            'joiner_customer_id',
+            'joiner_name',
+            'joiner_phone',
+            'joiner_whatsapp',
+            'joiner_message',
+            'status',
+            'form_answers',
+            'attended',
+            'refund_state',
+            'created_at',
+        ];
     }
 }

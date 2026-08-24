@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -14,6 +16,8 @@ use Illuminate\Database\Eloquent\Model;
  */
 class VenueHourPeriod extends Model
 {
+    use LogsModelActivity;
+
     protected $table = 'venue_hour_periods';
 
     public const DAY_INDEX = [
@@ -85,5 +89,21 @@ class VenueHourPeriod extends Model
         $s = (string) $value;
 
         return strlen($s) >= 5 ? substr($s, 0, 5) : $s;
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'venue_hour_period';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'venue_id',
+            'day',
+            'is_open',
+            'open_time',
+            'close_time',
+        ];
     }
 }

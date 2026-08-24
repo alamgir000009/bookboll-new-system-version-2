@@ -2,11 +2,15 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
 class CustomType extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     protected $keyType = 'string';
@@ -42,5 +46,23 @@ class CustomType extends Model
                 $row->id = (string) Str::uuid();
             }
         });
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'custom_type';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'domain',
+            'name',
+            'category',
+            'status',
+            'created_by',
+            'approved_at',
+        ];
     }
 }

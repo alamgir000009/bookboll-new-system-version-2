@@ -2,11 +2,15 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ClassSession extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     protected $keyType = 'string';
@@ -38,5 +42,26 @@ class ClassSession extends Model
     public function program(): BelongsTo
     {
         return $this->belongsTo(ClassProgram::class, 'program_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'class_session';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'subscription_id',
+            'program_id',
+            'listing_id',
+            'session_date',
+            'session_time',
+            'duration_minutes',
+            'status',
+            'created_at',
+            'updated_at',
+        ];
     }
 }

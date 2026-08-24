@@ -2,10 +2,14 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class PricingCell extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'listing_id',
         'day_of_week',
@@ -27,5 +31,21 @@ class PricingCell extends Model
     public function pricingGroup()
     {
         return $this->belongsTo(PricingGroup::class);
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'pricing_cell';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'listing_id',
+            'day_of_week',
+            'slot_time',
+            'pricing_group_id',
+            'direct_price',
+        ];
     }
 }

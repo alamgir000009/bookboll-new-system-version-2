@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
 
 class WalletTransaction extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     protected $keyType = 'string';
@@ -59,5 +63,34 @@ class WalletTransaction extends Model
     public function wallet(): BelongsTo
     {
         return $this->belongsTo(ProviderWallet::class, 'wallet_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'wallet_transaction';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'owner_user_id',
+            'type',
+            'direction',
+            'amount',
+            'provider_share',
+            'platform_fee',
+            'source_id',
+            'source_label',
+            'description',
+            'status',
+            'currency',
+            'available_on',
+            'hold_days_snapshot',
+            'released_at',
+            'country_id',
+            'wallet_id',
+            'created_at',
+        ];
     }
 }

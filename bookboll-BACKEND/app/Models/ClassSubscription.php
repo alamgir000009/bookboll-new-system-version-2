@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ClassSubscription extends Model
 {
+    use LogsModelActivity;
+
     public $incrementing = false;
 
     protected $keyType = 'string';
@@ -70,5 +74,45 @@ class ClassSubscription extends Model
     public function sessions(): HasMany
     {
         return $this->hasMany(ClassSession::class, 'subscription_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'class_subscription';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'id',
+            'program_id',
+            'customer_id',
+            'customer_name',
+            'customer_email',
+            'started_at',
+            'next_billing_at',
+            'trial_ends_at',
+            'status',
+            'trial_status',
+            'billing_interval',
+            'monthly_amount',
+            'provider_payout',
+            'platform_fee',
+            'joining_fee',
+            'card_on_file_id',
+            'first_charge_at',
+            'cancelled_during_trial_at',
+            'cancelled_at',
+            'paused_until',
+            'payment_failed_at',
+            'country_id',
+            'wallet_id',
+            'form_answers',
+            'is_comp',
+            'comp_reason',
+            'cancel_reason',
+            'created_at',
+            'updated_at',
+        ];
     }
 }
