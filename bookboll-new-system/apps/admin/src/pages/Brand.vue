@@ -1,13 +1,10 @@
 <script setup>
 /**
- * Brand.vue — "My Website": a provider configures their white-label customer site.
+ * Brand.vue — "My Website": a provider configures their white-label customer site,
+ * or (platform mode) Bookboll marketplace + admin chrome branding.
  *
- * Brand settings live on the OWNER's admin_users row (currentOwnerUserId). The
- * public storefront reads them at load (see lib/brand.js) and renders a copy of the
- * customer site scoped to this provider only, themed with these colors + logo.
- *
- * All writes are best-effort: if the branding columns aren't migrated yet, we tell
- * the user to run the SQL rather than failing silently.
+ * Platform mode persists via Laravel /api/admin/settings (dual-writes Supabase
+ * platform_settings for storefront preview). Provider mode still uses admin_users.
  */
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { supabase } from '../lib/supabase.js'
@@ -19,6 +16,7 @@ import { brandHost, brandPreviewById, ensureProviderSubdomain, loadPlatformBrand
 import { countPublishedPosts } from '../lib/blog.js'
 import { usePremium } from '../lib/premium.js'
 import { SUPPORTED_LOCALES } from '../lib/i18n.js'
+import { fetchSettings, updateSettings } from '../lib/settings.js'
 import MultiSelect from '../components/MultiSelect.vue'
 import BrandMark from '../components/BrandMark.vue'
 import { adminBrand, DEFAULT_ADMIN_PRIMARY, saveAdminBrand } from '../lib/adminBrand.js'
@@ -37,12 +35,33 @@ const loading = ref(true)
 const saving = ref(false)
 const uploading = ref(false)
 const ownerId = computed(() => currentOwnerUserId.value)
-// Editing the MAIN Bookboll marketplace (apex, stored in platform_settings) is a
-// platform-wide action — Bookboll HQ only (Super Admin + Platform Staff). Country
-// Admins run their countries, not the one global marketplace brand, so they're excluded.
+// Editing the MAIN Bookboll marketplace brand is a platform-wide action —
+// Bookboll HQ only (Super Admin + Platform Staff). Country Admins run their
+// countries, not the one global marketplace brand, so they're excluded.
 const isPlatformMode = computed(() => (isSuperAdmin.value || actorRole.value === 'platform_staff') && !ownerId.value)
-const PLATFORM_KEYS = ['brand_name', 'brand_tagline', 'brand_logo_url', 'brand_primary', 'brand_accent']
 const siteOrigin = computed(() => appBaseUrl())
+
+function settingsError(res, fallback = 'Could not save.') {
+  if (!res) return fallback
+  if (res.errors && typeof res.errors === 'object') {
+    const first = Object.values(res.errors).flat()[0]
+    if (first) return String(first)
+  }
+  return res.message || fallback
+}
+
+/** Best-effort mirror to Supabase so storefront preview still works. */
+async function dualWritePlatformSettings(rows) {
+  try {
+    const now = new Date().toISOString()
+    await supabase.from('platform_settings').upsert(
+      rows.map(r => ({ key: r.key, value: r.value ?? '', updated_at: now })),
+      { onConflict: 'key' },
+    )
+  } catch {
+    /* ignore */
+  }
+}
 
 const f = reactive({
   brand_enabled: false,
@@ -223,10 +242,15 @@ async function savePages() {
 // ── load ────────────────────────────────────────────────────────────────────────
 async function load() {
   loading.value = true
-  // Marketplace (platform) mode → read the brand_* keys from platform_settings.
+  // Marketplace (platform) mode → Laravel settings (brand_* / admin_*).
   if (isPlatformMode.value) {
-    const { data } = await supabase.from('platform_settings').select('key, value').in('key', [...PLATFORM_KEYS, 'brand_meta_title', 'brand_meta_description', 'admin_logo_url', 'admin_primary'])
-    const m = {}; for (const row of (data || [])) m[row.key] = row.value
+    const res = await fetchSettings()
+    if (!res?.success) {
+      toast.error(settingsError(res, 'Could not load branding.'))
+      loading.value = false
+      return
+    }
+    const m = res.data?.settings || {}
     f.brand_name     = m.brand_name    || 'Bookboll'
     f.brand_tagline  = m.brand_tagline || ''
     f.brand_logo_url = m.brand_logo_url || ''
@@ -344,10 +368,9 @@ function resetAdminPrimary() { f.admin_primary = ''; persistAdminBrand() }
 
 // ── save ──────────────────────────────────────────────────────────────────────
 async function save() {
-  // Marketplace (platform) mode → upsert the brand_* keys into platform_settings.
+  // Marketplace (platform) mode → Laravel settings + dual-write Supabase.
   if (isPlatformMode.value) {
     saving.value = true
-    const now = new Date().toISOString()
     const rows = [
       { key: 'brand_name',     value: f.brand_name?.trim() || 'Bookboll' },
       { key: 'brand_tagline',  value: f.brand_tagline?.trim() || '' },
@@ -356,13 +379,16 @@ async function save() {
       { key: 'brand_accent',   value: f.brand_accent || DEFAULT_ACCENT },
       { key: 'brand_meta_title',       value: f.brand_meta_title?.trim() || '' },
       { key: 'brand_meta_description', value: f.brand_meta_description?.trim() || '' },
-      // Admin-dashboard branding (separate from the marketplace brand).
       { key: 'admin_logo_url', value: f.admin_logo_url || '' },
       { key: 'admin_primary',  value: f.admin_primary || '' },
-    ].map(r => ({ ...r, updated_at: now }))
-    const { error } = await supabase.from('platform_settings').upsert(rows, { onConflict: 'key' })
+    ]
+    const res = await updateSettings(rows)
     saving.value = false
-    if (error) { toast.error(error.message || 'Could not save.'); return }
+    if (!res?.success) {
+      toast.error(settingsError(res, 'Could not save.'))
+      return
+    }
+    await dualWritePlatformSettings(rows)
     // Re-apply live so the change reflects immediately (logo/name/colors in the
     // header + the marketplace theme) without needing a full page reload.
     await loadPlatformBrand()
