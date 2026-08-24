@@ -15,7 +15,7 @@ import { reservationSummary } from '../lib/programSessions.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { logAudit } from '../lib/audit.js'
-import { Plus, Search, Trash2, Pencil as Edit2, Users, CalendarDays, DollarSign, X, Check, Repeat, BookOpen, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, ShieldCheck, Info, Clock, Image as ImageIcon, ChevronUp, ChevronDown as ChevronDownIcon, ListFilter as Filter, SlidersHorizontal, ChevronsUpDown, Infinity as InfinityIcon, Timer, CalendarCheck, Eye, EyeOff, GraduationCap, Download, Loader, ImagePlus, Wallet as WalletIcon, Store, Globe, TrendingDown, Copy } from 'lucide-vue-next'
+import { Plus, Search, Trash2, Pencil as Edit2, Users, CalendarDays, DollarSign, X, Check, Repeat, BookOpen, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, ShieldCheck, Info, Clock, Image as ImageIcon, ChevronUp, ChevronDown as ChevronDownIcon, ListFilter as Filter, SlidersHorizontal, ChevronsUpDown, Infinity as InfinityIcon, Timer, CalendarCheck, Eye, EyeOff, GraduationCap, Download, Loader, ImagePlus, Wallet as WalletIcon, Store, Globe, TrendingDown, Copy, Share2, QrCode, ExternalLink } from 'lucide-vue-next'
 import { downloadCSV } from '../lib/useExport.js'
 import { usePremium } from '../lib/premium.js'
 import PaginationBar from '../components/PaginationBar.vue'
@@ -30,6 +30,9 @@ import { usePagination } from '../lib/usePagination.js'
 import { SLOT_DURATIONS, fmt12 } from '../lib/slots.js'
 import { CAP } from '../lib/permissions.js'
 import { isWalletReady, isCountryWalletReady, hasActivePayoutMethodFor } from '../lib/walletSetup.js'
+import { appBaseUrl } from '../lib/appBase.js'
+import { fetchSubscriptionsDashboard, deleteProgram as deleteProgramApi, firstError } from '../lib/subscriptions.js'
+import QRCode from 'qrcode'
 
 const { isSuperAdmin, isCountryAdmin, currentOwnerUserId, role: authRole, can, currentUser } = useCurrentUser()
 // Platform-side accounts (Bookboll): super/country admin + platform staff.
@@ -125,53 +128,36 @@ async function loadAll() {
   if (!isSuperAdmin.value && currentOwnerUserId.value) {
     locQ = locQ.eq('owner_user_id', currentOwnerUserId.value)
   }
-  const [pg, sb, ss, pv, ls, lo, ci, co] = await Promise.all([
-    supabase.from('class_programs').select('*').order('created_at', { ascending: false }),
-    supabase.from('class_subscriptions').select('*').order('created_at', { ascending: false }),
-    supabase.from('class_sessions').select('*').order('session_date'),
-    supabase.from('admin_users').select('*').eq('role', 'provider_admin'),
+  const [dash, ls, lo, ci, co] = await Promise.all([
+    fetchSubscriptionsDashboard(),
     supabase.from('listings').select('*'),
     locQ,
     supabase.from('cities').select('id, name, country_id').eq('status', 'active').order('name'),
     supabase.from('countries').select('id, name, currency_code').eq('status', 'active').order('name'),
   ])
-  programs.value = pg.data || []
-  // Detect whether the per-program colour column exists (migration applied).
-  programColorSupported.value = !!(pg.data && pg.data.length && 'color' in pg.data[0])
-  programCategorySupported.value = !!(pg.data && pg.data.length && 'category' in pg.data[0])
-  programPlacementSupported.value = !!(pg.data && pg.data.length && 'show_on_marketplace' in pg.data[0])
-  programBonusSupported.value = !!(pg.data && pg.data.length && 'bonus_months' in pg.data[0])
-  programOfferSupported.value = !!(pg.data && pg.data.length && 'discount_months' in pg.data[0] && 'free_trial_sessions' in pg.data[0])
-  programFormSupported.value = !!(pg.data && pg.data.length && 'signup_form' in pg.data[0])
-  programAudienceSupported.value = !!(pg.data && pg.data.length && 'audience' in pg.data[0])
-  programGenderSupported.value = !!(pg.data && pg.data.length && 'gender_policy' in pg.data[0])
-  programJoiningFeeSupported.value = !!(pg.data && pg.data.length && 'joining_fee' in pg.data[0])
-  programDraftSupported.value = !!(pg.data && pg.data.length && 'is_draft' in pg.data[0])
-  if (!pg.data || !pg.data.length) {
-    const probe = await supabase.from('class_programs').select('color').limit(1)
-    programColorSupported.value = !probe.error
-    const probeCat = await supabase.from('class_programs').select('category').limit(1)
-    programCategorySupported.value = !probeCat.error
-    const probePl = await supabase.from('class_programs').select('show_on_marketplace').limit(1)
-    programPlacementSupported.value = !probePl.error
-    const probeBonus = await supabase.from('class_programs').select('bonus_months').limit(1)
-    programBonusSupported.value = !probeBonus.error
-    const probeOffer = await supabase.from('class_programs').select('discount_months, free_trial_sessions').limit(1)
-    programOfferSupported.value = !probeOffer.error
-    const probeForm = await supabase.from('class_programs').select('signup_form').limit(1)
-    programFormSupported.value = !probeForm.error
-    const probeAud = await supabase.from('class_programs').select('audience').limit(1)
-    programAudienceSupported.value = !probeAud.error
-    const probeGen = await supabase.from('class_programs').select('gender_policy').limit(1)
-    programGenderSupported.value = !probeGen.error
-    const probeFee = await supabase.from('class_programs').select('joining_fee').limit(1)
-    programJoiningFeeSupported.value = !probeFee.error
-    const probeDraft = await supabase.from('class_programs').select('is_draft').limit(1)
-    programDraftSupported.value = !probeDraft.error
+  if (!dash.success) {
+    pushToast(firstError(dash, 'Could not load memberships.'), 'error')
+    programs.value = []
+    subscriptions.value = []
+    sessions.value = []
+    providers.value = []
+  } else {
+    programs.value = dash.data?.programs || []
+    subscriptions.value = dash.data?.subscriptions || []
+    sessions.value = dash.data?.sessions || []
+    providers.value = dash.data?.providers || []
   }
-  subscriptions.value = sb.data || []
-  sessions.value = ss.data || []
-  providers.value = pv.data || []
+  // Laravel mapProgram always includes these columns.
+  programColorSupported.value = true
+  programCategorySupported.value = true
+  programPlacementSupported.value = true
+  programBonusSupported.value = true
+  programOfferSupported.value = true
+  programFormSupported.value = true
+  programAudienceSupported.value = true
+  programGenderSupported.value = true
+  programJoiningFeeSupported.value = true
+  programDraftSupported.value = true
   listings.value = ls.data || []
   locations.value = lo.data || []
   cities.value = ci.data || []
@@ -189,7 +175,7 @@ async function loadAll() {
     providerWallets.value = ws.error ? [] : (ws.data || [])
   }
 
-  await windDownSweep()
+  // Wind-down runs server-side on the subscriptions dashboard bootstrap.
 
   // auto-open new program if url hint present (standalone page only)
   if (!props.embedded && route.query.new === '1') {
@@ -1272,15 +1258,51 @@ async function removeProgram(id) {
     message: `“${p?.name || 'This program'}” will be permanently removed (it has no active members). This cannot be undone.`,
     confirmText: 'Delete',
   }))) return
-  await hardDeleteProgram(p)
+  if (await hardDeleteProgram(p)) {
+    pushToast(`“${p?.name || 'Program'}” deleted`, 'success')
+    loadAll()
+  }
 }
 
-// Shared hard-delete: remove program-origin bookings, then the program itself.
-// class_subscriptions + attendance are removed automatically (ON DELETE CASCADE).
+// ── Share a program: copy marketplace link + QR ───────────────────────────────
+const shareRow = ref(null)      // { id, name, kind, url }
+const shareQr = ref('')
+const shareCopied = ref(false)
+function programPublicUrl(row) {
+  return `${appBaseUrl()}/programs/${row.id}`
+}
+async function openShare(row) {
+  shareCopied.value = false
+  const url = programPublicUrl(row)
+  shareRow.value = { id: row.id, name: row.name, kind: 'academy', url }
+  shareQr.value = ''
+  try { shareQr.value = await QRCode.toDataURL(url, { width: 320, margin: 1, errorCorrectionLevel: 'M' }) } catch { shareQr.value = '' }
+}
+function closeShare() { shareRow.value = null; shareQr.value = ''; shareCopied.value = false }
+async function copyShareLink() {
+  if (!shareRow.value) return
+  try {
+    await navigator.clipboard.writeText(shareRow.value.url)
+    shareCopied.value = true
+    setTimeout(() => { shareCopied.value = false }, 1800)
+  } catch { /* clipboard blocked — link is visible to copy manually */ }
+}
+function downloadQr() {
+  if (!shareQr.value || !shareRow.value) return
+  const a = document.createElement('a')
+  a.href = shareQr.value
+  a.download = `${(shareRow.value.name || 'bookboll').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-qr.png`
+  a.click()
+}
+
+// Shared hard-delete via Laravel (bookings + program; subs/sessions cascade).
 async function hardDeleteProgram(p) {
-  await supabase.from('bookings').delete().eq('program_id', p.id).eq('origin', 'class_program')
-  const { error } = await supabase.from('class_programs').delete().eq('id', p.id)
-  if (error) { pushToast('Could not delete program.', 'error'); return false }
+  if (!p?.id) return false
+  const res = await deleteProgramApi(p.id)
+  if (!res.success) {
+    pushToast(firstError(res, 'Could not delete program.'), 'error')
+    return false
+  }
   return true
 }
 
@@ -1734,6 +1756,7 @@ const canSaveProgram = computed(() =>
                 <div class="row-actions">
                   <button v-if="canManagePrograms" class="btn-icon" title="Edit program" @click="openEditProgram(p)"><Edit2 :size="15" /></button>
                   <button v-if="canManagePrograms" class="btn-icon" title="Duplicate program" @click="openDuplicateProgram(p)"><Copy :size="15" /></button>
+                  <button class="btn-icon" title="Share program (link + QR)" @click="openShare(p)"><Share2 :size="15" /></button>
                   <button
                     v-if="canManagePrograms"
                     class="btn-icon"
@@ -2385,6 +2408,31 @@ const canSaveProgram = computed(() =>
       </div>
     </div>
 
+    <!-- SHARE: copy link + QR for one membership program -->
+    <div v-if="shareRow" class="modal-backdrop" style="z-index:3600" @click.self="closeShare">
+      <div class="modal share-modal">
+        <div class="modal-header">
+          <div class="modal-title"><Share2 :size="16" /> Share “{{ shareRow.name }}”</div>
+          <button class="btn-icon" @click="closeShare"><X :size="18" /></button>
+        </div>
+        <div class="modal-body share-body">
+          <p class="share-hint">Anyone with this link lands straight on the membership page — paste it in your Instagram bio or a WhatsApp broadcast, or print the QR for a door poster or flyer.</p>
+          <div class="share-linkrow">
+            <input class="share-link" :value="shareRow.url" readonly @focus="$event.target.select()" />
+            <button class="btn btn-primary btn-sm share-copy" @click="copyShareLink">
+              <component :is="shareCopied ? Check : Copy" :size="14" />{{ shareCopied ? 'Copied' : 'Copy' }}
+            </button>
+          </div>
+          <div class="share-qr-wrap">
+            <img v-if="shareQr" :src="shareQr" alt="QR code for this page" class="share-qr" />
+            <div v-else class="share-qr share-qr-empty"><QrCode :size="34" /></div>
+            <button v-if="shareQr" class="btn btn-secondary btn-sm" @click="downloadQr"><Download :size="14" />Download QR</button>
+          </div>
+          <a :href="shareRow.url" target="_blank" rel="noopener" class="share-open"><ExternalLink :size="13" />Open the page</a>
+        </div>
+      </div>
+    </div>
+
 
     <!-- ── Hide-from-marketplace confirm (same as the listing form) ───────── -->
     <div v-if="mktConfirm" class="modal-backdrop" style="z-index:3600" @click.self="keepOnMarketplace">
@@ -2811,6 +2859,20 @@ const canSaveProgram = computed(() =>
 .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12.5px; }
 .provider-share { color: #065f46; }
 .platform-fee { color: #92400e; }
+
+/* Share modal (copy link + QR) */
+.share-modal { max-width: 420px; }
+.share-body { display: flex; flex-direction: column; gap: 14px; }
+.share-hint { font-size: 13px; color: var(--text-muted); line-height: 1.5; margin: 0; }
+.share-linkrow { display: flex; gap: 8px; }
+.share-link { flex: 1; min-width: 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--text); }
+.share-copy { flex-shrink: 0; white-space: nowrap; }
+.share-qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.share-qr { width: 200px; height: 200px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface, #ffffff); padding: 8px; }
+.share-qr-empty { display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
+.share-open { display: inline-flex; align-items: center; gap: 6px; align-self: center; font-size: 13px; font-weight: 700; color: #0f766e; text-decoration: none; }
+.share-open:hover { text-decoration: underline; }
+
 .sessions-count { display: inline-flex; align-items: center; justify-content: center; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
 .trial-days-left { background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
 .sub-status-badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid; }

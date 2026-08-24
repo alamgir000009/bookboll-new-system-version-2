@@ -12,10 +12,23 @@ import { useJurisdiction } from '../lib/jurisdiction.js'
 import { pushToast } from '../lib/toast.js'
 import { askConfirm } from '../lib/confirm.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
-import { rowState, PLATFORM_COMMISSION, DEFAULT_TRIAL_DAYS } from '../lib/approvalState.js'
-import { addIntervalToDate, offerModeFor, discountedPrice } from '../lib/billingPlans.js'
-import { nthSessionDate } from '../lib/programSessions.js'
-import { recordSubscriptionPayment } from '../lib/subscriptionPayment.js'
+import { rowState } from '../lib/approvalState.js'
+import { offerModeFor, discountedPrice } from '../lib/billingPlans.js'
+import {
+  firstError,
+  fetchSubscriptionsDashboard,
+  createSubscription,
+  chargeSubscription,
+  retryChargeSubscription,
+  cancelSubscription,
+  bulkCancelSubscriptions,
+  pauseSubscription,
+  resumeSubscription,
+  markSubscriptionPastDue,
+  retentionMonthOff as retentionMonthOffApi,
+  winbackSubscription,
+  fetchSubscriptionPayments,
+} from '../lib/subscriptions.js'
 import { notifyMembershipStarted, notifyMembershipPayment, notifyMembershipCancelled, notifyMembershipPaymentFailed, notifyMembershipWinback } from '../customer/notificationDispatch.js'
 import { recordOfferRedemption } from '../lib/offerGuard.js'
 import { usePremium } from '../lib/premium.js'
@@ -57,10 +70,6 @@ function exportSubs() {
   downloadCSV(filteredSortedSubs.value, subExportColumns(), 'subscriptions')
 }
 
-// Optional-column fallback: try the write WITH the new columns, retry WITHOUT them on a
-// missing-column / schema-cache error (mirrors lib/auth.js columnMissing()). Used for the
-// paused_until / cancel_reason / payment_failed_at columns added by a later migration.
-const columnMissing = (e) => !!e && /could not find|does not exist|schema cache/i.test(e.message || '')
 // When embedded (inside the Customers page's "Members" tab) the page title/padding are
 // dropped — the host page provides the header.
 defineProps({ embedded: { type: Boolean, default: false } })
@@ -81,23 +90,23 @@ const jCountries = computed(() => scopeCountries(countries.value))
 const jCities = computed(() => scopeCities(cities.value))
 
 async function loadAll() {
-  const [sb, pg, lo, ci, co, pv, ss] = await Promise.all([
-    supabase.from('class_subscriptions').select('*').order('created_at', { ascending: false }),
-    supabase.from('class_programs').select('*').order('created_at', { ascending: false }),
+  const [dash, lo, ci, co] = await Promise.all([
+    fetchSubscriptionsDashboard(),
     supabase.from('locations').select('*').order('name'),
     supabase.from('cities').select('id, name, country_id').order('name'),
     supabase.from('countries').select('id, name, currency_code').order('name'),
-    supabase.from('admin_users').select('*').eq('role', 'provider_admin'),
-    supabase.from('class_sessions').select('id, subscription_id, program_id, status'),
   ])
-  subscriptions.value = sb.data || []
-  programs.value = pg.data || []
+  if (!dash.success) {
+    pushToast(firstError(dash, 'Could not load subscriptions.'), 'error')
+    return
+  }
+  subscriptions.value = dash.data?.subscriptions || []
+  programs.value = dash.data?.programs || []
+  sessions.value = dash.data?.sessions || []
+  providers.value = dash.data?.providers || []
   locations.value = lo.data || []
   cities.value = ci.data || []
   countries.value = co.data || []
-  providers.value = pv.data || []
-  sessions.value = ss.data || []
-  await windDownSweep()
 }
 
 const route = useRoute()
@@ -116,27 +125,6 @@ onMounted(async () => {
   await loadAll()
   openSubFromQuery()
 })
-
-// Wind-down: a paused/archived program's member is cancelled once their next billing
-// date passes (no renewal). Runs on load (billing is manual; there's no server cron).
-async function windDownSweep() {
-  const today = new Date().toISOString().slice(0, 10)
-  const due = subscriptions.value.filter(s => {
-    // A paused subscription is intentionally frozen — never auto-cancel it here, even if its
-    // program is paused/archived. It resumes (or is cancelled) only by an explicit action.
-    if (s.status === 'paused') return false
-    if (!(s.status === 'active' || s.trial_status === 'in_trial')) return false
-    if (!s.next_billing_at || s.next_billing_at >= today) return false
-    const prog = programs.value.find(p => p.id === s.program_id)
-    return prog && !(prog.status === 'active' && rowState(prog) === 'active')
-  })
-  if (!due.length) return
-  const ids = due.map(s => s.id)
-  await supabase.from('class_subscriptions').update({ status: 'cancelled' }).in('id', ids)
-  await supabase.from('class_sessions').update({ status: 'cancelled' }).in('subscription_id', ids).eq('status', 'scheduled')
-  const idSet = new Set(ids)
-  subscriptions.value = subscriptions.value.map(s => idSet.has(s.id) ? { ...s, status: 'cancelled' } : s)
-}
 
 // ── Shared helpers ──
 const programById = (id) => programs.value.find(p => p.id === id)
@@ -160,7 +148,11 @@ function hasAnswers(s) {
 }
 const locationName = (id) => locations.value.find(l => l.id === id)?.name || '—'
 const providerName = (id) => { const p = providers.value.find(x => x.id === id); return p ? (p.business_name || p.full_name) : '—' }
-const sessionsForSub = (id) => sessions.value.filter(s => s.subscription_id === id).length
+const sessionsForSub = (id) => {
+  const sub = subscriptions.value.find(s => s.id === id)
+  if (sub && sub.session_count != null) return Number(sub.session_count) || 0
+  return sessions.value.filter(s => s.subscription_id === id).length
+}
 function currencyForLocation(locationId) {
   const loc = locations.value.find(l => l.id === locationId)
   if (!loc) return 'AED'
@@ -238,183 +230,51 @@ function openNewSub(programId = '') {
   subModal.value = true
 }
 
-function generateMonthlyDates(program, startDateStr) {
-  if (!program) return []
-  const dates = []
-  const start = new Date(startDateStr)
-  const end = new Date(start); end.setMonth(end.getMonth() + 1)
-  const mask = new Set(program.day_of_week_mask || [])
-  const cur = new Date(start)
-  while (cur < end) {
-    if (mask.has(cur.getDay())) dates.push(new Date(cur))
-    cur.setDate(cur.getDate() + 1)
-  }
-  return dates
-}
-
 async function saveSubscription() {
   subTriedSave.value = true
   const program = programById(subForm.value.program_id)
   if (!program) { pushToast('Please select a program.', 'error'); return }
   if (rowState(program) !== 'active') { pushToast('This program is not active.', 'error'); return }
   const isComped = !!subForm.value.comp
-  // A comped member is never charged, so the card token + trial consent are not required.
   if (!subForm.value.customer_name?.trim()) {
     pushToast('Please complete the required fields.', 'error'); return
   }
   if (!isComped && (!subForm.value.card_on_file_id || !subForm.value.trial_consent)) {
     pushToast('Please complete the required fields and trial consent.', 'error'); return
   }
-  // The program's single plan (interval / price / trial / discount).
-  const plan = subPlan.value || { interval: program.billing_interval || 'monthly', mode: 'trial', price: Number(program.monthly_price) || 0, trial_days: Number(program.free_trial_days) || DEFAULT_TRIAL_DAYS, trial_sessions: 0, discount_months: 0 }
-  const isFixedProg = program.program_type === 'fixed_duration'
-  const oneTime = plan.interval === 'one_time'
-  // A free trial exists unless this plan is charged today (discount plans + pay-in-full +
-  // longer upfront intervals). amount is already discounted for discount plans.
-  // A comped member is a free member: never on a trial, never charged.
-  const hasTrial = !isComped && !subUpfront.value && (Number(plan.trial_days) > 0 || Number(plan.trial_sessions) > 0)
-  const commission = Number(program.commission_percentage) || PLATFORM_COMMISSION
-  // Comp → $0 across the board (no price, no fee, no payout).
-  const amount = isComped ? 0 : (Number(plan.price) || 0)
-  const platform_fee = isComped ? 0 : +(amount * commission / 100).toFixed(2)
-  const provider_payout = isComped ? 0 : +(amount - platform_fee).toFixed(2)
-  const started_at = subForm.value.started_at
 
-  let trial_ends_at, next_billing_at, trial_status
-  if (isComped) {
-    // Comped members are active immediately with no billing schedule.
-    trial_status = 'active'
-    trial_ends_at = started_at
-    next_billing_at = null
-  } else if (hasTrial) {
-    trial_status = 'in_trial'
-    if (Number(plan.trial_sessions) > 0) {
-      // "1 free session" → first charge on the 2nd scheduled session date.
-      next_billing_at = nthSessionDate(started_at, program.day_of_week_mask, 2) || addIntervalToDate(started_at, 'monthly')
-    } else {
-      const te = new Date(started_at); te.setDate(te.getDate() + Number(plan.trial_days))
-      next_billing_at = te.toISOString().slice(0, 10)
-    }
-    trial_ends_at = next_billing_at
-  } else {
-    // No trial → charged today.
-    trial_ends_at = started_at
-    trial_status = 'active'
-    if (oneTime) {
-      next_billing_at = null                                   // pay in full — no renewal
-    } else if (isFixedProg) {
-      const nb = addIntervalToDate(started_at, 'monthly')      // monthly installments…
-      next_billing_at = (program.end_date && nb >= program.end_date) ? null : nb   // …but never past the end date
-    } else {
-      next_billing_at = addIntervalToDate(started_at, plan.interval)   // discount/longer ongoing: renews each interval
-    }
-  }
-
-  // Bind the new subscription to the provider's CURRENT wallet for the program's country,
-  // so its recurring payouts always land there even if the provider later switches gateway.
-  let subCountryId = program.country_id || null
-  if (!subCountryId && program.location_id) {
-    const { data: loc } = await supabase.from('locations').select('city_id').eq('id', program.location_id).maybeSingle()
-    if (loc?.city_id) {
-      const { data: city } = await supabase.from('cities').select('country_id').eq('id', loc.city_id).maybeSingle()
-      subCountryId = city?.country_id || null
-    }
-  }
-  let subWalletId = null
-  if (program.owner_user_id && subCountryId) {
-    // Bind to the country's CURRENT SUBSCRIPTION wallet (memberships pay into the subscription
-    // wallet). Filter by purpose; fall back without it pre-migration. The authoritative payout
-    // wallet is still resolved in recordSubscriptionPayment via ensureCountryWallet.
-    const baseQ = () => supabase.from('provider_wallets').select('id')
-      .eq('owner_user_id', program.owner_user_id).eq('country_id', subCountryId).eq('is_current', true)
-    let { data: w, error: wErr } = await baseQ().eq('purpose', 'subscription').maybeSingle()
-    if (wErr) { ({ data: w } = await baseQ().maybeSingle()) }
-    subWalletId = w?.id || null
-  }
-
-  const subRow = {
+  const res = await createSubscription({
     program_id: program.id,
-    customer_name: subForm.value.customer_name,
-    customer_email: subForm.value.customer_email,
-    started_at,
-    next_billing_at,
-    trial_ends_at,
-    trial_status,
-    card_on_file_id: subForm.value.card_on_file_id,
-    monthly_amount: amount,
-    provider_payout,
-    platform_fee,
-    status: 'active',
+    customer_name: subForm.value.customer_name.trim(),
+    customer_email: subForm.value.customer_email || '',
+    started_at: subForm.value.started_at,
+    card_on_file_id: subForm.value.card_on_file_id || '',
+    trial_consent: !!subForm.value.trial_consent,
+    comp: isComped,
+    comp_reason: isComped ? (subForm.value.comp_reason?.trim() || null) : null,
+  })
+  if (!res.success) {
+    pushToast(firstError(res, 'Could not add subscriber.'), 'error')
+    return
   }
-  // Optional columns added by later migrations (billing-plans, wallet binding). Try with
-  // all of them; fall back to the base row if the DB doesn't have them yet.
-  const subOptional = { billing_interval: plan.interval, country_id: subCountryId, wallet_id: subWalletId }
-  // Newest columns (comp / free member). is_comp + comp_reason are added by a later migration,
-  // so try WITH them first and fall back WITHOUT them on a missing-column error — same pattern
-  // as auth.js columnMissing().
-  const subComp = isComped ? { is_comp: true, comp_reason: subForm.value.comp_reason?.trim() || null } : { is_comp: false }
-  const columnMissing = (e) => !!e && /could not find|does not exist|schema cache/i.test(e.message || '')
-  let { data: inserted, error } = await supabase.from('class_subscriptions').insert({ ...subRow, ...subOptional, ...subComp }).select().maybeSingle()
-  if (columnMissing(error)) { ({ data: inserted, error } = await supabase.from('class_subscriptions').insert({ ...subRow, ...subOptional }).select().maybeSingle()) }
-  if (columnMissing(error)) { ({ data: inserted, error } = await supabase.from('class_subscriptions').insert(subRow).select().maybeSingle()) }
-  if (error || !inserted) { console.error(error); pushToast('Could not add subscriber.', 'error'); return }
 
-  // Ledger an admin-granted free trial too (best-effort), so the same customer can't
-  // also self-serve a trial on the storefront later. Admin adds are never BLOCKED by
-  // the ledger — the front desk decides; this only records it.
-  if (hasTrial && program.owner_user_id) {
+  const inserted = res.data?.subscription
+  const hasTrial = !!res.data?.has_trial
+  const charged = !!res.data?.charged
+
+  if (hasTrial && program.owner_user_id && inserted) {
     recordOfferRedemption({
       email: subForm.value.customer_email, ownerUserId: program.owner_user_id,
       programId: program.id, subscriptionId: inserted.id, source: 'admin',
     })
   }
 
-  const rows = generateMonthlyDates(program, started_at).map(d => ({
-    subscription_id: inserted.id,
-    program_id: program.id,
-    listing_id: null,
-    session_date: d.toISOString().slice(0, 10),
-    session_time: program.session_time,
-    duration_minutes: program.session_duration_minutes,
-    status: 'scheduled',
-  }))
-  if (rows.length) await supabase.from('class_sessions').insert(rows)
-
-  // No free trial → take the first payment now (upfront plans, or monthly with no trial).
-  // A comped member is $0 — skip the charge entirely so no phantom payment is recorded.
-  if (trial_status === 'active' && !isComped) {
-    try { await recordSubscriptionPayment(withJoiningFee(inserted, true), program, true) } catch (e) { console.error('[saveSubscription] charge error:', e) }
-    // Stamp the first charge so renewals never re-add the one-time joining fee
-    // (best-effort — pre-migration DBs without the column just skip it).
-    try { await supabase.from('class_subscriptions').update({ first_charge_at: new Date().toISOString() }).eq('id', inserted.id) } catch { /* ignore */ }
-  }
-  // Fire-and-forget: welcome / membership-started notification to the new member.
-  try { notifyMembershipStarted({ ownerId: program.owner_user_id, sub: inserted, program }) } catch { /* non-blocking */ }
+  try { if (inserted) notifyMembershipStarted({ ownerId: program.owner_user_id, sub: inserted, program }) } catch { /* non-blocking */ }
 
   clearDirty()
-  pushToast(isComped ? 'Comped member added' : (trial_status === 'active' ? 'Subscriber added & charged' : 'Subscriber added'), 'success')
+  pushToast(isComped ? 'Comped member added' : (charged ? 'Subscriber added & charged' : 'Subscriber added'), 'success')
   subModal.value = false
   loadAll()
-}
-
-// One-time joining/sign-up fee: fold it into the FIRST real charge only (a free-trial
-// signup defers its first charge to here). Mirrors customer/data.js enrollInProgram —
-// bumps the charged amount + scales platform_fee so the commission RATE is unchanged.
-// The persisted row's monthly_amount stays the recurring price, so renewals never re-add it.
-// Is this renewal actually the member's FIRST real charge? True for a live trial
-// converting. A missing first_charge_at stamp alone is NOT enough: no-trial
-// signups (trial_status 'active') were charged at signup — legacy rows created
-// before the stamp existed must never have the joining fee re-added.
-function isFirstRealCharge(s) {
-  return s.trial_status === 'in_trial' || (!s.first_charge_at && s.trial_status !== 'active')
-}
-function withJoiningFee(s, isFirstCharge) {
-  const fee = Math.max(0, Number(s.joining_fee) || 0)
-  if (!isFirstCharge || fee <= 0) return s
-  const base = Number(s.monthly_amount) || 0
-  const gross = +(base + fee).toFixed(2)
-  const rate = base > 0 ? (Number(s.platform_fee) || 0) / base : 0
-  return { ...s, monthly_amount: gross, platform_fee: +(gross * rate).toFixed(2) }
 }
 
 async function chargeSub(s) {
@@ -424,31 +284,13 @@ async function chargeSub(s) {
     pushToast('This program is paused or archived and is winding down — its subscriptions can’t be renewed.', 'error')
     return
   }
-  const isFirstCharge = isFirstRealCharge(s)
-  const now = new Date()
-  const today = now.toISOString().slice(0, 10)
-  // Next charge depends on the plan: pay-in-full never renews; a fixed season's monthly
-  // installments stop at its end date; everything else renews each interval.
-  const interval = program.billing_interval || 'monthly'
-  let nextBilling
-  if (interval === 'one_time') {
-    nextBilling = null
-  } else if (program.program_type === 'fixed_duration') {
-    const nb = addIntervalToDate(today, 'monthly')
-    nextBilling = (program.end_date && nb >= program.end_date) ? null : nb
-  } else {
-    nextBilling = addIntervalToDate(today, interval)
+  const res = await chargeSubscription(s.id)
+  if (!res.success) {
+    pushToast(firstError(res, 'Could not collect charge.'), 'error')
+    return
   }
-  const result = await recordSubscriptionPayment(withJoiningFee(s, isFirstCharge), program, isFirstCharge)
-  if (!result) return
-  await supabase.from('class_subscriptions').update({
-    trial_status: 'converted',
-    status: 'active',
-    first_charge_at: isFirstCharge ? now.toISOString() : s.first_charge_at,
-    next_billing_at: nextBilling,
-  }).eq('id', s.id)
-  // Fire-and-forget: renewal/charge receipt to the member.
-  try { notifyMembershipPayment({ ownerId: program.owner_user_id, sub: { ...s, next_billing_at: nextBilling }, program }) } catch { /* non-blocking */ }
+  const updated = res.data?.subscription || s
+  try { notifyMembershipPayment({ ownerId: program.owner_user_id, sub: updated, program }) } catch { /* non-blocking */ }
   detailSub.value = null
   loadAll()
 }
@@ -471,15 +313,8 @@ function cancelSub(s) {
 }
 // The actual cancellation write. reason is persisted onto the row (graceful column).
 async function performCancel(s, reason = '') {
-  const inTrial = s.trial_status === 'in_trial'
-  const patch = { status: 'cancelled' }
-  if (inTrial) { patch.trial_status = 'cancelled_in_trial'; patch.cancelled_during_trial_at = new Date().toISOString() }
-  const withReason = reason ? { ...patch, cancel_reason: reason } : patch
-  let { error } = await supabase.from('class_subscriptions').update(withReason).eq('id', s.id)
-  if (columnMissing(error)) { ({ error } = await supabase.from('class_subscriptions').update(patch).eq('id', s.id)) }
-  if (error) { pushToast('Could not cancel subscription.', 'error'); return false }
-  await supabase.from('class_sessions').update({ status: 'cancelled' }).eq('subscription_id', s.id).eq('status', 'scheduled')
-  // Fire-and-forget: membership-cancelled confirmation to the member.
+  const res = await cancelSubscription(s.id, reason ? { cancel_reason: reason } : {})
+  if (!res.success) { pushToast(firstError(res, 'Could not cancel subscription.'), 'error'); return false }
   try { const program = programById(s.program_id); if (program) notifyMembershipCancelled({ ownerId: program.owner_user_id, sub: s, program }) } catch { /* non-blocking */ }
   return true
 }
@@ -499,16 +334,10 @@ async function confirmCancelFromModal() {
 async function retentionMonthOff() {
   const s = cancelModal.value?.sub
   if (!s) return
-  // Push the next billing date out by ~1 month (free month). If there's no schedule yet
-  // (in-trial / one-time), derive from today so the gesture still lands somewhere sensible.
-  const base = s.next_billing_at || new Date().toISOString().slice(0, 10)
-  const nextBilling = addIntervalToDate(base, 'monthly')
-  const patch = { next_billing_at: nextBilling }
-  // cancel_reason doubles as a light retention audit ("saved: <reason>") — graceful.
-  const withReason = { ...patch, cancel_reason: cancelReason.value ? `saved:${cancelReason.value}` : 'saved' }
-  let { error } = await supabase.from('class_subscriptions').update(withReason).eq('id', s.id)
-  if (columnMissing(error)) { ({ error } = await supabase.from('class_subscriptions').update(patch).eq('id', s.id)) }
-  if (error) { pushToast('Could not apply the offer.', 'error'); return }
+  const res = await retentionMonthOffApi(s.id, {
+    cancel_reason: cancelReason.value || undefined,
+  })
+  if (!res.success) { pushToast(firstError(res, 'Could not apply the offer.'), 'error'); return }
   cancelModal.value = null
   detailSub.value = null
   pushToast('1 month applied — next charge pushed out', 'success')
@@ -528,69 +357,34 @@ async function pauseSub(s) {
     message: 'Billing is frozen and upcoming sessions are skipped. You can resume any time — no charge is taken while paused.',
     danger: false, confirmText: 'Pause', cancelText: 'Keep active',
   }))) return
-  // Freeze: clear the next charge so no auto-billing/wind-down fires while paused, mark the
-  // scheduled sessions skipped, and (graceful) stamp paused_until as informational metadata.
-  const patch = { status: 'paused', next_billing_at: null }
-  const withOptional = { ...patch, paused_until: null }
-  let { error } = await supabase.from('class_subscriptions').update(withOptional).eq('id', s.id)
-  if (columnMissing(error)) { ({ error } = await supabase.from('class_subscriptions').update(patch).eq('id', s.id)) }
-  if (error) { pushToast('Could not pause subscription.', 'error'); return }
-  // Mark scheduled sessions as skipped (kept distinct from cancelled so a resume could re-open them).
-  let { error: sErr } = await supabase.from('class_sessions').update({ status: 'skipped' }).eq('subscription_id', s.id).eq('status', 'scheduled')
-  if (columnMissing(sErr)) { await supabase.from('class_sessions').update({ status: 'cancelled' }).eq('subscription_id', s.id).eq('status', 'scheduled') }
+  const res = await pauseSubscription(s.id)
+  if (!res.success) { pushToast(firstError(res, 'Could not pause subscription.'), 'error'); return }
   pushToast('Subscription paused', 'success')
   detailSub.value = null
   loadAll()
 }
 async function resumeSub(s) {
-  const program = programById(s.program_id)
-  // Re-derive the next billing date from today using the program's interval (same rules as
-  // chargeSub): one-time never renews; a fixed season stops at its end date.
-  const today = new Date().toISOString().slice(0, 10)
-  let nextBilling
-  const interval = program?.billing_interval || s.billing_interval || 'monthly'
-  if (interval === 'one_time') {
-    nextBilling = null
-  } else if (program?.program_type === 'fixed_duration') {
-    const nb = addIntervalToDate(today, 'monthly')
-    nextBilling = (program.end_date && nb >= program.end_date) ? null : nb
-  } else {
-    nextBilling = addIntervalToDate(today, interval)
-  }
-  const patch = { status: 'active', next_billing_at: nextBilling }
-  const withOptional = { ...patch, paused_until: null }
-  let { error } = await supabase.from('class_subscriptions').update(withOptional).eq('id', s.id)
-  if (columnMissing(error)) { ({ error } = await supabase.from('class_subscriptions').update(patch).eq('id', s.id)) }
-  if (error) { pushToast('Could not resume subscription.', 'error'); return }
-  // Re-open the skipped sessions that are still in the future (best-effort; ignore if the
-  // 'skipped' status isn't supported by the DB).
-  await supabase.from('class_sessions').update({ status: 'scheduled' }).eq('subscription_id', s.id).eq('status', 'skipped').gte('session_date', today)
+  const res = await resumeSubscription(s.id)
+  if (!res.success) { pushToast(firstError(res, 'Could not resume subscription.'), 'error'); return }
   pushToast('Subscription resumed', 'success')
   detailSub.value = null
   loadAll()
 }
 
 // ── Dunning / Past-due ──────────────────────────────────────────────────────────
-// Simulate a failed recurring charge. Moves the member to 'past_due' and stamps when it
-// failed (graceful column) so the top-of-page strip and badge can surface it.
 async function markPaymentFailed(s) {
   if (!(await askConfirm({
     title: 'Mark payment failed?',
     message: 'Marks this member past-due (a recurring charge could not be collected). You can retry the charge afterwards.',
     danger: false, confirmText: 'Mark past-due', cancelText: 'Back',
   }))) return
-  const patch = { status: 'past_due' }
-  const withOptional = { ...patch, payment_failed_at: new Date().toISOString() }
-  let { error } = await supabase.from('class_subscriptions').update(withOptional).eq('id', s.id)
-  if (columnMissing(error)) { ({ error } = await supabase.from('class_subscriptions').update(patch).eq('id', s.id)) }
-  if (error) { pushToast('Could not update subscription.', 'error'); return }
-  // Fire-and-forget: dunning notice — nudge the member to update their card.
+  const res = await markSubscriptionPastDue(s.id)
+  if (!res.success) { pushToast(firstError(res, 'Could not update subscription.'), 'error'); return }
   try { const program = programById(s.program_id); if (program) notifyMembershipPaymentFailed({ ownerId: program.owner_user_id, sub: s, program }) } catch { /* non-blocking */ }
   pushToast('Member marked past-due', 'success')
   detailSub.value = null
   loadAll()
 }
-// Win back a churned member: send the configured win-back message on demand (WhatsApp).
 async function winBack(s) {
   const program = programById(s.program_id)
   if (!program) return
@@ -599,11 +393,10 @@ async function winBack(s) {
     message: `Send ${s.customer_name || 'this member'} your win-back message inviting them back to “${program.name}”.`,
     danger: false, confirmText: 'Send win-back', cancelText: 'Back',
   }))) return
+  await winbackSubscription(s.id)
   try { notifyMembershipWinback({ ownerId: program.owner_user_id, sub: s, program }) } catch { /* non-blocking */ }
   pushToast('Win-back message sent (WhatsApp, if the channel is connected).', 'success')
 }
-// Retry a failed charge: re-runs the existing charge path. On success the row returns to
-// active and payment_failed_at is cleared (graceful).
 async function retryCharge(s) {
   const program = programById(s.program_id)
   if (!program) return
@@ -611,27 +404,9 @@ async function retryCharge(s) {
     pushToast('This program is paused or archived — its subscriptions can’t be charged.', 'error')
     return
   }
-  const now = new Date()
-  const today = now.toISOString().slice(0, 10)
-  const interval = program.billing_interval || 'monthly'
-  let nextBilling
-  if (interval === 'one_time') {
-    nextBilling = null
-  } else if (program.program_type === 'fixed_duration') {
-    const nb = addIntervalToDate(today, 'monthly')
-    nextBilling = (program.end_date && nb >= program.end_date) ? null : nb
-  } else {
-    nextBilling = addIntervalToDate(today, interval)
-  }
-  const retryFirst = isFirstRealCharge(s)
-  const result = await recordSubscriptionPayment(withJoiningFee(s, retryFirst), program, retryFirst)
-  if (!result) { pushToast('Retry failed — charge could not be collected.', 'error'); return }
-  const patch = { status: 'active', trial_status: 'converted', next_billing_at: nextBilling, first_charge_at: s.first_charge_at || now.toISOString() }
-  const withOptional = { ...patch, payment_failed_at: null }
-  let { error } = await supabase.from('class_subscriptions').update(withOptional).eq('id', s.id)
-  if (columnMissing(error)) { ({ error } = await supabase.from('class_subscriptions').update(patch).eq('id', s.id)) }
-  if (error) { pushToast('Charge collected but status update failed.', 'error') }
-  else pushToast('Charge retried & collected', 'success')
+  const res = await retryChargeSubscription(s.id)
+  if (!res.success) { pushToast(firstError(res, 'Retry failed — charge could not be collected.'), 'error'); return }
+  pushToast('Charge retried & collected', 'success')
   detailSub.value = null
   loadAll()
 }
@@ -649,9 +424,8 @@ const detailSubPayments = ref([])
 async function openSubDetail(s) {
   detailSub.value = s
   detailSubPayments.value = []
-  const { data } = await supabase.from('booking_payments')
-    .select('*').eq('subscription_id', s.id).order('created_at', { ascending: true })
-  detailSubPayments.value = data || []
+  const res = await fetchSubscriptionPayments(s.id)
+  detailSubPayments.value = res.success ? (res.data?.payments || []) : []
 }
 function closeSubDetail() { detailSub.value = null }
 const detailSubProgram = computed(() => detailSub.value ? programById(detailSub.value.program_id) : null)
@@ -786,9 +560,19 @@ async function bulkCancelSelected() {
     message: 'The selected members will be cancelled and their upcoming sessions removed. This cannot be undone.',
     confirmText: 'Cancel them', cancelText: 'Keep them',
   }))) return
-  let ok = 0
-  for (const s of targets) { if (await performCancel(s)) ok++ }   // ONE confirm, then loop cancelSub logic
+  const res = await bulkCancelSubscriptions(targets.map(s => s.id))
   clearSelection()
+  if (!res.success) {
+    pushToast(firstError(res, 'Could not cancel subscriptions.'), 'error')
+    return
+  }
+  const ok = Number(res.data?.count) || 0
+  for (const s of targets) {
+    try {
+      const program = programById(s.program_id)
+      if (program) notifyMembershipCancelled({ ownerId: program.owner_user_id, sub: s, program })
+    } catch { /* non-blocking */ }
+  }
   pushToast(`${ok} subscription${ok !== 1 ? 's' : ''} cancelled`, ok ? 'success' : 'error')
   detailSub.value = null
   loadAll()

@@ -43,3 +43,75 @@ export async function sortListings(updates) {
     body: { updates },
   })
 }
+
+/** Map Laravel add-on row → Listings.vue dropdown shape */
+export function mapAddOnRow(a) {
+  if (!a) return null
+  return {
+    id: a.id,
+    name: a.name || '',
+    description: a.description || '',
+    price: Number(a.price) || 0,
+    status: a.status || 'active',
+    image_url: a.image || a.image_url || '',
+    location_id: a.location_id ?? null,
+    hours_extension: a.hours_extension ?? null,
+    stock: a.stock ?? null,
+    category: a.category || '',
+  }
+}
+
+/** Map Laravel resource row → Listings.vue dropdown shape */
+export function mapResourceRow(r) {
+  if (!r) return null
+  return {
+    id: r.id,
+    name: r.name || '',
+    type: r.unit_type || r.type || '',
+    quantity: Number(r.total_quantity ?? r.quantity) || 0,
+    status: r.status || 'active',
+    location_id: r.location_id ?? null,
+  }
+}
+
+export async function fetchAddOns(query = {}) {
+  const res = await apiFetch('/admin/add-ons', { query })
+  if (!res.success) return res
+  const raw = res.data?.addOns ?? res.data?.addons ?? res.data ?? []
+  const list = Array.isArray(raw) ? raw : []
+  return { ...res, data: list.map(mapAddOnRow).filter(Boolean) }
+}
+
+export async function createAddOn(body) {
+  return apiFetch('/admin/add-ons', { method: 'POST', body })
+}
+
+export async function updateAddOn(id, body) {
+  return apiFetch(`/admin/add-ons/${id}`, { method: 'PUT', body })
+}
+
+export async function deleteAddOn(id) {
+  return apiFetch(`/admin/add-ons/${id}`, { method: 'DELETE' })
+}
+
+export async function fetchResources(query = {}) {
+  const res = await apiFetch('/admin/resources', {
+    query: { records_per_page: 500, ...query },
+  })
+  if (!res.success) return res
+  const page = res.data?.resources
+  const list = Array.isArray(page?.data) ? page.data : (Array.isArray(page) ? page : [])
+  return { ...res, data: list.map(mapResourceRow).filter(Boolean) }
+}
+
+export async function createResource(body) {
+  return apiFetch('/admin/resources', { method: 'POST', body })
+}
+
+export async function updateResource(id, body) {
+  return apiFetch(`/admin/resources/${id}`, { method: 'PUT', body })
+}
+
+export async function deleteResource(id) {
+  return apiFetch(`/admin/resources/${id}`, { method: 'DELETE' })
+}

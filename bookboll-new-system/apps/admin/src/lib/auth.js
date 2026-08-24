@@ -10,6 +10,7 @@
  */
 import { ref, computed } from 'vue'
 import { apiFetch, getAdminToken, setAdminToken, clearAdminToken } from './api.js'
+import { disconnectEcho } from './echo.js'
 import {
   applyLaravelUser,
   clearLaravelUser,
@@ -58,6 +59,7 @@ function applySession(data) {
 }
 
 function clearSession() {
+  try { disconnectEcho() } catch { /* ignore */ }
   clearAdminToken()
   clearLaravelUser()
   authUser.value = null

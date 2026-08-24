@@ -8,6 +8,9 @@ import {
 import {
   fetchListingsDashboard, fetchListingDashboard, createListing, updateListing,
   patchListing, deleteListing, sortListings,
+  fetchAddOns, createAddOn, updateAddOn, deleteAddOn as apiDeleteAddOn,
+  fetchResources, createResource, updateResource, deleteResource as apiDeleteResource,
+  mapAddOnRow, mapResourceRow,
   firstError as listingFirstError,
 } from '../lib/listings.js'
 import { appBaseUrl } from '../lib/appBase.js'
@@ -401,15 +404,13 @@ async function loadList() {
   const ownerQuery = (!isSuperAdmin.value && currentOwnerUserId.value)
     ? { owner_user_id: currentOwnerUserId.value }
     : {}
-  let aQ = supabase.from('addons').select('*')
-  if (ownerQuery.owner_user_id) aQ = aQ.eq('owner_user_id', ownerQuery.owner_user_id)
-  const [venuesRes, listingsRes, ci, co, a, r, cr] = await Promise.all([
+  const [venuesRes, listingsRes, ci, co, addOnsRes, resourcesRes, cr] = await Promise.all([
     fetchVenuesDashboard(ownerQuery),
     fetchListingsDashboard(ownerQuery),
     supabase.from('cities').select('*').eq('status', 'active').order('name'),
     supabase.from('countries').select('*').eq('status', 'active').order('name'),
-    aQ,
-    supabase.from('resources').select('*'),
+    fetchAddOns(),
+    fetchResources(),
     supabase.from('commission_rates').select('*'),
   ])
   cities.value = ci.data || []
@@ -421,8 +422,8 @@ async function loadList() {
   if (allowed) locations.value = locations.value.filter(l => allowed.has(l.id))
   const ownedLocIds = new Set(locations.value.map(l => l.id))
   listings.value = scopeListings((listingsRes.data?.listings || []).filter(x => isSuperAdmin.value || ownedLocIds.has(x.location_id)))
-  allAddons.value = a.data || []
-  allResources.value = r.data || []
+  allAddons.value = addOnsRes.success ? (addOnsRes.data || []) : []
+  allResources.value = resourcesRes.success ? (resourcesRes.data || []) : []
   const rates = {}
   for (const row of (cr.data || [])) {
     if (!rates[row.country_id]) rates[row.country_id] = { facility: 20, program: 20 }
@@ -1623,7 +1624,7 @@ function addonUsedElsewhere(id, i) { return !!id && connectedAddons.value.some((
 function resourceUsedElsewhere(id, i) { return !!id && connectedResources.value.some((r, idx) => idx !== i && r.resource_id === id) }
 
 // All add-ons / resources available at this listing's location (the dropdown options).
-const locAddons = computed(() => { const loc = form.value.location_id; return allAddons.value.filter(a => !a.location_id || a.location_id === loc) })
+const locAddons = computed(() => allAddons.value)
 const locResources = computed(() => { const loc = form.value.location_id; return allResources.value.filter(r => !r.location_id || r.location_id === loc) })
 
 // PickerSelect option rows (already-chosen items disabled for the other rows).
@@ -1662,32 +1663,30 @@ function editResource(id) {
 async function deleteAddon(id) {
   const a = addonById(id)
   if (!(await confirm({ title: 'Delete add-on?', message: `“${a?.name || 'This add-on'}” will be permanently removed and detached from any listings that use it. This cannot be undone.`, confirmText: 'Delete' }))) return
-  const { error } = await supabase.from('addons').delete().eq('id', id)
-  if (error) { toast.error('Could not delete add-on. It may be linked to existing bookings.'); return }
+  const res = await apiDeleteAddOn(id)
+  if (!res.success) { toast.error(listingFirstError(res, 'Could not delete add-on. It may be linked to existing bookings.')); return }
   allAddons.value = allAddons.value.filter(x => x.id !== id)
-  connectedAddons.value = connectedAddons.value.filter(r => r.addon_id !== id)
+  connectedAddons.value = connectedAddons.value.filter(r => r.addon_id !== id && Number(r.addon_id) !== Number(id))
   toast.success('Add-on deleted')
 }
 async function deleteResource(id) {
   const r = resourceById(id)
   if (!(await confirm({ title: 'Delete resource?', message: `“${r?.name || 'This resource'}” will be permanently removed and detached from any listings that require it. This cannot be undone.`, confirmText: 'Delete' }))) return
-  const { error } = await supabase.from('resources').delete().eq('id', id)
-  if (error) { toast.error('Could not delete resource. It may be linked to existing bookings.'); return }
+  const res = await apiDeleteResource(id)
+  if (!res.success) { toast.error(listingFirstError(res, 'Could not delete resource. It may be linked to existing bookings.')); return }
   allResources.value = allResources.value.filter(x => x.id !== id)
-  connectedResources.value = connectedResources.value.filter(row => row.resource_id !== id)
+  connectedResources.value = connectedResources.value.filter(row => row.resource_id !== id && Number(row.resource_id) !== Number(id))
   toast.success('Resource deleted')
 }
 
-// Only show items not already connected (and scoped to the listing's location).
+// Only show items not already connected (Laravel catalog is not location-scoped).
 const availableAddons = computed(() => {
-  const loc = form.value.location_id
-  const used = new Set(connectedAddons.value.map(a => a.addon_id))
-  return allAddons.value.filter(a => (!a.location_id || a.location_id === loc) && !used.has(a.id))
+  const used = new Set(connectedAddons.value.map(a => String(a.addon_id)))
+  return allAddons.value.filter(a => !used.has(String(a.id)))
 })
 const availableResources = computed(() => {
-  const loc = form.value.location_id
-  const used = new Set(connectedResources.value.map(r => r.resource_id))
-  return allResources.value.filter(r => (!r.location_id || r.location_id === loc) && !used.has(r.id))
+  const used = new Set(connectedResources.value.map(r => String(r.resource_id)))
+  return allResources.value.filter(r => !used.has(String(r.id)))
 })
 
 // Rich option rows for the ConnectPicker dropdowns.
@@ -1805,7 +1804,7 @@ async function save() {
   }
   const contentSnapshot = { ...contentFields, photos: form.value.photos || [] }   // staged in pending_content
   const opPayload = {
-    location_id: form.value.location_id,
+    location_id: Number(form.value.location_id),
     sport_category: form.value.sport_category,
     base_price: Number(form.value.base_price),
     slot_duration: Number(form.value.slot_duration),
@@ -1821,12 +1820,15 @@ async function save() {
     max_bookings_per_slot: Number(form.value.max_bookings_per_slot) || 1,
     commission_rate: (form.value.commission_rate !== null && form.value.commission_rate !== '') ? Number(form.value.commission_rate) : null,
   }
-  let id
+
   // stageMode: 'full' = whole listing under first/re-review · 'content' = live stays,
   // new content staged · 'operational' = live now, nothing to review · 'admin' = admin edit.
   let stageMode = 'admin'
+  let liveContent = { ...contentFields, photos: form.value.photos || [] }
+  let previousSnapshot = null
+  let approvalStatus = form.value.approval_status || 'approved'
+
   if (editing.value) {
-    id = editing.value.id
     if (userRole.value === 'provider') {
       const liveApproved = {
         name: editing.value.name || '', description: editing.value.description || '',
@@ -1836,157 +1838,98 @@ async function save() {
       const paused = (editing.value.eligibility_status || 'eligible') === 'paused'
       const notLiveYet = (editing.value.approval_status || 'approved') !== 'approved' || paused
       if (notLiveYet) {
-        // First-time review or Bookboll-paused → the whole listing is offline anyway:
-        // write content live and (re)submit the entire listing, as before.
         const snap = { ...editing.value }
         delete snap.previous_snapshot; delete snap.pending_content
-        await supabase.from('listings').update({
-          ...opPayload, ...contentFields, approval_status: 'pending', previous_snapshot: snap,
-        }).eq('id', id)
+        previousSnapshot = snap
+        approvalStatus = 'pending'
+        liveContent = { ...contentFields, photos: form.value.photos || [] }
         stageMode = 'full'
       } else if (contentChanged(contentSnapshot, liveApproved)) {
-        // Live & approved + content changed → keep the approved content serving, stage the
-        // new content for review. Operational fields still apply live immediately.
-        await supabase.from('listings').update(opPayload).eq('id', id)
+        // Keep approved content serving live; stage the new content for review.
+        liveContent = {
+          name: liveApproved.name,
+          description: liveApproved.description,
+          photo_url: liveApproved.photo_url,
+          photos: liveApproved.photos || [],
+        }
+        approvalStatus = editing.value.approval_status || 'approved'
         stageMode = 'content'
       } else {
-        // Operational-only edit → live now, no approval needed.
-        await supabase.from('listings').update(opPayload).eq('id', id)
+        liveContent = { ...contentFields, photos: form.value.photos || [] }
+        approvalStatus = editing.value.approval_status || 'approved'
         stageMode = 'operational'
       }
     } else {
-      await supabase.from('listings').update({ ...opPayload, ...contentFields, approval_status: form.value.approval_status }).eq('id', id)
+      liveContent = { ...contentFields, photos: form.value.photos || [] }
+      approvalStatus = form.value.approval_status
       stageMode = 'admin'
     }
   } else {
-    const initialApproval = userRole.value === 'admin' ? 'approved' : 'pending'
-    const { data } = await supabase.from('listings').insert({ ...opPayload, ...contentFields, approval_status: initialApproval }).select().maybeSingle()
-    id = data?.id
-    if (id) editing.value = { id, ...opPayload, ...contentFields, approval_status: initialApproval }
+    approvalStatus = userRole.value === 'admin' ? 'approved' : 'pending'
+    liveContent = { ...contentFields, photos: form.value.photos || [] }
     stageMode = userRole.value === 'admin' ? 'admin' : 'full'
   }
-  if (!id) return
 
-  // Staged content (migration 20260765000000). Guarded so saves work pre-migration:
-  // 'content' stashes the new content for review; every other mode clears it.
-  supabase.from('listings').update({ pending_content: stageMode === 'content' ? contentSnapshot : null }).eq('id', id).then(() => {}, () => {})
+  const depPct = Number(effectiveCommissionRate.value) || 20
+  const body = {
+    ...opPayload,
+    ...liveContent,
+    category: form.value.category || 'sports',
+    approval_status: approvalStatus,
+    pending_content: stageMode === 'content' ? contentSnapshot : null,
+    show_on_marketplace: form.value.show_on_marketplace !== false,
+    show_on_provider_site: form.value.show_on_provider_site !== false,
+    extension_pricing: form.value.extension_pricing || 'none',
+    extension_value: Number(form.value.extension_value) || 0,
+    extension_max_slots: Math.max(1, Number(form.value.extension_max_slots) || 1),
+    hours: hours.value,
+    pricing_groups: groups.value,
+    pricing_cells: cells.value,
+    payment: {
+      cash_on_arrival: !!pay.value.cash_on_arrival,
+      deposit_enabled: !!pay.value.deposit_enabled,
+      deposit_amount: 0,
+      deposit_percentage: depPct,
+      online_payment_enabled: !!pay.value.online_payment_enabled,
+      site_deposit_enabled: !!pay.value.site_deposit_enabled,
+      site_deposit_percentage: Math.max(10, Math.min(100, Number(pay.value.site_deposit_percentage) || 0)),
+      site_online_enabled: !!pay.value.site_online_enabled && onlineAllowed.value,
+      site_cash_enabled: !!pay.value.site_cash_enabled,
+    },
+    addons: connectedAddons.value
+      .filter(a => a.addon_id)
+      .map((a, i) => ({ addon_id: Number(a.addon_id), sort_order: i })),
+    resources: connectedResources.value
+      .filter(r => r.resource_id)
+      .map(r => ({ resource_id: Number(r.resource_id), quantity: Number(r.quantity) || 1 })),
+  }
+  if (stageMode === 'full' && previousSnapshot) body.previous_snapshot = previousSnapshot
 
-  // Best-effort: venue category (column added by 20260607020000_add_venue_categories.sql;
-  // ignored if the column doesn't exist yet, so saves never break pre-migration).
-  supabase.from('listings').update({ category: form.value.category || 'sports' }).eq('id', id).then(() => {}, () => {})
-
-  // Best-effort submission stamp (WHO + WHEN) for the approval queue, plus an audit
-  // entry — ONLY when something actually went to review (full submission or staged
-  // content). A purely operational edit is live, so it never enters the queue.
   if (userRole.value === 'provider' && (stageMode === 'full' || stageMode === 'content')) {
-    supabase.from('listings').update({
-      submitted_at: new Date().toISOString(),
-      submitted_by_name: currentUser.value?.full_name || currentUser.value?.business_name || '',
-    }).eq('id', id).then(() => {}, () => {})
+    body.submitted_at = new Date().toISOString()
+    body.submitted_by_name = currentUser.value?.full_name || currentUser.value?.business_name || currentUser.value?.name || ''
+  }
+
+  const res = editing.value
+    ? await updateListing(editing.value.id, body)
+    : await createListing(body)
+
+  if (!res.success) {
+    listingSaveError.value = listingFirstError(res, 'Could not save listing.')
+    toast.error(listingSaveError.value)
+    return
+  }
+
+  const savedListing = res.data?.listing
+  if (savedListing) editing.value = { ...editing.value, ...savedListing }
+
+  if (userRole.value === 'provider' && (stageMode === 'full' || stageMode === 'content')) {
     logAudit({
-      action: 'submitted', entity_type: 'listing', entity_id: id,
+      action: 'submitted', entity_type: 'listing', entity_id: savedListing?.id || editing.value?.id,
       details: stageMode === 'content'
         ? `Submitted updated content (title/description/photos) for “${form.value.name}” for review`
         : `${wasEdit ? 'Resubmitted' : 'Submitted'} listing “${form.value.name}” for review`,
     })
-  }
-
-  // Best-effort: slot-extension pricing. Silently ignored until the migration
-  // (extension_pricing / extension_value columns) is applied, so saves never break.
-  supabase.from('listings').update({
-    extension_pricing: form.value.extension_pricing || 'none',
-    extension_value: Number(form.value.extension_value) || 0,
-    extension_max_slots: Math.max(1, Number(form.value.extension_max_slots) || 1),
-  }).eq('id', id).then(() => {}, () => {})
-
-  // Listing placement (columns from 20260619000000_listing_placement.sql). Awaited so
-  // the listings page reflects the change immediately; a missing column (pre-migration)
-  // just returns an error we ignore, so saves never break.
-  await supabase.from('listings').update({
-    show_on_marketplace: form.value.show_on_marketplace !== false,
-    show_on_provider_site: form.value.show_on_provider_site !== false,
-  }).eq('id', id)
-
-  // Gallery images (photos jsonb column from 20260621100000_listing_photos.sql).
-  // Separate, guarded update so a pre-migration DB still saves everything else.
-  // Skipped when staging content — the approved gallery must keep serving live; the new
-  // photos are held in pending_content until approved.
-  if (stageMode !== 'content') await supabase.from('listings').update({ photos: form.value.photos || [] }).eq('id', id)
-
-  // Listings store their own concrete weekly hours (no location sync). The legacy
-  // inherit_from_location column is always written false so old data is normalised.
-  await supabase.from('listing_hours').delete().eq('listing_id', id)
-  const hoursRows = []
-  for (const h of hours.value) {
-    if (!h.is_open || !h.periods?.length) {
-      hoursRows.push({ listing_id: id, day_of_week: h.day_of_week, is_open: false, inherit_from_location: false, open_time: '09:00', close_time: '23:00' })
-    } else {
-      for (const p of h.periods) {
-        hoursRows.push({ listing_id: id, day_of_week: h.day_of_week, is_open: true, inherit_from_location: false, open_time: p.open_time, close_time: p.close_time })
-      }
-    }
-  }
-  if (hoursRows.length) await supabase.from('listing_hours').insert(hoursRows)
-
-  await supabase.from('pricing_cells').delete().eq('listing_id', id)
-  await supabase.from('pricing_groups').delete().eq('listing_id', id)
-  const gidMap = new Map()
-  if (groups.value.length) {
-    const ins = await supabase.from('pricing_groups').insert(groups.value.map((g, idx) => ({
-      listing_id: id, name: g.name, color: g.color, price: Number(g.price),
-      start_time: g.start_time || '18:00', end_time: g.end_time || '22:00',
-      days: g.days || '1,2,3,4,5', sort_order: idx,
-    }))).select()
-    ;(ins.data || []).forEach((ng, i) => gidMap.set(groups.value[i].id, ng.id))
-  }
-  if (cells.value.length) {
-    await supabase.from('pricing_cells').insert(cells.value.map(c => ({
-      listing_id: id, day_of_week: c.day_of_week, slot_time: c.slot_time,
-      pricing_group_id: c.pricing_group_id ? (gidMap.get(c.pricing_group_id) || c.pricing_group_id) : null,
-      direct_price: c.direct_price,
-    })))
-  }
-
-  await supabase.from('listing_payment_options').delete().eq('listing_id', id)
-  // Save the exact methods chosen. Providers now toggle deposit / full-online themselves
-  // (the form enforces ≥1 on); cash stays admin-controlled. Deposit % = the platform fee.
-  const depPct = Number(effectiveCommissionRate.value) || 20
-  const baseRow = {
-    listing_id: id,
-    cash_on_arrival: !!pay.value.cash_on_arrival,
-    deposit_enabled: !!pay.value.deposit_enabled,
-    deposit_amount: 0,
-    deposit_percentage: depPct,
-    online_payment_enabled: !!pay.value.online_payment_enabled,
-  }
-  // Own-website options (separate from the marketplace ones). Full online is forced off
-  // unless the provider has a connected payout method, mirroring the marketplace gate.
-  const siteRow = {
-    site_deposit_enabled: !!pay.value.site_deposit_enabled,
-    site_deposit_percentage: Math.max(10, Math.min(100, Number(pay.value.site_deposit_percentage) || 0)),
-    site_online_enabled: !!pay.value.site_online_enabled && onlineAllowed.value,
-    site_cash_enabled: !!pay.value.site_cash_enabled,
-  }
-  const { error: poErr } = await supabase.from('listing_payment_options').insert({ ...baseRow, ...siteRow })
-  // Pre-migration fallback: if the site_* columns don't exist yet, save the base row only.
-  if (poErr && /column|schema cache|site_/i.test(poErr.message || '')) {
-    await supabase.from('listing_payment_options').insert(baseRow)
-  }
-
-  await supabase.from('listing_addons').delete().eq('listing_id', id)
-  const validAddons = connectedAddons.value.filter(a => a.addon_id)
-  if (validAddons.length) {
-    await supabase.from('listing_addons').insert(validAddons.map((a, i) => ({
-      listing_id: id, addon_id: a.addon_id, sort_order: i,
-    })))
-  }
-
-  await supabase.from('listing_resources').delete().eq('listing_id', id)
-  const validRes = connectedResources.value.filter(r => r.resource_id)
-  if (validRes.length) {
-    await supabase.from('listing_resources').insert(validRes.map(r => ({
-      listing_id: id, resource_id: r.resource_id, quantity: Number(r.quantity) || 1,
-    })))
   }
 
   savedFlag.value = true
@@ -2095,8 +2038,8 @@ async function removeListing(id) {
 }
 
 /* inline add-on / resource creation + editing.
-   Each add-on / resource is tied to a location, so it only appears in the dropdowns
-   of listings at that location. `*EditingId` is null when creating, an id when editing. */
+   Catalog lives on Laravel (/admin/add-ons, /admin/resources). Location on the form
+   is optional UX context only — Laravel add-ons/resources are not location-scoped. */
 const newAddonModal = ref(false)
 const addonEditingId = ref(null)
 const newAddonForm = ref({ name: '', description: '', price: 0, status: 'active', image_url: '', location_id: '' })
@@ -2105,33 +2048,33 @@ function resetAddonForm(locId = '') {
   addonImgError.value = ''
 }
 async function saveNewAddon() {
-  if (!newAddonForm.value.location_id) { toast.error('Pick a location for this add-on.'); return }
-  const locId = newAddonForm.value.location_id
-  const loc = locations.value.find(l => l.id === locId)
-  const { location_id: _drop, ...rest } = newAddonForm.value
+  if (!newAddonForm.value.name?.trim()) { toast.error('Add-on name is required.'); return }
   const payload = {
-    owner_user_id: loc?.owner_user_id || null,
-    location_id: locId,
-    ...rest,
+    name: newAddonForm.value.name.trim(),
+    description: newAddonForm.value.description || '',
     price: Number(newAddonForm.value.price) || 0,
+    status: newAddonForm.value.status || 'active',
+    image: newAddonForm.value.image_url || null,
   }
-  const table = supabase.from('addons')
-  const runWithRetry = async (build) => {
-    let { data, error } = await build(payload)
-    if (error) { const { image_url, ...base } = payload; data = (await build(base)).data }   // pre-migration fallback (image_url column)
-    return data
-  }
-  let data
+  let res
   if (addonEditingId.value) {
-    data = await runWithRetry(p => table.update(p).eq('id', addonEditingId.value).select().maybeSingle())
-    if (data) { const idx = allAddons.value.findIndex(a => a.id === data.id); if (idx !== -1) allAddons.value[idx] = data; else allAddons.value.unshift(data) }
+    res = await updateAddOn(addonEditingId.value, payload)
   } else {
-    data = await runWithRetry(p => supabase.from('addons').insert(p).select().maybeSingle())
-    if (data) {
-      allAddons.value.unshift(data)
+    res = await createAddOn(payload)
+  }
+  if (!res.success) {
+    toast.error(listingFirstError(res, 'Could not save add-on.'))
+    return
+  }
+  const mapped = mapAddOnRow(res.data?.addOn || res.data?.addon)
+  if (mapped) {
+    const idx = allAddons.value.findIndex(a => a.id === mapped.id || String(a.id) === String(mapped.id))
+    if (idx !== -1) allAddons.value[idx] = mapped
+    else allAddons.value.unshift(mapped)
+    if (!addonEditingId.value) {
       const i = addonCreateRow.value
-      if (i != null && connectedAddons.value[i]) connectedAddons.value[i].addon_id = data.id   // fill the row that opened this
-      else connectedAddons.value.push({ addon_id: data.id, sort_order: connectedAddons.value.length })
+      if (i != null && connectedAddons.value[i]) connectedAddons.value[i].addon_id = mapped.id
+      else connectedAddons.value.push({ addon_id: mapped.id, sort_order: connectedAddons.value.length })
     }
   }
   addonCreateRow.value = null
@@ -2142,32 +2085,38 @@ async function saveNewAddon() {
 
 const newResourceModal = ref(false)
 const resourceEditingId = ref(null)
-// `type` holds the optional free-text Unit Type (e.g. "Court"); hourly_rate/etc.
-// use their DB defaults, so the form stays to the fields the user asked for.
+// `type` holds the optional free-text Unit Type (e.g. "Court"); maps to Laravel unit_type.
 const newResourceForm = ref({ name: '', type: '', quantity: 1, status: 'active', location_id: '' })
 function resetResourceForm(locId = '') {
   newResourceForm.value = { name: '', type: '', quantity: 1, status: 'active', location_id: locId || '' }
 }
 async function saveNewResource() {
-  if (!newResourceForm.value.location_id) { toast.error('Pick a location for this resource.'); return }
+  if (!newResourceForm.value.name?.trim()) { toast.error('Resource name is required.'); return }
   const payload = {
-    location_id: newResourceForm.value.location_id,
-    name: newResourceForm.value.name?.trim() || '',
-    type: newResourceForm.value.type?.trim() || '',
-    quantity: Number(newResourceForm.value.quantity) || 1,
+    name: newResourceForm.value.name.trim(),
+    unit_type: newResourceForm.value.type?.trim() || null,
+    total_quantity: Math.max(1, Number(newResourceForm.value.quantity) || 1),
     status: newResourceForm.value.status || 'active',
   }
-  let data
+  let res
   if (resourceEditingId.value) {
-    data = (await supabase.from('resources').update(payload).eq('id', resourceEditingId.value).select().maybeSingle()).data
-    if (data) { const idx = allResources.value.findIndex(r => r.id === data.id); if (idx !== -1) allResources.value[idx] = data; else allResources.value.unshift(data) }
+    res = await updateResource(resourceEditingId.value, payload)
   } else {
-    data = (await supabase.from('resources').insert(payload).select().maybeSingle()).data
-    if (data) {
-      allResources.value.unshift(data)
+    res = await createResource(payload)
+  }
+  if (!res.success) {
+    toast.error(listingFirstError(res, 'Could not save resource.'))
+    return
+  }
+  const mapped = mapResourceRow(res.data?.resource)
+  if (mapped) {
+    const idx = allResources.value.findIndex(r => r.id === mapped.id || String(r.id) === String(mapped.id))
+    if (idx !== -1) allResources.value[idx] = mapped
+    else allResources.value.unshift(mapped)
+    if (!resourceEditingId.value) {
       const i = resourceCreateRow.value
-      if (i != null && connectedResources.value[i]) connectedResources.value[i].resource_id = data.id   // fill the row that opened this
-      else connectedResources.value.push({ resource_id: data.id, quantity: 1 })
+      if (i != null && connectedResources.value[i]) connectedResources.value[i].resource_id = mapped.id
+      else connectedResources.value.push({ resource_id: mapped.id, quantity: 1 })
     }
   }
   resourceCreateRow.value = null
@@ -2176,8 +2125,8 @@ async function saveNewResource() {
   resetResourceForm()
 }
 
-const addonById = (id) => allAddons.value.find(a => a.id === id)
-const resourceById = (id) => allResources.value.find(a => a.id === id)
+const addonById = (id) => allAddons.value.find(a => a.id === id || String(a.id) === String(id))
+const resourceById = (id) => allResources.value.find(a => a.id === id || String(a.id) === String(id))
 
 /* ---- layout toggle ---- */
 const layout = ref('grouped') // 'grouped' | 'flat'
@@ -2310,7 +2259,7 @@ async function onFlatDrop(e, targetId) {
   arr.splice(toIdx, 0, arr.splice(fromIdx, 1)[0])
   listings.value = arr
   dragFlatId.value = null
-  await Promise.all(arr.map((l, i) => supabase.from('listings').update({ sort_order: i }).eq('id', l.id)))
+  await sortListings(arr.map((l, i) => ({ id: Number(l.id), sort_order: i })))
 }
 function onFlatDragEnd() { dragFlatId.value = null; dragOverFlatId.value = null }
 
@@ -2340,7 +2289,7 @@ async function onLocDrop(e, targetId) {
   arr.splice(toIdx, 0, arr.splice(fromIdx, 1)[0])
   locations.value = arr
   dragLocId.value = null
-  await Promise.all(arr.map((l, i) => supabase.from('locations').update({ sort_order: i }).eq('id', l.id)))
+  await sortVenues(arr.map((l, i) => ({ id: Number(l.id), sort_order: i })))
 }
 function onLocDragEnd() { dragLocId.value = null; dragOverLocId.value = null }
 
@@ -2367,7 +2316,7 @@ async function onListingDrop(e, targetId) {
   arr.splice(toIdx, 0, arr.splice(fromIdx, 1)[0])
   listings.value = [...others, ...arr]
   dragListingId.value = null
-  await Promise.all(arr.map((l, i) => supabase.from('listings').update({ sort_order: i }).eq('id', l.id)))
+  await sortListings(arr.map((l, i) => ({ id: Number(l.id), sort_order: i })))
 }
 function onListingDragEnd() { dragListingId.value = null; dragOverListingId.value = null }
 

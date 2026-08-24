@@ -2,14 +2,15 @@
 /**
  * AdminBell — the dashboard header's notification bell (providers + staff).
  * Feed is derived on each refresh by lib/bellFeed.js; unread = newer than the
- * per-user "last seen" stamp. Polls gently so new activity appears while the
- * dashboard sits open.
+ * per-user "last seen" stamp. Subscribes to Laravel Echo / Pusher
+ * (private-refresh.{userId}) for live updates; falls back to a slow poll.
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { supabase } from '../lib/supabase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { loadBellFeed, getLastSeen, setLastSeen } from '../lib/bellFeed.js'
+import { subscribeStaffRefresh, unsubscribeStaffRefresh } from '../lib/echo.js'
 import { Bell, Inbox, CalendarCheck, GraduationCap, ListChecks, TriangleAlert as AlertTriangle, Banknote, UserPlus } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -23,6 +24,8 @@ const items = ref([])
 const lastSeen = ref(0)
 let timer = null
 let busy = false
+let refreshChannel = null
+let liveRefreshTimer = null
 
 async function refresh() {
   if (!uid.value || busy) return
@@ -39,6 +42,30 @@ async function refresh() {
       locations: locs,
     })
   } finally { busy = false }
+}
+
+/** Debounce bursty Pusher events into one feed reload. */
+function scheduleLiveRefresh() {
+  if (liveRefreshTimer) clearTimeout(liveRefreshTimer)
+  liveRefreshTimer = setTimeout(() => { liveRefreshTimer = null; refresh() }, 400)
+}
+
+function setupPusher() {
+  teardownPusher()
+  if (!uid.value) return
+  refreshChannel = subscribeStaffRefresh(uid.value, (payload) => {
+    if (import.meta.env.DEV) {
+      console.log('[Bookboll Bell] refresh event', payload)
+    }
+    scheduleLiveRefresh()
+  })
+}
+
+function teardownPusher() {
+  if (refreshChannel) {
+    unsubscribeStaffRefresh(refreshChannel)
+    refreshChannel = null
+  }
 }
 
 const isUnread = (n) => new Date(n.ts).getTime() > lastSeen.value
@@ -59,11 +86,18 @@ function onDocClick(e) { if (open.value && rootEl.value && !rootEl.value.contain
 
 onMounted(() => {
   refresh()
-  timer = setInterval(refresh, 60000)
+  setupPusher()
+  // Fallback when Pusher is offline / misconfigured
+  timer = setInterval(refresh, 120000)
   document.addEventListener('click', onDocClick, true)
 })
-onUnmounted(() => { clearInterval(timer); document.removeEventListener('click', onDocClick, true) })
-watch(uid, refresh)
+onUnmounted(() => {
+  clearInterval(timer)
+  if (liveRefreshTimer) clearTimeout(liveRefreshTimer)
+  teardownPusher()
+  document.removeEventListener('click', onDocClick, true)
+})
+watch(uid, () => { refresh(); setupPusher() })
 watch(() => route.fullPath, () => { if (!open.value) refresh() })
 
 const ICONS = { booking: CalendarCheck, member: GraduationCap, approval: ListChecks, wallet: Banknote, provider: UserPlus }
