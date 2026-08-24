@@ -66,7 +66,7 @@ class PostService
             'slug'             => 'nullable|string|unique:posts,slug',
             'excerpt'          => 'nullable|string|max:500',
             'content'          => 'nullable|string',
-            'read_time'        => 'required|string',
+            'read_time'        => 'nullable|string|max:50',
             'status'           => 'required|in:draft,published',
             'type'             => 'nullable|in:' . implode(',', Post::TYPES),
             'post_category_id' => 'nullable|exists:post_categories,id',
@@ -85,7 +85,6 @@ class PostService
             'tags'             => 'nullable|array',
             'tags.*'           => 'string|max:100',
             'seo_title'        => 'nullable|string|max:255',
-            '5 min read'       => 'nullable|string|max:50',
             'seo_description'  => 'nullable|string|max:160',
             'featured'         => 'nullable',
         ]);
@@ -94,6 +93,7 @@ class PostService
             DB::beginTransaction();
 
             $formData['type'] = $formData['type'] ?? Post::TYPE_MAIN;
+            $formData['read_time'] = $formData['read_time'] ?? '5 min read';
 
             if ($formData['status'] == $this->postModel::PUBLISHED) {
                 $formData['published_at'] = now();
@@ -115,13 +115,15 @@ class PostService
             } elseif ($request->filled('image_url')) {
                 $formData['featured_image'] = $request->input('image_url');
             }
+            unset($formData['image_url']);
 
             $formData['user_id'] = $request->user()->id;
 
+            $tags = null;
             if (! empty($formData['tags'])) {
                 $tags = $formData['tags'];
-                unset($formData['tags']);
             }
+            unset($formData['tags']);
 
             $post = $this->postModel::create($formData);
 
@@ -137,7 +139,7 @@ class PostService
 
             DB::commit();
 
-            $post->load('tags', 'category');
+            $post->load('tags', 'category', 'author');
 
             return sendSuccess('Post created successfully', compact('post'), 201);
         } catch (Exception $e) {
@@ -162,7 +164,7 @@ class PostService
             'slug'             => 'nullable|string|unique:posts,slug,' . $post->id,
             'excerpt'          => 'nullable|string|max:500',
             'content'          => 'nullable|string',
-            'read_time'        => 'required|string',
+            'read_time'        => 'nullable|string|max:50',
             'status'           => 'required|in:draft,published',
             'type'             => 'nullable|in:' . implode(',', Post::TYPES),
             'post_category_id' => 'nullable|exists:post_categories,id',
@@ -189,6 +191,9 @@ class PostService
             DB::beginTransaction();
 
             $formData['type'] = $formData['type'] ?? $post->type ?? Post::TYPE_MAIN;
+            if (empty($formData['read_time'])) {
+                $formData['read_time'] = $post->read_time ?: '5 min read';
+            }
 
             if ($formData['status'] == $this->postModel::PUBLISHED && $post->published_at == null) {
                 $formData['published_at'] = now();
@@ -212,13 +217,14 @@ class PostService
             } else {
                 unset($formData['featured_image']);
             }
+            unset($formData['image_url']);
 
-            $tags = $formData['tags'] ?? null;
+            $tags = array_key_exists('tags', $formData) ? ($formData['tags'] ?? []) : null;
             unset($formData['tags']);
 
             $post->update($formData);
 
-            if (! empty($tags)) {
+            if ($tags !== null) {
                 $tagIds = collect($tags)->map(function ($tag) {
                     return $this->tagModel::firstOrCreate(
                         ['slug' => Str::slug($tag)],
@@ -229,6 +235,7 @@ class PostService
             }
 
             $post->refresh();
+            $post->load('tags', 'category', 'author');
 
             DB::commit();
 
