@@ -388,9 +388,10 @@ export async function resolveBrand() {
     // first label isn't a real white-label): fall back to the marketplace brand so
     // the super admin's logo/colors still apply, instead of the unthemed default.
     if (!row) { await applyPlatformBrand(); return null }
+    const brandSlug = providerSlug(row) || (slug || '').toLowerCase()
     const brand = {
       ownerUserId: row.id,
-      slug: providerSlug(row) || (slug || '').toLowerCase(),
+      slug: brandSlug,
       name: row.brand_name || row.business_name || row.username || 'Bookboll',
       tagline: row.brand_tagline || '',
       logo: row.brand_logo_url || '',
@@ -398,10 +399,10 @@ export async function resolveBrand() {
       accent: row.brand_accent || DEFAULT_ACCENT,
       metaTitle: row.brand_meta_title || '',
       metaDescription: row.brand_meta_description || '',
-      modules: await loadBrandModules(row.id),   // which sections to show
-      sort: await loadBrandSort(row.id),         // storefront sort fallback (space/venue)
-      banners: await loadBrandBanners(row.id),   // home hero slideshow
-      regions: await loadServedRegions(row.id),  // countries/cities they actually serve
+      modules: await loadBrandModules(row.id),
+      sort: await loadBrandSort(row.id),
+      banners: await loadBrandBanners(row.id),
+      regions: await loadServedRegions(brandSlug),
       tracking: await loadBrandTracking(row.id), // their own analytics/pixels (storefront only)
       languages: await loadBrandLanguages(row.id), // offered storefront languages ([] = all)
       pages: await loadBrandPages(row.id),       // About / Contact simple pages

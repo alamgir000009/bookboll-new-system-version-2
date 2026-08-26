@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { selectedCountry } from '../../lib/customerSession.js'
 import { loadFacility } from '../../customer/data.js'
 import { useSeo, sportsActivityLocationLd } from '../../lib/seo.js'
-import { cityForId, slugifySport, facilityPath } from '../../lib/cityPages.js'
+import { cityForId, slugifySport, facilityPath, slugifyCity } from '../../lib/cityPages.js'
 import { isWhiteLabel } from '../../lib/brand.js'
 import { ArrowLeft, MapPin, Building2, Users, ChevronRight, Navigation, Expand } from 'lucide-vue-next'
 import Lightbox from '../components/Lightbox.vue'
@@ -26,7 +26,11 @@ async function load() {
   loading.value = true
   activePhoto.value = 0
   data.value = await loadFacility(route.params.id)
-  cityInfo.value = data.value?.location?.city_id ? await cityForId(data.value.location.city_id) : null
+  const loc = data.value?.location
+  const cityName = loc?.city_name || loc?.city || ''
+  cityInfo.value = cityName
+    ? { name: cityName, slug: slugifyCity(cityName) }
+    : (loc?.city_id ? await cityForId(loc.city_id, cityName) : null)
   loading.value = false
   // Canonical slug URL: /facilities/<id>/<name-slug>. Old bare-id links (and
   // stale slugs after a rename) are silently replaced — the id did the lookup.

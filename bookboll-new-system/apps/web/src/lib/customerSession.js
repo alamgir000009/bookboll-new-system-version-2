@@ -8,17 +8,30 @@
  */
 import { ref, computed } from 'vue'
 import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 const LOC_KEY  = 'bb_customer_location'
 const CUST_KEY = 'bb_customer_identity'
 
 function readJSON(key) { try { return JSON.parse(localStorage.getItem(key) || 'null') } catch { return null } }
 
+function isLaravelGeoId(id) {
+  return id != null && id !== '' && /^\d+$/.test(String(id))
+}
+
 // ── Location ────────────────────────────────────────────────────────────────
 const _loc = readJSON(LOC_KEY)
-export const selectedCountry = ref(_loc?.country || null)  // { id, name, currency_code }
+export const selectedCountry = ref(_loc?.country || null)  // { id, name, currency_code, iso_code }
 export const selectedCity    = ref(_loc?.city || null)     // { id, name, country_id }
 export const hasLocation = computed(() => !!selectedCity.value)
+
+// Drop mockup Supabase UUID locations so catalog city_id matches Laravel venues.
+if ((selectedCity.value?.id && !isLaravelGeoId(selectedCity.value.id))
+  || (selectedCountry.value?.id && !isLaravelGeoId(selectedCountry.value.id))) {
+  selectedCountry.value = null
+  selectedCity.value = null
+  try { localStorage.removeItem(LOC_KEY) } catch { /* ignore */ }
+}
 
 export function setLocation(country, city) {
   selectedCountry.value = country || null
@@ -27,18 +40,19 @@ export function setLocation(country, city) {
   ensureRegionIso()
 }
 
-// The stored country may predate the iso_code field (used for phone dial-code defaults).
-// Backfill it from the DB so `selectedCountry.iso_code` is always available + persisted.
+// Backfill iso_code on stored country rows (picker/API may omit it on older saves).
 export async function ensureRegionIso() {
   const c = selectedCountry.value
-  if (!c || c.iso_code || !c.id) return
-  const { data } = await supabase.from('countries').select('iso_code').eq('id', c.id).maybeSingle()
-  if (data?.iso_code) {
-    selectedCountry.value = { ...c, iso_code: data.iso_code }
+  if (!c || c.iso_code || !isLaravelGeoId(c.id)) return
+  const res = await apiFetch('/marketplace/countries')
+  if (!res.success) return
+  const match = (res.data?.countries || []).find(x => x.id === c.id)
+  if (match?.iso_code) {
+    selectedCountry.value = { ...c, iso_code: match.iso_code, currency_code: match.currency_code || c.currency_code }
     try { localStorage.setItem(LOC_KEY, JSON.stringify({ country: selectedCountry.value, city: selectedCity.value })) } catch { /* ignore */ }
   }
 }
-ensureRegionIso()   // backfill on load for already-saved locations
+ensureRegionIso()
 export function clearLocation() {
   selectedCountry.value = null; selectedCity.value = null
   localStorage.removeItem(LOC_KEY)
@@ -98,27 +112,12 @@ export function guessCountryIso() {
 export async function ensureDefaultLocation() {
   if (selectedCity.value) return
   try {
-    const { data: locs } = await supabase.from('locations').select('city_id').eq('status', 'active')
-    const tally = {}
-    ;(locs || []).forEach(l => { if (l.city_id) tally[l.city_id] = (tally[l.city_id] || 0) + 1 })
-    const cityIds = Object.keys(tally)
-    if (!cityIds.length) return
-    const { data: cities } = await supabase.from('cities').select('id, name, country_id').in('id', cityIds)
-    const byVenues = (a, b) => (tally[b.id] || 0) - (tally[a.id] || 0)
-
-    let chosen = null
     const iso = guessCountryIso()
-    if (iso) {
-      const { data: countries } = await supabase.from('countries').select('id, iso_code')
-      const ids = new Set((countries || []).filter(c => (c.iso_code || '').toUpperCase() === iso).map(c => c.id))
-      const inCountry = (cities || []).filter(c => ids.has(c.country_id)).sort(byVenues)
-      if (inCountry.length) chosen = inCountry[0]
-    }
-    if (!chosen) chosen = (cities || []).slice().sort(byVenues)[0]   // fallback: busiest overall
-    if (!chosen) return
-
-    const { data: country } = await supabase.from('countries').select('id, name, currency_code, iso_code').eq('id', chosen.country_id).maybeSingle()
-    setLocation(country || null, { id: chosen.id, name: chosen.name, country_id: chosen.country_id })
+    const res = await apiFetch('/marketplace/default-city', { query: iso ? { country_iso: iso } : null })
+    if (!res.success || !res.data?.city) return
+    const country = res.data.country || null
+    const city = res.data.city
+    setLocation(country, { id: city.id, name: city.name, country_id: city.country_id })
   } catch { /* leave unset → the gate will prompt */ }
 }
 
@@ -130,6 +129,10 @@ export async function ensureDefaultLocation() {
 export function ensureBrandLocation(regions) {
   const served = regions?.cities || []
   if (!served.length) return
+  if (selectedCity.value?.id && !isLaravelGeoId(selectedCity.value.id)) {
+    selectedCity.value = null
+    selectedCountry.value = null
+  }
   if (selectedCity.value && served.some(c => c.id === selectedCity.value.id)) return
   const c0 = served[0]
   const country = (regions.countries || []).find(x => x.id === c0.country_id) || null

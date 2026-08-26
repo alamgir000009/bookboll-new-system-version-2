@@ -4,12 +4,14 @@
  */
 import { ref } from 'vue'
 import { supabase } from '../lib/supabase.js'
+import { apiFetch } from '../lib/api.js'
+import { selectedCity, selectedCountry } from '../lib/customerSession.js'
 import { fmt12, fmtRange12 } from '../lib/slots.js'
 import { roundsFor, nextMatchFor, totalGames } from './bracket.js'
 import { offerModeFor, discountedPrice, addIntervalToDate } from '../lib/billingPlans.js'
 import { nthSessionDate } from '../lib/programSessions.js'
 import { recordSubscriptionPayment } from '../lib/subscriptionPayment.js'
-import { ensureCountryWallet, hasActivePayoutMethodFor } from '../lib/walletSetup.js'
+import { ensureCountryWallet } from '../lib/walletSetup.js'
 import { notifyMembershipStarted } from './notificationDispatch.js'
 import { hasUsedIntroOffer, recordOfferRedemption } from '../lib/offerGuard.js'
 import { effectiveGenderPolicy } from '../lib/membershipCategories.js'
@@ -266,75 +268,43 @@ async function ownerSuspended(ownerId) {
   return (await suspendedOwners()).has(ownerId)
 }
 
+// Catalog query for Laravel marketplace endpoints. City UUIDs from the Supabase
+// location picker cannot be sent as city_id — we match Laravel world cities by name.
+async function marketplaceQuery(cityId, extra = {}) {
+  const q = {}
+  if (cityId != null && cityId !== '' && /^\d+$/.test(String(cityId))) q.city_id = Number(cityId)
+  const name = extra.name || extra.city || selectedCity.value?.name || ''
+  if (name) q.city = name
+  const iso = extra.iso || extra.country_iso || selectedCountry.value?.iso_code || ''
+  if (iso) q.country_iso = iso
+  let slug = extra.brand_slug || ''
+  if (!slug) {
+    try {
+      const { activeBrand } = await import('../lib/brand.js')
+      slug = activeBrand.value?.slug || ''
+    } catch { /* ignore circular-init */ }
+  }
+  if (slug) q.brand_slug = slug
+  return q
+}
+
 // ── Facilities (bookable listings) in a city ───────────────────────────────────
 // One card per LISTING: the listing name is the headline, its venue (location) name
 // is shown by the pin. Cards link to the venue detail page (keyed by location id).
-export async function loadFacilities(cityId) {
-  if (!cityId) return []
-  let locQ = supabase.from('locations').select('*').eq('city_id', cityId).eq('status', 'active')
-  if (brandOwnerId) locQ = locQ.eq('owner_user_id', brandOwnerId)
-  const { data: locs } = await locQ
-  const suspended = brandOwnerId ? new Set() : await suspendedOwners()
-  const locById = {}; (locs || []).forEach(l => { if (!suspended.has(l.owner_user_id)) locById[l.id] = l })
-  const ids = Object.keys(locById)
-  if (!ids.length) return []
-  const { data: listings } = await supabase.from('listings').select('*').in('location_id', ids).order('name')
-  const rows = (listings || []).filter(listingVisible)
-  const priceMap = await startingPriceMap(rows)
-  return rows.map(l => {
-    const loc = locById[l.location_id] || {}
-    return {
-      id: l.id,                                // listing id (unique card key)
-      locationId: l.location_id,               // used for the card link → venue detail
-      name: l.name,                            // listing name → card title
-      photo: firstPhoto(l) || firstPhoto(loc),
-      price: priceMap[l.id],                   // starting-from price
-      slotMins: l.slot_duration || 60,         // priced per this many minutes
-      pinText: loc.name || '',                 // venue name next to the pin
-      mapsUrl: mapsUrl(loc),                   // → Google Maps
-      lat: loc.latitude ?? null,               // venue pin → "X km away"
-      lng: loc.longitude ?? null,
-      category: l.category || 'sports',        // main category (Sports/Hangout/Work)
-      sport: l.sport_category || '',           // type / subcategory
-      sortOrder: l.sort_order ?? 9999,         // dashboard manual order ("recommended")
-      createdAt: l.created_at,                  // for "newest first"
-    }
-  })
+export async function loadFacilities(cityId, extra = {}) {
+  if (!cityId && !extra.name && !selectedCity.value?.name) return []
+  const res = await apiFetch('/marketplace/listings', { query: await marketplaceQuery(cityId, extra) })
+  if (!res.success) return []
+  return Array.isArray(res.data?.listings) ? res.data.listings : []
 }
 
 // One card per LOCATION (venue): the venue name is the headline, with its court
 // count + sports. Used by the Facilities page "by location" toggle.
-export async function loadLocations(cityId) {
-  if (!cityId) return []
-  let locQ = supabase.from('locations').select('*').eq('city_id', cityId).eq('status', 'active').order('name')
-  if (brandOwnerId) locQ = locQ.eq('owner_user_id', brandOwnerId)
-  const { data: locs } = await locQ
-  const suspendedL = brandOwnerId ? new Set() : await suspendedOwners()
-  const list = (locs || []).filter(l => !suspendedL.has(l.owner_user_id))
-  const ids = list.map(l => l.id)
-  let listings = []
-  if (ids.length) {
-    const { data } = await supabase.from('listings').select('*').in('location_id', ids)
-    listings = (data || []).filter(listingVisible)
-  }
-  const priceMap = await startingPriceMap(listings)
-  return list.map(l => {
-    const courts = listings.filter(x => x.location_id === l.id)
-    const prices = courts.map(c => priceMap[c.id]).filter(p => p != null && p > 0)
-    const sports = [...new Set(courts.map(c => c.sport_category).filter(Boolean))]
-    return {
-      id: l.id, name: l.name, photo: firstPhoto(l),
-      price: prices.length ? Math.min(...prices) : null,   // cheapest court at this venue
-      sportsText: sports.join(' · '),                      // sport types at this venue
-      mapsUrl: mapsUrl(l),                                 // → Google Maps (name is the link)
-      lat: l.latitude ?? null,                             // venue pin → "X km away"
-      lng: l.longitude ?? null,
-      categories: [...new Set(courts.map(c => c.category || 'sports'))],   // main categories present
-      subcats: sports,                                                     // types present
-      sortOrder: l.sort_order ?? 9999,                     // dashboard manual order ("recommended")
-      createdAt: l.created_at,                             // for "newest first"
-    }
-  })
+export async function loadLocations(cityId, extra = {}) {
+  if (!cityId && !extra.name && !selectedCity.value?.name) return []
+  const res = await apiFetch('/marketplace/venues', { query: await marketplaceQuery(cityId, extra) })
+  if (!res.success) return []
+  return Array.isArray(res.data?.venues) ? res.data.venues : []
 }
 
 // All of the ACTIVE brand's locations (the white-label "Our locations" page) — across every
@@ -373,94 +343,34 @@ export async function loadBrandLocations() {
 }
 
 export async function loadFacility(id) {
-  const { data: loc } = await supabase.from('locations').select('*').eq('id', id).maybeSingle()
-  if (!loc || ownerMismatch(loc.owner_user_id)) return null
-  if (await ownerSuspended(loc.owner_user_id)) return null
-  const { data: listings } = await supabase.from('listings').select('*').eq('location_id', id).order('name')
-  const rows = (listings || []).filter(listingVisible)
-  const priceMap = await startingPriceMap(rows)
-  const decorated = rows.map(l => ({ ...l, photo: firstPhoto(l) || firstPhoto(loc), startPrice: priceMap[l.id] }))
-  return { location: loc, photo: firstPhoto(loc), photos: allPhotos(loc), mapsUrl: mapsUrl(loc), listings: decorated }
+  if (!id) return null
+  const res = await apiFetch(`/marketplace/venues/${id}`, { query: await marketplaceQuery(null) })
+  if (!res.success || !res.data?.facility) return null
+  return res.data.facility
 }
 
 // Full detail for a single listing (court/pitch): the listing, its venue, pricing
 // tiers and any add-ons offered.
 export async function loadListing(id) {
-  const { data: l } = await supabase.from('listings').select('*').eq('id', id).maybeSingle()
-  if (!l || !listingVisible(l)) return null   // hide per placement: marketplace needs approval, own site does not
-  const { data: loc } = await supabase.from('locations').select('*').eq('id', l.location_id).maybeSingle()
-  if (ownerMismatch(loc?.owner_user_id)) return null   // not this brand's listing
-  if (await ownerSuspended(loc?.owner_user_id)) return null
-
-  const { data: groups } = await supabase.from('pricing_groups').select('name, price').eq('listing_id', id).order('price')
-  const tiers = (groups || []).filter(g => Number(g.price) > 0)
-
-  let addons = []
-  const { data: la } = await supabase.from('listing_addons').select('addon_id').eq('listing_id', id)
-  const addonIds = (la || []).map(x => x.addon_id)
-  if (addonIds.length) {
-    const { data: ad } = await supabase.from('addons').select('*').in('id', addonIds)
-    addons = (ad || []).filter(a => (a.status || 'active') !== 'inactive')
-      .map(a => ({ ...a, kind: a.kind || 'product', charge_unit: a.charge_unit || 'per_item' }))
-  }
-
-  const { data: payOpt } = await supabase.from('listing_payment_options').select('*').eq('listing_id', id).maybeSingle()
-
-  // Does the PROVIDER have an active BOOKINGS payout method? Gates the own-site full-online
-  // option and decides where the own-site deposit goes (provider wallet vs Bookboll, when no
-  // payout method). Venue bookings pay into the BOOKINGS wallet (Stripe only); any active
-  // bookings method is enough — the local country wallet auto-creates at payment time. Only
-  // relevant for provider listings.
-  let providerHasPayout = false
-  if (loc?.owner_user_id) {
-    const { data: wallets } = await supabase.from('provider_wallets').select('*').eq('owner_user_id', loc.owner_user_id)
-    providerHasPayout = hasActivePayoutMethodFor(wallets || [], 'bookings')
-  }
-
-  const base = Number(l.base_price) || 0
-  const startPrice = tiers.length ? Math.min(base > 0 ? base : Infinity, ...tiers.map(t => Number(t.price))) : base
-  const gallery = allPhotos(l).length ? allPhotos(l) : allPhotos(loc)
-  return {
-    listing: l,
-    location: loc || null,
-    photo: firstPhoto(l) || firstPhoto(loc),
-    photos: gallery,
-    mapsUrl: mapsUrl(loc),
-    pricingTiers: tiers,
-    addons,
-    paymentOptions: payOpt || null,
-    providerHasPayout,
-    startPrice: Number.isFinite(startPrice) ? startPrice : base,
-  }
+  if (!id) return null
+  const res = await apiFetch(`/marketplace/listings/${id}`, { query: await marketplaceQuery(null) })
+  if (!res.success || !res.data?.detail) return null
+  const d = res.data.detail
+  if (d.listing && d.holdMinutes) d.listing.holdMinutes = d.holdMinutes
+  return d
 }
 
 // Countries + cities where a PROVIDER actually has visible content on their white-label
 // site — used to scope the location picker and to detect "we don't serve here". Cities are
 // busiest-first. `show_on_provider_site !== false` mirrors the storefront's visibility rule.
-export async function loadServedRegions(ownerId) {
-  if (!ownerId) return { countries: [], cities: [] }
-  const { data: locs } = await supabase.from('locations').select('id, city_id').eq('owner_user_id', ownerId)
-  const locById = {}; (locs || []).forEach(l => { locById[l.id] = l })
-  const locIds = (locs || []).map(l => l.id)
-  const cityCount = {}
-  const add = (cityId) => { if (cityId) cityCount[cityId] = (cityCount[cityId] || 0) + 1 }
-  if (locIds.length) {
-    const { data: ls } = await supabase.from('listings').select('location_id, show_on_provider_site').in('location_id', locIds)
-    ;(ls || []).filter(l => l.show_on_provider_site !== false).forEach(l => add(locById[l.location_id]?.city_id))
+export async function loadServedRegions(brandSlug) {
+  if (!brandSlug) return { countries: [], cities: [] }
+  const res = await apiFetch('/marketplace/served-regions', { query: { brand_slug: String(brandSlug).toLowerCase() } })
+  if (!res.success) return { countries: [], cities: [] }
+  return {
+    countries: res.data?.countries || [],
+    cities: res.data?.cities || [],
   }
-  const { data: ps } = await supabase.from('class_programs').select('location_id, show_on_provider_site').eq('owner_user_id', ownerId)
-  ;(ps || []).filter(p => p.show_on_provider_site !== false && p.location_id).forEach(p => add(locById[p.location_id]?.city_id))
-  const cityIds = Object.keys(cityCount)
-  if (!cityIds.length) return { countries: [], cities: [] }
-  const { data: cities } = await supabase.from('cities').select('id, name, country_id').in('id', cityIds).eq('status', 'active')
-  const ordered = (cities || []).slice().sort((a, b) => (cityCount[b.id] || 0) - (cityCount[a.id] || 0))
-  const countryIds = [...new Set(ordered.map(c => c.country_id))]
-  let countries = []
-  if (countryIds.length) {
-    const { data: co } = await supabase.from('countries').select('id, name, currency_code, iso_code').in('id', countryIds).eq('status', 'active').order('name')
-    countries = co || []
-  }
-  return { countries, cities: ordered }
 }
 
 // ── Programs / classes in a city ───────────────────────────────────────────────

@@ -6,10 +6,10 @@ import { ensureSignedIn } from '../../lib/authGate.js'
 import { setCheckoutSession, clearCheckoutSession, checkoutSession } from '../../customer/bookingSession.js'
 import { useSeo, productLd } from '../../lib/seo.js'
 import { facilityPath } from '../../lib/cityPages.js'
-import { supabase } from '../../lib/supabase.js'
 import { hostDraft } from '../../customer/hostDraft.js'
 import { loadListing } from '../../customer/data.js'
-import { loadDayAvailability, buildDaySlots, dayScheduleInfo, createCustomerBookingsMulti, quoteBooking, isPerPerson, extensionsEnabled, extensionSlotPrice, extensionMaxSlots, addonAmount, paymentPlan, paymentSplit, effectivePaymentOptions, holdSlots, holdMinutes, releaseHolds, holdToken, loadMonthAvailability, cheapestAvailableForDay, resolveFacilityCommission } from '../../customer/booking.js'
+import { quoteBooking, isPerPerson, extensionsEnabled, extensionSlotPrice, extensionMaxSlots, addonAmount, paymentPlan, paymentSplit, effectivePaymentOptions } from '../../customer/booking.js'
+import { loadDayAvailability, buildDaySlots, dayScheduleInfo, createCustomerBookingsMulti, holdSlots, holdMinutes, releaseHolds, holdToken, loadMonthAvailability, cheapestAvailableForDay, resolveFacilityCommission } from '../../customer/apiBooking.js'
 import { validatePromo, recordRedemption } from '../../lib/promocodes.js'
 import { loadLoyaltyConfig, maxRedeemable, awardLoyalty, redeemLoyalty } from '../../lib/loyalty.js'
 import { loadCustomerLoyalty } from '../../lib/customerSession.js'
@@ -177,22 +177,12 @@ function writeCheckoutSession(expEpoch) {
 // Live grid: when anyone else holds/releases/books a slot on this listing, refresh the
 // day the customer is viewing so taken times grey out in real time. No-op if Realtime
 // isn't enabled on the project (subscription just never fires).
-let realtimeChan = null
 let reloadDebounce = null
-function setupRealtime(listingId) {
+function setupRealtime(_listingId) {
   teardownRealtime()
-  if (!listingId) return
-  const ping = () => { clearTimeout(reloadDebounce); reloadDebounce = setTimeout(() => { if (!syncing) { loadDay(); ensureMonthPrices(lastMonthView, true) } }, 500) }
-  try {
-    realtimeChan = supabase.channel(`listing-${listingId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'slot_holds', filter: `listing_id=eq.${listingId}` }, ping)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings', filter: `listing_id=eq.${listingId}` }, ping)
-      .subscribe()
-  } catch { /* realtime not available — ignore */ }
 }
 function teardownRealtime() {
   clearTimeout(reloadDebounce)
-  if (realtimeChan) { try { supabase.removeChannel(realtimeChan) } catch { /* ignore */ } realtimeChan = null }
 }
 
 const l = computed(() => data.value?.listing || {})
@@ -607,6 +597,7 @@ async function confirm() {
   const res = await createCustomerBookingsMulti({ listing: l.value, location: loc.value, selectionByDate: selectedByDate.value, addons: selectedAddons.value, players: players.value, customer: cust, payment: { method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount, discount, loyaltyRedeem }, surface: surface.value, providerHasPayout: providerHasPayout.value })
   saving.value = false
   if (res.error) { err.value = res.error; loadDay(); return }   // e.g. "just taken" → refresh grid
+  if (res.redirect) return
   stopHoldTimer(); holdActive.value = false; holdExpiresAt.value = 0   // booked → holds released server-side
   clearCheckoutSession()   // checkout complete → dismiss the resume card
   saveCustomerPhone(selectedCountry.value?.id, phone.value)   // remember for this country
