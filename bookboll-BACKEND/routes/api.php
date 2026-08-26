@@ -34,6 +34,7 @@ use App\Http\Controllers\SpecialDayController;
 use App\Http\Controllers\SportsCategoryController;
 use App\Http\Controllers\SportsTypeController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\MarketplaceCatalogController;
 use App\Http\Controllers\VenueController;
 use App\Http\Controllers\WhatsappController;
 use Illuminate\Support\Facades\Route;
@@ -363,6 +364,19 @@ Route::get('sports-categories', [SportsCategoryController::class, 'sportsCategor
 Route::post('contact-us', [HelperController::class, 'contactUs'])->name('contact-us');
 Route::get('fetch-venues', [VenueController::class, 'fetchVenues'])->name('customer.fetch-venues');
 Route::get('fetch-listings', [ListingController::class, 'fetchListings'])->name('fetch-listings');
+
+Route::prefix('marketplace')->name('marketplace.')->group(function () {
+    Route::get('listings', [MarketplaceCatalogController::class, 'listings'])->name('listings');
+    Route::get('venues', [MarketplaceCatalogController::class, 'venues'])->name('venues');
+    Route::get('venues/{id}', [MarketplaceCatalogController::class, 'venue'])->name('venues.show');
+    Route::get('listings/{id}', [MarketplaceCatalogController::class, 'listing'])->name('listings.show');
+    Route::get('countries', [MarketplaceCatalogController::class, 'countries'])->name('countries');
+    Route::get('cities', [MarketplaceCatalogController::class, 'cities'])->name('cities');
+    Route::get('cities/{id}', [MarketplaceCatalogController::class, 'city'])->name('cities.show');
+    Route::get('directory', [MarketplaceCatalogController::class, 'directory'])->name('directory');
+    Route::get('default-city', [MarketplaceCatalogController::class, 'defaultCity'])->name('default-city');
+    Route::get('served-regions', [MarketplaceCatalogController::class, 'servedRegions'])->name('served-regions');
+});
 Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings'])->name('fetch-suggested-listings');
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing'])->name('fetch-listing');
 Route::get('fetch-time-slots', [ListingController::class, 'fetchTimeSlots'])->name('fetch-time-slots');
