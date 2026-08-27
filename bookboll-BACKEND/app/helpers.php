@@ -1274,10 +1274,6 @@ if (! function_exists('expireOpenStripeCheckoutSessionsForBooking')) {
     {
         $stripeSecret = trim((string) config('services.stripe.secret'));
         if ($stripeSecret === '') {
-            $stripeSecret = trim((string) Setting::where('key', 'stripe_secret_key')->value('value'));
-        }
-
-        if ($stripeSecret === '') {
             return;
         }
 

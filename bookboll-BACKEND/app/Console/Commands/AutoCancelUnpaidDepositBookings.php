@@ -137,14 +137,9 @@ class AutoCancelUnpaidDepositBookings extends Command
 
     protected function resolveStripeSecret(): ?string
     {
-        $configSecret = trim((string) config('services.stripe.secret'));
-        if ($configSecret !== '') {
-            return $configSecret;
-        }
-
-        $settingSecret = trim((string) Setting::where('key', 'stripe_secret_key')->value('value'));
-        if ($settingSecret !== '') {
-            return $settingSecret;
+        $secret = trim((string) config('services.stripe.secret'));
+        if ($secret !== '') {
+            return $secret;
         }
 
         Log::warning('Stripe secret key is missing. Stripe checkout sessions will not be expired by auto-cancel command.');

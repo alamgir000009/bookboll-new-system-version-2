@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Models\Payment;
-use App\Models\Setting;
 use App\Models\StripeSession;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
@@ -933,25 +932,15 @@ class StripeService
 
     protected function resolveStripeSecret(): ?string
     {
-        $configSecret = trim((string) config('services.stripe.secret'));
-        if ($configSecret !== '') {
-            return $configSecret;
-        }
+        $secret = trim((string) config('services.stripe.secret'));
 
-        $settingSecret = trim((string) Setting::where('key', 'stripe_secret_key')->value('value'));
-
-        return $settingSecret !== '' ? $settingSecret : null;
+        return $secret !== '' ? $secret : null;
     }
 
     protected function resolveWebhookSecret(): ?string
     {
-        $configSecret = trim((string) config('services.stripe.webhook_secret'));
-        if ($configSecret !== '') {
-            return $configSecret;
-        }
+        $secret = trim((string) config('services.stripe.webhook_secret'));
 
-        $settingSecret = trim((string) Setting::where('key', 'stripe_webhook_secret')->value('value'));
-
-        return $settingSecret !== '' ? $settingSecret : null;
+        return $secret !== '' ? $secret : null;
     }
 }

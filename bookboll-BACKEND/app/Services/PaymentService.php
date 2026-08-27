@@ -1841,7 +1841,7 @@ class PaymentService
         }
 
         if ($chargeId && ! $paymentIntentId) {
-            $secret = config('services.stripe.secret') ?: \App\Models\Setting::where('key', 'stripe_secret_key')->value('value');
+            $secret = config('services.stripe.secret');
             if ($secret) {
                 try {
                     Stripe::setApiKey($secret);
@@ -1859,7 +1859,7 @@ class PaymentService
         }
 
         if ($paymentIntentId && ! $chargeId) {
-            $secret = config('services.stripe.secret') ?: \App\Models\Setting::where('key', 'stripe_secret_key')->value('value');
+            $secret = config('services.stripe.secret');
             if ($secret) {
                 try {
                     Stripe::setApiKey($secret);

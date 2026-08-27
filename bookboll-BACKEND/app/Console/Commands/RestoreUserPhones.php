@@ -2,7 +2,6 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Setting;
 use App\Models\Payment;
 use App\Models\User;
 use Illuminate\Console\Command;
@@ -235,17 +234,9 @@ class RestoreUserPhones extends Command
 
     private function resolveStripeSecret(): ?string
     {
-        $configSecret = trim((string) config('services.stripe.secret'));
-        if ($configSecret !== '') {
-            return $configSecret;
-        }
+        $secret = trim((string) config('services.stripe.secret'));
 
-        $settingSecret = trim((string) Setting::where('key', 'stripe_secret_key')->value('value'));
-        if ($settingSecret !== '') {
-            return $settingSecret;
-        }
-
-        return null;
+        return $secret !== '' ? $secret : null;
     }
 
     private function loadUsersCsvMap(string $path, array &$map): int

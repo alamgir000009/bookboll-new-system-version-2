@@ -9,29 +9,6 @@ class SettingTableSeeder extends Seeder
     public function run(): void
     {
         $defaults = [
-            // Stripe
-            [
-                'key'         => 'stripe_publishable_key',
-                'value'       => 'pk_test_51SPZ0zAnPS3KrhqJaCi4rPR81jlzikJsmha8jq5Xz5Hw0wEzaKorVzEgnS9jv6IaVZLR2sCXTg4J2yx1AAsZ82Y000CclzTQKZ',
-                'type'        => 'string',
-                'description' =>
-                'Stripe Publishable Key',
-            ],
-            [
-                'key'         => 'stripe_secret_key',
-                'value'       => 'sk_test_51SPZ0zAnPS3KrhqJrWnvLXKrWLGKuE1kZQfrAbFtXJzpV9igUSWXSMu5Ufl8zUWMT5ON3JhUPPC392GAiz5Au4Vd00kXia5Pqz',
-                'type'        => 'string',
-                'encrypted'   => true,
-                'description' => 'Stripe Secret Key',
-            ],
-            [
-                'key'         => 'stripe_webhook_secret',
-                'value'       => null,
-                'type'        => 'string',
-                'encrypted'   => true,
-                'description' => 'Stripe Secret Key',
-            ],
-
             // Booking
             [
                 'key'         => 'min_advance_hours',
