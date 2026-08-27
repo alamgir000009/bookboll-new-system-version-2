@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { customer, isCustomer, customerSignOut, updateCustomerProfile } from '../../lib/customerSession.js'
+import { customer, isCustomer, customerSignOut, loadCustomerAccount, saveCustomerAccount, uploadCustomerAvatar } from '../../lib/customerSession.js'
+import { getCustomerToken } from '../../lib/api.js'
 import { isWhiteLabel, activeBrand, brandShows, platformBrand } from '../../lib/brand.js'
 import { uploadImage } from '../../lib/imageUpload.js'
 import { profileStrength } from '../../lib/social.js'
@@ -21,30 +22,47 @@ const avatarUrl = ref('')
 const avatarBusy = ref(false)
 const galBusy = ref(false)
 const imgErr = ref('')
+const saveErr = ref('')
+const loading = ref(true)
+const loadError = ref('')
 const saving = ref(false)
 const saved = ref(false)
 const avatarInput = ref(null)
 const galInput = ref(null)
+const signedIn = computed(() => isCustomer.value && !!getCustomerToken())
 
 const initial = computed(() => (customer.value?.full_name || customer.value?.email || '?').charAt(0).toUpperCase())
 
-watch(() => customer.value?.id, () => {
-  if (!isCustomer.value) return
-  edit.value.full_name = customer.value.full_name || ''
-  edit.value.bio = customer.value.bio || ''
-  edit.value.is_private = customer.value.is_private === true
-  edit.value.photos = Array.isArray(customer.value.photos) ? [...customer.value.photos] : []
-  edit.value.marketing_email = customer.value.marketing_email === true
-  edit.value.marketing_sms = customer.value.marketing_sms === true
-  edit.value.marketing_whatsapp = customer.value.marketing_whatsapp === true
-  avatarUrl.value = customer.value.avatar_url || ''
-}, { immediate: true })
+function fillFromCustomer() {
+  const c = customer.value
+  if (!c) return
+  edit.value.full_name = c.full_name || ''
+  edit.value.bio = c.bio || ''
+  edit.value.is_private = c.is_private === true
+  edit.value.photos = Array.isArray(c.photos) ? [...c.photos] : []
+  edit.value.marketing_email = c.marketing_email === true
+  edit.value.marketing_sms = c.marketing_sms === true
+  edit.value.marketing_whatsapp = c.marketing_whatsapp === true
+  avatarUrl.value = c.avatar_url || ''
+}
+
+async function load() {
+  if (!signedIn.value) { loading.value = false; loadError.value = ''; return }
+  loading.value = true
+  loadError.value = ''
+  const res = await loadCustomerAccount()
+  if (res.error) loadError.value = res.error
+  fillFromCustomer()
+  loading.value = false
+}
+onMounted(load)
+watch(() => [customer.value?.id, signedIn.value], load)
 
 function pickAvatar() { avatarInput.value?.click() }
 async function onAvatarFile(e) {
   const file = e.target.files?.[0]; if (!file) return
   imgErr.value = ''; avatarBusy.value = true
-  const res = await uploadImage(file)
+  const res = await uploadCustomerAvatar(file)
   avatarBusy.value = false
   if (avatarInput.value) avatarInput.value.value = ''
   if (res.error) { imgErr.value = res.error; return }
@@ -64,9 +82,11 @@ async function onGalleryFiles(e) {
 }
 function removePhoto(i) { edit.value.photos.splice(i, 1) }
 async function saveProfile() {
-  saving.value = true; saved.value = false
-  await updateCustomerProfile({
-    full_name: edit.value.full_name.trim() || customer.value.full_name,
+  const name = edit.value.full_name.trim()
+  if (!name) { saveErr.value = 'Please enter your name.'; return }
+  saving.value = true; saved.value = false; saveErr.value = ''
+  const res = await saveCustomerAccount({
+    full_name: name,
     bio: edit.value.bio.trim(),
     is_private: edit.value.is_private,
     avatar_url: avatarUrl.value,
@@ -76,7 +96,10 @@ async function saveProfile() {
     marketing_whatsapp: edit.value.marketing_whatsapp,
     marketing_updated_at: new Date().toISOString(),
   })
-  saving.value = false; saved.value = true
+  saving.value = false
+  if (res.error) { saveErr.value = res.error; return }
+  saved.value = true
+  fillFromCustomer()
   setTimeout(() => { saved.value = false }, 2000)
 }
 
@@ -87,8 +110,14 @@ function signOut() { customerSignOut(); router.push('/') }
 
 <template>
   <div class="acc">
-    <!-- Signed in -->
-    <template v-if="isCustomer">
+    <!-- Signed in (Sanctum token required — leftover demo sessions cannot load Laravel profile) -->
+    <template v-if="signedIn && loading">
+      <div class="acc-msg">Loading…</div>
+    </template>
+    <template v-else-if="signedIn && loadError">
+      <div class="acc-msg acc-msg-err">{{ loadError }}</div>
+    </template>
+    <template v-else-if="signedIn">
       <div class="acc-prof">
         <div class="acc-avatar-wrap">
           <div class="acc-avatar" :class="{ img: avatarUrl }" :style="avatarUrl ? { backgroundImage: `url(${avatarUrl})` } : {}" @click="pickAvatar" title="Change profile picture">
@@ -153,8 +182,8 @@ function signOut() { customerSignOut(); router.push('/') }
             </button>
             <input ref="galInput" type="file" accept="image/*" multiple class="acc-file" @change="onGalleryFiles" />
           </div>
-          <div v-if="imgErr" class="acc-err">{{ imgErr }}</div>
         </template>
+        <div v-if="imgErr" class="acc-err">{{ imgErr }}</div>
 
         <!-- Marketing preferences — per-channel consent, editable any time. Shown on the
              marketplace AND white-label sites (providers may message their own customers). -->
@@ -175,6 +204,7 @@ function signOut() { customerSignOut(); router.push('/') }
           <span class="acc-toggle" :class="{ on: edit.marketing_whatsapp }"><span class="acc-knob"></span></span>
         </button>
 
+        <div v-if="saveErr" class="acc-err">{{ saveErr }}</div>
         <button class="acc-btn" :disabled="saving || avatarBusy || galBusy" @click="saveProfile">{{ saving ? 'Saving…' : (saved ? 'Saved!' : 'Save profile') }}</button>
       </div>
 
@@ -203,6 +233,8 @@ function signOut() { customerSignOut(); router.push('/') }
 
 <style scoped>
 .acc { max-width: 440px; margin: 0 auto; }
+.acc-msg { text-align: center; padding: 50px 20px; color: var(--text-light, #94a3b8); }
+.acc-msg-err { color: #dc2626; }
 .acc-hero { text-align: center; color: var(--brand); margin-bottom: 22px; }
 .acc-hero h1 { font-size: 25px; font-weight: 900; color: #0f172a; margin: 12px 0 6px; }
 .acc-hero p { font-size: 14.5px; color: var(--text-muted, #64748b); line-height: 1.5; margin: 0; }

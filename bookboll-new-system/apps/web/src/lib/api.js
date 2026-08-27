@@ -41,6 +41,8 @@ export async function apiFetch(path, { method = 'GET', body = null, token = null
   const headers = {}
   const bearer = token !== null && token !== undefined ? token : getCustomerToken()
   if (bearer) headers.Authorization = `Bearer ${bearer}`
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData
+  if (!isForm && body && typeof body === 'object') headers['Content-Type'] = 'application/json'
 
   try {
     const res = await client.request({

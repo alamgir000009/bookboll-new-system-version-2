@@ -346,8 +346,79 @@ export async function updateCustomerProfile(patch) {
     const r = await supabase.from('customers').update(safe).eq('id', customer.value.id).select().maybeSingle()
     data = r.data; error = r.error
   }
-  persistCustomer(data || { ...customer.value, ...patch })
+  persistCustomer({ ...(customer.value || {}), ...(data || patch) })
   return { ok: true }
+}
+
+function mergeLaravelUser(user, preferences) {
+  const current = customer.value || {}
+  const marketingEmail = !!(preferences?.notifications?.marketing_emails)
+  return {
+    ...current,
+    full_name: user?.name || current.full_name || '',
+    email: user?.email || current.email || '',
+    phone: user?.phone || current.phone || '',
+    avatar_url: user?.image || current.avatar_url || '',
+    marketing_email: marketingEmail,
+    laravel_user_id: user?.id || current.laravel_user_id,
+  }
+}
+
+export async function loadCustomerAccount() {
+  if (!getCustomerToken()) return { error: 'Please sign in to see your account.' }
+  const [profile, prefs] = await Promise.all([
+    apiFetch('/customer/profile'),
+    apiFetch('/customer/preferences'),
+  ])
+  if (!profile.success) return { error: formatApiError(profile, 'Could not load your account.') }
+  const user = profile.data?.user || {}
+  const preferences = prefs.success ? (prefs.data?.preferences || {}) : {}
+  const merged = mergeLaravelUser(user, preferences)
+  persistCustomer(merged)
+  return { ok: true, customer: merged }
+}
+
+export async function saveCustomerAccount(patch) {
+  if (!getCustomerToken()) return { error: 'Please sign in to save your account.' }
+  const name = String(patch?.full_name || '').trim()
+  if (!name) return { error: 'Please enter your name.' }
+  if (name.length > 100) return { error: 'Name must be 100 characters or fewer.' }
+
+  const profileRes = await apiFetch('/customer/update-profile', { method: 'POST', body: { name } })
+  if (!profileRes.success) return { error: formatApiError(profileRes, 'Could not save your profile.') }
+
+  const prefsRes = await apiFetch('/customer/preferences', {
+    method: 'POST',
+    body: { notifications: { marketing_emails: !!patch.marketing_email } },
+  })
+  if (!prefsRes.success) return { error: formatApiError(prefsRes, 'Profile saved, but marketing preferences could not be updated.') }
+
+  const social = await updateCustomerProfile({
+    full_name: name,
+    bio: patch.bio,
+    is_private: patch.is_private,
+    avatar_url: patch.avatar_url,
+    photos: patch.photos,
+    marketing_email: !!patch.marketing_email,
+    marketing_sms: !!patch.marketing_sms,
+    marketing_whatsapp: !!patch.marketing_whatsapp,
+    marketing_updated_at: patch.marketing_updated_at || new Date().toISOString(),
+  })
+  if (social.error) return social
+  return { ok: true }
+}
+
+export async function uploadCustomerAvatar(file) {
+  if (!file || !String(file.type || '').startsWith('image/')) return { error: 'Please choose a valid image file.' }
+  if (!getCustomerToken()) return { error: 'Please sign in to update your photo.' }
+  const body = new FormData()
+  body.append('image', file)
+  const res = await apiFetch('/customer/update-profile-image', { method: 'POST', body })
+  if (!res.success) return { error: formatApiError(res, 'Could not update your profile picture.') }
+  const url = res.data?.image || ''
+  if (!url) return { error: 'Could not update your profile picture.' }
+  await updateCustomerProfile({ avatar_url: url })
+  return { url }
 }
 
 // ── Loyalty tiers (mirror of the admin per-country model) ──────────────────────
