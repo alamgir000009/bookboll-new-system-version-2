@@ -1,9 +1,8 @@
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue'
-import { supabase } from '../../lib/supabase.js'
 import { customer, isCustomer, selectedCountry } from '../../lib/customerSession.js'
-import { loadMyBookings } from '../../customer/booking.js'
-import { notifyBookingCancelled } from '../../customer/notificationDispatch.js'
+import { getCustomerToken } from '../../lib/api.js'
+import { loadCustomerBookings, cancelCustomerBooking } from '../../customer/apiBooking.js'
 import { CalendarCheck, Calendar, Clock, MapPin, Building2, X } from 'lucide-vue-next'
 import { useSeo } from '../../lib/seo.js'
 import { fmt12 } from '../../lib/slots.js'
@@ -11,36 +10,38 @@ useSeo({ title: 'My bookings', noindex: true, path: '/my-bookings' })
 
 const bookings = ref([])
 const loading = ref(true)
+const loadError = ref('')
 const cancelling = ref('')
 const cur = computed(() => selectedCountry.value?.currency_code || 'AED')
+const signedIn = computed(() => isCustomer.value && !!getCustomerToken())
 
-// Customer self-cancel of an upcoming booking.
+function canCancel(b) {
+  return !!b?.canCancel
+}
+
 async function cancelBooking(b) {
-  if (!b || cancelling.value) return
+  if (!b || cancelling.value || !canCancel(b)) return
   if (!window.confirm(`Cancel ${b.listingName} on ${fmtDate(b.booking_date)} at ${fmtTime(b.start_time)}? This can't be undone.`)) return
+  const reason = window.prompt('Optional: why are you cancelling?')
+  if (reason === null) return
   cancelling.value = b.id
-  const { error } = await supabase.from('bookings').update({ booking_status: 'cancelled' }).eq('id', b.id)
+  const res = await cancelCustomerBooking(b.id, (reason || '').trim())
   cancelling.value = ''
-  if (error) { window.alert('Sorry — the booking could not be cancelled. Please try again.'); return }
-  // Fire-and-forget cancellation notification to the customer (their own booking).
-  try {
-    notifyBookingCancelled({
-      ownerId: null,
-      customer: { id: customer.value?.id, name: customer.value?.full_name || customer.value?.name, email: customer.value?.email, phone: customer.value?.phone },
-      booking: { listing: b.listingName, venue: b.locationName, business_name: b.locationName, date: fmtDate(b.booking_date), start_time: fmtTime(b.start_time), code: String(b.id).slice(0, 8).toUpperCase(), currency: cur.value },
-    })
-  } catch { /* non-blocking */ }
+  if (res.error) { window.alert(res.error); return }
   load()
 }
 
 async function load() {
-  if (!isCustomer.value) { loading.value = false; return }
+  if (!signedIn.value) { loading.value = false; bookings.value = []; loadError.value = ''; return }
   loading.value = true
-  bookings.value = await loadMyBookings(customer.value.id)
+  loadError.value = ''
+  const res = await loadCustomerBookings()
+  bookings.value = res.bookings || []
+  loadError.value = res.error || ''
   loading.value = false
 }
 onMounted(load)
-watch(() => customer.value?.id, load)
+watch(() => [customer.value?.id, signedIn.value], load)
 
 function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '' }
 function fmtTime(t) { return fmt12(t) }
@@ -53,8 +54,9 @@ const payLabel = { paid: 'Paid', pending: 'Pay at venue', partial: 'Deposit paid
 
 <template>
   <div class="mb">
-    <div v-if="!isCustomer" class="cmsg">Please <router-link to="/account">sign in</router-link> to see your bookings.</div>
+    <div v-if="!signedIn" class="cmsg">Please <router-link to="/account">sign in</router-link> to see your bookings.</div>
     <div v-else-if="loading" class="cmsg">Loading…</div>
+    <div v-else-if="loadError" class="cmsg">{{ loadError }}</div>
     <template v-else>
       <h1 class="mb-h1"><CalendarCheck :size="24" /> My Bookings</h1>
 
@@ -78,7 +80,7 @@ const payLabel = { paid: 'Paid', pending: 'Pay at venue', partial: 'Deposit paid
               <div class="mb-total">{{ cur }} {{ Number(b.total).toLocaleString() }}</div>
               <span class="mb-pay" :class="'pay-' + b.payment_status">{{ payLabel[b.payment_status] || b.payment_status }}</span>
               <span v-if="b.payment_status === 'partial'" class="mb-nr">deposit non-refundable</span>
-              <button class="mb-cancel" :disabled="cancelling === b.id" @click="cancelBooking(b)">
+              <button v-if="canCancel(b)" class="mb-cancel" :disabled="cancelling === b.id" @click="cancelBooking(b)">
                 <X :size="12" />{{ cancelling === b.id ? 'Cancelling…' : 'Cancel' }}
               </button>
             </div>

@@ -248,3 +248,67 @@ export async function createCustomerBookingsMulti({
   const bookings = (res.data?.bookings || []).map(b => b.id || b)
   return { bookings, currency: location?.currency_override || 'AED' }
 }
+
+const PAY_STATUS = {
+  fully_paid: 'paid',
+  deposit_paid: 'partial',
+  payment_skipped: 'skipped',
+  pending: 'pending',
+  cancelled: 'skipped',
+}
+
+function bookingList(res) {
+  const d = res?.data
+  if (Array.isArray(d?.bookings)) return d.bookings
+  if (Array.isArray(d?.data)) return d.data
+  if (Array.isArray(d)) return d
+  return []
+}
+
+export function mapCustomerBooking(row) {
+  const date = String(row?.date || '').slice(0, 10)
+  const paymentRaw = row?.payment_status || 'pending'
+  const payment_status = PAY_STATUS[paymentRaw] || paymentRaw
+  const booking_status = row?.status || 'pending'
+  return {
+    id: row.id,
+    bookingRef: row.booking_id || String(row.id),
+    listingName: row.listing?.name || 'Court',
+    locationName: row.venue?.name || '',
+    booking_date: date,
+    start_time: row.start_time,
+    end_time: row.end_time,
+    total: Number(row.total_price) || 0,
+    booking_status,
+    payment_status,
+    canCancel: booking_status === 'pending' && paymentRaw !== 'deposit_paid' && payment_status !== 'partial',
+  }
+}
+
+export async function loadCustomerBookings() {
+  const [upcoming, recent] = await Promise.all([
+    apiFetch('/customer/bookings/upcoming'),
+    apiFetch('/customer/bookings/recent'),
+  ])
+  const ok = upcoming.success || recent.success
+  if (!ok) {
+    return { error: upcoming.message || recent.message || 'Could not load bookings.', bookings: [] }
+  }
+  const seen = new Set()
+  const bookings = []
+  for (const row of [...bookingList(upcoming), ...bookingList(recent)]) {
+    if (row?.id == null || seen.has(row.id)) continue
+    seen.add(row.id)
+    bookings.push(mapCustomerBooking(row))
+  }
+  return { bookings }
+}
+
+export async function cancelCustomerBooking(id, reason) {
+  const res = await apiFetch('/customer/bookings/cancel', {
+    method: 'POST',
+    body: { booking_id: id, cancel_reason: reason || undefined },
+  })
+  if (!res.success) return { error: res.message || 'Sorry — the booking could not be cancelled. Please try again.' }
+  return { ok: true, booking: res.data?.booking }
+}
