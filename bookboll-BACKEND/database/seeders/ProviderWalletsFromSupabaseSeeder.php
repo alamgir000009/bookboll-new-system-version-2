@@ -47,7 +47,7 @@ class ProviderWalletsFromSupabaseSeeder extends Seeder
                     continue;
                 }
                 ProviderWallet::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     $this->mapRow($row, $owner)
                 );
                 $ok++;

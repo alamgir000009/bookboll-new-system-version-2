@@ -33,6 +33,7 @@ class WalletTransactionsFromSupabaseSeeder extends Seeder
         try {
             $this->command?->info('Fetching wallet_transactions…');
             $rows = $client->fetchAll('wallet_transactions', 'created_at.desc', 500, ['id.asc']);
+            $walletIdsByUuid = ProviderWallet::query()->pluck('id', 'uuid');
             $ok = 0;
             $skipped = 0;
             foreach ($rows as $row) {
@@ -42,13 +43,14 @@ class WalletTransactionsFromSupabaseSeeder extends Seeder
                     $skipped++;
                     continue;
                 }
-                $walletId = isset($row['wallet_id']) ? (string) $row['wallet_id'] : null;
-                if ($walletId && ! ProviderWallet::query()->where('id', $walletId)->exists()) {
+                $walletUuid = isset($row['wallet_id']) ? (string) $row['wallet_id'] : null;
+                $walletPk = $walletUuid ? $walletIdsByUuid->get($walletUuid) : null;
+                if ($walletUuid && ! $walletPk) {
                     $skipped++;
                     continue;
                 }
                 WalletTransaction::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     [
                         'owner_user_id'      => $owner,
                         'type'               => $row['type'] ?? 'booking_online',
@@ -65,7 +67,7 @@ class WalletTransactionsFromSupabaseSeeder extends Seeder
                         'hold_days_snapshot' => $row['hold_days_snapshot'] ?? null,
                         'released_at'        => $row['released_at'] ?? null,
                         'country_id'         => isset($row['country_id']) ? (string) $row['country_id'] : null,
-                        'wallet_id'          => $walletId,
+                        'wallet_id'          => $walletPk ? (int) $walletPk : null,
                         'created_at'         => $row['created_at'] ?? now(),
                     ]
                 );

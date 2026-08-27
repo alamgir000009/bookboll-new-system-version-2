@@ -2,9 +2,11 @@
 
 namespace Database\Seeders;
 
+use App\Models\Community;
 use App\Models\HostedGame;
 use App\Support\SupabaseRestClient;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -37,6 +39,7 @@ class HostedGamesFromSupabaseSeeder extends Seeder
         try {
             $this->command?->info('Fetching hosted_games…');
             $rows = $client->fetchAll('hosted_games', 'created_at.desc', 500, ['created_at.asc', 'id.asc']);
+            $communityIdsByUuid = Community::query()->pluck('id', 'uuid');
             $ok = 0;
             $skipped = 0;
             foreach ($rows as $row) {
@@ -46,8 +49,8 @@ class HostedGamesFromSupabaseSeeder extends Seeder
                     continue;
                 }
                 HostedGame::query()->updateOrCreate(
-                    ['id' => $id],
-                    $this->mapRow($row)
+                    ['uuid' => $id],
+                    $this->mapRow($row, $communityIdsByUuid)
                 );
                 $ok++;
             }
@@ -65,8 +68,11 @@ class HostedGamesFromSupabaseSeeder extends Seeder
         }
     }
 
-    protected function mapRow(array $row): array
+    protected function mapRow(array $row, Collection $communityIdsByUuid): array
     {
+        $communityUuid = $this->uuidOrNull($row['community_id'] ?? null);
+        $communityPk = $communityUuid ? $communityIdsByUuid->get($communityUuid) : null;
+
         return [
             'host_customer_id'         => $this->uuidOrNull($row['host_customer_id'] ?? null),
             'host_name'                => (string) ($row['host_name'] ?? ''),
@@ -105,7 +111,7 @@ class HostedGamesFromSupabaseSeeder extends Seeder
             'request_deadline'         => $row['request_deadline'] ?? null,
             'approval_mode'            => (string) ($row['approval_mode'] ?? 'review'),
             'charge'                   => $this->jsonVal($row['charge'] ?? null, null),
-            'community_id'             => $this->uuidOrNull($row['community_id'] ?? null),
+            'community_id'             => $communityPk ? (int) $communityPk : null,
             'lock_minutes_before'      => isset($row['lock_minutes_before']) ? (int) $row['lock_minutes_before'] : null,
             'play_format'              => (string) ($row['play_format'] ?? ''),
             'courts_count'             => isset($row['courts_count']) ? (int) $row['courts_count'] : null,

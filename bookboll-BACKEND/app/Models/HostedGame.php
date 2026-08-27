@@ -3,25 +3,19 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Str;
 
 class HostedGame extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    public $timestamps = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'hosted_games';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'host_customer_id',
         'host_name',
         'host_phone',
@@ -67,6 +61,7 @@ class HostedGame extends Model
         'community_public',
         'allow_waitlist',
         'created_at',
+        'updated_at',
     ];
 
     protected $casts = [
@@ -87,19 +82,8 @@ class HostedGame extends Model
         'community_public'     => 'boolean',
         'allow_waitlist'       => 'boolean',
         'created_at'           => 'datetime',
+        'updated_at'           => 'datetime',
     ];
-
-    protected static function booted(): void
-    {
-        static::creating(function (HostedGame $row) {
-            if (! $row->id) {
-                $row->id = (string) Str::uuid();
-            }
-            if (! $row->created_at) {
-                $row->created_at = now();
-            }
-        });
-    }
 
     public function joinRequests(): HasMany
     {
@@ -115,6 +99,7 @@ class HostedGame extends Model
     {
         return [
             'id',
+            'uuid',
             'host_customer_id',
             'host_name',
             'host_phone',
@@ -160,6 +145,7 @@ class HostedGame extends Model
             'community_public',
             'allow_waitlist',
             'created_at',
+            'updated_at',
         ];
     }
 }

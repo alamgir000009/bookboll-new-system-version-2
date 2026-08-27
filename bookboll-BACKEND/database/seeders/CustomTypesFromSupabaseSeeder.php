@@ -40,7 +40,7 @@ class CustomTypesFromSupabaseSeeder extends Seeder
                 }
                 $id = (string) ($row['id'] ?? Str::uuid());
                 CustomType::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     [
                         'domain'      => $domain,
                         'name'        => $name,
@@ -66,7 +66,7 @@ class CustomTypesFromSupabaseSeeder extends Seeder
     protected function seedFallback(): void
     {
         CustomType::query()->updateOrCreate(
-            ['id' => 'cccccccc-dddd-eeee-ffff-000000000001'],
+            ['uuid' => 'cccccccc-dddd-eeee-ffff-000000000001'],
             [
                 'domain'     => CustomType::DOMAIN_VENUE,
                 'name'       => 'Futsal Court XL',
@@ -76,7 +76,7 @@ class CustomTypesFromSupabaseSeeder extends Seeder
             ]
         );
         CustomType::query()->updateOrCreate(
-            ['id' => 'cccccccc-dddd-eeee-ffff-000000000002'],
+            ['uuid' => 'cccccccc-dddd-eeee-ffff-000000000002'],
             [
                 'domain'     => CustomType::DOMAIN_PROGRAM,
                 'name'       => 'Kids Academy Elite',

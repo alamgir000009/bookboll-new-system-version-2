@@ -21,8 +21,8 @@ class WalletPayoutDemoSeeder extends Seeder
         $walletId = 'dddddddd-eeee-ffff-cccc-000000000001';
         $walletId2 = 'dddddddd-eeee-ffff-cccc-000000000002';
 
-        ProviderWallet::query()->updateOrCreate(
-            ['id' => $walletId],
+        $wallet = ProviderWallet::query()->updateOrCreate(
+            ['uuid' => $walletId],
             [
                 'owner_user_id'         => $owner,
                 'country_id'            => $country,
@@ -50,7 +50,7 @@ class WalletPayoutDemoSeeder extends Seeder
         );
 
         ProviderWallet::query()->updateOrCreate(
-            ['id' => $walletId2],
+            ['uuid' => $walletId2],
             [
                 'owner_user_id'         => $owner,
                 'country_id'            => (string) Str::uuid(),
@@ -72,7 +72,7 @@ class WalletPayoutDemoSeeder extends Seeder
         );
 
         WithdrawalRequest::query()->updateOrCreate(
-            ['id' => 'dddddddd-eeee-ffff-dddd-000000000001'],
+            ['uuid' => 'dddddddd-eeee-ffff-dddd-000000000001'],
             [
                 'owner_user_id'  => $owner,
                 'amount'         => 100.00,
@@ -80,7 +80,7 @@ class WalletPayoutDemoSeeder extends Seeder
                 'payout_method'  => 'bank',
                 'status'         => 'pending',
                 'country_id'     => $country,
-                'wallet_id'      => $walletId,
+                'wallet_id'      => $wallet->id,
                 'requested_at'   => now()->subHours(3),
             ]
         );

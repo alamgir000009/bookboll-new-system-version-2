@@ -18,12 +18,12 @@ class ClassMembershipDemoSeeder extends Seeder
     public function run(): void
     {
         $venue = Venue::query()->orderBy('id')->first();
-        $programId = 'aaaaaaaa-bbbb-cccc-dddd-000000000001';
-        $subId = 'aaaaaaaa-bbbb-cccc-dddd-000000000002';
-        $sessionId = 'aaaaaaaa-bbbb-cccc-dddd-000000000003';
+        $programUuid = 'aaaaaaaa-bbbb-cccc-dddd-000000000001';
+        $subUuid = 'aaaaaaaa-bbbb-cccc-dddd-000000000002';
+        $sessionUuid = 'aaaaaaaa-bbbb-cccc-dddd-000000000003';
 
-        ClassProgram::query()->updateOrCreate(
-            ['id' => $programId],
+        $program = ClassProgram::query()->updateOrCreate(
+            ['uuid' => $programUuid],
             [
                 'name'                     => 'Demo Football Academy',
                 'description'              => 'Seeded demo membership program (not from Supabase).',
@@ -54,10 +54,10 @@ class ClassMembershipDemoSeeder extends Seeder
             ]
         );
 
-        ClassSubscription::query()->updateOrCreate(
-            ['id' => $subId],
+        $sub = ClassSubscription::query()->updateOrCreate(
+            ['uuid' => $subUuid],
             [
-                'program_id'       => $programId,
+                'program_id'       => $program->id,
                 'customer_name'    => 'Demo Member',
                 'customer_email'   => 'demo.member@example.com',
                 'started_at'       => now()->toDateString(),
@@ -75,10 +75,10 @@ class ClassMembershipDemoSeeder extends Seeder
         );
 
         ClassSession::query()->updateOrCreate(
-            ['id' => $sessionId],
+            ['uuid' => $sessionUuid],
             [
-                'subscription_id'  => $subId,
-                'program_id'       => $programId,
+                'subscription_id'  => $sub->id,
+                'program_id'       => $program->id,
                 'session_date'     => now()->next('Monday')->toDateString(),
                 'session_time'     => '18:00',
                 'duration_minutes' => 60,
@@ -86,10 +86,9 @@ class ClassMembershipDemoSeeder extends Seeder
             ]
         );
 
-        // Second light program for list UI smoke tests
-        $programId2 = 'aaaaaaaa-bbbb-cccc-dddd-000000000011';
+        $programUuid2 = 'aaaaaaaa-bbbb-cccc-dddd-000000000011';
         ClassProgram::query()->updateOrCreate(
-            ['id' => $programId2],
+            ['uuid' => $programUuid2],
             [
                 'name'                     => 'Demo Yoga Membership',
                 'description'              => 'Second demo program.',
@@ -114,6 +113,6 @@ class ClassMembershipDemoSeeder extends Seeder
         );
 
         $this->command?->info('Demo class membership rows ready (2 programs, 1 subscription, 1 session).');
-        $this->command?->info('IDs: program=' . $programId . ' sub=' . $subId);
+        $this->command?->info('UUIDs: program=' . $programUuid . ' sub=' . $subUuid);
     }
 }

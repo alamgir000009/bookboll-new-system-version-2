@@ -3,25 +3,19 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Str;
 
 class Community extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    public $timestamps = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'communities';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'owner_customer_id',
         'name',
         'description',
@@ -39,6 +33,7 @@ class Community extends Model
         'moderated_by',
         'avatar_image',
         'created_at',
+        'updated_at',
     ];
 
     protected $casts = [
@@ -48,19 +43,8 @@ class Community extends Model
         'settings'          => 'array',
         'moderated_at'      => 'datetime',
         'created_at'        => 'datetime',
+        'updated_at'        => 'datetime',
     ];
-
-    protected static function booted(): void
-    {
-        static::creating(function (Community $row) {
-            if (! $row->id) {
-                $row->id = (string) Str::uuid();
-            }
-            if (! $row->created_at) {
-                $row->created_at = now();
-            }
-        });
-    }
 
     public function members(): HasMany
     {
@@ -81,6 +65,7 @@ class Community extends Model
     {
         return [
             'id',
+            'uuid',
             'owner_customer_id',
             'name',
             'description',
@@ -98,6 +83,7 @@ class Community extends Model
             'moderated_by',
             'avatar_image',
             'created_at',
+            'updated_at',
         ];
     }
 }

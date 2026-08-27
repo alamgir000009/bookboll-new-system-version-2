@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Membership programs / subscribers / sessions (Supabase class_* parity).
- * UUID primary keys so seeded rows keep the same ids as Postgres.
+ * Bigint PKs; unique uuid keeps the original Postgres ids for imports.
  */
 return new class extends Migration
 {
@@ -14,7 +14,8 @@ return new class extends Migration
     {
         if (! Schema::hasTable('class_programs')) {
             Schema::create('class_programs', function (Blueprint $table) {
-                $table->uuid('id')->primary();
+                $table->id();
+                $table->uuid('uuid')->unique();
                 $table->uuid('provider_id')->nullable()->index();
                 $table->uuid('listing_id')->nullable()->index();
                 $table->json('listing_ids')->nullable();
@@ -80,8 +81,9 @@ return new class extends Migration
 
         if (! Schema::hasTable('class_subscriptions')) {
             Schema::create('class_subscriptions', function (Blueprint $table) {
-                $table->uuid('id')->primary();
-                $table->uuid('program_id')->index();
+                $table->id();
+                $table->uuid('uuid')->unique();
+                $table->foreignId('program_id')->constrained('class_programs')->cascadeOnDelete();
                 $table->uuid('customer_id')->nullable()->index();
                 $table->string('customer_name')->nullable();
                 $table->string('customer_email')->nullable()->index();
@@ -96,6 +98,7 @@ return new class extends Migration
                 $table->decimal('monthly_amount', 12, 2)->default(0);
                 $table->decimal('provider_payout', 12, 2)->default(0);
                 $table->decimal('platform_fee', 12, 2)->default(0);
+                $table->decimal('joining_fee', 12, 2)->default(0);
 
                 $table->string('card_on_file_id')->nullable();
                 $table->timestamp('first_charge_at')->nullable();
@@ -105,32 +108,28 @@ return new class extends Migration
                 $table->timestamp('payment_failed_at')->nullable();
 
                 $table->uuid('country_id')->nullable();
-                $table->uuid('wallet_id')->nullable()->index();
+                $table->unsignedBigInteger('wallet_id')->nullable()->index();
                 $table->json('form_answers')->nullable();
                 $table->boolean('is_comp')->default(false);
                 $table->string('comp_reason')->nullable();
                 $table->string('cancel_reason')->nullable();
 
                 $table->timestamps();
-
-                $table->foreign('program_id')->references('id')->on('class_programs')->cascadeOnDelete();
             });
         }
 
         if (! Schema::hasTable('class_sessions')) {
             Schema::create('class_sessions', function (Blueprint $table) {
-                $table->uuid('id')->primary();
-                $table->uuid('subscription_id')->index();
-                $table->uuid('program_id')->index();
+                $table->id();
+                $table->uuid('uuid')->unique();
+                $table->foreignId('subscription_id')->constrained('class_subscriptions')->cascadeOnDelete();
+                $table->foreignId('program_id')->constrained('class_programs')->cascadeOnDelete();
                 $table->uuid('listing_id')->nullable()->index();
                 $table->date('session_date')->index();
                 $table->string('session_time', 16);
                 $table->unsignedInteger('duration_minutes')->default(60);
                 $table->string('status', 32)->default('scheduled')->index();
                 $table->timestamps();
-
-                $table->foreign('subscription_id')->references('id')->on('class_subscriptions')->cascadeOnDelete();
-                $table->foreign('program_id')->references('id')->on('class_programs')->cascadeOnDelete();
             });
         }
     }

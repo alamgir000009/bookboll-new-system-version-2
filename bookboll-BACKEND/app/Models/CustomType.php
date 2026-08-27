@@ -3,17 +3,13 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Str;
 
 class CustomType extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'custom_types';
 
@@ -26,7 +22,7 @@ class CustomType extends Model
     public const DOMAIN_PROGRAM = 'program';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'domain',
         'name',
         'category',
@@ -39,15 +35,6 @@ class CustomType extends Model
         'approved_at' => 'datetime',
     ];
 
-    protected static function booted(): void
-    {
-        static::creating(function (CustomType $row) {
-            if (! $row->id) {
-                $row->id = (string) Str::uuid();
-            }
-        });
-    }
-
     protected function activityLogName(): string
     {
         return 'custom_type';
@@ -57,6 +44,7 @@ class CustomType extends Model
     {
         return [
             'id',
+            'uuid',
             'domain',
             'name',
             'category',

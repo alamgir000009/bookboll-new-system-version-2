@@ -36,26 +36,28 @@ class CommunityMembersFromSupabaseSeeder extends Seeder
         try {
             $this->command?->info('Fetching community_members…');
             $rows = $client->fetchAll('community_members', 'joined_at.desc', 500, ['joined_at.asc', 'id.asc']);
-            $known = Community::query()->pluck('id')->flip();
+            $communityIdsByUuid = Community::query()->pluck('id', 'uuid');
             $ok = 0;
             $skipped = 0;
             foreach ($rows as $row) {
                 $id = (string) ($row['id'] ?? '');
                 $cid = (string) ($row['community_id'] ?? '');
                 $customer = (string) ($row['customer_id'] ?? '');
-                if ($id === '' || $cid === '' || $customer === '' || ! $known->has($cid)) {
+                $communityPk = $cid !== '' ? $communityIdsByUuid->get($cid) : null;
+                if ($id === '' || ! $communityPk || $customer === '') {
                     $skipped++;
                     continue;
                 }
                 CommunityMember::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     [
-                        'community_id' => $cid,
+                        'community_id' => (int) $communityPk,
                         'customer_id'  => $customer,
                         'role'         => (string) ($row['role'] ?? 'member'),
                         'status'       => (string) ($row['status'] ?? 'accepted'),
                         'last_read_at' => $row['last_read_at'] ?? null,
                         'joined_at'    => $row['joined_at'] ?? now(),
+                        'created_at'   => $row['joined_at'] ?? $row['created_at'] ?? now(),
                     ]
                 );
                 $ok++;

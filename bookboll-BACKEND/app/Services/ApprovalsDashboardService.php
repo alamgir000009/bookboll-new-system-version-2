@@ -352,6 +352,7 @@ class ApprovalsDashboardService
 
         return [
             'id'                       => $p->id,
+            'uuid'                     => $p->uuid,
             'name'                     => $p->name,
             'description'              => $p->description,
             'sport_category'           => $p->sport_category,

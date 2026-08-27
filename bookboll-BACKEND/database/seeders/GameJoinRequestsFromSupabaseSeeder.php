@@ -36,20 +36,21 @@ class GameJoinRequestsFromSupabaseSeeder extends Seeder
         try {
             $this->command?->info('Fetching game_join_requests…');
             $rows = $client->fetchAll('game_join_requests', 'created_at.desc', 500, ['created_at.asc', 'id.asc']);
-            $knownGames = HostedGame::query()->pluck('id')->flip();
+            $gameIdsByUuid = HostedGame::query()->pluck('id', 'uuid');
             $ok = 0;
             $skipped = 0;
             foreach ($rows as $row) {
                 $id = (string) ($row['id'] ?? '');
-                $gameId = (string) ($row['game_id'] ?? '');
-                if ($id === '' || $gameId === '' || ! $knownGames->has($gameId)) {
+                $gameUuid = (string) ($row['game_id'] ?? '');
+                $gamePk = $gameUuid !== '' ? $gameIdsByUuid->get($gameUuid) : null;
+                if ($id === '' || ! $gamePk) {
                     $skipped++;
                     continue;
                 }
                 GameJoinRequest::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     [
-                        'game_id'             => $gameId,
+                        'game_id'             => (int) $gamePk,
                         'joiner_customer_id'  => $this->uuidOrNull($row['joiner_customer_id'] ?? null),
                         'joiner_name'         => (string) ($row['joiner_name'] ?? ''),
                         'joiner_phone'        => (string) ($row['joiner_phone'] ?? ''),

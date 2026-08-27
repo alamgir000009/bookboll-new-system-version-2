@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Communities module — mirrors Supabase public.communities,
- * community_members, community_posts (UUID PKs, no FKs).
+ * community_members, community_posts (bigint PKs + unique uuid, no FKs).
  */
 return new class extends Migration
 {
@@ -14,7 +14,8 @@ return new class extends Migration
     {
         if (! Schema::hasTable('communities')) {
             Schema::create('communities', function (Blueprint $table) {
-                $table->uuid('id')->primary();
+                $table->id();
+                $table->uuid('uuid')->unique();
                 $table->uuid('owner_customer_id')->index();
                 $table->string('name');
                 $table->text('description')->nullable();
@@ -31,19 +32,22 @@ return new class extends Migration
                 $table->timestamp('moderated_at')->nullable();
                 $table->string('moderated_by')->nullable();
                 $table->text('avatar_image')->nullable();
-                $table->timestamp('created_at')->nullable()->index();
+                $table->timestamps();
+                $table->index('created_at');
             });
         }
 
         if (! Schema::hasTable('community_members')) {
             Schema::create('community_members', function (Blueprint $table) {
-                $table->uuid('id')->primary();
-                $table->uuid('community_id');
+                $table->id();
+                $table->uuid('uuid')->unique();
+                $table->unsignedBigInteger('community_id');
                 $table->uuid('customer_id');
                 $table->string('role', 32)->default('member');
                 $table->string('status', 32)->default('accepted');
                 $table->timestamp('last_read_at')->nullable();
                 $table->timestamp('joined_at')->nullable();
+                $table->timestamps();
                 $table->unique(['community_id', 'customer_id'], 'cm_community_customer_unique');
                 $table->index(['community_id', 'status'], 'cm_community_status');
                 $table->index(['customer_id', 'status'], 'cm_customer_status');
@@ -52,8 +56,9 @@ return new class extends Migration
 
         if (! Schema::hasTable('community_posts')) {
             Schema::create('community_posts', function (Blueprint $table) {
-                $table->uuid('id')->primary();
-                $table->uuid('community_id')->index();
+                $table->id();
+                $table->uuid('uuid')->unique();
+                $table->unsignedBigInteger('community_id')->index();
                 $table->uuid('author_id')->index();
                 $table->text('body')->nullable();
                 $table->json('photos')->nullable();
@@ -61,7 +66,8 @@ return new class extends Migration
                 $table->text('moderation_reason')->nullable();
                 $table->timestamp('moderated_at')->nullable();
                 $table->string('moderated_by')->nullable();
-                $table->timestamp('created_at')->nullable()->index();
+                $table->timestamps();
+                $table->index('created_at');
             });
         }
     }

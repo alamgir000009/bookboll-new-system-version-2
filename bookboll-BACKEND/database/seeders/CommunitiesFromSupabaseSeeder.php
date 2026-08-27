@@ -45,7 +45,7 @@ class CommunitiesFromSupabaseSeeder extends Seeder
                     continue;
                 }
                 Community::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     $this->mapRow($row, $owner)
                 );
                 $ok++;

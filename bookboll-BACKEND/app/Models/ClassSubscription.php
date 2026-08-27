@@ -3,6 +3,7 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,16 +11,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ClassSubscription extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'class_subscriptions';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'program_id',
         'customer_id',
         'customer_name',
@@ -85,6 +82,7 @@ class ClassSubscription extends Model
     {
         return [
             'id',
+            'uuid',
             'program_id',
             'customer_id',
             'customer_name',

@@ -487,7 +487,7 @@ class WalletPayoutService
             'payout_method'  => 'nullable|string|max:64',
             'payout_details' => 'nullable|string',
             'country_id'     => 'nullable|string|max:36',
-            'wallet_id'      => 'required|string|max:36',
+            'wallet_id'      => 'required|integer|exists:provider_wallets,id',
             'notes'          => 'nullable|string',
         ]);
 
@@ -536,7 +536,7 @@ class WalletPayoutService
             'payout_method'  => 'nullable|string|max:64',
             'payout_details' => 'nullable|string',
             'country_id'     => 'nullable|string|max:36',
-            'wallet_id'      => 'nullable|string|max:36',
+            'wallet_id'      => 'nullable|integer|exists:provider_wallets,id',
             'notes'          => 'nullable|string',
         ]);
 
@@ -562,7 +562,7 @@ class WalletPayoutService
     public function applyWalletDelta($request)
     {
         $data = $request->validate([
-            'wallet_id' => 'required|string|max:36',
+            'wallet_id' => 'required|integer|exists:provider_wallets,id',
             'pending'   => 'nullable|numeric',
             'available' => 'nullable|numeric',
             'earned'    => 'nullable|numeric',
@@ -601,7 +601,7 @@ class WalletPayoutService
             'hold_days_snapshot'  => 'nullable|integer',
             'released_at'         => 'nullable|date',
             'country_id'          => 'nullable|string|max:36',
-            'wallet_id'           => 'nullable|string|max:36',
+            'wallet_id'           => 'nullable|integer|exists:provider_wallets,id',
         ]);
 
         $tx = WalletTransaction::query()->create([
@@ -733,6 +733,7 @@ class WalletPayoutService
     {
         return [
             'id'                     => $w->id,
+            'uuid'                   => $w->uuid,
             'owner_user_id'          => $w->owner_user_id,
             'available_balance'      => (float) $w->available_balance,
             'pending_balance'        => (float) $w->pending_balance,
@@ -778,6 +779,7 @@ class WalletPayoutService
     {
         return [
             'id'               => $w->id,
+            'uuid'             => $w->uuid,
             'owner_user_id'    => $w->owner_user_id,
             'amount'           => (float) $w->amount,
             'currency'         => $w->currency,
@@ -802,6 +804,7 @@ class WalletPayoutService
     {
         return [
             'id'                  => $t->id,
+            'uuid'                => $t->uuid,
             'owner_user_id'       => $t->owner_user_id,
             'type'                => $t->type,
             'direction'           => $t->direction,

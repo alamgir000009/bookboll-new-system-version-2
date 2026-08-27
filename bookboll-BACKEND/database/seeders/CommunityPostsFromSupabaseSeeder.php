@@ -36,21 +36,22 @@ class CommunityPostsFromSupabaseSeeder extends Seeder
         try {
             $this->command?->info('Fetching community_posts…');
             $rows = $client->fetchAll('community_posts', 'created_at.desc', 500, ['created_at.asc', 'id.asc']);
-            $known = Community::query()->pluck('id')->flip();
+            $communityIdsByUuid = Community::query()->pluck('id', 'uuid');
             $ok = 0;
             $skipped = 0;
             foreach ($rows as $row) {
                 $id = (string) ($row['id'] ?? '');
                 $cid = (string) ($row['community_id'] ?? '');
                 $author = (string) ($row['author_id'] ?? '');
-                if ($id === '' || $cid === '' || $author === '' || ! $known->has($cid)) {
+                $communityPk = $cid !== '' ? $communityIdsByUuid->get($cid) : null;
+                if ($id === '' || ! $communityPk || $author === '') {
                     $skipped++;
                     continue;
                 }
                 CommunityPost::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     [
-                        'community_id'      => $cid,
+                        'community_id'      => (int) $communityPk,
                         'author_id'         => $author,
                         'body'              => (string) ($row['body'] ?? ''),
                         'photos'            => $this->jsonVal($row['photos'] ?? null, []),

@@ -3,23 +3,19 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Str;
 
 class WalletTransaction extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'wallet_transactions';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'owner_user_id',
         'type',
         'direction',
@@ -51,9 +47,6 @@ class WalletTransaction extends Model
     protected static function booted(): void
     {
         static::creating(function (WalletTransaction $row) {
-            if (! $row->id) {
-                $row->id = (string) Str::uuid();
-            }
             if (! $row->created_at) {
                 $row->created_at = now();
             }
@@ -74,6 +67,7 @@ class WalletTransaction extends Model
     {
         return [
             'id',
+            'uuid',
             'owner_user_id',
             'type',
             'direction',

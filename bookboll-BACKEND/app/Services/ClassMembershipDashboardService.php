@@ -100,7 +100,7 @@ class ClassMembershipDashboardService
     public function store($request)
     {
         $data = $request->validate([
-            'program_id'      => 'required|uuid|exists:class_programs,id',
+            'program_id'      => 'required|integer|exists:class_programs,id',
             'customer_name'   => 'required|string|max:255',
             'customer_email'  => 'nullable|string|max:255',
             'started_at'      => 'required|date',
@@ -132,7 +132,6 @@ class ClassMembershipDashboardService
         DB::beginTransaction();
         try {
             $sub = ClassSubscription::query()->create([
-                'id'               => (string) Str::uuid(),
                 'program_id'       => $program->id,
                 'customer_name'    => trim($data['customer_name']),
                 'customer_email'   => $data['customer_email'] ?? '',
@@ -234,7 +233,7 @@ class ClassMembershipDashboardService
     {
         $data = $request->validate([
             'ids'   => 'required|array|min:1',
-            'ids.*' => 'uuid',
+            'ids.*' => 'integer',
         ]);
 
         $n = 0;
@@ -731,7 +730,6 @@ class ClassMembershipDashboardService
         while ($cur < $end) {
             if (isset($set[(int) $cur->dayOfWeek])) {
                 ClassSession::query()->create([
-                    'id'               => (string) Str::uuid(),
                     'subscription_id'  => $sub->id,
                     'program_id'       => $program->id,
                     'listing_id'       => null,
@@ -797,6 +795,7 @@ class ClassMembershipDashboardService
 
         return [
             'id'                       => $p->id,
+            'uuid'                     => $p->uuid,
             'name'                     => $p->name,
             'description'              => $p->description,
             'sport_category'           => $p->sport_category,
@@ -852,6 +851,7 @@ class ClassMembershipDashboardService
     {
         return [
             'id'                        => $s->id,
+            'uuid'                      => $s->uuid,
             'program_id'                => $s->program_id,
             'customer_id'               => $s->customer_id,
             'customer_name'             => $s->customer_name,

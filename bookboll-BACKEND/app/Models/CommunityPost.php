@@ -3,25 +3,19 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Str;
 
 class CommunityPost extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    public $timestamps = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'community_posts';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'community_id',
         'author_id',
         'body',
@@ -31,25 +25,15 @@ class CommunityPost extends Model
         'moderated_at',
         'moderated_by',
         'created_at',
+        'updated_at',
     ];
 
     protected $casts = [
         'photos'       => 'array',
         'moderated_at' => 'datetime',
         'created_at'   => 'datetime',
+        'updated_at'   => 'datetime',
     ];
-
-    protected static function booted(): void
-    {
-        static::creating(function (CommunityPost $row) {
-            if (! $row->id) {
-                $row->id = (string) Str::uuid();
-            }
-            if (! $row->created_at) {
-                $row->created_at = now();
-            }
-        });
-    }
 
     public function community(): BelongsTo
     {
@@ -65,6 +49,7 @@ class CommunityPost extends Model
     {
         return [
             'id',
+            'uuid',
             'community_id',
             'author_id',
             'body',
@@ -74,6 +59,7 @@ class CommunityPost extends Model
             'moderated_at',
             'moderated_by',
             'created_at',
+            'updated_at',
         ];
     }
 }

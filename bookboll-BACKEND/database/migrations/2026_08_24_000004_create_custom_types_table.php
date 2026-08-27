@@ -17,7 +17,8 @@ return new class extends Migration
         }
 
         Schema::create('custom_types', function (Blueprint $table) {
-            $table->uuid('id')->primary();
+            $table->id();
+            $table->uuid('uuid')->unique();
             $table->string('domain', 32)->index(); // venue | program
             $table->string('name');
             $table->string('category', 64)->nullable();

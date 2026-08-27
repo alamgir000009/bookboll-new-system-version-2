@@ -33,6 +33,7 @@ class WithdrawalRequestsFromSupabaseSeeder extends Seeder
         try {
             $this->command?->info('Fetching withdrawal_requests…');
             $rows = $client->fetchAll('withdrawal_requests', 'requested_at.desc', 500, ['created_at.desc', 'id.asc']);
+            $walletIdsByUuid = ProviderWallet::query()->pluck('id', 'uuid');
             $ok = 0;
             $skipped = 0;
             foreach ($rows as $row) {
@@ -42,14 +43,15 @@ class WithdrawalRequestsFromSupabaseSeeder extends Seeder
                     $skipped++;
                     continue;
                 }
-                $walletId = isset($row['wallet_id']) ? (string) $row['wallet_id'] : null;
-                if ($walletId && ! ProviderWallet::query()->where('id', $walletId)->exists()) {
-                    $this->command?->warn("Skip withdrawal {$id}: wallet {$walletId} missing locally");
+                $walletUuid = isset($row['wallet_id']) ? (string) $row['wallet_id'] : null;
+                $walletPk = $walletUuid ? $walletIdsByUuid->get($walletUuid) : null;
+                if ($walletUuid && ! $walletPk) {
+                    $this->command?->warn("Skip withdrawal {$id}: wallet {$walletUuid} missing locally");
                     $skipped++;
                     continue;
                 }
                 WithdrawalRequest::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     [
                         'owner_user_id'    => $owner,
                         'amount'           => $row['amount'] ?? 0,
@@ -65,7 +67,7 @@ class WithdrawalRequestsFromSupabaseSeeder extends Seeder
                         'cancelled_at'     => $row['cancelled_at'] ?? null,
                         'notes'            => $row['notes'] ?? null,
                         'country_id'       => isset($row['country_id']) ? (string) $row['country_id'] : null,
-                        'wallet_id'        => $walletId,
+                        'wallet_id'        => $walletPk ? (int) $walletPk : null,
                     ]
                 );
                 $ok++;

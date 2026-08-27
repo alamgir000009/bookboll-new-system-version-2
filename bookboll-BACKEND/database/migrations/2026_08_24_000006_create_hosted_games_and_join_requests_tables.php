@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Hosted events / join requests — mirrors Supabase public.hosted_games
- * and public.game_join_requests (final column set, UUID PKs, no FKs).
+ * and public.game_join_requests (bigint PKs + unique uuid, no FKs).
  */
 return new class extends Migration
 {
@@ -14,7 +14,8 @@ return new class extends Migration
     {
         if (! Schema::hasTable('hosted_games')) {
             Schema::create('hosted_games', function (Blueprint $table) {
-                $table->uuid('id')->primary();
+                $table->id();
+                $table->uuid('uuid')->unique();
                 $table->uuid('host_customer_id')->nullable()->index();
                 $table->string('host_name')->nullable()->default('');
                 $table->string('host_phone')->nullable()->default('');
@@ -52,21 +53,23 @@ return new class extends Migration
                 $table->timestamp('request_deadline')->nullable();
                 $table->string('approval_mode', 32)->default('review');
                 $table->json('charge')->nullable();
-                $table->uuid('community_id')->nullable()->index();
+                $table->unsignedBigInteger('community_id')->nullable()->index();
                 $table->integer('lock_minutes_before')->nullable();
                 $table->string('play_format', 64)->nullable()->default('');
                 $table->integer('courts_count')->nullable();
                 $table->json('rounds')->nullable();
                 $table->boolean('community_public')->default(false);
                 $table->boolean('allow_waitlist')->default(true);
-                $table->timestamp('created_at')->nullable()->index();
+                $table->timestamps();
+                $table->index('created_at');
             });
         }
 
         if (! Schema::hasTable('game_join_requests')) {
             Schema::create('game_join_requests', function (Blueprint $table) {
-                $table->uuid('id')->primary();
-                $table->uuid('game_id')->index();
+                $table->id();
+                $table->uuid('uuid')->unique();
+                $table->unsignedBigInteger('game_id')->index();
                 $table->uuid('joiner_customer_id')->nullable()->index();
                 $table->string('joiner_name')->nullable()->default('');
                 $table->string('joiner_phone')->nullable()->default('');
@@ -76,7 +79,7 @@ return new class extends Migration
                 $table->json('form_answers')->nullable();
                 $table->boolean('attended')->nullable();
                 $table->string('refund_state', 32)->nullable()->default('');
-                $table->timestamp('created_at')->nullable();
+                $table->timestamps();
             });
         }
     }

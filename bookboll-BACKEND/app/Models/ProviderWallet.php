@@ -3,22 +3,18 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Str;
 
 class ProviderWallet extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'provider_wallets';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'owner_user_id',
         'available_balance',
         'pending_balance',
@@ -69,15 +65,6 @@ class ProviderWallet extends Model
         'payout_paused_at'    => 'datetime',
     ];
 
-    protected static function booted(): void
-    {
-        static::creating(function (ProviderWallet $row) {
-            if (! $row->id) {
-                $row->id = (string) Str::uuid();
-            }
-        });
-    }
-
     protected function activityLogName(): string
     {
         return 'provider_wallet';
@@ -87,6 +74,7 @@ class ProviderWallet extends Model
     {
         return [
             'id',
+            'uuid',
             'owner_user_id',
             'available_balance',
             'pending_balance',

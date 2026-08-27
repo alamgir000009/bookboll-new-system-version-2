@@ -3,22 +3,19 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ClassSession extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'class_sessions';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'subscription_id',
         'program_id',
         'listing_id',
@@ -53,6 +50,7 @@ class ClassSession extends Model
     {
         return [
             'id',
+            'uuid',
             'subscription_id',
             'program_id',
             'listing_id',

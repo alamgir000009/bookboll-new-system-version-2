@@ -3,6 +3,7 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,16 +11,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ClassProgram extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'class_programs';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'provider_id',
         'listing_id',
         'listing_ids',
@@ -124,6 +121,7 @@ class ClassProgram extends Model
     {
         return [
             'id',
+            'uuid',
             'provider_id',
             'listing_id',
             'listing_ids',

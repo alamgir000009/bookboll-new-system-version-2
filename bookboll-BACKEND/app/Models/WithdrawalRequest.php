@@ -3,23 +3,19 @@
 namespace App\Models;
 
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Str;
 
 class WithdrawalRequest extends Model
 {
-    use LogsModelActivity;
-
-    public $incrementing = false;
-
-    protected $keyType = 'string';
+    use GeneratesUuid, LogsModelActivity;
 
     protected $table = 'withdrawal_requests';
 
     protected $fillable = [
-        'id',
+        'uuid',
         'owner_user_id',
         'amount',
         'currency',
@@ -48,9 +44,6 @@ class WithdrawalRequest extends Model
     protected static function booted(): void
     {
         static::creating(function (WithdrawalRequest $row) {
-            if (! $row->id) {
-                $row->id = (string) Str::uuid();
-            }
             if (! $row->requested_at) {
                 $row->requested_at = now();
             }
@@ -71,6 +64,7 @@ class WithdrawalRequest extends Model
     {
         return [
             'id',
+            'uuid',
             'owner_user_id',
             'amount',
             'currency',

@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Provider payout rails — mirrors Supabase public.provider_wallets,
- * withdrawal_requests, wallet_transactions (final column set, UUID PKs).
+ * withdrawal_requests, wallet_transactions (bigint PKs + unique uuid).
  */
 return new class extends Migration
 {
@@ -14,7 +14,8 @@ return new class extends Migration
     {
         if (! Schema::hasTable('provider_wallets')) {
             Schema::create('provider_wallets', function (Blueprint $table) {
-                $table->uuid('id')->primary();
+                $table->id();
+                $table->uuid('uuid')->unique();
                 $table->uuid('owner_user_id')->index();
                 $table->decimal('available_balance', 14, 2)->default(0);
                 $table->decimal('pending_balance', 14, 2)->default(0);
@@ -57,7 +58,8 @@ return new class extends Migration
 
         if (! Schema::hasTable('withdrawal_requests')) {
             Schema::create('withdrawal_requests', function (Blueprint $table) {
-                $table->uuid('id')->primary();
+                $table->id();
+                $table->uuid('uuid')->unique();
                 $table->uuid('owner_user_id')->index();
                 $table->decimal('amount', 14, 2);
                 $table->string('currency', 16)->default('AED');
@@ -72,14 +74,15 @@ return new class extends Migration
                 $table->timestamp('cancelled_at')->nullable();
                 $table->text('notes')->nullable();
                 $table->uuid('country_id')->nullable()->index();
-                $table->uuid('wallet_id')->nullable()->index();
+                $table->unsignedBigInteger('wallet_id')->nullable()->index();
                 $table->timestamps();
             });
         }
 
         if (! Schema::hasTable('wallet_transactions')) {
             Schema::create('wallet_transactions', function (Blueprint $table) {
-                $table->uuid('id')->primary();
+                $table->id();
+                $table->uuid('uuid')->unique();
                 $table->uuid('owner_user_id')->index();
                 $table->string('type', 64)->default('booking_online');
                 $table->string('direction', 16)->default('credit');
@@ -95,7 +98,7 @@ return new class extends Migration
                 $table->unsignedInteger('hold_days_snapshot')->nullable();
                 $table->timestamp('released_at')->nullable();
                 $table->uuid('country_id')->nullable()->index();
-                $table->uuid('wallet_id')->nullable()->index();
+                $table->unsignedBigInteger('wallet_id')->nullable()->index();
                 $table->timestamp('created_at')->nullable();
                 $table->timestamp('updated_at')->nullable();
 

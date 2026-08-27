@@ -100,7 +100,7 @@ class EventModerationService
         $supabaseError = null;
         try {
             $client = SupabaseRestClient::fromConfig();
-            $client->updateById('hosted_games', $id, [
+            $client->updateById('hosted_games', (string) $game->uuid, [
                 'moderation_status' => $status,
                 'moderation_reason' => $reason,
                 'moderated_at'      => optional($game->moderated_at)?->toIso8601String() ?? now()->toIso8601String(),
@@ -134,7 +134,8 @@ class EventModerationService
     protected function mapGame(HostedGame $g): array
     {
         return [
-            'id'                       => (string) $g->id,
+            'id'                       => $g->id,
+            'uuid'                     => $g->uuid,
             'host_customer_id'         => $g->host_customer_id ? (string) $g->host_customer_id : null,
             'host_name'                => $g->host_name ?? '',
             'host_phone'               => $g->host_phone ?? '',

@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\ClassProgram;
 use App\Models\ClassSession;
 use App\Models\ClassSubscription;
+use App\Models\ProviderWallet;
 use App\Models\User;
 use App\Models\Venue;
 use App\Support\SupabaseRestClient;
@@ -14,7 +15,7 @@ use Throwable;
 
 /**
  * Pull class_programs / class_subscriptions / class_sessions from Supabase
- * and upsert into MySQL (idempotent by UUID id).
+ * and upsert into MySQL (idempotent by uuid).
  *
  *   php artisan db:seed --class=ClassMembershipFromSupabaseSeeder
  */
@@ -81,7 +82,7 @@ class ClassMembershipFromSupabaseSeeder extends Seeder
                 }
 
                 ClassProgram::query()->updateOrCreate(
-                    ['id' => $id],
+                    ['uuid' => $id],
                     $this->mapProgram($row, $venueId, $mappedOwner)
                 );
                 $programOk++;
@@ -91,26 +92,31 @@ class ClassMembershipFromSupabaseSeeder extends Seeder
 
             $this->command?->info('Fetching class_subscriptions…');
             $subs = $client->fetchAll('class_subscriptions', 'created_at.asc');
-            $knownPrograms = ClassProgram::query()->pluck('id')->flip();
+            $programIdsByUuid = ClassProgram::query()->pluck('id', 'uuid');
+            $walletIdsByUuid = ProviderWallet::query()->pluck('id', 'uuid');
             $subOk = 0;
             $subSkip = 0;
 
             foreach ($subs as $row) {
                 $id = (string) ($row['id'] ?? '');
-                $programId = (string) ($row['program_id'] ?? '');
-                if ($id === '' || $programId === '') {
+                $programUuid = (string) ($row['program_id'] ?? '');
+                if ($id === '' || $programUuid === '') {
                     $subSkip++;
                     continue;
                 }
-                if (! $knownPrograms->has($programId)) {
+                $programPk = $programIdsByUuid->get($programUuid);
+                if (! $programPk) {
                     $subSkip++;
-                    $this->command?->warn("Skip subscription {$id}: missing program {$programId}");
+                    $this->command?->warn("Skip subscription {$id}: missing program {$programUuid}");
                     continue;
                 }
 
+                $walletUuid = $this->uuidOrNull($row['wallet_id'] ?? null);
+                $walletPk = $walletUuid ? $walletIdsByUuid->get($walletUuid) : null;
+
                 ClassSubscription::query()->updateOrCreate(
-                    ['id' => $id],
-                    $this->mapSubscription($row)
+                    ['uuid' => $id],
+                    $this->mapSubscription($row, (int) $programPk, $walletPk ? (int) $walletPk : null)
                 );
                 $subOk++;
             }
@@ -119,26 +125,28 @@ class ClassMembershipFromSupabaseSeeder extends Seeder
 
             $this->command?->info('Fetching class_sessions…');
             $sessions = $client->fetchAll('class_sessions', 'session_date.asc');
-            $knownSubs = ClassSubscription::query()->pluck('id')->flip();
+            $subIdsByUuid = ClassSubscription::query()->pluck('id', 'uuid');
             $sessOk = 0;
             $sessSkip = 0;
 
             foreach ($sessions as $row) {
                 $id = (string) ($row['id'] ?? '');
-                $subId = (string) ($row['subscription_id'] ?? '');
-                $programId = (string) ($row['program_id'] ?? '');
-                if ($id === '' || $subId === '' || $programId === '') {
+                $subUuid = (string) ($row['subscription_id'] ?? '');
+                $programUuid = (string) ($row['program_id'] ?? '');
+                if ($id === '' || $subUuid === '' || $programUuid === '') {
                     $sessSkip++;
                     continue;
                 }
-                if (! $knownSubs->has($subId) || ! $knownPrograms->has($programId)) {
+                $subPk = $subIdsByUuid->get($subUuid);
+                $programPk = $programIdsByUuid->get($programUuid);
+                if (! $subPk || ! $programPk) {
                     $sessSkip++;
                     continue;
                 }
 
                 ClassSession::query()->updateOrCreate(
-                    ['id' => $id],
-                    $this->mapSession($row)
+                    ['uuid' => $id],
+                    $this->mapSession($row, (int) $subPk, (int) $programPk)
                 );
                 $sessOk++;
             }
@@ -212,10 +220,10 @@ class ClassMembershipFromSupabaseSeeder extends Seeder
         ];
     }
 
-    protected function mapSubscription(array $row): array
+    protected function mapSubscription(array $row, int $programId, ?int $walletId): array
     {
         return [
-            'program_id'                => (string) $row['program_id'],
+            'program_id'                => $programId,
             'customer_id'               => $this->uuidOrNull($row['customer_id'] ?? null),
             'customer_name'             => $row['customer_name'] ?? '',
             'customer_email'            => $row['customer_email'] ?? '',
@@ -228,6 +236,7 @@ class ClassMembershipFromSupabaseSeeder extends Seeder
             'monthly_amount'            => $row['monthly_amount'] ?? 0,
             'provider_payout'           => $row['provider_payout'] ?? 0,
             'platform_fee'              => $row['platform_fee'] ?? 0,
+            'joining_fee'               => $row['joining_fee'] ?? 0,
             'card_on_file_id'           => $row['card_on_file_id'] ?? '',
             'first_charge_at'           => $this->tsOrNull($row['first_charge_at'] ?? null),
             'cancelled_during_trial_at' => $this->tsOrNull($row['cancelled_during_trial_at'] ?? null),
@@ -235,7 +244,7 @@ class ClassMembershipFromSupabaseSeeder extends Seeder
             'paused_until'              => $this->tsOrNull($row['paused_until'] ?? null),
             'payment_failed_at'         => $this->tsOrNull($row['payment_failed_at'] ?? null),
             'country_id'                => $this->uuidOrNull($row['country_id'] ?? null),
-            'wallet_id'                 => $this->uuidOrNull($row['wallet_id'] ?? null),
+            'wallet_id'                 => $walletId,
             'form_answers'              => is_array($row['form_answers'] ?? null) ? $row['form_answers'] : [],
             'is_comp'                   => (bool) ($row['is_comp'] ?? false),
             'comp_reason'               => $row['comp_reason'] ?? null,
@@ -245,11 +254,11 @@ class ClassMembershipFromSupabaseSeeder extends Seeder
         ];
     }
 
-    protected function mapSession(array $row): array
+    protected function mapSession(array $row, int $subscriptionId, int $programId): array
     {
         return [
-            'subscription_id'  => (string) $row['subscription_id'],
-            'program_id'       => (string) $row['program_id'],
+            'subscription_id'  => $subscriptionId,
+            'program_id'       => $programId,
             'listing_id'       => $this->uuidOrNull($row['listing_id'] ?? null),
             'session_date'     => $this->dateOrNull($row['session_date'] ?? null) ?: now()->toDateString(),
             'session_time'     => $this->hm($row['session_time'] ?? '18:00'),

@@ -95,7 +95,7 @@ class CommunityModerationService
         $supabaseError = null;
         try {
             $client = SupabaseRestClient::fromConfig();
-            $client->updateById('communities', $id, [
+            $client->updateById('communities', (string) $community->uuid, [
                 'moderation_status' => $status,
                 'moderation_reason' => $reason,
                 'moderated_at'      => optional($community->moderated_at)?->toIso8601String() ?? now()->toIso8601String(),
@@ -129,7 +129,8 @@ class CommunityModerationService
     protected function mapCommunity(Community $c): array
     {
         return [
-            'id'                => (string) $c->id,
+            'id'                => $c->id,
+            'uuid'              => $c->uuid,
             'owner_customer_id' => $c->owner_customer_id ? (string) $c->owner_customer_id : null,
             'name'              => $c->name ?? '',
             'description'       => $c->description ?? '',
