@@ -16,20 +16,16 @@ return new class extends Migration
             return;
         }
 
-        try {
+        if (Schema::hasIndex('venue_hour_periods', 'venue_hour_periods_venue_id_day_unique')) {
             Schema::table('venue_hour_periods', function (Blueprint $table) {
                 $table->dropUnique('venue_hour_periods_venue_id_day_unique');
             });
-        } catch (\Throwable $e) {
-            // Unique may never have been created (duplicates blocked it earlier).
         }
 
-        try {
+        if (! Schema::hasIndex('venue_hour_periods', 'venue_hour_periods_venue_id_day_index')) {
             Schema::table('venue_hour_periods', function (Blueprint $table) {
                 $table->index(['venue_id', 'day'], 'venue_hour_periods_venue_id_day_index');
             });
-        } catch (\Throwable $e) {
-            // Index already exists.
         }
     }
 
