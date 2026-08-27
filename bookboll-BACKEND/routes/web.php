@@ -42,5 +42,5 @@ Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin'])->group(fu
 Route::middleware('guest')->group(function () {
     Route::get('login-000009', [AuthenticatedSessionController::class, 'create'])->name('login');
 
-    Route::post('login-000009', [AuthenticatedSessionController::class, 'store']);
+    Route::post('login-000009', [AuthenticatedSessionController::class, 'store'])->name('login.store');
 });

@@ -39,8 +39,8 @@ use App\Http\Controllers\VenueController;
 use App\Http\Controllers\WhatsappController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('login', [UserController::class, 'login'])->name('login');
-Route::post('register', [UserController::class, 'register'])->name('register');
+Route::post('login', [UserController::class, 'login'])->name('api.login');
+Route::post('register', [UserController::class, 'register'])->name('api.register');
 Route::post('update-profile', [UserController::class, 'updateProfile'])->middleware('auth:sanctum')->name('update-profile');
 Route::post('change-password', [UserController::class, 'changePassword'])->middleware('auth:sanctum')->name('change-password');
 Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail'])->name('forgot-password');
@@ -59,7 +59,7 @@ Route::prefix('business')->name('business.')->group(function () {
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
-    Route::post('logout', [UserController::class, 'logout'])->name('logout');
+    Route::post('logout', [UserController::class, 'logout'])->name('api.logout');
     Route::post('admin-app/delete-account', [UserController::class, 'deleteAdminAppAccount'])->name('admin-app.delete-account');
     Route::get('me', [UserController::class, 'me'])->name('me');
     Route::post('subscribe-onesignal', [UserController::class, 'subscribeOneSignal'])->name('customer.subscribe-onesignal');

@@ -59,10 +59,11 @@ class LoginRequest extends FormRequest
     {
         $this->ensureIsNotRateLimited();
 
-        if (! Auth::attempt($this->only('email', 'password'), $this->boolean('remember'))) {
-            RateLimiter::hit($this->throttleKey());
+        $user = User::where('email', $this->string('email'))->first();
+        $password = (string) $this->input('password');
 
-            $user = User::where('email', $this->input('email'))->first();
+        if (! $user || ! $user->passwordMatches($password)) {
+            RateLimiter::hit($this->throttleKey());
 
             if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
                 throw ValidationException::withMessages([
@@ -75,14 +76,27 @@ class LoginRequest extends FormRequest
             ]);
         }
 
-        if (! Auth::user()->hasAnyRole(['super_admin', 'admin'])) {
-            Auth::logout();
+        if (! $user->hasAnyRole(['super_admin', 'admin'])) {
             RateLimiter::hit($this->throttleKey());
 
             throw ValidationException::withMessages([
                 'email' => ['Access denied. Admin privileges required.'],
             ]);
         }
+
+        if ($user->status === User::PENDING) {
+            throw ValidationException::withMessages([
+                'email' => ['Your account is pending admin approval. Please wait for approval before logging in.'],
+            ]);
+        }
+
+        if ($user->status === User::BLOCKED) {
+            throw ValidationException::withMessages([
+                'email' => ['Your account has been blocked.'],
+            ]);
+        }
+
+        Auth::login($user, $this->boolean('remember'));
 
         RateLimiter::clear($this->throttleKey());
     }
@@ -110,6 +124,6 @@ class LoginRequest extends FormRequest
 
     public function throttleKey(): string
     {
-        return Str::transliterate(Str::lower($this->string('email')).'|'.$this->ip());
+        return Str::transliterate(Str::lower($this->string('email')) . '|' . $this->ip());
     }
 }
