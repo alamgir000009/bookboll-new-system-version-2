@@ -2,13 +2,13 @@
  * customerSession.js — state for the public customer-facing site.
  *
  *  • Selected location (country + city) — chosen in the Location Gate, persisted.
- *  • Lightweight customer identity — email-based, looked up/created in `customers`,
- *    persisted locally. (Demo-grade: no password; this is a storefront, not the admin.)
+ *  • Auth is Laravel Sanctum (email/password or Google). A matching `customers`
+ *    row is upserted so games/communities/loyalty still key off that UUID.
  *  • Loyalty tier helpers shared by the home badge + Rewards page.
  */
 import { ref, computed } from 'vue'
 import { supabase } from './supabase.js'
-import { apiFetch } from './api.js'
+import { apiFetch, getCustomerToken, setCustomerToken, clearCustomerToken } from './api.js'
 
 const LOC_KEY  = 'bb_customer_location'
 const CUST_KEY = 'bb_customer_identity'
@@ -173,26 +173,35 @@ function persistCustomer(c) {
   else localStorage.removeItem(CUST_KEY)
 }
 
-// Sign in / register a customer by email (creates the row if new). Demo-grade.
-// `marketing` is an opt-in consent map { email, sms, whatsapp } collected at signup.
-export async function customerSignIn({ email, fullName, phone, countryId, marketing }) {
+function formatApiError(res, fallback) {
+  const errors = res?.errors
+  if (errors && typeof errors === 'object') {
+    for (const v of Object.values(errors)) {
+      const msg = Array.isArray(v) ? v[0] : v
+      if (msg) return String(msg)
+    }
+  }
+  return res?.message || fallback
+}
+
+/** Find or create the storefront `customers` row used by games/communities/loyalty. */
+async function upsertStorefrontCustomer({ email, fullName, phone, countryId, marketing, avatarUrl }) {
   const cleanEmail = (email || '').trim().toLowerCase()
   if (!cleanEmail) return { error: 'Please enter your email.' }
 
   const { data: existing } = await supabase.from('customers').select('*').ilike('email', cleanEmail).maybeSingle()
-  if (existing) { persistCustomer(existing); return { customer: existing } }
+  if (existing) return { customer: existing }
 
-  // New customer
   const base = {
     full_name: (fullName || '').trim() || cleanEmail.split('@')[0],
     email: cleanEmail,
-    phone: (phone || '').trim(),   // '' (not null) — customers.phone is NOT NULL
-
+    phone: (phone || '').trim(),
     country_id: countryId || selectedCountry.value?.id || null,
     status: 'active',
     loyalty_tier: 'Rookie',
     loyalty_points: 0,
   }
+  if (avatarUrl) base.avatar_url = avatarUrl
   const m = marketing || {}
   const row = {
     ...base,
@@ -201,85 +210,118 @@ export async function customerSignIn({ email, fullName, phone, countryId, market
     marketing_whatsapp: !!m.whatsapp,
   }
   let { data: created, error } = await supabase.from('customers').insert(row).select().maybeSingle()
-  // Pre-migration: marketing_* columns may not exist yet — retry without them.
-  if (error && /marketing_|column/i.test(error.message || '')) {
+  if (error && /marketing_|avatar_url|column/i.test(error.message || '')) {
     const r = await supabase.from('customers').insert(base).select().maybeSingle()
     created = r.data; error = r.error
   }
-  if (error) return { error: error.message }
-  persistCustomer(created)
-  return { customer: created }
-}
-
-export function customerSignOut() { persistCustomer(null) }
-
-// ── Google (demo) + phone-OTP sign-up ──────────────────────────────────────────
-// DEMO Google: a real Google identity would come back from supabase.auth.signInWithOAuth;
-// here the AuthGate hands us the {email, firstName, lastName} the user "signed in with". If that
-// email already has an account we sign them straight in; a new email goes to the "complete your
-// account" + OTP step (nothing is written until the phone is verified).
-export async function customerGoogleDemo({ email, firstName, lastName }) {
-  const cleanEmail = (email || '').trim().toLowerCase()
-  if (!cleanEmail) return { error: 'A Google email is required.' }
-  const { data: existing } = await supabase.from('customers').select('*').ilike('email', cleanEmail).maybeSingle()
-  if (existing) { persistCustomer(existing); return { customer: existing, existing: true } }
-  return { needsComplete: true, prefill: { email: cleanEmail, firstName: (firstName || '').trim(), lastName: (lastName || '').trim() } }
-}
-
-// Send a verification code to `phone` over WhatsApp (preferred) or SMS. Returns
-// { ok, channel, delivered, demoCode? } — demoCode is present only while the function runs in
-// demo-echo mode (for testing without a live WhatsApp/SMS delivery).
-export async function otpSend({ phone, channel = 'whatsapp', purpose = 'customer_signup' }) {
-  try {
-    const { data, error } = await supabase.functions.invoke('otp', { body: { action: 'send', phone, channel, purpose } })
-    if (error) return { ok: false, error: 'Could not send the code — please try again.' }
-    return data || { ok: false, error: 'No response.' }
-  } catch { return { ok: false, error: 'Could not reach the verification service.' } }
-}
-
-export async function otpVerify({ phone, code }) {
-  try {
-    const { data, error } = await supabase.functions.invoke('otp', { body: { action: 'verify', phone, code } })
-    if (error) return { ok: false, error: 'Verification failed — please try again.' }
-    return data || { ok: false, error: 'No response.' }
-  } catch { return { ok: false, error: 'Could not reach the verification service.' } }
-}
-
-// Create the customer AFTER the phone is verified (Google/complete-account flow). Splits the
-// name and marks the phone verified + the provider. Degrades gracefully pre-migration.
-export async function completeCustomerSignup({ email, firstName, lastName, phone, countryId, provider = 'google', marketing }) {
-  const cleanEmail = (email || '').trim().toLowerCase()
-  if (!cleanEmail) return { error: 'Email is required.' }
-  // Guard: if the account was created in a parallel tab meanwhile, just sign in.
-  const { data: existing } = await supabase.from('customers').select('*').ilike('email', cleanEmail).maybeSingle()
-  if (existing) { persistCustomer(existing); return { customer: existing } }
-
-  const fn = (firstName || '').trim(), ln = (lastName || '').trim()
-  const m = marketing || {}
-  const base = {
-    full_name: `${fn} ${ln}`.trim() || cleanEmail.split('@')[0],
-    email: cleanEmail,
-    phone: (phone || '').trim(),
-    country_id: countryId || selectedCountry.value?.id || null,
-    status: 'active', loyalty_tier: 'Rookie', loyalty_points: 0,
-    marketing_email: !!m.email, marketing_sms: !!m.sms, marketing_whatsapp: !!m.whatsapp,
-  }
-  const full = { ...base, first_name: fn, last_name: ln, phone_verified: true, auth_provider: provider }
-
-  let { data: created, error } = await supabase.from('customers').insert(full).select().maybeSingle()
-  // Pre-migration fallbacks: drop the new auth columns, then the marketing columns, if missing.
-  if (error && /first_name|last_name|phone_verified|auth_provider|column/i.test(error.message || '')) {
-    const r = await supabase.from('customers').insert(base).select().maybeSingle()
-    created = r.data; error = r.error
-  }
-  if (error && /marketing_|column/i.test(error.message || '')) {
-    const { marketing_email, marketing_sms, marketing_whatsapp, ...noMkt } = base
-    const r = await supabase.from('customers').insert(noMkt).select().maybeSingle()
+  if (error && /avatar_url|column/i.test(error.message || '')) {
+    const { avatar_url: _avatar, ...noAvatar } = base
+    const r = await supabase.from('customers').insert(noAvatar).select().maybeSingle()
     created = r.data; error = r.error
   }
   if (error) return { error: error.message }
-  persistCustomer(created)
   return { customer: created }
+}
+
+export async function applyLaravelAuth(user, token, { marketing } = {}) {
+  if (!token) return { error: 'Invalid login response.' }
+  setCustomerToken(token)
+  const linked = await upsertStorefrontCustomer({
+    email: user?.email,
+    fullName: user?.name,
+    phone: user?.phone,
+    marketing,
+    avatarUrl: user?.image,
+  })
+  if (linked.error) {
+    clearCustomerToken()
+    return linked
+  }
+  persistCustomer({ ...linked.customer, laravel_user_id: user?.id })
+  return { customer: customer.value, user }
+}
+
+export async function customerLogin({ email, password }) {
+  const cleanEmail = (email || '').trim().toLowerCase()
+  if (!cleanEmail) return { error: 'Please enter your email.' }
+  if (!password) return { error: 'Please enter your password.' }
+  const res = await apiFetch('/customer/login', { method: 'POST', body: { email: cleanEmail, password } })
+  if (res.data?.reset_password === true) return { resetPassword: true }
+  if (!res.success || !res.data?.token) return { error: formatApiError(res, 'Login failed. Please try again.') }
+  return applyLaravelAuth(res.data.user, res.data.token)
+}
+
+export async function customerRegister({ name, email, phone, password, passwordConfirmation, marketing }) {
+  const cleanEmail = (email || '').trim().toLowerCase()
+  const fullName = (name || '').trim()
+  if (!fullName) return { error: 'Please enter your name.' }
+  if (!cleanEmail) return { error: 'Please enter your email.' }
+  if (!phone || String(phone).replace(/\D/g, '').length < 6) return { error: 'Please enter a valid phone number.' }
+  if (!password || password.length < 8) return { error: 'Password must be at least 8 characters.' }
+  if (password !== passwordConfirmation) return { error: 'Passwords do not match.' }
+  const res = await apiFetch('/register', {
+    method: 'POST',
+    body: {
+      name: fullName,
+      email: cleanEmail,
+      phone: String(phone).trim(),
+      password,
+      password_confirmation: passwordConfirmation,
+    },
+  })
+  if (!res.success || !res.data?.token) return { error: formatApiError(res, 'Could not create your account.') }
+  return applyLaravelAuth(res.data.user, res.data.token, { marketing })
+}
+
+export async function customerGoogleLogin(idToken) {
+  if (!idToken) return { error: 'Google sign-in failed. Please try again.' }
+  const res = await apiFetch('/customer/google-login', { method: 'POST', body: { id_token: idToken } })
+  if (!res.success || !res.data?.token) return { error: formatApiError(res, 'Google login failed. Please try again.') }
+  return applyLaravelAuth(res.data.user, res.data.token)
+}
+
+export async function customerForgotPassword(email) {
+  const cleanEmail = (email || '').trim().toLowerCase()
+  if (!cleanEmail) return { error: 'Please enter your email.' }
+  const res = await apiFetch('/customer/forgot-password', { method: 'POST', body: { email: cleanEmail } })
+  if (!res.success) return { error: formatApiError(res, 'Failed to send OTP. Please try again.') }
+  return { ok: true, message: res.message || 'OTP has been sent to your email.' }
+}
+
+export async function customerResetPassword({ email, otp, password, passwordConfirmation }) {
+  const cleanEmail = (email || '').trim().toLowerCase()
+  if (!cleanEmail) return { error: 'Please enter your email.' }
+  if (!otp) return { error: 'Please enter the OTP from your email.' }
+  if (!password || password.length < 8) return { error: 'Password must be at least 8 characters.' }
+  if (password !== passwordConfirmation) return { error: 'Passwords do not match.' }
+  const res = await apiFetch('/customer/reset-password', {
+    method: 'POST',
+    body: {
+      email: cleanEmail,
+      otp: String(otp).trim(),
+      password,
+      password_confirmation: passwordConfirmation,
+    },
+  })
+  if (!res.success) return { error: formatApiError(res, 'Failed to reset password. Please check your OTP and try again.') }
+  if (res.data?.token) return applyLaravelAuth(res.data.user, res.data.token)
+  return { ok: true, message: res.message || 'Password has been reset successfully.' }
+}
+
+// Guest checkout fallback: create/find the storefront identity without a password.
+export async function customerSignIn({ email, fullName, phone, countryId, marketing }) {
+  const linked = await upsertStorefrontCustomer({ email, fullName, phone, countryId, marketing })
+  if (linked.error) return linked
+  persistCustomer(linked.customer)
+  return { customer: linked.customer }
+}
+
+export async function customerSignOut() {
+  if (getCustomerToken()) {
+    try { await apiFetch('/logout', { method: 'POST' }) } catch { /* ignore */ }
+  }
+  clearCustomerToken()
+  persistCustomer(null)
 }
 
 // Update the signed-in customer's profile (name, avatar_url, photos…) and refresh the

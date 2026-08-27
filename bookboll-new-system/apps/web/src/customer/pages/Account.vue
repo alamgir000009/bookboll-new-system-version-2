@@ -1,54 +1,17 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { customer, isCustomer, customerSignIn, customerSignOut, updateCustomerProfile, selectedCountry } from '../../lib/customerSession.js'
+import { customer, isCustomer, customerSignOut, updateCustomerProfile } from '../../lib/customerSession.js'
 import { isWhiteLabel, activeBrand, brandShows, platformBrand } from '../../lib/brand.js'
-import { supabase } from '../../lib/supabase.js'
-import { getSavedPhone, saveCustomerPhone, migrateGuestPhones } from '../../customer/customerPhones.js'
 import { uploadImage } from '../../lib/imageUpload.js'
 import { profileStrength } from '../../lib/social.js'
 import { useSeo } from '../../lib/seo.js'
 import { ensureSignedIn } from '../../lib/authGate.js'
 useSeo({ title: 'My account', noindex: true, path: '/account' })
-import PhoneInput from '../components/PhoneInput.vue'
 import BrandMark from '../../components/BrandMark.vue'
-import { User, Mail, LogOut, Trophy, Ticket, Sparkles, CalendarCheck, Dumbbell, Camera, Plus, X, ArrowRight, Loader, Check, Loader2, Lock, Globe, Star } from 'lucide-vue-next'
+import { User, Mail, LogOut, Trophy, Ticket, Sparkles, CalendarCheck, Dumbbell, Camera, Plus, X, ArrowRight, Loader, Check, Lock, Globe } from 'lucide-vue-next'
 
 const router = useRouter()
-const f = ref({ email: '', full_name: '', phone: '' })
-const mkt = ref({ email: false, sms: false, whatsapp: false })   // signup consent (new email only)
-const busy = ref(false)
-const err = ref('')
-
-// Customer identity is ONE Bookboll account shared across the marketplace + every
-// white-label site. As the user types their email we check whether they already have
-// a Bookboll account, so we can say "sign in" instead of treating it as a new signup.
-const knownCustomer = ref(null)   // existing { id, full_name } or null
-const checkingEmail = ref(false)
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
-let emailTimer = null
-watch(() => f.value.email, (v) => {
-  const email = (v || '').trim().toLowerCase()
-  clearTimeout(emailTimer)
-  knownCustomer.value = null
-  if (!EMAIL_RE.test(email)) { checkingEmail.value = false; return }
-  checkingEmail.value = true
-  emailTimer = setTimeout(async () => {
-    const { data } = await supabase.from('customers').select('id, full_name').ilike('email', email).maybeSingle()
-    knownCustomer.value = data || null
-    checkingEmail.value = false
-  }, 450)
-})
-const emailValid = computed(() => EMAIL_RE.test((f.value.email || '').trim().toLowerCase()))
-// Only treat it as a NEW signup once we've checked the email and found no account —
-// so a blank/half-typed email shows just the email box, not name/phone + "Create".
-const isNewEmail = computed(() => emailValid.value && !checkingEmail.value && !knownCustomer.value)
-const fineText = computed(() =>
-  knownCustomer.value ? 'Welcome back!'
-  : isNewEmail.value ? 'New here? We’ll create your Bookboll account — one login works everywhere on Bookboll.'
-  : 'Sign in or create your account with just your email — no password needed.')
-
-// signed-in profile editor
 const edit = ref({ full_name: '', bio: '', is_private: false, photos: [], marketing_email: false, marketing_sms: false, marketing_whatsapp: false })
 // Live profile-strength meter (mirrors what hosts see when accepting join requests).
 const strength = computed(() => profileStrength({
@@ -65,20 +28,17 @@ const galInput = ref(null)
 
 const initial = computed(() => (customer.value?.full_name || customer.value?.email || '?').charAt(0).toUpperCase())
 
-onMounted(() => {
-  f.value.phone = getSavedPhone(selectedCountry.value?.id)
-  if (isCustomer.value) {
-    edit.value.full_name = customer.value.full_name || ''
-    edit.value.bio = customer.value.bio || ''
-    edit.value.is_private = customer.value.is_private === true
-    edit.value.photos = Array.isArray(customer.value.photos) ? [...customer.value.photos] : []
-    edit.value.marketing_email = customer.value.marketing_email === true
-    edit.value.marketing_sms = customer.value.marketing_sms === true
-    edit.value.marketing_whatsapp = customer.value.marketing_whatsapp === true
-    avatarUrl.value = customer.value.avatar_url || ''
-  }
-})
-watch(() => customer.value?.id, () => { if (isCustomer.value) loadRatings() })
+watch(() => customer.value?.id, () => {
+  if (!isCustomer.value) return
+  edit.value.full_name = customer.value.full_name || ''
+  edit.value.bio = customer.value.bio || ''
+  edit.value.is_private = customer.value.is_private === true
+  edit.value.photos = Array.isArray(customer.value.photos) ? [...customer.value.photos] : []
+  edit.value.marketing_email = customer.value.marketing_email === true
+  edit.value.marketing_sms = customer.value.marketing_sms === true
+  edit.value.marketing_whatsapp = customer.value.marketing_whatsapp === true
+  avatarUrl.value = customer.value.avatar_url || ''
+}, { immediate: true })
 
 function pickAvatar() { avatarInput.value?.click() }
 async function onAvatarFile(e) {
@@ -118,22 +78,6 @@ async function saveProfile() {
   })
   saving.value = false; saved.value = true
   setTimeout(() => { saved.value = false }, 2000)
-}
-
-async function submit() {
-  err.value = ''
-  if (!f.value.email.trim()) { err.value = 'Please enter your email.'; return }
-  busy.value = true
-  const res = await customerSignIn({
-    email: f.value.email, fullName: f.value.full_name, phone: f.value.phone,
-    countryId: selectedCountry.value?.id,
-    marketing: isNewEmail.value ? mkt.value : undefined,
-  })
-  busy.value = false
-  if (res.error) { err.value = res.error; return }
-  migrateGuestPhones(res.customer?.id)
-  saveCustomerPhone(selectedCountry.value?.id, f.value.phone)
-  router.push('/')
 }
 
 async function openGate() { await ensureSignedIn() }   // success flips isCustomer → profile renders
@@ -245,14 +189,10 @@ function signOut() { customerSignOut(); router.push('/') }
 
     <!-- Signed out -->
     <template v-else>
-      <div class="acc-hero"><Sparkles :size="30" /><h1>Welcome to {{ isWhiteLabel ? activeBrand.name : 'Bookboll' }}</h1><p>{{ isWhiteLabel ? 'Sign in with your Bookboll account to book and manage your reservations.' : 'Sign in to earn rewards, host games and track your join requests. No password needed!' }}</p></div>
-      <!-- ONE signup flow everywhere: this opens the same AuthGate (Google +
-           phone-OTP) the guest join/book/subscribe actions use — the legacy
-           email-only form that lived here created accounts with no verification
-           and split signups into two different processes. -->
+      <div class="acc-hero"><Sparkles :size="30" /><h1>Welcome to {{ isWhiteLabel ? activeBrand.name : 'Bookboll' }}</h1><p>{{ isWhiteLabel ? 'Sign in with your Bookboll account to book and manage your reservations.' : 'Sign in with Google or email to earn rewards, host games and track your join requests.' }}</p></div>
       <div class="acc-card">
         <button class="acc-btn" @click="openGate">Sign in / Create account</button>
-        <p class="acc-fine">{{ fineText }}</p>
+        <p class="acc-fine">One Bookboll account works everywhere.</p>
       </div>
 
       <!-- Powered by Bookboll: clarifies the account is a shared Bookboll identity -->

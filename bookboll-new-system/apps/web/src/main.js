@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createHead } from '@unhead/vue'
+import GoogleSignInPlugin from 'vue3-google-signin'
 import './style.css'
 import App from './App.vue'
 import { installUnsavedGuards } from './lib/unsavedGuard.js'
@@ -170,6 +171,9 @@ Promise.allSettled([resolveBrand()])
   .then(() => (!isWhiteLabel.value ? ensureDefaultLocation() : ensureBrandLocation(activeBrand.value?.regions)))
   .catch(() => {})
   .finally(() => {
-    createApp(App).use(router).use(i18n).use(createHead()).mount('#app')
+    const app = createApp(App)
+    const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
+    if (googleClientId) app.use(GoogleSignInPlugin, { clientId: googleClientId })
+    app.use(router).use(i18n).use(createHead()).mount('#app')
     initAutoTranslate()
   })
