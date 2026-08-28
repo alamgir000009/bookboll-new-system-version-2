@@ -6,19 +6,19 @@ import { ref } from 'vue'
 import { supabase } from '../lib/supabase.js'
 import { apiFetch } from '../lib/api.js'
 import { selectedCity, selectedCountry } from '../lib/customerSession.js'
-import { fmt12, fmtRange12 } from '../lib/slots.js'
+import { fmt12 } from '../lib/slots.js'
 import { roundsFor, nextMatchFor, totalGames } from './bracket.js'
-import { offerModeFor, discountedPrice, addIntervalToDate } from '../lib/billingPlans.js'
-import { nthSessionDate } from '../lib/programSessions.js'
-import { recordSubscriptionPayment } from '../lib/subscriptionPayment.js'
-import { ensureCountryWallet } from '../lib/walletSetup.js'
-import { notifyMembershipStarted } from './notificationDispatch.js'
-import { hasUsedIntroOffer, recordOfferRedemption } from '../lib/offerGuard.js'
-import { effectiveGenderPolicy } from '../lib/membershipCategories.js'
 import { notifyHostNewJoiner, notifyJoinerDecision, notifyMatchResult, notifyEventCancelled } from './eventNotify.js'
 import { meetupState } from './meetup.js'
 import { awardLoyalty, JOIN_BONUS, HOST_BONUS } from '../lib/loyalty.js'
 import { checkCommunityMembership, loadCommunity } from './community.js'
+import {
+  apiLoadPrograms,
+  apiLoadProgram,
+  apiEnrollInProgram,
+  apiLoadMySubscriptions,
+  apiCancelMySubscription,
+} from './apiPrograms.js'
 
 // ── White-label scoping ─────────────────────────────────────────────────────────
 // When the storefront is served for a provider's brand (see lib/brand.js), every
@@ -153,29 +153,6 @@ export function intervalLabel(v) { return INTERVAL_LABEL[v] || 'month' }
 // Below this, we hide the "N members" social-proof pill — a tiny/new program showing
 // "1 member" reads worse than showing nothing. Threshold shared by cards + detail page.
 export const MEMBER_COUNT_MIN = 5
-
-// A subscription counts as a "member" once it's active (a converted/paid membership OR
-// someone currently inside their free trial — both are real, live members). Cancelled/
-// expired subs are excluded. Mirrors the `status='active'` rule used across the admin.
-function isMemberSub(s) { return (s.status || 'active') === 'active' }
-
-// Live active-member count per program, in ONE aggregate round-trip (no N+1). Pass the
-// list of program ids; returns a map { [programId]: count }. Ids with no active subs are
-// simply absent (callers treat missing as 0). Best-effort: any query error → empty map so
-// the storefront still renders (the pill just won't show).
-async function memberCountMap(programIds) {
-  const ids = [...new Set((programIds || []).filter(Boolean))]
-  if (!ids.length) return {}
-  const { data, error } = await supabase.from('class_subscriptions')
-    .select('program_id, status, trial_status').in('program_id', ids)
-  if (error || !data) return {}
-  const map = {}
-  for (const s of data) {
-    if (!s.program_id || !isMemberSub(s)) continue
-    map[s.program_id] = (map[s.program_id] || 0) + 1
-  }
-  return map
-}
 
 function firstPhoto(row) {
   if (Array.isArray(row?.photos) && row.photos[0]) return row.photos[0]
@@ -376,283 +353,35 @@ export async function loadServedRegions(brandSlug) {
 
 // ── Programs / classes in a city ───────────────────────────────────────────────
 export async function loadPrograms(cityId) {
-  if (!cityId) return []
-  let locQ = supabase.from('locations').select('id, name, city_id, latitude, longitude').eq('city_id', cityId)
-  if (brandOwnerId) locQ = locQ.eq('owner_user_id', brandOwnerId)
-  const { data: locs } = await locQ
-  const locById = {}; (locs || []).forEach(l => { locById[l.id] = l })
-  const ids = Object.keys(locById)
-  if (!ids.length) return []
-  const { data: progs } = await supabase.from('class_programs').select('*').in('location_id', ids).eq('status', 'active')
-  const suspendedP = brandOwnerId ? new Set() : await suspendedOwners()
-  const visible = (progs || []).filter(p => programVisible(p) && !suspendedP.has(p.owner_user_id))
-  // One aggregate query for every visible program's active-member count (social proof).
-  const counts = await memberCountMap(visible.map(p => p.id))
-  return visible
-    .map(p => {
-      const mode = offerModeFor(p)
-      const discount = Number(p.discount_months) || 0
-      const sessions = Number(p.free_trial_sessions) || 0
-      const tdays = Number(p.free_trial_days) || 0
-      const offerBadge = mode === 'discount'
-        ? (discount > 0 ? `${discount} month${discount !== 1 ? 's' : ''} off` : '')
-        : (sessions > 0 ? '1 free session' : (tdays > 0 ? `${tdays}-day free trial` : ''))
-      const price = mode === 'discount' ? discountedPrice(p.monthly_price, p.billing_interval, discount) : p.monthly_price
-      return {
-        id: p.id, name: p.name, sport: p.sport_category, category: p.category || 'academy',
-        audience: p.audience || '',                       // kids | adults | both (class/academy)
-        gender: effectiveGenderPolicy(p),                 // mixed | men | women (gym-access fallback)
-        color: p.color || '#7c3aed',
-        image: firstPhoto(p), locationName: locById[p.location_id]?.name || '',
-        lat: locById[p.location_id]?.latitude ?? null,   // venue pin → "X km away"
-        lng: locById[p.location_id]?.longitude ?? null,
-        price, currency: p.currency || 'AED', interval: intervalLabel(p.billing_interval),
-        offerBadge,
-        memberCount: counts[p.id] || 0,           // live active members (social proof)
-      }
-    })
+  return apiLoadPrograms(cityId, brandOwnerId)
 }
 
-// Weekly opening hours for a location (anon-readable `location_hours`). Returns a Mon→Sun
-// array [{ day, open, label }] or null if none set. Used by gym membership pages.
-function fmtHourTime(t) {
-  return t ? fmt12(t) : ''
-}
+// Weekly opening hours — served with program detail from Laravel venues.
 export async function loadLocationHours(locationId) {
   if (!locationId) return null
-  const { data } = await supabase.from('location_hours')
-    .select('day_of_week, is_open, open_time, close_time').eq('location_id', locationId)
-  if (!data || !data.length) return null
-  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-  const byDay = {}
-  for (const r of data) {
-    if (!byDay[r.day_of_week]) byDay[r.day_of_week] = []
-    if (r.is_open && r.open_time && r.close_time) byDay[r.day_of_week].push(fmtRange12(r.open_time, r.close_time))
-  }
-  return [1, 2, 3, 4, 5, 6, 0].map(d => ({
-    day: DOW[d],
-    open: (byDay[d] || []).length > 0,
-    label: (byDay[d] || []).length ? byDay[d].join(', ') : 'Closed',
-  }))
+  return null
 }
 
 export async function loadProgram(id) {
-  const { data: p } = await supabase.from('class_programs').select('*').eq('id', id).maybeSingle()
-  if (!p || ownerMismatch(p.owner_user_id) || !programVisible(p)) return null
-  if (await ownerSuspended(p.owner_user_id)) return null
-  const { data: loc } = await supabase.from('locations').select('id, name, address, phone').eq('id', p.location_id).maybeSingle()
-  // Gyms = facility access → surface the venue's opening hours (no class sessions).
-  const openingHours = (p.category === 'gym') ? await loadLocationHours(p.location_id) : null
-  // Live active-member count (social proof) — one head/count query, best-effort.
-  const mc = await supabase.from('class_subscriptions')
-    .select('id', { count: 'exact', head: true }).eq('program_id', p.id).eq('status', 'active')
-  const memberCount = mc.error ? 0 : (mc.count || 0)
-  return { program: p, image: firstPhoto(p), photos: allPhotos(p), location: loc || null, openingHours, memberCount }
+  return apiLoadProgram(id, brandOwnerId)
 }
 
-// Customer self-enrolment (marketplace membership checkout). Creates the subscription
-// with the custom-form answers, binds it to the provider's CURRENT country wallet, and —
-// unless the plan has a free trial — takes the first charge now via the wallet split.
-// Payment itself is simulated (dummy card on the checkout). Mirrors Subscribers.addSub.
+// Customer self-enrolment (marketplace membership checkout) — Laravel authoritative.
 export async function enrollInProgram(program, { customer, answers = {}, discount = 0, cardFp = '', loyaltyRedeem = 0 } = {}) {
   if (!program?.id) return { error: 'Program not found.' }
   if (!customer?.id) return { error: 'Please sign in to continue.' }
-
-  // Capacity enforcement: a capped program (capacity > 0) can't take more active members
-  // than its seat count. capacity 0/falsy = unlimited (gym-access / open memberships) →
-  // skip entirely. Counts current active members (converted OR in-trial) authoritatively
-  // here so the UI can't be bypassed. (A waitlist is out of scope — we just block.)
-  const capacity = Number(program.capacity) || 0
-  if (capacity > 0) {
-    const cap = await supabase.from('class_subscriptions')
-      .select('id', { count: 'exact', head: true }).eq('program_id', program.id).eq('status', 'active')
-    if (!cap.error && (cap.count || 0) >= capacity) return { error: 'This program is full.' }
-  }
-
-  // One membership per program per customer: a second signup would mint a second
-  // pass AND re-charge the one-time joining fee. A trial that expired without
-  // converting doesn't count — re-joining is how those members come back.
-  {
-    const [dupA, dupB] = await Promise.all([
-      supabase.from('class_subscriptions').select('id, status, trial_status, trial_ends_at')
-        .eq('program_id', program.id).eq('customer_id', customer.id)
-        .in('status', ['active', 'trial', 'trialing', 'paused', 'past_due']),
-      customer.email ? supabase.from('class_subscriptions').select('id, status, trial_status, trial_ends_at')
-        .eq('program_id', program.id).eq('customer_email', customer.email)
-        .in('status', ['active', 'trial', 'trialing', 'paused', 'past_due']) : Promise.resolve({ data: [] }),
-    ])
-    const dupes = [...(dupA.data || []), ...(dupB.data || [])]
-    const today0 = new Date().toISOString().slice(0, 10)
-    const live = (dupes || []).some(s => !(s.trial_status === 'in_trial' && s.trial_ends_at && String(s.trial_ends_at).slice(0, 10) < today0))
-    if (live) return { error: 'You’re already a member of this program — manage it in My Memberships.' }
-  }
-
-  const interval = program.billing_interval || 'monthly'
-  // Anti-abuse (authoritative, re-checked here so the UI can't be bypassed): one intro
-  // TRIAL per customer per PROVIDER, matched by account email OR card fingerprint.
-  // Repeat customers still join — at standard pricing, first payment taken now.
-  // ("Months off" discount plans aren't gated: that price applies to every cycle,
-  // so cancel/rejoin gains nothing.)
-  const rawMode = offerModeFor(program)
-  const introUsed = rawMode === 'trial'
-    ? await hasUsedIntroOffer({ email: customer.email, cardFp, ownerUserId: program.owner_user_id })
-    : false
-  const mode = introUsed ? 'none' : rawMode
-  const isFixed = program.program_type === 'fixed_duration'
-  const oneTime = interval === 'one_time'
-  const trialDays = mode === 'trial' ? (Number(program.free_trial_days) || 0) : 0
-  const trialSessions = mode === 'trial' ? (Number(program.free_trial_sessions) || 0) : 0
-  const discountMonths = mode === 'discount' ? (Number(program.discount_months) || 0) : 0
-  const listPrice = Number(program.monthly_price) || 0
-  const amount = mode === 'discount' ? discountedPrice(listPrice, interval, discountMonths) : listPrice
-  const hasTrial = mode === 'trial' && (trialDays > 0 || trialSessions > 0)
-  const commission = Number(program.commission_percentage) || 15
-  const platform_fee = +(amount * commission / 100).toFixed(2)
-  const provider_payout = +(amount - platform_fee).toFixed(2)
-  // One-time joining / sign-up fee (added by another agent to class_programs; undefined =
-  // 0). Charged ONCE, folded into the FIRST real charge only — never on renewals. When a
-  // free trial defers the first charge, it rides along on that first post-trial charge.
-  const joiningFee = Math.max(0, Number(program.joining_fee) || 0)
-  const started_at = new Date().toISOString().slice(0, 10)
-
-  let trial_ends_at, next_billing_at, trial_status
-  if (hasTrial) {
-    trial_status = 'in_trial'
-    if (trialSessions > 0) next_billing_at = nthSessionDate(started_at, program.day_of_week_mask, 2) || addIntervalToDate(started_at, 'monthly')
-    else { const te = new Date(started_at); te.setDate(te.getDate() + trialDays); next_billing_at = te.toISOString().slice(0, 10) }
-    trial_ends_at = next_billing_at
-  } else {
-    trial_ends_at = started_at; trial_status = 'active'
-    if (oneTime) next_billing_at = null
-    else if (isFixed) { const nb = addIntervalToDate(started_at, 'monthly'); next_billing_at = (program.end_date && nb >= program.end_date) ? null : nb }
-    else next_billing_at = addIntervalToDate(started_at, interval)
-  }
-
-  // Resolve the program's country + the provider's CURRENT wallet for it.
-  let countryId = program.country_id || null
-  if (!countryId && program.location_id) {
-    const { data: loc } = await supabase.from('locations').select('city_id').eq('id', program.location_id).maybeSingle()
-    if (loc?.city_id) { const { data: city } = await supabase.from('cities').select('country_id').eq('id', loc.city_id).maybeSingle(); countryId = city?.country_id || null }
-  }
-  // Bind to the program country's wallet — auto-created (inheriting the provider's payout
-  // method) if missing, so each country's earnings stay in their own currency.
-  let walletId = null
-  if (program.owner_user_id) {
-    const w = await ensureCountryWallet(program.owner_user_id, countryId, program.currency, 'subscription')
-    walletId = w?.id || null
-  }
-
-  const base = {
-    program_id: program.id,
-    customer_id: customer.id,
-    customer_name: customer.full_name || customer.email,
-    customer_email: customer.email || '',
-    started_at, next_billing_at, trial_ends_at, trial_status,
-    monthly_amount: amount, provider_payout, platform_fee,
-    status: 'active',
-  }
-  // Optional columns (later migrations): plan interval, wallet binding, custom answers,
-  // and the one-time joining fee owed on the first real charge (persisted so a trial's
-  // deferred first charge can still collect it; on a no-trial signup it's charged now).
-  const optional = { billing_interval: interval, country_id: countryId, wallet_id: walletId, form_answers: answers || {}, joining_fee: joiningFee }
-  // Charged at signup (no trial) → stamp first_charge_at NOW. Renewals use this
-  // stamp to know the one-time joining fee was already collected; without it the
-  // first renewal re-charged the fee.
-  if (trial_status === 'active') optional.first_charge_at = new Date().toISOString()
-  let { data: inserted, error } = await supabase.from('class_subscriptions').insert({ ...base, ...optional }).select().maybeSingle()
-  if (error) { ({ data: inserted, error } = await supabase.from('class_subscriptions').insert(base).select().maybeSingle()) }
-  if (error || !inserted) return { error: error?.message || 'Could not complete sign-up.' }
-
-  // Ledger the redeemed trial (best-effort) so it can't be taken again at this provider —
-  // by this account OR this card. Cancelling never clears it.
-  if (hasTrial && program.owner_user_id) {
-    recordOfferRedemption({
-      email: customer.email, cardFp, ownerUserId: program.owner_user_id,
-      programId: program.id, subscriptionId: inserted.id, source: 'customer_web',
-    })
-  }
-
-  // A signup promo can only discount a charge that happens NOW — i.e. when there is no
-  // trial deferring the first charge. (With a trial, nothing is charged today.)
-  const firstChargeDiscount = trial_status === 'active' ? Math.min(Math.max(0, Number(discount) || 0), amount) : 0
-
-  // No free trial → take the first (simulated) payment now via the wallet split, with the
-  // one-time joining fee folded into THIS first charge only. recordSubscriptionPayment
-  // derives the split from the row's monthly_amount/platform_fee, so we hand it a shallow
-  // clone whose amounts include the joining fee (commission applied at the same rate). The
-  // PERSISTED row keeps the plain recurring monthly_amount, so renewals never re-charge it.
-  // Loyalty redemption applies ONLY to a real first charge (a trial defers it) and is
-  // capped by recordSubscriptionPayment at that charge's commission — the provider's
-  // earning is never touched. loyaltyApplied is returned so the caller can spend points.
-  let loyaltyApplied = 0
-  if (trial_status === 'active') {
-    let chargeSub = inserted
-    if (joiningFee > 0) {
-      const grossFirst = +(amount + joiningFee).toFixed(2)
-      chargeSub = { ...inserted, monthly_amount: grossFirst, platform_fee: +(grossFirst * commission / 100).toFixed(2) }
-    }
-    try {
-      const pres = await recordSubscriptionPayment(chargeSub, program, true, firstChargeDiscount, Math.max(0, Number(loyaltyRedeem) || 0))
-      loyaltyApplied = Number(pres?.loyaltyApplied || 0)
-    } catch (e) { console.error('[enrollInProgram] charge error:', e) }
-  }
-  // Fire-and-forget: welcome / membership-started notification to the new member.
-  try { notifyMembershipStarted({ ownerId: program.owner_user_id, sub: inserted, program }) } catch { /* non-blocking */ }
-  // Charged today = (discounted plan price) + joining fee. A trial defers everything (the
-  // joining fee rides the first post-trial charge — persisted on the row via joining_fee).
-  const joiningNow = trial_status === 'active' ? joiningFee : 0
-  return { subscription: inserted, charged: trial_status === 'active', amount, joiningFee, charged_amount: +(amount - firstChargeDiscount + joiningNow - loyaltyApplied).toFixed(2), discountApplied: firstChargeDiscount, loyaltyApplied, introUsed, countryId, currency: program.currency || 'AED' }
+  return apiEnrollInProgram(program, { answers, discount, cardFp, loyaltyRedeem })
 }
 
 // A customer's membership subscriptions (for the "My memberships" page / account widget).
-// Brand-scoped: on a white-label site only this provider's memberships show.
 export async function loadMySubscriptions(customerId, email = '') {
   if (!customerId && !email) return []
-  // Match by id OR email: guest/legacy signups can hold a different customer row
-  // than the current session (the pass page matches by email for the same reason) —
-  // id-only matching left real memberships invisible here.
-  const [byId, byEmail] = await Promise.all([
-    customerId ? supabase.from('class_subscriptions').select('*').eq('customer_id', customerId) : Promise.resolve({ data: [] }),
-    // ilike (no wildcards) = case-insensitive equality — signups typed with a
-    // different capitalisation still match.
-    email ? supabase.from('class_subscriptions').select('*').ilike('customer_email', email) : Promise.resolve({ data: [] }),
-  ])
-  const seen = new Set()
-  const subs = [...(byId.data || []), ...(byEmail.data || [])]
-    .filter(s => !seen.has(s.id) && seen.add(s.id))
-    .sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')))
-  if (!subs.length) return []
-  const progIds = [...new Set(subs.map(s => s.program_id).filter(Boolean))]
-  // select('*') on purpose: a fixed column list makes the WHOLE query fail if a
-  // single column is missing on an older DB — which silently emptied this page.
-  const { data: progs, error: progErr } = await supabase.from('class_programs').select('*').in('id', progIds)
-  if (progErr) console.warn('[loadMySubscriptions] program fetch failed:', progErr.message)
-  const pById = {}; (progs || []).forEach(p => { pById[p.id] = p })
-  return subs
-    .map(s => ({ s, p: pById[s.program_id] }))
-    // White-label: hide memberships that provably belong to ANOTHER business.
-    // An unknown program (fetch failed / row deleted) is still shown generically —
-    // a paying member must never see an empty page because a lookup hiccuped.
-    .filter(({ p }) => !(p && p.owner_user_id && ownerMismatch(p.owner_user_id)))
-    .map(({ s, p }) => ({
-      id: s.id, programId: s.program_id, name: p?.name || 'Membership',
-      sport: p?.sport_category || '', category: p?.category || '',
-      image: p ? firstPhoto(p) : '', color: p?.color || '#7c3aed',
-      amount: Number(s.monthly_amount) || 0,
-      currency: s.currency || p?.currency || 'AED',
-      interval: intervalLabel(s.billing_interval || p?.billing_interval),
-      status: s.status || 'active',
-      trialStatus: s.trial_status || '',
-      startedAt: s.started_at, nextBilling: s.next_billing_at, trialEndsAt: s.trial_ends_at,
-    }))
+  return apiLoadMySubscriptions(brandOwnerId)
 }
 
-/** Customer cancels their own membership: no further renewals are collected and
- *  the pass disappears. (Refunds for the current period stay a provider matter.) */
+/** Customer cancels their own membership: no further renewals are collected. */
 export async function cancelMySubscription(subId) {
-  const { error } = await supabase.from('class_subscriptions')
-    .update({ status: 'cancelled', next_billing_at: null }).eq('id', subId)
-  return { error: error?.message || null }
+  return apiCancelMySubscription(subId)
 }
 
 // ── Hosted games in a city (resilient if the table isn't migrated yet) ─────────

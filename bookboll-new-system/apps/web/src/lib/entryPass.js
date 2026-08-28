@@ -15,6 +15,7 @@
 import { supabase } from './supabase.js'
 import { adminBaseUrl } from './appBase.js'
 import QRCode from 'qrcode'
+import { apiLoadMemberPassBundle } from '../customer/apiPrograms.js'
 
 // Unambiguous alphabet — no 0/O/1/I/L so codes survive being read out loud.
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
@@ -59,16 +60,14 @@ export async function ensurePass({ kind, refId, ownerUserId, customerId, custome
   return null
 }
 
-/** ONE pass per member (kind 'member', ref = customers.id). Needs the member_pass
- *  migration (kind CHECK) — pre-migration the insert is rejected and this returns
- *  null, so callers fall back to per-membership passes. */
+/** ONE pass per member — Laravel creates/returns it with the pass bundle. */
 export async function ensureMemberPass({ customerId, email }) {
   if (!customerId) return null
-  return ensurePass({ kind: 'member', refId: customerId, ownerUserId: null, customerId, customerEmail: email || '' })
+  const bundle = await apiLoadMemberPassBundle()
+  return bundle.pass || null
 }
 
-/** A customer's LIVE memberships (id+email matched, lapsed unconverted trials
- *  dropped), decorated for pass cards. Shared by the member-card bundle below. */
+/** A customer's LIVE memberships (staff door still uses Supabase until staff APIs migrate). */
 async function liveMembershipsFor({ customerId, email }) {
   const [byId, byEmail] = await Promise.all([
     customerId ? supabase.from('class_subscriptions').select('*')
@@ -100,65 +99,20 @@ async function liveMembershipsFor({ customerId, email }) {
   })
 }
 
-/** The member-card bundle: ONE identity pass + the membership rows shown on it.
- *  Pre-migration (member kind rejected) → { pass: null } and the caller renders
- *  the legacy per-membership cards from loadCustomerPasses. */
+/** The member-card bundle from Laravel. */
 export async function loadMemberPassBundle({ customerId, email }) {
-  const memberships = await liveMembershipsFor({ customerId, email })
-  if (!memberships.length) return { pass: null, memberships: [] }
-  const pass = await ensureMemberPass({ customerId, email })
-  return { pass, memberships }
+  if (!customerId && !email) return { pass: null, memberships: [] }
+  const bundle = await apiLoadMemberPassBundle()
+  return { pass: bundle.pass || null, memberships: bundle.memberships || [] }
 }
 
 /**
- * Customer side: MEMBERSHIP passes only. Bookings don't get passes — a booking is a
- * one-off with a name on it; the abuse the pass fights is SUBSCRIPTION sharing
- * (one member's plan used by many people), so the pass proves the member's identity
- * on every gym/class/academy visit.
- * Returns [{ pass, kind: 'membership', title, status }] newest first.
+ * Customer side: MEMBERSHIP passes only (Laravel).
  */
 export async function loadCustomerPasses({ customerId, email }) {
-  const out = []
-
-  if (email) {
-    // Include paused / past_due members too — a lapsed card shouldn't wipe the pass
-    // (the provider may still admit them and it's how they re-enter to fix payment).
-    // The pass card + door lookup surface the real state. select('*') so optional
-    // columns (trial_ends_at, first_charge_at, joining_fee) ride along when present.
-    const { data: subs } = await supabase.from('class_subscriptions')
-      .select('*')
-      .eq('customer_email', email).in('status', ['active', 'trial', 'trialing', 'paused', 'past_due'])
-      .order('created_at', { ascending: false }).limit(20)
-    // A free trial that ENDED without converting is not a live membership — its
-    // pass disappears (re-joining or the provider's conversion charge revives it).
-    const today = new Date().toISOString().slice(0, 10)
-    const rows = (subs || []).filter(s =>
-      !(s.trial_status === 'in_trial' && s.trial_ends_at && String(s.trial_ends_at).slice(0, 10) < today))
-    const pids = [...new Set(rows.map(s => s.program_id).filter(Boolean))]
-    let programs = []
-    if (pids.length) { const x = await supabase.from('class_programs').select('*').in('id', pids); programs = x.data || [] }
-    for (const s of rows) {
-      const prog = programs.find(p => p.id === s.program_id)
-      const pass = await ensurePass({
-        kind: 'membership', refId: s.id, ownerUserId: prog?.owner_user_id || null,
-        customerId: customerId || null, customerEmail: email,
-      })
-      if (!pass) continue
-      const joiningFee = Math.max(0, Number(s.joining_fee ?? prog?.joining_fee) || 0)
-      out.push({
-        pass, kind: 'membership',
-        title: prog?.name || 'Membership',
-        venue: '', date: '', start: '', end: '',
-        // 'in_trial' is the live-trial marker ('active' means a PAID no-trial plan)
-        status: s.trial_status === 'in_trial' ? 'trial' : s.status,
-        joiningFee,
-        // Paid once the first real charge happened (stamp), or for any non-trial
-        // plan (those are charged at signup — including rows older than the stamp).
-        feePaid: joiningFee > 0 && (!!s.first_charge_at || s.trial_status !== 'in_trial'),
-      })
-    }
-  }
-  return out
+  if (!customerId && !email) return []
+  const bundle = await apiLoadMemberPassBundle()
+  return bundle.legacyPasses || []
 }
 
 /**
