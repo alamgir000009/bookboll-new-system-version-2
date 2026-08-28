@@ -158,6 +158,20 @@ class Listing extends Model
         return $this->hasMany(Schedule::class, 'listing_id');
     }
 
+    /**
+     * Slot length in minutes.
+     * Legacy rows store hours (1–12); admin dashboard stores minutes (15/30/45/60/90/120).
+     */
+    public function slotDurationMinutes(): int
+    {
+        $n = (int) ($this->slot_duration ?: 60);
+        if ($n > 0 && $n <= 12) {
+            return $n * 60;
+        }
+
+        return max(1, $n);
+    }
+
     public function reviews()
     {
         return Review::whereRelation('booking', 'listing_id', $this->id);

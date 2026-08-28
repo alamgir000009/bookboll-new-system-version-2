@@ -1560,7 +1560,7 @@ class PaymentService
             $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
 
             $totalDiscount = 0;
-            if (!empty($validated['promocode'])) {
+            if (! empty($validated['promocode'] ?? null)) {
                 $promocode = \App\Models\Promocode::where('code', $validated['promocode'])->active()->first();
                 if ($promocode) {
                     $isValid = $promocode->isValidForOrder(
@@ -1630,7 +1630,7 @@ class PaymentService
                 return $user;
             });
 
-            $bookingResult = $bookingService->createBooking($bookingRequest);
+            $bookingResult = $bookingService->createCustomerBooking($bookingRequest);
             $bookingResultData = $bookingResult->getData();
 
             if (! $bookingResultData->success) {
@@ -1694,7 +1694,7 @@ class PaymentService
 
             $productDescription = trim(implode(' | ', array_filter([
                 "Slots ({$totalSlots}): " . $allSlotsSummary,
-                $validated['promocode'] ? "Promo: {$validated['promocode']}" : null,
+                ! empty($validated['promocode'] ?? null) ? "Promo: {$validated['promocode']}" : null,
                 "Subtotal: QAR " . number_format($combinedSubtotal, 2),
                 $totalDiscount > 0 ? "Discount: -QAR " . number_format($totalDiscount, 2) : null,
                 "Total: QAR " . number_format($totalPrice, 2),

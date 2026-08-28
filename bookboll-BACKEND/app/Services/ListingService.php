@@ -898,7 +898,7 @@ class ListingService
                 'max_multiple_bookings'   => $listing->max_multiple_bookings,
                 'allow_multiple_bookings' => $listing->allow_multiple_bookings,
                 'rating'                  => round($listing->average_rating, 1),
-                'duration'                => getFormattedDuration($listing->slot_duration * 60),
+                'duration'                => getFormattedDuration($listing->slotDurationMinutes()),
             ];
         });
 
@@ -947,7 +947,7 @@ class ListingService
                     'allow_multiple_bookings' => $listing->allow_multiple_bookings,
                     'icon'                    => $listing->sportsCategory?->sportsType?->icon,
                     'rating'                  => round($listing->average_rating, 1),
-                    'duration'                => getFormattedDuration($listing->slot_duration * 60),
+                    'duration'                => getFormattedDuration($listing->slotDurationMinutes()),
                 ];
             });
 
@@ -1059,7 +1059,7 @@ class ListingService
                 'description'             => $listing->description,
                 'base_price'              => $listing->base_price,
                 'slot_duration'           => $listing->slot_duration,
-                'duration'                => getFormattedDuration($listing->slot_duration * 60),
+                'duration'                => getFormattedDuration($listing->slotDurationMinutes()),
                 'capacity'                => $listing->capacity,
                 'loyalty_points'          => $listing->loyalty_points,
                 'payment_options'         => $listing->payment_options,
@@ -1206,7 +1206,7 @@ class ListingService
         }
 
         $weekday     = strtolower($date->format('l'));
-        $slotMinutes = ($listing->slot_duration ?? 1) * 60;
+        $slotMinutes = $listing->slotDurationMinutes();
 
         $venueSchedules = $listing->venue?->schedules
             ->where('day', $weekday)

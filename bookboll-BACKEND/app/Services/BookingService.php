@@ -45,6 +45,7 @@ class BookingService
     public function __construct(
         protected Booking $bookingModel,
         protected Payment $paymentModel,
+        protected Listing $listingModel,
         protected SpecialDay $specialDayModel,
         protected OneSignalService $oneSignalService
     ) {}
@@ -1906,6 +1907,317 @@ class BookingService
                         $promocode,
                         $paymentIntentId,
                         $chargeId,
+                        $listing,
+                        $request
+                    );
+
+                    if (! $booking) {
+                        DB::rollBack();
+                        Log::error("Second: Failed to create recurring booking for user {$user->id} on {$recurring['date']}");
+                        return sendError('Failed to create recurring booking');
+                    }
+
+                    $createdBookings->push($booking);
+                }
+            }
+
+            DB::commit();
+            $bookingIds      = $createdBookings->pluck('id');
+            $createdBookings = Booking::with(['user', 'venue', 'listing', 'payments', 'addOns', 'resourcesAllocated', 'promocode', 'history'])
+                ->whereIn('id', $bookingIds)
+                ->get();
+
+            foreach ($createdBookings as $booking) {
+                $this->sendBookingNotification($booking, 'created');
+            }
+
+            return sendSuccess('Booking confirmed successfully', ['bookings' => $createdBookings]);
+        } catch (Exception $e) {
+
+            DB::rollBack();
+            Log::error("Bookings Failed: " . $e->getMessage(), ["Exception" => $e]);
+            return sendError("Something went wrong please try again later: " . $e->getMessage());
+        }
+    }
+
+    public function createCustomerBooking($request)
+    {
+        logger("Customer booking creation request", ["Request" => $request->all()]);
+        $user = $request->user_id ? User::find($request->user_id) : auth()->user();
+
+        $formData = $request->validate([
+            'venue_id'                        => 'required|exists:venues,id',
+            'listing_id'                      => 'required|exists:listings,id',
+            'promocode'                       => 'nullable|string',
+            'date'                            => 'required|date|after_or_equal:today',
+            'start_time'                      => 'required|date_format:H:i',
+            'end_time'                        => 'required|date_format:H:i',
+            'payment_method'                  => 'required|in:deposit_remaining_on_arrival,online_payment,cash_on_arrival,paid_cash,paid_cheque,paid_credit_card,paid_wire,paid_wire_transfer,payment_skipped',
+            'notes'                           => 'nullable|string|max:500',
+            'phone'                           => 'nullable|string|min:5',
+            'quantity'                        => 'required|numeric|min:1',
+            'recurring_bookings'              => 'nullable|array',
+            'recurring_bookings.*.date'       => 'required|date|after:today',
+            'recurring_bookings.*.start_time' => 'required|date_format:H:i',
+            'recurring_bookings.*.end_time'   => 'required|date_format:H:i',
+            'recurring_bookings.*.price'      => 'required|numeric|min:0',
+            'recurring_bookings.*.quantity'   => 'required|numeric|min:1',
+            'use_gift_card_balance'           => 'nullable|boolean',
+            'gift_card_balance_used'          => 'nullable|numeric|min:0',
+        ]);
+
+        $validationErrors = $this->collectCreateBookingValidationErrors($formData);
+        if (! empty($validationErrors)) {
+            Log::error("Booking validation errors", ["Errors" => $validationErrors]);
+            return sendError('Validation failed', $validationErrors, 422);
+        }
+
+        if (isset($formData['notes'])) {
+            $formData['notes'] = strip_tags($formData['notes']);
+        } else {
+            $formData['notes'] = null;
+        }
+
+        try {
+
+            DB::beginTransaction();
+
+            if ($request->filled('phone') && $user->phone !== $request->phone) {
+                $user->phone = $request->phone;
+                $user->save();
+            }
+
+            $createdBookings = collect();
+            $listing         = $this->listingModel::with(['pricingGroups'])->findOrFail($formData['listing_id']);
+
+            $weekday = strtolower(Carbon::parse($request->date)->format('l'));
+
+            $specialDay = $this->specialDayModel::with('timeBlocks')
+                ->where('venue_id', $listing->venue_id)
+                ->where(function ($q) use ($listing) {
+                    $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
+                })
+                ->whereDate('date', $request->date)->active()->first();
+
+            $basePrice = determineSlotPrice(
+                $listing,
+                $weekday,
+                $formData['start_time'],
+                $formData['end_time'],
+                $specialDay
+            );
+
+            $addOnCost = ! empty($formData['add_ons'])
+                ? AddOn::whereIn('id', $formData['add_ons'])->sum('price')
+                : 0;
+
+            $singleSubtotal = round($basePrice + $addOnCost, 2);
+
+            $recurringBookings      = $formData['recurring_bookings'] ?? [];
+            $totalRecurringBookings = 0;
+            foreach ($recurringBookings as $recurring) {
+                $totalRecurringBookings += $recurring['quantity'] ?? 1;
+            }
+            $totalBookings = $formData['quantity'] + $totalRecurringBookings;
+
+            $baseSubtotal      = round($singleSubtotal * $formData['quantity'], 2);
+            $recurringSubtotal = 0;
+            foreach ($recurringBookings as $recurring) {
+                $recurringAddOnCost = ! empty($recurring['add_ons'])
+                    ? AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
+                    : 0;
+
+                $recurringSingleSubtotal  = round($recurring['price'] + $recurringAddOnCost, 2);
+                $recurringQuantity        = $recurring['quantity'] ?? 1;
+                $recurringSubtotal       += $recurringSingleSubtotal * $recurringQuantity;
+            }
+            $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
+
+            $giftCardBalanceUsed = 0;
+            if (! empty($formData['use_gift_card_balance']) && $formData['use_gift_card_balance']) {
+                $userGiftCardBalance = Transaction::balance($user->id) ?? 0;
+                $requestedAmount     = $formData['gift_card_balance_used'] ?? 0;
+
+                if ($requestedAmount > 0 && $userGiftCardBalance > 0) {
+                    $giftCardBalanceUsed = min($requestedAmount, $userGiftCardBalance);
+                }
+            }
+
+            $totalDiscount = 0;
+            $promocode     = null;
+            if (! empty($formData['promocode'] ?? null)) {
+                $promocode = Promocode::where('code', $formData['promocode'])->active()->first();
+
+                if (! $promocode) {
+                    return sendError('Invalid or inactive promocode');
+                }
+
+                $isValidPromocode = $promocode->isValidForOrder(
+                    $combinedSubtotal,
+                    $user->id,
+                    $formData['payment_method'],
+                    $formData['venue_id'],
+                    $formData['listing_id']
+                );
+
+                if (! $isValidPromocode) {
+                    return sendError('Promocode is not applicable');
+                }
+
+                $totalDiscount = $promocode->applyDiscount($combinedSubtotal);
+                $promocode->incrementUsage($user->id);
+            }
+
+            if ($giftCardBalanceUsed > 0) {
+                $totalAfterDiscount  = $combinedSubtotal - $totalDiscount;
+                $giftCardBalanceUsed = min($giftCardBalanceUsed, $totalAfterDiscount);
+            }
+
+            $discounts       = [];
+            $giftCardAmounts = [];
+
+            if ($totalBookings > 0) {
+                if ($totalDiscount > 0) {
+                    $baseDiscountPerBooking = round($totalDiscount / $totalBookings, 2);
+
+                    $calculatedTotal = $baseDiscountPerBooking * $totalBookings;
+
+                    $roundingDifference = round($totalDiscount - $calculatedTotal, 2);
+
+                    for ($i = 0; $i < $totalBookings; $i++) {
+                        if ($i === 0) {
+                            $discounts[] = round($baseDiscountPerBooking + $roundingDifference, 2);
+                        } else {
+                            $discounts[] = $baseDiscountPerBooking;
+                        }
+                    }
+
+                    $verifyTotal = round(array_sum($discounts), 2);
+                    if (abs($verifyTotal - $totalDiscount) > 0.01) {
+                        $adjustment   = round($totalDiscount - $verifyTotal, 2);
+                        $discounts[0] = round($discounts[0] + $adjustment, 2);
+                    }
+                } else {
+                    for ($i = 0; $i < $totalBookings; $i++) {
+                        $discounts[] = 0;
+                    }
+                }
+
+                if ($giftCardBalanceUsed > 0) {
+                    $baseGiftCardPerBooking = round($giftCardBalanceUsed / $totalBookings, 2);
+                    $calculatedTotal        = $baseGiftCardPerBooking * $totalBookings;
+                    $roundingDifference     = round($giftCardBalanceUsed - $calculatedTotal, 2);
+
+                    for ($i = 0; $i < $totalBookings; $i++) {
+                        if ($i === 0) {
+                            $giftCardAmounts[] = round($baseGiftCardPerBooking + $roundingDifference, 2);
+                        } else {
+                            $giftCardAmounts[] = $baseGiftCardPerBooking;
+                        }
+                    }
+
+                    $verifyTotal = round(array_sum($giftCardAmounts), 2);
+                    if (abs($verifyTotal - $giftCardBalanceUsed) > 0.01) {
+                        $adjustment         = round($giftCardBalanceUsed - $verifyTotal, 2);
+                        $giftCardAmounts[0] = round($giftCardAmounts[0] + $adjustment, 2);
+                    }
+                } else {
+                    for ($i = 0; $i < $totalBookings; $i++) {
+                        $giftCardAmounts[] = 0;
+                    }
+                }
+            }
+
+            $discountIndex = 0;
+            $giftCardIndex = 0;
+
+            for ($i = 0; $i < $formData['quantity']; $i++) {
+                $bookingDiscount       = $discounts[$discountIndex] ?? 0;
+                $bookingGiftCardAmount = $giftCardAmounts[$giftCardIndex] ?? 0;
+                $discountIndex++;
+                $giftCardIndex++;
+
+                $booking = $this->createSingleBooking(
+                    $user,
+                    $formData,
+                    $formData['date'],
+                    $formData['start_time'],
+                    $formData['end_time'],
+                    $singleSubtotal,
+                    $bookingDiscount,
+                    $bookingGiftCardAmount,
+                    $promocode,
+                    null,
+                    null,
+                    $listing,
+                    $request
+                );
+
+                if (! $booking) {
+                    DB::rollBack();
+                    Log::error("First: Failed to create booking for user {$user->id} on {$formData['date']}");
+                    return sendError('Failed to create booking');
+                }
+
+                $createdBookings->push($booking);
+            }
+
+            foreach ($recurringBookings as $recurring) {
+                if ($recurring['start_time'] !== $formData['start_time'] || $recurring['end_time'] !== $formData['end_time']) {
+                    DB::rollBack();
+                    Log::error("Recurring booking times do not match base booking times for user {$user->id} on {$recurring['date']}");
+                    return sendError('Recurring booking times must match base booking times');
+                }
+
+                $recurringDate = Carbon::parse($recurring['date']);
+                $baseDate      = Carbon::parse($formData['date']);
+                if ($recurringDate->lte($baseDate)) {
+                    DB::rollBack();
+                    Log::error("Recurring booking dates must be after the base booking date for user {$user->id} on {$recurring['date']}");
+                    return sendError('Recurring booking dates must be after the base booking date');
+                }
+
+                $recurringValidationData = array_merge($formData, [
+                    'date'     => $recurring['date'],
+                    'quantity' => $recurring['quantity'] ?? 1,
+                ]);
+
+                $validationErrors = $this->validateBooking($recurringValidationData);
+                if (! empty($validationErrors)) {
+                    DB::rollBack();
+                    Log::error("Validation failed for recurring booking on {$recurring['date']} for user {$user->id}", ["Errors" => $validationErrors]);
+                    return sendError('Validation failed for recurring booking on ' . $recurring['date'], $validationErrors, 422);
+                }
+
+                $recurringAddOnCost = ! empty($recurring['add_ons'])
+                    ? AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
+                    : 0;
+
+                $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
+
+                $recurringQuantity = $recurring['quantity'] ?? 1;
+
+                $recurringFormData            = $formData;
+                $recurringFormData['add_ons'] = $recurring['add_ons'] ?? [];
+
+                for ($i = 0; $i < $recurringQuantity; $i++) {
+                    $bookingDiscount       = $discounts[$discountIndex] ?? 0;
+                    $bookingGiftCardAmount = $giftCardAmounts[$giftCardIndex] ?? 0;
+                    $discountIndex++;
+                    $giftCardIndex++;
+
+                    $booking = $this->createSingleBooking(
+                        $user,
+                        $recurringFormData,
+                        $recurring['date'],
+                        $recurring['start_time'],
+                        $recurring['end_time'],
+                        $recurringSingleSubtotal,
+                        $bookingDiscount,
+                        $bookingGiftCardAmount,
+                        $promocode,
+                        null,
+                        null,
                         $listing,
                         $request
                     );
@@ -4158,7 +4470,7 @@ class BookingService
             return null;
         }
 
-        $mins = (int) round(((float) ($l->slot_duration ?? 1)) * 60);
+        $mins = $l->slotDurationMinutes();
         if ($mins < 15) {
             $mins = 60;
         }
@@ -4387,7 +4699,7 @@ class BookingService
             'friday' => 5,
             'saturday' => 6,
         ];
-        $slotMins = (int) round(((float) ($listing->slot_duration ?? 1)) * 60);
+        $slotMins = $listing->slotDurationMinutes();
         if ($slotMins < 15) {
             $slotMins = 60;
         }

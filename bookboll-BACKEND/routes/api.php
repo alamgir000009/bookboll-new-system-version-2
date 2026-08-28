@@ -323,6 +323,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('bookings/reviewable', [ReviewController::class, 'reviewableBookings'])->name('bookings.reviewable');
         Route::post('bookings/validate', [BookingController::class, 'validateBooking'])->name('bookings.validate');
         Route::post('bookings/confirm', [BookingController::class, 'confirmBooking'])->name('bookings.confirmBooking');
+        Route::post('bookings/create', [BookingController::class, 'createCustomerBooking'])->name('customer.bookings.create');
         Route::get('bookings/upcoming', [BookingController::class, 'upcoming'])->name('bookings.upcoming');
         Route::get('bookings/recent', [BookingController::class, 'recent'])->name('bookings.recent');
         Route::get('bookings/by-ids', [BookingController::class, 'getBookingsByIds'])->name('bookings.byIds');

@@ -519,12 +519,7 @@ class MarketplaceCatalogService
      */
     protected function slotMinutes(Listing $listing): int
     {
-        $n = (int) ($listing->slot_duration ?: 60);
-        if ($n > 0 && $n <= 12) {
-            return $n * 60;
-        }
-
-        return $n;
+        return $listing->slotDurationMinutes();
     }
 
     protected function startingPrice(Listing $listing): ?float
