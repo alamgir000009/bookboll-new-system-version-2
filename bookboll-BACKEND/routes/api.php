@@ -348,6 +348,7 @@ Route::prefix('customer')->group(function () {
         Route::get('preferences', [UserController::class, 'customerPreferences'])->name('customer.preferences');
         Route::post('preferences', [UserController::class, 'updatePreferences'])->name('customer.updatePreferences');
         Route::get('profile', [UserController::class, 'getCustomerProfile'])->name('customer.profile');
+        Route::get('loyalty', [LoyaltyPointController::class, 'customerLoyalty'])->name('customer.loyalty');
         Route::post('update-profile', [UserController::class, 'updateCustomerProfile'])->name('customer.updateCustomerProfile');
         Route::post('update-profile-image', [UserController::class, 'updateProfileImage'])->name('customer.updateProfileImage');
         Route::get('payment-methods', [PaymentController::class, 'getPaymentMethods'])->name('customer.payment-methods');
