@@ -4,7 +4,6 @@
  * quoting / payment-plan math stay in booking.js.
  */
 import { apiFetch, getCustomerToken, setCustomerToken } from '../lib/api.js'
-import { quoteBooking } from './booking.js'
 
 const PAY_MAP = {
   cash: 'cash_on_arrival',
@@ -175,45 +174,28 @@ function bookingPayload({ listing, location, selectionByDate, addons, players, c
   const dates = Object.keys(selectionByDate || {}).filter(d => (selectionByDate[d] || []).length).sort()
   if (!dates.length) return { error: 'Please pick at least one time slot.' }
 
-  const blocks = []
+  const slots = []
   for (const d of dates) {
-    const q = quoteBooking(listing, selectionByDate[d], [], players)
-    for (const b of q.blocks) {
-      blocks.push({
+    const sorted = [...selectionByDate[d]].sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)))
+    for (const s of sorted) {
+      slots.push({
         date: d,
-        start_time: hm(b.start),
-        end_time: hm(b.end),
-        price: Number(b.total) || 0,
+        start_time: hm(s.start_time),
+        end_time: hm(s.end_time),
         quantity: Math.max(1, players || 1),
       })
     }
   }
-  const first = blocks[0]
-  const rest = blocks.slice(1)
   const addonIds = (addons || []).filter(a => a.qty > 0).flatMap(a => Array(a.qty).fill(a.id))
 
   return {
     venue_id: location?.id || listing.venue_id || listing.location_id,
     listing_id: listing.id,
-    date: first.date,
-    start_time: first.start_time,
-    end_time: first.end_time,
+    slots,
     payment_method: PAY_MAP[payment?.method] || 'cash_on_arrival',
-    quantity: first.quantity,
     add_ons: addonIds.length ? addonIds : undefined,
     phone: customer?.phone || undefined,
-    notes: undefined,
-    promocode: payment?.promocode || undefined,
-    recurring_bookings: rest.length
-      ? rest.map(r => ({
-          date: r.date,
-          start_time: r.start_time,
-          end_time: r.end_time,
-          price: r.price,
-          quantity: r.quantity,
-          add_ons: addonIds.length ? addonIds : undefined,
-        }))
-      : undefined,
+    promocode: payment?.promocode || null,
   }
 }
 
@@ -242,7 +224,7 @@ export async function createCustomerBookingsMulti({
     return { error: res.message || 'Failed to create checkout session.' }
   }
 
-  const res = await apiFetch('/customer/bookings/confirm', { method: 'POST', body: payload })
+  const res = await apiFetch('/customer/bookings/create', { method: 'POST', body: payload })
   if (!res.success) return { error: res.message || 'Could not create the booking.' }
   await releaseHolds(listing)
   const bookings = (res.data?.bookings || []).map(b => b.id || b)
