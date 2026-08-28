@@ -393,6 +393,7 @@ Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggeste
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing'])->name('fetch-listing');
 Route::get('fetch-time-slots', [ListingController::class, 'fetchTimeSlots'])->name('fetch-time-slots');
 Route::post('lock-slot', [ListingController::class, 'lockSlot'])->name('lock-slot');
+Route::post('lock-slots', [ListingController::class, 'lockSlots'])->name('lock-slots');
 Route::post('unlock-slot', [ListingController::class, 'unlockSlot'])->name('unlock-slot');
 Route::post('unlock-all-slots', [ListingController::class, 'unlockAllSlots'])->name('unlock-all-slots');
 Route::post('extend-slot-lock', [ListingController::class, 'extendSlotLock'])->name('extend-slot-lock');

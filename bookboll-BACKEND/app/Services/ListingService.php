@@ -15,6 +15,7 @@ use App\Models\Venue;
 use BookingStatus;
 use Carbon\Carbon;
 use Exception;
+use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -2159,6 +2160,70 @@ class ListingService
         } catch (Exception $e) {
             Log::error('Failed to lock slot: ' . $e->getMessage(), ['exception' => $e]);
             return sendError('Failed to lock slot: ' . $e->getMessage());
+        }
+    }
+
+    public function lockSlots($request)
+    {
+        $request->merge([
+            'slots' => collect($request->input('slots', []))->map(fn ($slot) => [
+                'start_time' => data_get($slot, 'start_time'),
+                'end_time'   => data_get($slot, 'end_time'),
+            ])->all(),
+        ]);
+
+        $request->validate([
+            'listing_id'           => 'required|numeric|exists:listings,id',
+            'date'                 => 'required|date|after_or_equal:today',
+            'slots'                => 'required|array|min:1',
+            'slots.*.start_time'   => 'required|date_format:H:i',
+            'slots.*.end_time'     => 'required|date_format:H:i',
+        ], [
+            'date.after_or_equal' => 'You cannot lock a slot for a past date.',
+        ]);
+
+        try {
+            $earliestLock = null;
+            $locked       = [];
+
+            foreach ($request->slots as $slot) {
+                $slot = (array) $slot;
+                $singleRequest = Request::create(
+                    '/',
+                    'POST',
+                    [
+                        'listing_id' => $request->listing_id,
+                        'date'       => $request->date,
+                        'start_time' => $slot['start_time'],
+                        'end_time'   => $slot['end_time'],
+                    ]
+                );
+                $singleRequest->headers->replace($request->headers->all());
+
+                $result = $this->lockSlot($singleRequest);
+                $data   = $result->getData();
+
+                if (! ($data->success ?? false)) {
+                    return $result;
+                }
+
+                $locked[] = $data->data ?? null;
+
+                $until = $data->data->locked_until ?? null;
+                if ($until) {
+                    $ts = Carbon::parse($until)->getTimestamp();
+                    $earliestLock = $earliestLock ? min($earliestLock, $ts) : $ts;
+                }
+            }
+
+            return sendSuccess('Slots locked successfully', [
+                'locks'        => $locked,
+                'locked_until' => $earliestLock ? Carbon::createFromTimestamp($earliestLock)->toIso8601String() : null,
+            ]);
+        } catch (Exception $e) {
+            Log::error('Failed to lock slots: ' . $e->getMessage(), ['exception' => $e]);
+
+            return sendError('Failed to lock slots: ' . $e->getMessage());
         }
     }
 

@@ -5,6 +5,7 @@ use App\Exports\PaymentsExport;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\PaymentMethod as PaymentMethodModel;
+use App\Services\BookingService;
 use App\Services\PaymentService;
 use App\Services\StripeService;
 use Maatwebsite\Excel\Facades\Excel;
@@ -18,7 +19,8 @@ class PaymentController extends Controller
 {
     public function __construct(
         protected PaymentService $paymentService,
-        protected StripeService $stripeService
+        protected StripeService $stripeService,
+        protected BookingService $bookingService,
     ) {}
 
     public function index(Request $request)
@@ -260,29 +262,12 @@ class PaymentController extends Controller
             return sendError('Unauthorized', [], 401);
         }
 
-        $validated = $request->validate([
-            'venue_id'                => 'required|exists:venues,id',
-            'listing_id'             => 'required|exists:listings,id',
-            'date'                    => 'required|date|after_or_equal:today',
-            'start_time'               => 'required|date_format:H:i',
-            'end_time'                 => 'required|date_format:H:i',
-            'payment_method'           => 'required|in:online_payment,deposit_remaining_on_arrival',
-            'quantity'                 => 'required|numeric|min:1',
-            'add_ons'                  => 'nullable|array',
-            'add_ons.*'                => 'exists:add_ons,id',
-            'promocode'                => 'nullable|string',
-            'notes'                    => 'nullable|string|max:500',
-            'phone'                    => 'nullable|string|min:5',
-            'recurring_bookings'       => 'nullable|array',
-            'recurring_bookings.*.date' => 'required|date|after:today',
-            'recurring_bookings.*.start_time' => 'required|date_format:H:i',
-            'recurring_bookings.*.end_time' => 'required|date_format:H:i',
-            'recurring_bookings.*.price' => 'required|numeric|min:0',
-            'recurring_bookings.*.quantity' => 'required|numeric|min:1',
-            'recurring_bookings.*.add_ons' => 'nullable|array',
-            'use_gift_card_balance'    => 'nullable|boolean',
-            'gift_card_balance_used'  => 'nullable|numeric|min:0',
-        ]);
+        $validated = $request->validate(
+            $this->bookingService->customerBookingValidationRules([
+                'online_payment',
+                'deposit_remaining_on_arrival',
+            ])
+        );
 
         try {
             return $this->paymentService->createCheckoutSession($validated, $user);

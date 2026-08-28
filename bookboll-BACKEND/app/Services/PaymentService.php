@@ -1522,68 +1522,20 @@ class PaymentService
                 throw new Exception('Failed to create Stripe customer');
             }
 
-            $listing = \App\Models\Listing::with('pricingGroups')->findOrFail($validated['listing_id']);
-            $weekday = strtolower(\Carbon\Carbon::parse($validated['date'])->format('l'));
+            $bookingService = app(\App\Services\BookingService::class);
 
-            $specialDay = \App\Models\SpecialDay::with('timeBlocks')
-                ->where('venue_id', $listing->venue_id)
-                ->where(function ($q) use ($listing) {
-                    $q->whereNull('listing_id')->orWhere('listing_id', $listing->id);
-                })
-                ->whereDate('date', $validated['date'])->active()->first();
+            $prepared = $bookingService->prepareCustomerCheckout($validated, $user);
+            if (! empty($prepared['errors'])) {
+                DB::rollBack();
 
-            $basePrice = determineSlotPrice(
-                $listing,
-                $weekday,
-                $validated['start_time'],
-                $validated['end_time'],
-                $specialDay
-            );
-
-            $addOnCost = !empty($validated['add_ons'])
-                ? \App\Models\AddOn::whereIn('id', $validated['add_ons'])->sum('price')
-                : 0;
-
-            $singleSubtotal = round($basePrice + $addOnCost, 2);
-            $baseSubtotal = round($singleSubtotal * $validated['quantity'], 2);
-
-            $recurringSubtotal = 0;
-            foreach ($validated['recurring_bookings'] ?? [] as $recurring) {
-                $recurringAddOnCost = !empty($recurring['add_ons'])
-                    ? \App\Models\AddOn::whereIn('id', $recurring['add_ons'])->sum('price')
-                    : 0;
-                $recurringSingleSubtotal = round($recurring['price'] + $recurringAddOnCost, 2);
-                $recurringQuantity = $recurring['quantity'] ?? 1;
-                $recurringSubtotal += $recurringSingleSubtotal * $recurringQuantity;
+                return sendError('Validation failed', $prepared['errors'], 422);
             }
 
-            $combinedSubtotal = round($baseSubtotal + $recurringSubtotal, 2);
-
-            $totalDiscount = 0;
-            if (! empty($validated['promocode'] ?? null)) {
-                $promocode = \App\Models\Promocode::where('code', $validated['promocode'])->active()->first();
-                if ($promocode) {
-                    $isValid = $promocode->isValidForOrder(
-                        $combinedSubtotal,
-                        $user->id,
-                        $validated['payment_method'],
-                        $validated['venue_id'],
-                        $validated['listing_id']
-                    );
-                    if ($isValid) {
-                        $totalDiscount = $promocode->applyDiscount($combinedSubtotal);
-                    }
-                }
-            }
-
-            $giftCardBalanceUsed = 0;
-            if (!empty($validated['use_gift_card_balance']) && $validated['use_gift_card_balance']) {
-                $userGiftCardBalance = \App\Models\Transaction::balance($user->id) ?? 0;
-                $requestedAmount = $validated['gift_card_balance_used'] ?? 0;
-                if ($requestedAmount > 0 && $userGiftCardBalance > 0) {
-                    $giftCardBalanceUsed = min($requestedAmount, $userGiftCardBalance, $combinedSubtotal - $totalDiscount);
-                }
-            }
+            $combinedSubtotal    = $prepared['combinedSubtotal'];
+            $totalBookings       = $prepared['totalBookings'];
+            $totalDiscount       = $prepared['totalDiscount'];
+            $giftCardBalanceUsed = $prepared['giftCardBalanceUsed'];
+            $listing             = $prepared['listing'];
 
             $totalPrice = round($combinedSubtotal - $totalDiscount - $giftCardBalanceUsed, 2);
             if ($totalPrice < 0) {
@@ -1595,19 +1547,12 @@ class PaymentService
 
             if ($validated['payment_method'] === 'deposit_remaining_on_arrival') {
                 $depositAmount = 0;
-                if (!empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
+                if (! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
                     $deposit = $listing->payment_options['deposit'];
 
-                    $baseQuantity = $validated['quantity'] ?? 1;
-                    $totalRecurringQuantity = 0;
-                    foreach ($validated['recurring_bookings'] ?? [] as $recurring) {
-                        $totalRecurringQuantity += $recurring['quantity'] ?? 1;
-                    }
-                    $totalBookings = $baseQuantity + $totalRecurringQuantity;
-
-                    if (!empty($deposit['amount']) && $deposit['amount'] > 0) {
+                    if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
                         $depositAmount = $deposit['amount'] * $totalBookings;
-                    } elseif (!empty($deposit['percentage']) && $deposit['percentage'] > 0) {
+                    } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
                         $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
                     }
                 }
@@ -1619,7 +1564,6 @@ class PaymentService
                 $paymentAmount = 0;
             }
 
-            $bookingService = app(\App\Services\BookingService::class);
             $bookingRequest = new \Illuminate\Http\Request();
             $bookingRequest->merge(array_merge($validated, [
                 'payment_method' => $validated['payment_method'],
@@ -1630,7 +1574,7 @@ class PaymentService
                 return $user;
             });
 
-            $bookingResult = $bookingService->createCustomerBooking($bookingRequest);
+            $bookingResult = $bookingService->createCustomerBooking($bookingRequest, $prepared);
             $bookingResultData = $bookingResult->getData();
 
             if (! $bookingResultData->success) {
@@ -1673,9 +1617,7 @@ class PaymentService
             $listingName = $mainBooking?->listing?->name ?? $listing->name ?? 'Facility';
             $bookingRef = $mainBooking?->booking_id ?? "BKN#{$mainBookingId}";
 
-            $baseQuantity = $validated['quantity'] ?? 1;
-            $totalRecurringQty = collect($validated['recurring_bookings'] ?? [])->sum('quantity');
-            $totalSlots = $baseQuantity + $totalRecurringQty;
+            $totalSlots = $totalBookings;
 
             $allBookings = Booking::whereIn('id', $allBookingIds)->orderBy('id')->get(['id', 'booking_id', 'date', 'start_time', 'end_time']);
             $slotLines = [];

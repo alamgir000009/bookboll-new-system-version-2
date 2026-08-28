@@ -88,6 +88,11 @@ class ListingController extends Controller
         return $this->listingService->lockSlot($request);
     }
 
+    public function lockSlots(Request $request)
+    {
+        return $this->listingService->lockSlots($request);
+    }
+
     public function unlockSlot(Request $request)
     {
         return $this->listingService->unlockSlot($request);
