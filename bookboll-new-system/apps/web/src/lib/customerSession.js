@@ -223,21 +223,39 @@ async function upsertStorefrontCustomer({ email, fullName, phone, countryId, mar
   return { customer: created }
 }
 
+function mapLaravelUserToCustomer(user, preferences = {}) {
+  const marketingEmail = !!(preferences?.notifications?.marketing_emails)
+  return {
+    id: user?.uuid || user?.id || '',
+    full_name: user?.name || '',
+    email: user?.email || '',
+    phone: user?.phone || '',
+    avatar_url: user?.image || '',
+    bio: user?.bio || '',
+    photos: Array.isArray(user?.photos) ? user.photos.filter(Boolean) : [],
+    is_private: user?.is_private === true,
+    marketing_email: marketingEmail,
+    laravel_user_id: user?.id || null,
+  }
+}
+
 export async function applyLaravelAuth(user, token, { marketing } = {}) {
   if (!token) return { error: 'Invalid login response.' }
-  setCustomerToken(token)
-  const linked = await upsertStorefrontCustomer({
-    email: user?.email,
-    fullName: user?.name,
-    phone: user?.phone,
-    marketing,
-    avatarUrl: user?.image,
-  })
-  if (linked.error) {
-    clearCustomerToken()
-    return linked
+  if (!user?.uuid) {
+    return { error: 'Your account is missing a public profile ID. Please contact support.' }
   }
-  persistCustomer({ ...linked.customer, laravel_user_id: user?.id })
+  setCustomerToken(token)
+  const merged = mapLaravelUserToCustomer(user, {
+    notifications: {
+      marketing_emails: marketing?.email,
+    },
+  })
+  if (marketing) {
+    merged.marketing_email = !!marketing.email
+    merged.marketing_sms = !!marketing.sms
+    merged.marketing_whatsapp = !!marketing.whatsapp
+  }
+  persistCustomer(merged)
   clearCustomerLoyaltyCache()
   return { customer: customer.value, user }
 }
@@ -330,39 +348,34 @@ export async function customerSignOut() {
 // locally-stored identity. Best-effort: if a column isn't migrated yet, the change still
 // shows for this session (and persists once the migration is applied).
 export async function updateCustomerProfile(patch) {
-  if (!customer.value?.id) return { error: 'Not signed in' }
-  let { data, error } = await supabase.from('customers').update(patch).eq('id', customer.value.id).select().maybeSingle()
-  // Pre-migration: optional columns may not exist yet — retry without them so the rest of the
-  // profile still saves. Drop the newest columns first (marketing_*), then fall back to dropping
-  // the social columns (bio/is_private) for a very old DB.
-  if (error && /marketing_|column/i.test(error.message || '')) {
-    const { marketing_email, marketing_sms, marketing_whatsapp, marketing_updated_at, ...noMkt } = patch
-    let r = await supabase.from('customers').update(noMkt).eq('id', customer.value.id).select().maybeSingle()
-    if (r.error && /bio|is_private|column/i.test(r.error.message || '')) {
-      const { bio, is_private, ...safe } = noMkt
-      r = await supabase.from('customers').update(safe).eq('id', customer.value.id).select().maybeSingle()
-    }
-    data = r.data; error = r.error
-  } else if (error && /bio|is_private|column/i.test(error.message || '')) {
-    const { bio, is_private, ...safe } = patch
-    const r = await supabase.from('customers').update(safe).eq('id', customer.value.id).select().maybeSingle()
-    data = r.data; error = r.error
+  if (!getCustomerToken()) return { error: 'Not signed in' }
+  const body = {}
+  if ('full_name' in patch) body.name = patch.full_name
+  if ('bio' in patch) body.bio = patch.bio ?? ''
+  if ('photos' in patch) body.photos = Array.isArray(patch.photos) ? patch.photos.filter(Boolean) : []
+  if ('is_private' in patch) body.is_private = !!patch.is_private
+
+  if (Object.keys(body).length) {
+    const res = await apiFetch('/customer/update-profile', { method: 'POST', body })
+    if (!res.success) return { error: formatApiError(res, 'Could not save your profile.') }
+    const user = res.data?.user || {}
+    persistCustomer({
+      ...(customer.value || {}),
+      ...mapLaravelUserToCustomer(user, { notifications: { marketing_emails: customer.value?.marketing_email } }),
+      ...(patch.avatar_url ? { avatar_url: patch.avatar_url } : {}),
+    })
+    return { ok: true }
   }
-  persistCustomer({ ...(customer.value || {}), ...(data || patch) })
+
+  persistCustomer({ ...(customer.value || {}), ...patch })
   return { ok: true }
 }
 
 function mergeLaravelUser(user, preferences) {
   const current = customer.value || {}
-  const marketingEmail = !!(preferences?.notifications?.marketing_emails)
   return {
     ...current,
-    full_name: user?.name || current.full_name || '',
-    email: user?.email || current.email || '',
-    phone: user?.phone || current.phone || '',
-    avatar_url: user?.image || current.avatar_url || '',
-    marketing_email: marketingEmail,
-    laravel_user_id: user?.id || current.laravel_user_id,
+    ...mapLaravelUserToCustomer(user, preferences),
   }
 }
 
@@ -386,7 +399,15 @@ export async function saveCustomerAccount(patch) {
   if (!name) return { error: 'Please enter your name.' }
   if (name.length > 100) return { error: 'Name must be 100 characters or fewer.' }
 
-  const profileRes = await apiFetch('/customer/update-profile', { method: 'POST', body: { name } })
+  const profileRes = await apiFetch('/customer/update-profile', {
+    method: 'POST',
+    body: {
+      name,
+      bio: patch.bio ?? '',
+      photos: Array.isArray(patch.photos) ? patch.photos.filter(Boolean) : [],
+      is_private: !!patch.is_private,
+    },
+  })
   if (!profileRes.success) return { error: formatApiError(profileRes, 'Could not save your profile.') }
 
   const prefsRes = await apiFetch('/customer/preferences', {
@@ -395,18 +416,13 @@ export async function saveCustomerAccount(patch) {
   })
   if (!prefsRes.success) return { error: formatApiError(prefsRes, 'Profile saved, but marketing preferences could not be updated.') }
 
-  const social = await updateCustomerProfile({
-    full_name: name,
-    bio: patch.bio,
-    is_private: patch.is_private,
-    avatar_url: patch.avatar_url,
-    photos: patch.photos,
-    marketing_email: !!patch.marketing_email,
+  const user = profileRes.data?.user || {}
+  persistCustomer({
+    ...mergeLaravelUser(user, prefsRes.data?.preferences || {}),
     marketing_sms: !!patch.marketing_sms,
     marketing_whatsapp: !!patch.marketing_whatsapp,
-    marketing_updated_at: patch.marketing_updated_at || new Date().toISOString(),
+    avatar_url: patch.avatar_url || user?.image || customer.value?.avatar_url || '',
   })
-  if (social.error) return social
   return { ok: true }
 }
 
@@ -419,7 +435,7 @@ export async function uploadCustomerAvatar(file) {
   if (!res.success) return { error: formatApiError(res, 'Could not update your profile picture.') }
   const url = res.data?.image || ''
   if (!url) return { error: 'Could not update your profile picture.' }
-  await updateCustomerProfile({ avatar_url: url })
+  persistCustomer({ ...(customer.value || {}), avatar_url: url })
   return { url }
 }
 

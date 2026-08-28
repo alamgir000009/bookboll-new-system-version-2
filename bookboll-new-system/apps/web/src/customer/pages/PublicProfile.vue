@@ -2,17 +2,19 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { customer, isCustomer, updateCustomerProfile } from '../../lib/customerSession.js'
-import { loadPublicProfile } from '../../customer/data.js'
 import {
-  loadFollowState, followUser, unfollowUser, followCounts, canViewContent,
-  loadPosts, createPost, deletePost, pendingFollowRequests, respondFollow, loadFollowList,
-} from '../../lib/social.js'
+  loadPublicProfileBundle,
+  followUser,
+  unfollowUser,
+  loadFollowList,
+  respondFollow,
+  createPost,
+  deletePost,
+} from '../apiPublicProfile.js'
 import { uploadImage } from '../../lib/imageUpload.js'
 import GameCard from '../components/GameCard.vue'
 import { useSeo } from '../../lib/seo.js'
 import { ArrowLeft, CalendarDays, Trophy, Users, ShieldCheck, Camera, Plus, X, Loader, Maximize2, ChevronLeft, ChevronRight, UserPlus, UserCheck, Clock, MessageCircle, Lock, Trash2, Star, Check, Pencil } from 'lucide-vue-next'
-import { streetCredCounts, myCommunities } from '../../customer/community.js'
-
 const route = useRoute()
 const router = useRouter()
 const profile = ref(null)
@@ -33,19 +35,21 @@ const isSelf = computed(() => isCustomer.value && customer.value?.id === profile
 async function load() {
   loading.value = true
   followState.value = 'none'; counts.value = { followers: 0, following: 0 }; posts.value = []; pendingReqs.value = []
-  const p = await loadPublicProfile(route.params.id)
-  profile.value = p
+  const bundle = await loadPublicProfileBundle(route.params.id)
+  if (!bundle) {
+    profile.value = null
+    loading.value = false
+    return
+  }
+  profile.value = bundle.profile
+  followState.value = bundle.followState
+  counts.value = bundle.counts
+  canView.value = bundle.canView
+  posts.value = bundle.posts
+  pendingReqs.value = bundle.pendingRequests
+  props_.value = bundle.streetCred
+  communities.value = bundle.communities
   loading.value = false
-  if (!p) return
-  const me = customer.value?.id
-  counts.value = await followCounts(p.id)
-  if (me && me !== p.id) followState.value = await loadFollowState(me, p.id)
-  canView.value = await canViewContent(me, { id: p.id, is_private: p.isPrivate })
-  if (canView.value) posts.value = await loadPosts(p.id)
-  if (me === p.id && p.isPrivate) pendingReqs.value = await pendingFollowRequests(p.id)
-  // Street-cred badges are public player-card facts, shown even on private profiles.
-  props_.value = await streetCredCounts(p.id)
-  communities.value = await myCommunities(p.id)
 }
 // Real memberships only; private clubs stay hidden from other viewers.
 const shownCommunities = computed(() => (communities.value || [])
@@ -93,9 +97,13 @@ async function goFollow() {
     followState.value = 'none'
   }
   followBusy.value = false
-  counts.value = await followCounts(profile.value.id)
-  canView.value = await canViewContent(customer.value?.id, { id: profile.value.id, is_private: profile.value.isPrivate })
-  if (canView.value && !posts.value.length) posts.value = await loadPosts(profile.value.id)
+  const refreshed = await loadPublicProfileBundle(profile.value.id)
+  if (refreshed) {
+    counts.value = refreshed.counts
+    canView.value = refreshed.canView
+    followState.value = refreshed.followState
+    if (canView.value && !posts.value.length) posts.value = refreshed.posts
+  }
 }
 function goMessage() {
   if (!isCustomer.value) { router.push('/account'); return }
@@ -104,7 +112,10 @@ function goMessage() {
 async function actReq(req, accept) {
   await respondFollow(req.id, accept)
   pendingReqs.value = pendingReqs.value.filter(r => r.id !== req.id)
-  if (accept) counts.value = await followCounts(profile.value.id)
+  if (accept) {
+    const refreshed = await loadPublicProfileBundle(profile.value.id)
+    if (refreshed) counts.value = refreshed.counts
+  }
 }
 
 // ── Followers / following modal ──
