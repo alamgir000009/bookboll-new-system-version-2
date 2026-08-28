@@ -7,6 +7,7 @@ use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use App\Traits\TracksCreator;
 use Spatie\Activitylog\Traits\CausesActivity;
@@ -14,7 +15,7 @@ use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use Billable, CausesActivity, HasApiTokens, HasFactory, HasRoles, LogsModelActivity, Notifiable, TracksCreator;
+    use Billable, CausesActivity, GeneratesUuid, HasApiTokens, HasFactory, HasRoles, LogsModelActivity, Notifiable, TracksCreator;
 
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
@@ -22,8 +23,11 @@ class User extends Authenticatable
     public const PENDING  = 'pending';
 
     protected $fillable = [
+        'uuid',
         'name',
         'image',
+        'bio',
+        'is_private',
         'phone',
         'email',
         'status',
@@ -69,6 +73,7 @@ class User extends Authenticatable
             'marketing_email'       => 'boolean',
             'marketing_sms'         => 'boolean',
             'marketing_whatsapp'    => 'boolean',
+            'is_private'            => 'boolean',
         ];
     }
 
@@ -78,6 +83,7 @@ class User extends Authenticatable
         'total_bookings',
         'loyalty_progress',
         'points_to_next_tier',
+        'photos',
     ];
 
     public function getRolesArrayAttribute()
@@ -124,6 +130,16 @@ class User extends Authenticatable
     public function scopeActive($query)
     {
         return $query->where('status', self::ACTIVE);
+    }
+
+    public function scopeCustomerRole($query)
+    {
+        return $query->whereRelation('roles', 'name', 'customer');
+    }
+
+    public function scopeByPublicUuid($query, string $uuid)
+    {
+        return $query->where('uuid', $uuid);
     }
 
     public function scopePending($query)
@@ -291,6 +307,78 @@ class User extends Authenticatable
     public function preferences()
     {
         return $this->hasOne(Preference::class);
+    }
+
+    public function assets()
+    {
+        return $this->morphMany(Asset::class, 'assetable')->orderBy('sort_order')->orderBy('id');
+    }
+
+    public function getPhotosAttribute(): array
+    {
+        $assets = $this->relationLoaded('assets')
+            ? $this->assets
+            : $this->assets()->get();
+
+        return $assets
+            ->map(fn (Asset $asset) => $asset->url)
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Replace gallery photo assets with the given URL/path list (order preserved).
+     *
+     * @param  list<string>  $urls
+     */
+    public function syncGalleryPhotos(array $urls): void
+    {
+        $urls = array_values(array_filter(array_map('strval', $urls)));
+
+        $this->assets()->delete();
+
+        $sort = 0;
+        foreach ($urls as $url) {
+            $path = $this->normalizeAssetPath($url);
+            if ($path === '') {
+                continue;
+            }
+            $this->assets()->create([
+                'path'       => $path,
+                'type'       => Asset::TYPE_IMAGE,
+                'sort_order' => $sort++,
+            ]);
+        }
+
+        $this->unsetRelation('assets');
+        $this->load('assets');
+    }
+
+    protected function normalizeAssetPath(string $url): string
+    {
+        $url = trim($url);
+        if ($url === '') {
+            return '';
+        }
+        if (filter_var($url, FILTER_VALIDATE_URL)) {
+            $path = parse_url($url, PHP_URL_PATH) ?: '';
+            $host = parse_url($url, PHP_URL_HOST) ?: '';
+            $appHost = parse_url((string) config('app.url'), PHP_URL_HOST) ?: '';
+            if ($appHost && $host === $appHost && str_contains($path, '/storage/')) {
+                return ltrim(preg_replace('#^.*/storage/#', '', $path), '/');
+            }
+
+            return $url;
+        }
+        if (str_starts_with($url, '/storage/')) {
+            return ltrim(substr($url, strlen('/storage/')), '/');
+        }
+        if (str_starts_with($url, 'storage/')) {
+            return ltrim(substr($url, strlen('storage/')), '/');
+        }
+
+        return $url;
     }
 
     public function onesignalSubscriptions()

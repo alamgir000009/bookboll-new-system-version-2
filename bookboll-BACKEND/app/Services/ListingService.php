@@ -671,16 +671,15 @@ class ListingService
 
     protected function uploadImagesAsAssets(Listing $listing, array $images): void
     {
-        $sortOrder = Asset::where('listing_id', $listing->id)->max('sort_order') ?? 0;
+        $sortOrder = $listing->assets()->max('sort_order') ?? 0;
 
         foreach ($images as $image) {
             if ($image->isValid()) {
                 $uploadedPath = $image->store('listings', 'public');
 
-                Asset::create([
-                    'listing_id' => $listing->id,
+                $listing->assets()->create([
                     'path'       => $uploadedPath,
-                    'type'       => 'image',
+                    'type'       => Asset::TYPE_IMAGE,
                     'sort_order' => ++$sortOrder,
                 ]);
             }
@@ -689,10 +688,10 @@ class ListingService
 
     protected function deleteListingAssets(Listing $listing): void
     {
-        $assets = Asset::where('listing_id', $listing->id)->get();
+        $assets = $listing->assets()->get();
 
         foreach ($assets as $asset) {
-            if (Storage::disk('public')->exists($asset->path)) {
+            if (! filter_var($asset->path, FILTER_VALIDATE_URL) && Storage::disk('public')->exists($asset->path)) {
                 Storage::disk('public')->delete($asset->path);
             }
             $asset->delete();
@@ -711,18 +710,17 @@ class ListingService
             if ($request->hasFile('image')) {
                 $uploadedPath = $request->file('image')->store('listings', 'public');
 
-                $maxSortOrder = Asset::where('listing_id', $listingId)->max('sort_order') ?? 0;
+                $maxSortOrder = $listing->assets()->max('sort_order') ?? 0;
 
-                $asset = Asset::create([
-                    'listing_id' => $listingId,
+                $asset = $listing->assets()->create([
                     'path'       => $uploadedPath,
-                    'type'       => 'image',
+                    'type'       => Asset::TYPE_IMAGE,
                     'sort_order' => $maxSortOrder + 1,
                 ]);
 
                 $uploadedUrl = $asset->url;
 
-                $totalImages = Asset::where('listing_id', $listingId)->count();
+                $totalImages = $listing->assets()->count();
 
                 return sendSuccess('Image uploaded successfully', [
                     'listing_id'   => $listing->id,
@@ -765,28 +763,30 @@ class ListingService
 
             $path = ltrim($path, '/');
 
-            $asset = Asset::where('listing_id', $listingId)
-                ->where('path', $path)
-                ->first();
+            $asset = $listing->assets()->where('path', $path)->first();
 
             if (! $asset) {
                 $filename = basename($path);
-                $asset    = Asset::where('listing_id', $listingId)
+                $asset    = $listing->assets()
                     ->whereRaw("SUBSTRING_INDEX(path, '/', -1) = ?", [$filename])
                     ->first();
+            }
+
+            if (! $asset && filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+                $asset = $listing->assets()->where('path', $imageUrl)->first();
             }
 
             if (! $asset) {
                 return sendError('Image not found in listing assets', [], 404);
             }
 
-            if (Storage::disk('public')->exists($asset->path)) {
+            if (! filter_var($asset->path, FILTER_VALIDATE_URL) && Storage::disk('public')->exists($asset->path)) {
                 Storage::disk('public')->delete($asset->path);
             }
 
             $asset->delete();
 
-            $remainingImages = Asset::where('listing_id', $listingId)->count();
+            $remainingImages = $listing->assets()->count();
 
             return sendSuccess('Image deleted successfully', [
                 'listing_id'       => $listing->id,

@@ -16,6 +16,8 @@ use App\Http\Controllers\ApprovalsController;
 use App\Http\Controllers\WalletPayoutController;
 use App\Http\Controllers\EventModerationController;
 use App\Http\Controllers\CommunityModerationController;
+use App\Http\Controllers\CustomerSocialController;
+use App\Http\Controllers\PublicProfileController;
 use App\Http\Controllers\LocationCityController;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\LocationCountryController;
@@ -353,6 +355,13 @@ Route::prefix('customer')->group(function () {
         Route::post('update-profile-image', [UserController::class, 'updateProfileImage'])->name('customer.updateProfileImage');
         Route::get('payment-methods', [PaymentController::class, 'getPaymentMethods'])->name('customer.payment-methods');
         Route::post('delete-account', [UserController::class, 'deleteCustomerAccount'])->name('customer.delete-account');
+
+        Route::post('social/follow/{uuid}', [CustomerSocialController::class, 'follow'])->name('customer.social.follow');
+        Route::delete('social/follow/{uuid}', [CustomerSocialController::class, 'unfollow'])->name('customer.social.unfollow');
+        Route::get('social/follows/{uuid}', [CustomerSocialController::class, 'followList'])->name('customer.social.follows');
+        Route::post('social/follow-requests/{id}/respond', [CustomerSocialController::class, 'respondFollowRequest'])->name('customer.social.follow-respond');
+        Route::post('social/posts', [CustomerSocialController::class, 'createPost'])->name('customer.social.posts.store');
+        Route::delete('social/posts/{id}', [CustomerSocialController::class, 'deletePost'])->name('customer.social.posts.destroy');
     });
 
 });
@@ -377,6 +386,7 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('directory', [MarketplaceCatalogController::class, 'directory'])->name('directory');
     Route::get('default-city', [MarketplaceCatalogController::class, 'defaultCity'])->name('default-city');
     Route::get('served-regions', [MarketplaceCatalogController::class, 'servedRegions'])->name('served-regions');
+    Route::get('profiles/{uuid}', [PublicProfileController::class, 'show'])->name('profiles.show');
 });
 Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings'])->name('fetch-suggested-listings');
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing'])->name('fetch-listing');

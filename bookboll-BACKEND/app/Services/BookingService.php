@@ -1404,8 +1404,8 @@ class BookingService
                 ->orderBy('venue_id')
                 ->orderBy('day')
                 ->get()
-                ->map(fn ($row) => $row->toDashboardRow())
-                ->filter(fn ($r) => $r['day_of_week'] !== null)
+                ->map(fn($row) => $row->toDashboardRow())
+                ->filter(fn($r) => $r['day_of_week'] !== null)
                 ->values()
                 ->all();
 
@@ -1420,8 +1420,8 @@ class BookingService
             ->orderBy('venue_id')
             ->orderBy('day')
             ->get()
-            ->map(fn (Schedule $row) => $row->toDashboardLocationHour())
-            ->filter(fn ($r) => $r['day_of_week'] !== null)
+            ->map(fn(Schedule $row) => $row->toDashboardLocationHour())
+            ->filter(fn($r) => $r['day_of_week'] !== null)
             ->values()
             ->all();
     }
@@ -3988,7 +3988,7 @@ class BookingService
                 $q->orWhere('listing_id', $listing->id);
             })
             ->get()
-            ->flatMap(fn (SpecialDay $sd) => $this->expandSpecialDayRow($sd))
+            ->flatMap(fn(SpecialDay $sd) => $this->expandSpecialDayRow($sd))
             ->values();
     }
 

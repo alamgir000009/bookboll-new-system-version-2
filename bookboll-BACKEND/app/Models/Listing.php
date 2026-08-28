@@ -165,7 +165,7 @@ class Listing extends Model
 
     public function assets()
     {
-        return $this->hasMany(Asset::class)->orderBy('sort_order');
+        return $this->morphMany(Asset::class, 'assetable')->orderBy('sort_order')->orderBy('id');
     }
 
     public function getImagesUrlsAttribute($images)

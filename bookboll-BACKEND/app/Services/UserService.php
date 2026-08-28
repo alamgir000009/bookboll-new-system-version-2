@@ -121,6 +121,7 @@ class UserService
 
             $user->load(['roles', 'venues']);
             $user->makeHidden('roles');
+            $this->ensurePublicUuid($user);
             $token = $user->createToken('bookboll-api-token')->plainTextToken;
             $roles = $user->getRoleNames();
 
@@ -137,8 +138,9 @@ class UserService
     {
 
         $user = auth()->user();
+        $this->ensurePublicUuid($user);
 
-        $user->load(['roles', 'venues', 'loyaltyTier']);
+        $user->load(['roles', 'venues', 'loyaltyTier', 'assets']);
         $user->makeHidden(['roles']);
         $roles = $user->getRoleNames();
 
@@ -174,6 +176,10 @@ class UserService
 
         $formData = $request->validate([
             'name'          => 'sometimes|string|max:100',
+            'bio'           => 'nullable|string|max:2000',
+            'photos'        => 'nullable|array',
+            'photos.*'      => 'nullable|string|max:2048',
+            'is_private'    => 'sometimes|boolean',
             'date_of_birth' => 'nullable|date|before:today',
             'gender'        => 'nullable',
             'nationality'   => 'nullable|string',
@@ -210,14 +216,28 @@ class UserService
                 $updateData['phone'] = $formData['phone'];
             }
 
+            if (array_key_exists('bio', $formData)) {
+                $updateData['bio'] = $formData['bio'];
+            }
+
+            if (array_key_exists('is_private', $formData)) {
+                $updateData['is_private'] = (bool) $formData['is_private'];
+            }
+
+            $this->ensurePublicUuid($user);
+
             if (! empty($updateData)) {
                 $user->update($updateData);
+            }
+
+            if (array_key_exists('photos', $formData)) {
+                $user->syncGalleryPhotos(array_values(array_filter($formData['photos'] ?? [])));
             }
 
             DB::commit();
 
             $user->refresh();
-            $user->load(['roles', 'venues']);
+            $user->load(['roles', 'venues', 'assets']);
             $user->makeHidden(['roles']);
             $roles = $user->getRoleNames();
 
@@ -357,6 +377,8 @@ class UserService
 
             $token = $user->createToken('auth-token')->plainTextToken;
 
+            $this->ensurePublicUuid($user);
+
             DB::commit();
 
             $user->makeHidden(['roles']);
@@ -454,6 +476,8 @@ class UserService
 
             $token = $user->createToken('auth-token')->plainTextToken;
 
+            $this->ensurePublicUuid($user);
+
             DB::commit();
 
             $user->makeHidden(['roles']);
@@ -497,6 +521,8 @@ class UserService
             if ($user->status == User::BLOCKED) {
                 return sendError('Your account is blocked by admin. Please contact for further details.');
             }
+
+            $this->ensurePublicUuid($user);
 
             $token = $user->createToken('bookboll-customer-login-api-token')->plainTextToken;
 
@@ -2005,5 +2031,15 @@ class UserService
             Log::error("Registration request rejection error: " . $e->getMessage(), ["Exception" => $e]);
             return sendError("Something went wrong: " . $e->getMessage());
         }
+    }
+
+    protected function ensurePublicUuid(User $user): void
+    {
+        if (! empty($user->uuid)) {
+            return;
+        }
+
+        $user->uuid = (string) \Illuminate\Support\Str::uuid();
+        $user->save();
     }
 }
