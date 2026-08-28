@@ -18,6 +18,7 @@ import { effectiveGenderPolicy } from '../lib/membershipCategories.js'
 import { notifyHostNewJoiner, notifyJoinerDecision, notifyMatchResult, notifyEventCancelled } from './eventNotify.js'
 import { meetupState } from './meetup.js'
 import { awardLoyalty, JOIN_BONUS, HOST_BONUS } from '../lib/loyalty.js'
+import { checkCommunityMembership, loadCommunity } from './community.js'
 
 // ── White-label scoping ─────────────────────────────────────────────────────────
 // When the storefront is served for a provider's brand (see lib/brand.js), every
@@ -733,7 +734,8 @@ async function _decorateGames(games) {
   const commIds = [...new Set(games.map(g => g.community_id).filter(Boolean))]
   let comms = []
   if (commIds.length) {
-    try { const r = await supabase.from('communities').select('*').in('id', commIds); comms = r.data || [] } catch { /* pre-migration */ }
+    const loaded = await Promise.all(commIds.map((id) => loadCommunity(id)))
+    comms = loaded.filter(Boolean)
   }
   return games.map(g => {
     const host = person(g.host_customer_id)
@@ -1014,9 +1016,8 @@ export async function requestToJoin(gameId, joiner) {
   // host opted it into public listing). Non-members are pointed to join the community.
   if (g?.community_id && g.community_public !== true) {
     if (!joiner.customerId) return { error: 'This is a members-only community event — join the community first.', communityOnly: true, communityId: g.community_id }
-    const m = await supabase.from('community_members')
-      .select('id, status').eq('community_id', g.community_id).eq('customer_id', joiner.customerId).maybeSingle()
-    if (!m.data || m.data.status !== 'accepted') {
+    const check = await checkCommunityMembership(g.community_id, joiner.customerId)
+    if (!check.is_member) {
       return { error: 'This is a members-only community event — join the community first.', communityOnly: true, communityId: g.community_id }
     }
   }

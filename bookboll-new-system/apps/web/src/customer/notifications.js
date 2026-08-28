@@ -14,6 +14,7 @@
 import { ref } from 'vue'
 import { supabase } from '../lib/supabase.js'
 import { loadDueTournamentMatches } from './data.js'
+import { myCommunities, loadMembers } from './community.js'
 
 const SEEN_KEY = 'bb_game_notif_seen'
 
@@ -117,39 +118,33 @@ export async function loadNotifications(customerId) {
 
   // ── COMMUNITIES: my membership got approved · people waiting on clubs I manage ──
   try {
-    const { data: myMems, error: memErr } = await supabase.from('community_members')
-      .select('id, community_id, role, status, joined_at').eq('customer_id', customerId)
-    if (!memErr && (myMems || []).length) {
-      const cids = [...new Set(myMems.map(m => m.community_id))]
-      const { data: comms } = await supabase.from('communities').select('id, name, is_private').in('id', cids)
-      const cById = Object.fromEntries((comms || []).map(c => [c.id, c]))
-      // JOINER: a private community accepted me.
-      for (const m of myMems) {
-        const cm = cById[m.community_id]
-        if (m.status === 'accepted' && cm?.is_private && m.role === 'member') {
+    const mine = await myCommunities(customerId)
+    if (mine.length) {
+      const cById = Object.fromEntries(mine.map((c) => [c.id, c]))
+      for (const c of mine) {
+        const m = c.membership
+        if (m?.status === 'accepted' && c.is_private && m.role === 'member') {
           items.push({
             id: 'cma_' + m.id, kind: 'joiner', reqId: 'cma_' + m.id, status: 'accepted',
-            text: `You're in — welcome to “${cm.name}”`,
-            link: `/communities/${m.community_id}`, ts: m.joined_at, unread: seen['cma_' + m.id] !== 'accepted',
+            text: `You're in — welcome to “${c.name}”`,
+            link: `/communities/${c.id}`, ts: m.joined_at, unread: seen['cma_' + m.id] !== 'accepted',
           })
         }
       }
-      // MANAGER: pending join requests on communities I own/admin.
-      const managed = myMems.filter(m => m.status === 'accepted' && ['owner', 'admin'].includes(m.role)).map(m => m.community_id)
-      if (managed.length) {
-        const { data: pend } = await supabase.from('community_members')
-          .select('id, community_id, customer_id, joined_at').in('community_id', managed).eq('status', 'pending').limit(40)
-        for (const p of (pend || [])) {
+      const managed = mine.filter((c) => c.membership?.status === 'accepted' && ['owner', 'admin'].includes(c.membership?.role))
+      for (const c of managed) {
+        const members = await loadMembers(c.id)
+        for (const p of members.filter((m) => m.status === 'pending')) {
           if (p.customer_id === customerId) continue
           items.push({
             id: 'cmp_' + p.id, kind: 'host', reqId: 'cmp_' + p.id, status: 'pending',
-            text: `Someone wants to join “${cById[p.community_id]?.name || 'your community'}”`,
-            link: `/communities/${p.community_id}`, ts: p.joined_at, unread: seen['cmp_' + p.id] !== 'pending',
+            text: `Someone wants to join “${cById[c.id]?.name || 'your community'}”`,
+            link: `/communities/${c.id}`, ts: p.joined_at, unread: seen['cmp_' + p.id] !== 'pending',
           })
         }
       }
     }
-  } catch { /* communities not migrated yet */ }
+  } catch { /* communities API unavailable */ }
 
   // ── JOINER: my own requests — decisions, cancellations, reminders, results ──
   const mineReqs = await supabase.from('game_join_requests')
