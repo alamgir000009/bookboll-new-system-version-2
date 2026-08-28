@@ -238,6 +238,7 @@ export async function applyLaravelAuth(user, token, { marketing } = {}) {
     return linked
   }
   persistCustomer({ ...linked.customer, laravel_user_id: user?.id })
+  clearCustomerLoyaltyCache()
   return { customer: customer.value, user }
 }
 
@@ -321,6 +322,7 @@ export async function customerSignOut() {
     try { await apiFetch('/logout', { method: 'POST' }) } catch { /* ignore */ }
   }
   clearCustomerToken()
+  clearCustomerLoyaltyCache()
   persistCustomer(null)
 }
 
@@ -421,38 +423,88 @@ export async function uploadCustomerAvatar(file) {
   return { url }
 }
 
-// ── Loyalty tiers (mirror of the admin per-country model) ──────────────────────
-export const TIERS = [
-  { name: 'Rookie', threshold: 0,     color: '#64748b', bg: '#f1f5f9', emoji: '🥉' },
-  { name: 'Star',   threshold: 1000,  color: '#2563eb', bg: '#dbeafe', emoji: '⭐' },
-  { name: 'Legend', threshold: 5000,  color: '#b45309', bg: '#fef3c7', emoji: '🔥' },
-  { name: 'GOAT',   threshold: 15000, color: '#059669', bg: '#d1fae5', emoji: '🐐' },
-]
-export function tierForPoints(lifetime) {
-  const pts = Number(lifetime || 0)
-  return [...TIERS].reverse().find(t => pts >= t.threshold) || TIERS[0]
-}
-export function nextTier(lifetime) {
-  const pts = Number(lifetime || 0)
-  return TIERS.find(t => t.threshold > pts) || null
+// ── Loyalty (Laravel-backed; tier ladder uses lifetime earned) ─────────────────
+const TIER_STYLE = {
+  bronze:   { color: '#64748b', bg: '#f1f5f9' },
+  silver:   { color: '#2563eb', bg: '#dbeafe' },
+  gold:     { color: '#b45309', bg: '#fef3c7' },
+  platinum: { color: '#059669', bg: '#d1fae5' },
+  rookie:   { color: '#64748b', bg: '#f1f5f9' },
+  star:     { color: '#2563eb', bg: '#dbeafe' },
+  legend:   { color: '#b45309', bg: '#fef3c7' },
+  goat:     { color: '#059669', bg: '#d1fae5' },
 }
 
-// Load the signed-in customer's loyalty for the selected country (falls back to
-// their highest across countries). Returns { points, lifetime, tier, next, progress }.
+const DEFAULT_TIERS = [
+  { name: 'Bronze', slug: 'bronze', min_points: 0, threshold: 0, color: '#64748b', bg: '#f1f5f9' },
+  { name: 'Silver', slug: 'silver', min_points: 1000, threshold: 1000, color: '#2563eb', bg: '#dbeafe' },
+  { name: 'Gold', slug: 'gold', min_points: 2500, threshold: 2500, color: '#b45309', bg: '#fef3c7' },
+  { name: 'Platinum', slug: 'platinum', min_points: 5000, threshold: 5000, color: '#059669', bg: '#d1fae5' },
+]
+
+/** @deprecated use loyaltyTiers from loadCustomerRewards */
+export const TIERS = DEFAULT_TIERS
+
+export function mapLaravelTiers(raw) {
+  const list = Array.isArray(raw) && raw.length ? raw : DEFAULT_TIERS
+  return list.map(t => {
+    const slug = String(t.slug || t.name || '').toLowerCase()
+    const style = TIER_STYLE[slug] || TIER_STYLE.bronze
+    const threshold = Number(t.min_points ?? t.threshold ?? 0)
+    return {
+      ...t,
+      slug,
+      name: t.name || slug,
+      threshold,
+      min_points: threshold,
+      color: style.color,
+      bg: style.bg,
+    }
+  })
+}
+
+function tierForLifetime(lifetime, tiers) {
+  const pts = Number(lifetime || 0)
+  return [...tiers].reverse().find(t => pts >= t.threshold) || tiers[0]
+}
+
+function nextTierForLifetime(lifetime, tiers) {
+  const pts = Number(lifetime || 0)
+  return tiers.find(t => t.threshold > pts) || null
+}
+
+function loyaltyFromPayload(data) {
+  const tiers = mapLaravelTiers(data?.tiers)
+  const balance = Number(data?.balance) || 0
+  const lifetime = Number(data?.lifetime_earned) || 0
+  const tier = tierForLifetime(lifetime, tiers)
+  const next = nextTierForLifetime(lifetime, tiers)
+  const progress = next
+    ? Math.min(100, Math.round(((lifetime - tier.threshold) / (next.threshold - tier.threshold)) * 100))
+    : 100
+  const ledger = Array.isArray(data?.ledger) ? data.ledger : []
+  return { points: balance, lifetime, tier, next, progress, tiers, ledger }
+}
+
+let _loyaltyCache = null
+
+export async function loadCustomerRewards() {
+  if (!getCustomerToken()) return { error: 'Please sign in to see your rewards.' }
+  const res = await apiFetch('/customer/loyalty')
+  if (!res.success) return { error: formatApiError(res, 'Could not load your rewards.') }
+  const payload = loyaltyFromPayload(res.data)
+  _loyaltyCache = payload
+  return { ok: true, ...payload }
+}
+
 export async function loadCustomerLoyalty() {
-  if (!customer.value?.id) return null
-  const { data } = await supabase.from('customer_loyalty').select('*').eq('customer_id', customer.value.id)
-  const rows = data || []
-  if (!rows.length) {
-    const tier = tierForPoints(0)
-    return { points: 0, lifetime: 0, tier, next: nextTier(0), progress: 0, countryId: selectedCountry.value?.id || null }
-  }
-  // Prefer the selected country; else the row with the most lifetime points.
-  let row = selectedCountry.value?.id ? rows.find(r => r.country_id === selectedCountry.value.id) : null
-  if (!row) row = [...rows].sort((a, b) => Number(b.lifetime_points || 0) - Number(a.lifetime_points || 0))[0]
-  const lifetime = Number(row.lifetime_points || 0)
-  const tier = tierForPoints(lifetime)
-  const next = nextTier(lifetime)
-  const progress = next ? Math.min(100, Math.round(((lifetime - tier.threshold) / (next.threshold - tier.threshold)) * 100)) : 100
-  return { points: Number(row.points || 0), lifetime, tier, next, progress, countryId: row.country_id }
+  if (!customer.value?.id || !getCustomerToken()) return null
+  if (_loyaltyCache) return _loyaltyCache
+  const res = await loadCustomerRewards()
+  if (res.error) return null
+  return _loyaltyCache
+}
+
+export function clearCustomerLoyaltyCache() {
+  _loyaltyCache = null
 }

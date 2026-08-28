@@ -18,7 +18,10 @@ const props = defineProps({
   customerName: { type: String, default: '' },
 })
 
-const TIER_ICON = { Rookie: Shield, Star: Star, Legend: Flame, GOAT: Crown }
+const TIER_ICON = {
+  Bronze: Shield, Silver: Star, Gold: Flame, Platinum: Crown,
+  Rookie: Shield, Legend: Flame, GOAT: Crown,
+}
 function tierIcon(n) { return TIER_ICON[n] || Shield }
 
 const idx = ref(0)

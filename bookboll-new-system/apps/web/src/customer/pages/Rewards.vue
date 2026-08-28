@@ -1,40 +1,64 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { isCustomer, customer, loadCustomerLoyalty, TIERS } from '../../lib/customerSession.js'
-import { loadLoyaltyLedger } from '../../lib/loyalty.js'
-import { Trophy, Sparkles, Lock, Check, Shield, Star, Flame, Crown, MapPin, Users, Gamepad2 } from 'lucide-vue-next'
+import { isCustomer, customer, loadCustomerRewards } from '../../lib/customerSession.js'
+import { getCustomerToken } from '../../lib/api.js'
+import { Trophy, Sparkles, Lock, Check, Shield, Star, Flame, Crown, MapPin, Users } from 'lucide-vue-next'
 
 const loy = ref(null)
 const ledger = ref([])
+const tiers = ref([])
 const showAllLedger = ref(false)
 const shownLedger = computed(() => showAllLedger.value ? ledger.value : ledger.value.slice(0, 3))
 const loading = ref(true)
-const TIER_ICON = { Rookie: Shield, Star: Star, Legend: Flame, GOAT: Crown }
+const loadError = ref('')
+const signedIn = computed(() => isCustomer.value && !!getCustomerToken())
+
+const TIER_ICON = {
+  Bronze: Shield, Silver: Star, Gold: Flame, Platinum: Crown,
+  Rookie: Shield, Legend: Flame, GOAT: Crown,
+}
 function tierIcon(name) { return TIER_ICON[name] || Shield }
 
-// How each earned entry reads, by its source key (bk: / gm: / host:).
-function earnMeta(key) {
-  if (String(key).startsWith('bk:')) return { icon: MapPin, label: 'Venue booking', cls: 'bk' }
-  if (String(key).startsWith('gm:')) return { icon: Users, label: 'Joined a game', cls: 'gm' }
-  if (String(key).startsWith('host:')) return { icon: Trophy, label: 'Hosted an event', cls: 'ho' }
+function earnMeta(entry) {
+  if (entry?.booking_id) return { icon: MapPin, label: 'Venue booking', cls: 'bk' }
+  const r = String(entry?.reason || '').toLowerCase()
+  if (/game|join/.test(r)) return { icon: Users, label: 'Joined a game', cls: 'gm' }
+  if (/host/.test(r)) return { icon: Trophy, label: 'Hosted an event', cls: 'ho' }
   return { icon: Sparkles, label: 'Points earned', cls: 'ot' }
 }
 function fmtDate(d) { try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) } catch { return '' } }
 
 async function load() {
+  if (!signedIn.value) {
+    loading.value = false
+    loy.value = null
+    ledger.value = []
+    tiers.value = []
+    loadError.value = ''
+    return
+  }
   loading.value = true
-  loy.value = isCustomer.value ? await loadCustomerLoyalty() : null
-  ledger.value = loy.value ? await loadLoyaltyLedger(customer.value.id, { countryId: loy.value.countryId }) : []
+  loadError.value = ''
+  const res = await loadCustomerRewards()
+  if (res.error) {
+    loy.value = null
+    ledger.value = []
+    tiers.value = []
+    loadError.value = res.error
+  } else {
+    loy.value = res
+    ledger.value = res.ledger || []
+    tiers.value = res.tiers || []
+  }
   loading.value = false
 }
 onMounted(load)
-watch(() => customer.value?.id, load)
+watch(() => [customer.value?.id, signedIn.value], load)
 </script>
 
 <template>
   <div class="rw">
-    <!-- not signed in -->
-    <div v-if="!isCustomer" class="rw-signin">
+    <div v-if="!signedIn" class="rw-signin">
       <Trophy :size="38" />
       <h2>Earn rewards as you play</h2>
       <p>Sign in to see your rank, points and how close you are to the next badge.</p>
@@ -42,6 +66,7 @@ watch(() => customer.value?.id, load)
     </div>
 
     <div v-else-if="loading" class="cmsg">Loading your rewards…</div>
+    <div v-else-if="loadError" class="cmsg cmsg-err">{{ loadError }}</div>
 
     <template v-else-if="loy">
       <!-- Hero badge -->
@@ -67,9 +92,9 @@ watch(() => customer.value?.id, load)
         </div>
         <div class="rw-ledger">
           <div v-for="e in shownLedger" :key="e.id" class="rw-le">
-            <div class="rw-le-ico" :class="earnMeta(e.source_key).cls"><component :is="earnMeta(e.source_key).icon" :size="17" /></div>
+            <div class="rw-le-ico" :class="earnMeta(e).cls"><component :is="earnMeta(e).icon" :size="17" /></div>
             <div class="rw-le-mid">
-              <div class="rw-le-t">{{ earnMeta(e.source_key).label }}</div>
+              <div class="rw-le-t">{{ earnMeta(e).label }}</div>
               <div class="rw-le-d">{{ fmtDate(e.created_at) }}</div>
             </div>
             <div class="rw-le-pts">+{{ Number(e.points).toLocaleString() }}</div>
@@ -80,7 +105,7 @@ watch(() => customer.value?.id, load)
       <!-- Tier ladder -->
       <h2 class="rw-h2">All ranks</h2>
       <div class="rw-ladder">
-        <div v-for="t in TIERS" :key="t.name" class="rung" :class="{ cur: t.name === loy.tier.name, done: loy.lifetime >= t.threshold }" :style="{ '--tbg': t.bg }">
+        <div v-for="t in tiers" :key="t.slug || t.name" class="rung" :class="{ cur: t.name === loy.tier.name, done: loy.lifetime >= t.threshold }" :style="{ '--tbg': t.bg }">
           <div class="rung-emoji" :style="{ color: t.color }"><component :is="tierIcon(t.name)" :size="26" /></div>
           <div class="rung-info">
             <div class="rung-name">{{ t.name }} <span v-if="t.name === loy.tier.name" class="rung-you">YOU</span></div>
@@ -102,6 +127,7 @@ watch(() => customer.value?.id, load)
 <style scoped>
 .rw { max-width: 560px; margin: 0 auto; }
 .cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
+.cmsg-err { color: #dc2626; }
 .rw-hero { background: linear-gradient(135deg,#0f172a,#1e293b); border-radius: 22px; padding: 32px 24px; text-align: center; color: #fff; position: relative; overflow: hidden; }
 .rw-hero::after { content:''; position:absolute; inset:0; background: radial-gradient(circle at 50% 0%, var(--tbg), transparent 60%); opacity:.25; }
 .rw-badge { width: 96px; height: 96px; margin: 0 auto 14px; border-radius: 26px; background: var(--tbg); display: flex; align-items: center; justify-content: center; font-size: 52px; box-shadow: 0 10px 30px rgba(0,0,0,.35); position: relative; z-index: 1; }
@@ -148,31 +174,22 @@ watch(() => customer.value?.id, load)
 .rw-signin-btn { display: inline-flex; align-items: center; gap: 7px; background: var(--brand); color: #fff; font-weight: 800; padding: 13px 24px; border-radius: 999px; text-decoration: none; }
 
 @media (max-width: 760px) {
-  /* keep the dark hero/cards off the screen edges without doubling the .cust gutter */
   .rw { padding: 0 14px; }
-
-  /* Signed-out: lift the Sign-in CTA into the first viewport */
   .rw-signin { padding: 32px 18px; }
   .rw-signin h2 { font-size: 19px; margin: 12px 0 6px; }
   .rw-signin p { font-size: 14px; margin: 0 0 18px; }
   .rw-signin-btn { min-height: 44px; }
-
-  /* Signed-in hero: shrink so points + progress land above the fold */
   .rw-hero { padding: 24px 18px; border-radius: 18px; }
   .rw-badge { width: 72px; height: 72px; border-radius: 20px; margin: 0 auto 10px; }
   .rw-badge svg { width: 36px; height: 36px; }
   .rw-rank { font-size: 24px; line-height: 1.2; }
   .rw-hi { font-size: 13px; }
   .rw-pts { font-size: 13px; line-height: 1.45; margin-top: 8px; }
-
-  /* Ladder: denser rungs so more ranks are visible at a glance */
   .rw-h2 { font-size: 17px; margin: 20px 0 10px; }
   .rw-h2row { margin: 20px 0 10px; }
   .rung { padding: 12px 13px; gap: 12px; border-radius: 14px; }
   .rung-emoji { width: 44px; height: 44px; border-radius: 12px; }
   .rung-you { font-size: 11px; }
-
-  /* Reclaim space at the bottom explainer */
   .rw-how { padding: 14px; margin-top: 18px; }
   .rw-how div { font-size: 13px; }
 }
