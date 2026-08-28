@@ -18,6 +18,7 @@ use App\Http\Controllers\EventModerationController;
 use App\Http\Controllers\CommunityModerationController;
 use App\Http\Controllers\CustomerSocialController;
 use App\Http\Controllers\CustomerCommunityController;
+use App\Http\Controllers\CustomerProgramController;
 use App\Http\Controllers\PublicProfileController;
 use App\Http\Controllers\LocationCityController;
 use App\Http\Controllers\LocationController;
@@ -389,6 +390,13 @@ Route::prefix('customer')->group(function () {
         Route::get('communities/{uuid}/chat/unread', [CustomerCommunityController::class, 'chatUnread'])->name('customer.communities.chat.unread');
         Route::get('messages/group', [CustomerCommunityController::class, 'loadGroupThread'])->name('customer.messages.group.index');
         Route::post('messages/group', [CustomerCommunityController::class, 'sendGroupMessage'])->name('customer.messages.group.store');
+
+        Route::get('programs/mine', [CustomerProgramController::class, 'mine'])->name('customer.programs.mine');
+        Route::get('programs/passes', [CustomerProgramController::class, 'passes'])->name('customer.programs.passes');
+        Route::get('programs/offers/check', [CustomerProgramController::class, 'checkOffer'])->name('customer.programs.offers.check');
+        Route::post('programs/offers/check', [CustomerProgramController::class, 'checkOffer'])->name('customer.programs.offers.check.post');
+        Route::post('programs/{uuid}/enroll', [CustomerProgramController::class, 'enroll'])->name('customer.programs.enroll');
+        Route::post('programs/subscriptions/{uuid}/cancel', [CustomerProgramController::class, 'cancel'])->name('customer.programs.cancel');
     });
 
 });
@@ -419,6 +427,9 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('communities/{uuid}', [CustomerCommunityController::class, 'show'])->name('communities.show');
     Route::get('communities/{uuid}/members', [CustomerCommunityController::class, 'members'])->name('communities.members');
     Route::get('communities/{uuid}/posts', [CustomerCommunityController::class, 'feed'])->name('communities.posts');
+    Route::get('programs', [CustomerProgramController::class, 'index'])->name('programs.index');
+    Route::get('programs/{uuid}', [CustomerProgramController::class, 'show'])->name('programs.show');
+    Route::get('programs/{uuid}/hours', [CustomerProgramController::class, 'hours'])->name('programs.hours');
 });
 Route::get('fetch-suggested-listings', [ListingController::class, 'fetchSuggestedListings'])->name('fetch-suggested-listings');
 Route::get('fetch-listing/{id}', [ListingController::class, 'fetchListing'])->name('fetch-listing');

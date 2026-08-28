@@ -1,0 +1,1056 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\ClassProgram;
+use App\Models\ClassSubscription;
+use App\Models\EntryPass;
+use App\Models\OfferRedemption;
+use App\Models\Payment;
+use App\Models\ProviderWallet;
+use App\Models\User;
+use App\Models\Venue;
+use App\Models\VenueHourPeriod;
+use App\Models\WalletTransaction;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Nnjeim\World\Models\City;
+
+/**
+ * Customer marketplace class programs / memberships — parity with storefront data.js.
+ * Public program IDs are UUIDs; FKs use numeric class_programs.id.
+ */
+class CustomerProgramService
+{
+    private const INTERVAL_LABEL = [
+        'weekly' => 'week', 'biweekly' => '2 weeks', 'monthly' => 'month',
+        'quarterly' => 'quarter', 'yearly' => 'year', 'one_time' => 'one-time',
+    ];
+
+    private const INTERVAL_MONTHS = [
+        'weekly' => 0.25, 'biweekly' => 0.5, 'monthly' => 1, 'quarterly' => 3, 'yearly' => 12,
+    ];
+
+    public function __construct(protected WalletPayoutService $wallets)
+    {}
+
+    public function list(Request $request)
+    {
+        $cityId = $request->query('city_id');
+        $brandOwner = $request->query('brand_owner') ?: null;
+
+        if (! $cityId && ! $brandOwner) {
+            return sendSuccess('Programs fetched', ['programs' => []]);
+        }
+
+        $query = ClassProgram::query()
+            ->with('venue')
+            ->where('status', 'active')
+            ->where(function ($q) {
+                $q->where('is_draft', false)->orWhereNull('is_draft');
+            });
+
+        if ($brandOwner) {
+            $query->where(function ($q) use ($brandOwner) {
+                $q->where('owner_user_id', $brandOwner)
+                    ->orWhere('mapped_owner_user_id', $brandOwner);
+            })->where(function ($q) {
+                $q->where('show_on_provider_site', true)->orWhereNull('show_on_provider_site');
+            });
+        } else {
+            $query->where(function ($q) {
+                $q->where('show_on_marketplace', true)->orWhereNull('show_on_marketplace');
+            })->where(function ($q) {
+                $q->where('approval_status', 'approved')->orWhereNull('approval_status');
+            })->where(function ($q) {
+                $q->whereNull('eligibility_status')->orWhere('eligibility_status', '!=', 'paused');
+            });
+        }
+
+        if ($cityId) {
+            $cityId = (int) $cityId;
+            $venueIds = Venue::query()->where('city_id', $cityId)->pluck('id');
+            $ownerIds = Venue::query()
+                ->where('city_id', $cityId)
+                ->whereNotNull('owner_user_id')
+                ->pluck('owner_user_id');
+
+            $query->where(function ($q) use ($venueIds, $ownerIds) {
+                $has = false;
+                if ($venueIds->isNotEmpty()) {
+                    $q->whereIn('venue_id', $venueIds);
+                    $has = true;
+                }
+                if ($ownerIds->isNotEmpty()) {
+                    $method = $has ? 'orWhereIn' : 'whereIn';
+                    $q->{$method}('mapped_owner_user_id', $ownerIds);
+                    $has = true;
+                }
+                // Seeded/imported rows often lack venue_id — still show them on marketplace.
+                $q->orWhereNull('venue_id');
+            });
+        }
+
+        $programs = $query->orderBy('sort_order')->orderBy('name')->get();
+
+        // If city filter only matched orphans, prefer decorating with a venue from that city.
+        $fallbackVenue = null;
+        if ($cityId) {
+            $fallbackVenue = Venue::query()->where('city_id', (int) $cityId)->orderBy('id')->first();
+        }
+        $counts = $this->activeMemberCounts($programs->pluck('id')->all());
+
+        $cards = $programs->map(function (ClassProgram $p) use ($counts, $fallbackVenue) {
+            if (! $p->venue && $fallbackVenue) {
+                $p->setRelation('venue', $fallbackVenue);
+            }
+
+            return $this->mapCard($p, (int) ($counts[$p->id] ?? 0));
+        })->values()->all();
+
+        return sendSuccess('Programs fetched', ['programs' => $cards]);
+    }
+
+    public function show(string $uuid, Request $request)
+    {
+        $brandOwner = $request->query('brand_owner') ?: null;
+        $program = ClassProgram::with('venue')->where('uuid', $uuid)->first();
+        if (! $program || ! $this->isVisible($program, $brandOwner)) {
+            return sendError('Program not found.', [], 404);
+        }
+
+        $venue = $program->venue;
+        $location = $venue ? [
+            'id'      => (string) $venue->id,
+            'name'    => $venue->name ?? '',
+            'address' => $venue->address ?? '',
+            'phone'   => $venue->phone ?? '',
+        ] : null;
+
+        $openingHours = null;
+        if (($program->category ?: '') === 'gym' && $venue) {
+            $openingHours = $this->venueHours((int) $venue->id);
+        }
+
+        $memberCount = (int) ($this->activeMemberCounts([$program->id])[$program->id] ?? 0);
+        $mapped = $this->mapProgramRow($program);
+
+        return sendSuccess('Program fetched', [
+            'program'      => $mapped,
+            'image'        => $this->firstPhoto($program),
+            'photos'       => $this->allPhotos($program),
+            'location'     => $location,
+            'openingHours' => $openingHours,
+            'memberCount'  => $memberCount,
+        ]);
+    }
+
+    public function hours(string $uuid)
+    {
+        $program = ClassProgram::with('venue')->where('uuid', $uuid)->first();
+        if (! $program?->venue_id) {
+            return sendSuccess('Hours', ['openingHours' => null]);
+        }
+
+        return sendSuccess('Hours', [
+            'openingHours' => $this->venueHours((int) $program->venue_id),
+        ]);
+    }
+
+    public function checkIntroOffer(Request $request)
+    {
+        $data = $request->validate([
+            'owner_user_id' => 'nullable|string|max:64',
+            'email'         => 'nullable|string|max:255',
+            'card_fp'       => 'nullable|string|max:128',
+        ]);
+
+        $used = $this->hasUsedIntroOffer(
+            $data['email'] ?? null,
+            $data['card_fp'] ?? null,
+            $data['owner_user_id'] ?? null
+        );
+
+        return sendSuccess('Offer check', ['used' => $used]);
+    }
+
+    public function enroll(User $user, string $uuid, array $payload)
+    {
+        if (! $user->uuid) {
+            return sendError('Please sign in to continue.');
+        }
+
+        $program = ClassProgram::with('venue')->where('uuid', $uuid)->first();
+        if (! $program || ! $this->isVisible($program, null)) {
+            return sendError('Program not found.');
+        }
+
+        $capacity = (int) ($program->capacity ?: 0);
+        if ($capacity > 0) {
+            $active = ClassSubscription::where('program_id', $program->id)
+                ->where('status', 'active')
+                ->count();
+            if ($active >= $capacity) {
+                return sendError('This program is full.');
+            }
+        }
+
+        $email = strtolower(trim((string) ($user->email ?: '')));
+        if ($this->hasLiveMembership($program->id, $user->uuid, $email)) {
+            return sendError('You’re already a member of this program — manage it in My Memberships.');
+        }
+
+        $ownerKey = $program->owner_user_id ?: ($program->mapped_owner_user_id ? (string) $program->mapped_owner_user_id : null);
+        $cardFp = (string) ($payload['card_fp'] ?? '');
+        $rawMode = $this->offerModeFor($program);
+        $introUsed = $rawMode === 'trial'
+            ? $this->hasUsedIntroOffer($email, $cardFp, $ownerKey)
+            : false;
+        $mode = $introUsed ? 'none' : $rawMode;
+
+        $interval = $program->billing_interval ?: 'monthly';
+        $isFixed = $program->program_type === 'fixed_duration';
+        $oneTime = $interval === 'one_time';
+        $trialDays = $mode === 'trial' ? (int) ($program->free_trial_days ?: 0) : 0;
+        $trialSessions = $mode === 'trial' ? (int) ($program->free_trial_sessions ?: 0) : 0;
+        $discountMonths = $mode === 'discount' ? (int) ($program->discount_months ?: 0) : 0;
+        $listPrice = (float) ($program->monthly_price ?: 0);
+        $amount = $mode === 'discount'
+            ? $this->discountedPrice($listPrice, $interval, $discountMonths)
+            : $listPrice;
+        $hasTrial = $mode === 'trial' && ($trialDays > 0 || $trialSessions > 0);
+        $commission = (float) ($program->commission_percentage ?: 15);
+        $platformFee = round($amount * $commission / 100, 2);
+        $providerPayout = round($amount - $platformFee, 2);
+        $joiningFee = max(0, (float) ($program->joining_fee ?: 0));
+        $startedAt = now()->toDateString();
+
+        if ($hasTrial) {
+            $trialStatus = 'in_trial';
+            if ($trialSessions > 0) {
+                $nextBilling = $this->nthSessionDate($startedAt, $program->day_of_week_mask ?? [], 2)
+                    ?: $this->addIntervalToDate($startedAt, 'monthly');
+            } else {
+                $nextBilling = \Carbon\Carbon::parse($startedAt)->addDays($trialDays)->toDateString();
+            }
+            $trialEndsAt = $nextBilling;
+        } else {
+            $trialEndsAt = $startedAt;
+            $trialStatus = 'active';
+            if ($oneTime) {
+                $nextBilling = null;
+            } elseif ($isFixed) {
+                $nb = $this->addIntervalToDate($startedAt, 'monthly');
+                $end = optional($program->end_date)?->toDateString();
+                $nextBilling = ($end && $nb >= $end) ? null : $nb;
+            } else {
+                $nextBilling = $this->addIntervalToDate($startedAt, $interval);
+            }
+        }
+
+        $countryId = $this->resolveCountryId($program);
+        $wallet = null;
+        if ($ownerKey) {
+            $wallet = $this->ensureSubscriptionWallet($ownerKey, $countryId, $program->currency ?: 'AED');
+        }
+
+        try {
+            $result = DB::transaction(function () use (
+                $program, $user, $email, $startedAt, $nextBilling, $trialEndsAt, $trialStatus,
+                $amount, $providerPayout, $platformFee, $interval, $countryId, $wallet,
+                $joiningFee, $hasTrial, $ownerKey, $cardFp, $payload, $commission, $introUsed
+            ) {
+                $sub = ClassSubscription::create([
+                    'program_id'       => $program->id,
+                    'customer_id'      => $user->uuid,
+                    'customer_name'    => $user->name ?: $email,
+                    'customer_email'   => $email,
+                    'started_at'       => $startedAt,
+                    'next_billing_at'  => $nextBilling,
+                    'trial_ends_at'    => $trialEndsAt,
+                    'trial_status'     => $trialStatus,
+                    'monthly_amount'   => $amount,
+                    'provider_payout'  => $providerPayout,
+                    'platform_fee'     => $platformFee,
+                    'status'           => 'active',
+                    'billing_interval' => $interval,
+                    'country_id'       => $countryId,
+                    'wallet_id'        => $wallet?->id,
+                    'form_answers'     => $payload['answers'] ?? [],
+                    'joining_fee'      => $joiningFee,
+                    'first_charge_at'  => $trialStatus === 'active' ? now() : null,
+                    'card_on_file_id'  => $cardFp ?: null,
+                ]);
+
+                if ($hasTrial && $ownerKey) {
+                    OfferRedemption::create([
+                        'customer_email'   => $email ?: null,
+                        'card_fingerprint' => $cardFp ?: null,
+                        'owner_user_id'    => $ownerKey,
+                        'program_id'       => $program->uuid,
+                        'subscription_id'  => $sub->uuid,
+                        'offer_type'       => 'trial',
+                        'source'           => 'customer_web',
+                    ]);
+                }
+
+                $discount = max(0, (float) ($payload['discount'] ?? 0));
+                $loyaltyRedeem = max(0, (float) ($payload['loyalty_redeem'] ?? 0));
+                $firstChargeDiscount = $trialStatus === 'active'
+                    ? min($discount, $amount)
+                    : 0;
+                $loyaltyApplied = 0;
+
+                if ($trialStatus === 'active') {
+                    $chargeAmount = $amount;
+                    $chargeFee = $platformFee;
+                    if ($joiningFee > 0) {
+                        $chargeAmount = round($amount + $joiningFee, 2);
+                        $chargeFee = round($chargeAmount * $commission / 100, 2);
+                    }
+                    $loyaltyApplied = $this->recordFirstCharge(
+                        $sub,
+                        $program,
+                        $chargeAmount,
+                        $chargeFee,
+                        $firstChargeDiscount,
+                        $loyaltyRedeem,
+                        $wallet
+                    );
+                }
+
+                $joiningNow = $trialStatus === 'active' ? $joiningFee : 0;
+
+                return [
+                    'subscription'     => $this->mapSubscriptionPublic($sub->fresh(), $program),
+                    'charged'          => $trialStatus === 'active',
+                    'amount'           => $amount,
+                    'joiningFee'       => $joiningFee,
+                    'charged_amount'   => round($amount - $firstChargeDiscount + $joiningNow - $loyaltyApplied, 2),
+                    'discountApplied'  => $firstChargeDiscount,
+                    'loyaltyApplied'   => $loyaltyApplied,
+                    'introUsed'        => $introUsed,
+                    'countryId'        => $countryId,
+                    'currency'         => $program->currency ?: 'AED',
+                ];
+            });
+        } catch (\Throwable $e) {
+            return sendError($e->getMessage() ?: 'Could not complete sign-up.');
+        }
+
+        return sendSuccess('Enrolled', $result);
+    }
+
+    public function mine(User $user, Request $request)
+    {
+        $brandOwner = $request->query('brand_owner') ?: null;
+        $email = strtolower(trim((string) ($user->email ?: '')));
+
+        $subs = ClassSubscription::query()
+            ->with('program.venue')
+            ->where(function ($q) use ($user, $email) {
+                $q->where('customer_id', $user->uuid);
+                if ($email) {
+                    $q->orWhereRaw('LOWER(customer_email) = ?', [$email]);
+                }
+            })
+            ->orderByDesc('started_at')
+            ->get()
+            ->unique('id')
+            ->values();
+
+        $out = [];
+        foreach ($subs as $s) {
+            $p = $s->program;
+            if ($brandOwner && $p) {
+                $owner = $p->owner_user_id ?: (string) $p->mapped_owner_user_id;
+                if ($owner && $owner !== $brandOwner && (string) $p->mapped_owner_user_id !== $brandOwner) {
+                    continue;
+                }
+            }
+            $out[] = [
+                'id'          => $s->uuid,
+                'programId'   => $p?->uuid,
+                'name'        => $p?->name ?: 'Membership',
+                'sport'       => $p?->sport_category ?: '',
+                'category'    => $p?->category ?: '',
+                'image'       => $p ? $this->firstPhoto($p) : '',
+                'color'       => $p?->color ?: '#7c3aed',
+                'amount'      => (float) ($s->monthly_amount ?: 0),
+                'currency'    => $p?->currency ?: 'AED',
+                'interval'    => $this->intervalLabel($s->billing_interval ?: $p?->billing_interval),
+                'status'      => $s->status ?: 'active',
+                'trialStatus' => $s->trial_status ?: '',
+                'startedAt'   => optional($s->started_at)?->toDateString(),
+                'nextBilling' => optional($s->next_billing_at)?->toDateString(),
+                'trialEndsAt' => optional($s->trial_ends_at)?->toDateString(),
+            ];
+        }
+
+        return sendSuccess('My memberships', ['subscriptions' => $out]);
+    }
+
+    public function cancel(User $user, string $subUuid)
+    {
+        $email = strtolower(trim((string) ($user->email ?: '')));
+        $sub = ClassSubscription::where('uuid', $subUuid)->first();
+        if (! $sub) {
+            return sendError('Subscription not found.', [], 404);
+        }
+        $owns = $sub->customer_id === $user->uuid
+            || ($email && strtolower((string) $sub->customer_email) === $email);
+        if (! $owns) {
+            return sendError('Not allowed.', [], 403);
+        }
+
+        $sub->update([
+            'status'          => 'cancelled',
+            'next_billing_at' => null,
+            'cancelled_at'    => now(),
+        ]);
+
+        return sendSuccess('Cancelled', ['ok' => true]);
+    }
+
+    public function passes(User $user)
+    {
+        $email = strtolower(trim((string) ($user->email ?: '')));
+        $memberships = $this->liveMembershipRows($user->uuid, $email);
+        if (! $memberships) {
+            return sendSuccess('Passes', ['pass' => null, 'memberships' => [], 'legacyPasses' => []]);
+        }
+
+        $pass = $this->ensurePass('member', $user->uuid, null, $user->uuid, $email);
+        $legacy = [];
+        foreach ($memberships as $row) {
+            $sub = $row['sub'];
+            $prog = $row['prog'];
+            $owner = $prog?->owner_user_id ?: ($prog?->mapped_owner_user_id ? (string) $prog->mapped_owner_user_id : null);
+            $lp = $this->ensurePass('membership', $sub->uuid, $owner, $user->uuid, $email);
+            if (! $lp) {
+                continue;
+            }
+            $joiningFee = max(0, (float) ($sub->joining_fee ?? $prog?->joining_fee ?? 0));
+            $legacy[] = [
+                'pass'      => $this->mapPass($lp),
+                'kind'      => 'membership',
+                'title'     => $prog?->name ?: 'Membership',
+                'venue'     => '',
+                'date'      => '',
+                'start'     => '',
+                'end'       => '',
+                'status'    => $sub->trial_status === 'in_trial' ? 'trial' : $sub->status,
+                'joiningFee'=> $joiningFee,
+                'feePaid'   => $joiningFee > 0 && ($sub->first_charge_at || $sub->trial_status !== 'in_trial'),
+            ];
+        }
+
+        return sendSuccess('Passes', [
+            'pass'         => $pass ? $this->mapPass($pass) : null,
+            'memberships'  => array_map(function ($row) {
+                $sub = $row['sub'];
+                $prog = $row['prog'];
+                $joiningFee = max(0, (float) ($sub->joining_fee ?? $prog?->joining_fee ?? 0));
+
+                return [
+                    'sub'         => $this->mapSubscriptionPublic($sub, $prog),
+                    'prog'        => $prog ? $this->mapProgramRow($prog) : null,
+                    'title'       => $prog?->name ?: 'Membership',
+                    'status'      => $sub->trial_status === 'in_trial' ? 'trial' : $sub->status,
+                    'nextBilling' => optional($sub->next_billing_at)?->toDateString() ?: '',
+                    'joiningFee'  => $joiningFee,
+                    'feePaid'     => $joiningFee > 0 && ($sub->first_charge_at || $sub->trial_status !== 'in_trial'),
+                ];
+            }, $memberships),
+            'legacyPasses' => $legacy,
+        ]);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    protected function isVisible(ClassProgram $p, ?string $brandOwner): bool
+    {
+        if (($p->status ?: '') !== 'active') {
+            return false;
+        }
+        if ($p->is_draft) {
+            return false;
+        }
+        if ($brandOwner) {
+            $owner = $p->owner_user_id ?: (string) $p->mapped_owner_user_id;
+            if ($owner !== $brandOwner && (string) $p->mapped_owner_user_id !== $brandOwner) {
+                return false;
+            }
+
+            return $p->show_on_provider_site !== false;
+        }
+        if ($p->show_on_marketplace === false) {
+            return false;
+        }
+        if (($p->approval_status ?: 'approved') !== 'approved') {
+            return false;
+        }
+        if (($p->eligibility_status ?: 'eligible') === 'paused') {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function activeMemberCounts(array $programIds): array
+    {
+        if (! $programIds) {
+            return [];
+        }
+
+        return ClassSubscription::whereIn('program_id', $programIds)
+            ->where('status', 'active')
+            ->selectRaw('program_id, COUNT(*) as cnt')
+            ->groupBy('program_id')
+            ->pluck('cnt', 'program_id')
+            ->all();
+    }
+
+    protected function mapCard(ClassProgram $p, int $memberCount): array
+    {
+        $mode = $this->offerModeFor($p);
+        $discount = (int) ($p->discount_months ?: 0);
+        $sessions = (int) ($p->free_trial_sessions ?: 0);
+        $tdays = (int) ($p->free_trial_days ?: 0);
+        $offerBadge = $mode === 'discount'
+            ? ($discount > 0 ? $discount.' month'.($discount !== 1 ? 's' : '').' off' : '')
+            : ($sessions > 0 ? '1 free session' : ($tdays > 0 ? $tdays.'-day free trial' : ''));
+        $price = $mode === 'discount'
+            ? $this->discountedPrice((float) $p->monthly_price, $p->billing_interval, $discount)
+            : (float) $p->monthly_price;
+        $venue = $p->venue;
+
+        return [
+            'id'           => $p->uuid,
+            'name'         => $p->name,
+            'sport'        => $p->sport_category,
+            'category'     => $p->category ?: 'academy',
+            'audience'     => $p->audience ?: '',
+            'gender'       => $this->effectiveGenderPolicy($p),
+            'color'        => $p->color ?: '#7c3aed',
+            'image'        => $this->firstPhoto($p),
+            'locationName' => $venue?->name ?: '',
+            'lat'          => $venue?->latitude !== null ? (float) $venue->latitude : null,
+            'lng'          => $venue?->longitude !== null ? (float) $venue->longitude : null,
+            'price'        => $price,
+            'currency'     => $p->currency ?: 'AED',
+            'interval'     => $this->intervalLabel($p->billing_interval),
+            'offerBadge'   => $offerBadge,
+            'memberCount'  => $memberCount,
+        ];
+    }
+
+    protected function mapProgramRow(ClassProgram $p): array
+    {
+        return [
+            'id'                       => $p->uuid,
+            'name'                     => $p->name,
+            'description'              => $p->description,
+            'sport_category'           => $p->sport_category,
+            'coach_name'               => $p->coach_name,
+            'monthly_price'            => (float) $p->monthly_price,
+            'currency'                 => $p->currency ?: 'AED',
+            'sessions_per_week'        => $p->sessions_per_week,
+            'session_duration_minutes' => $p->session_duration_minutes,
+            'day_of_week_mask'         => $p->day_of_week_mask ?? [],
+            'session_time'             => $p->session_time,
+            'capacity'                 => $p->capacity,
+            'commission_percentage'    => (float) $p->commission_percentage,
+            'status'                   => $p->status,
+            'photo_url'                => $p->photo_url,
+            'images'                   => $p->images ?? [],
+            'location_id'              => $p->venue_id ? (string) $p->venue_id : $p->location_id,
+            'venue_id'                 => $p->venue_id,
+            'owner_user_id'            => $p->owner_user_id ?: ($p->mapped_owner_user_id ? (string) $p->mapped_owner_user_id : null),
+            'billing_interval'         => $p->billing_interval,
+            'program_type'             => $p->program_type,
+            'duration_weeks'           => $p->duration_weeks,
+            'start_date'               => optional($p->start_date)?->toDateString(),
+            'end_date'                 => optional($p->end_date)?->toDateString(),
+            'bonus_months'             => $p->bonus_months,
+            'free_trial_days'          => $p->free_trial_days,
+            'free_trial_enabled'       => (bool) $p->free_trial_enabled,
+            'free_trial_sessions'      => $p->free_trial_sessions,
+            'discount_months'          => $p->discount_months,
+            'joining_fee'              => (float) $p->joining_fee,
+            'category'                 => $p->category ?: 'academy',
+            'audience'                 => $p->audience,
+            'gender_policy'            => $p->gender_policy,
+            'signup_form'              => $p->signup_form ?? [],
+            'color'                    => $p->color,
+            'show_on_marketplace'      => (bool) $p->show_on_marketplace,
+            'show_on_provider_site'    => (bool) $p->show_on_provider_site,
+            'approval_status'          => $p->approval_status,
+            'eligibility_status'       => $p->eligibility_status,
+        ];
+    }
+
+    protected function mapSubscriptionPublic(ClassSubscription $s, ?ClassProgram $p = null): array
+    {
+        $p = $p ?: $s->program;
+
+        return [
+            'id'               => $s->uuid,
+            'program_id'       => $p?->uuid,
+            'customer_id'      => $s->customer_id,
+            'customer_name'    => $s->customer_name,
+            'customer_email'   => $s->customer_email,
+            'started_at'       => optional($s->started_at)?->toDateString(),
+            'next_billing_at'  => optional($s->next_billing_at)?->toDateString(),
+            'trial_ends_at'    => optional($s->trial_ends_at)?->toDateString(),
+            'status'           => $s->status,
+            'trial_status'     => $s->trial_status,
+            'billing_interval' => $s->billing_interval,
+            'monthly_amount'   => (float) $s->monthly_amount,
+            'provider_payout'  => (float) $s->provider_payout,
+            'platform_fee'     => (float) $s->platform_fee,
+            'joining_fee'      => (float) $s->joining_fee,
+            'first_charge_at'  => optional($s->first_charge_at)?->toIso8601String(),
+            'wallet_id'        => $s->wallet_id,
+            'form_answers'     => $s->form_answers ?? [],
+            'currency'         => $p?->currency ?: 'AED',
+        ];
+    }
+
+    protected function mapPass(EntryPass $p): array
+    {
+        return [
+            'id'             => $p->uuid,
+            'kind'           => $p->kind,
+            'ref_id'         => $p->ref_id,
+            'owner_user_id'  => $p->owner_user_id,
+            'customer_id'    => $p->customer_id,
+            'customer_email' => $p->customer_email,
+            'code'           => $p->code,
+            'created_at'     => optional($p->created_at)?->toIso8601String(),
+        ];
+    }
+
+    protected function firstPhoto(ClassProgram $p): string
+    {
+        if ($p->photo_url) {
+            return (string) $p->photo_url;
+        }
+        $imgs = $p->images ?? [];
+        if (is_array($imgs) && count($imgs)) {
+            $first = $imgs[0];
+
+            return is_string($first) ? $first : (string) ($first['url'] ?? '');
+        }
+
+        return '';
+    }
+
+    protected function allPhotos(ClassProgram $p): array
+    {
+        $out = [];
+        if ($p->photo_url) {
+            $out[] = (string) $p->photo_url;
+        }
+        foreach ($p->images ?? [] as $img) {
+            $url = is_string($img) ? $img : (string) ($img['url'] ?? '');
+            if ($url && ! in_array($url, $out, true)) {
+                $out[] = $url;
+            }
+        }
+
+        return $out;
+    }
+
+    protected function effectiveGenderPolicy(ClassProgram $p): string
+    {
+        $g = strtolower((string) ($p->gender_policy ?: ''));
+        if (in_array($g, ['mixed', 'men', 'women'], true)) {
+            return $g;
+        }
+        $a = strtolower((string) ($p->audience ?: ''));
+        if ($a === 'ladies') {
+            return 'women';
+        }
+        if ($a === 'men') {
+            return 'men';
+        }
+
+        return 'mixed';
+    }
+
+    protected function intervalLabel(?string $v): string
+    {
+        return self::INTERVAL_LABEL[$v ?? ''] ?? 'month';
+    }
+
+    protected function offerModeFor(ClassProgram $p): string
+    {
+        $ongoing = $p->program_type !== 'fixed_duration';
+        $months = self::INTERVAL_MONTHS[$p->billing_interval ?? 'monthly'] ?? 1;
+
+        return ($ongoing && $months > 1) ? 'discount' : 'trial';
+    }
+
+    protected function discountedPrice(float $price, ?string $interval, int $discountMonths): float
+    {
+        $m = self::INTERVAL_MONTHS[$interval ?? 'yearly'] ?? 12;
+        $d = min($discountMonths, $m);
+
+        return max(0, round($price * (1 - $d / $m), 2));
+    }
+
+    protected function addIntervalToDate(string $dateStr, string $interval): string
+    {
+        $d = \Carbon\Carbon::parse($dateStr);
+        match ($interval) {
+            'weekly' => $d->addDays(7),
+            'biweekly' => $d->addDays(14),
+            'quarterly' => $d->addMonths(3),
+            'yearly' => $d->addYear(),
+            default => $d->addMonth(),
+        };
+
+        return $d->toDateString();
+    }
+
+    protected function nthSessionDate(string $startISO, array $dayMask, int $n): ?string
+    {
+        $set = array_map('intval', $dayMask);
+        if (! $set || $n < 1) {
+            return null;
+        }
+        $cur = \Carbon\Carbon::parse($startISO);
+        $count = 0;
+        for ($i = 0; $i < 400; $i++) {
+            if (in_array((int) $cur->dayOfWeek, $set, true)) {
+                $count++;
+                if ($count === $n) {
+                    return $cur->toDateString();
+                }
+            }
+            $cur->addDay();
+        }
+
+        return null;
+    }
+
+    protected function venueHours(int $venueId): ?array
+    {
+        $rows = VenueHourPeriod::where('venue_id', $venueId)->get();
+        if ($rows->isEmpty()) {
+            return null;
+        }
+        $DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        $byDay = [];
+        foreach ($rows as $r) {
+            $d = $r->day_of_week;
+            if ($d === null) {
+                continue;
+            }
+            $byDay[$d] ??= [];
+            if ($r->is_open && $r->open_time && $r->close_time) {
+                $byDay[$d][] = $this->fmt12Range($r->toDashboardRow()['open_time'], $r->toDashboardRow()['close_time']);
+            }
+        }
+
+        return collect([1, 2, 3, 4, 5, 6, 0])->map(fn ($d) => [
+            'day'   => $DOW[$d],
+            'open'  => ! empty($byDay[$d]),
+            'label' => ! empty($byDay[$d]) ? implode(', ', $byDay[$d]) : 'Closed',
+        ])->values()->all();
+    }
+
+    protected function fmt12Range(?string $open, ?string $close): string
+    {
+        return $this->fmt12($open).'–'.$this->fmt12($close);
+    }
+
+    protected function fmt12(?string $t): string
+    {
+        if (! $t) {
+            return '';
+        }
+        [$h, $m] = array_pad(explode(':', substr($t, 0, 5)), 2, '0');
+        $h = (int) $h;
+        $ampm = $h >= 12 ? 'PM' : 'AM';
+        $h12 = $h % 12 ?: 12;
+
+        return $h12.':'.str_pad($m, 2, '0', STR_PAD_LEFT).' '.$ampm;
+    }
+
+    protected function resolveCountryId(ClassProgram $program): ?string
+    {
+        $venue = $program->venue;
+        if ($venue?->country_id) {
+            return (string) $venue->country_id;
+        }
+        if ($venue?->city_id) {
+            $city = City::query()->find($venue->city_id);
+
+            return $city?->country_id ? (string) $city->country_id : null;
+        }
+
+        return null;
+    }
+
+    protected function ensureSubscriptionWallet(string $ownerUserId, ?string $countryId, string $currency): ?ProviderWallet
+    {
+        $q = ProviderWallet::query()
+            ->where('owner_user_id', $ownerUserId)
+            ->where('purpose', 'subscription')
+            ->where('is_current', true);
+        if ($countryId) {
+            $q->where('country_id', $countryId);
+        }
+        $wallet = $q->first();
+        if ($wallet) {
+            return $wallet;
+        }
+
+        return ProviderWallet::create([
+            'owner_user_id'      => $ownerUserId,
+            'country_id'         => $countryId,
+            'purpose'            => 'subscription',
+            'is_current'         => true,
+            'status'             => 'current',
+            'currency'           => $currency ?: 'AED',
+            'available_balance'  => 0,
+            'pending_balance'    => 0,
+            'lifetime_earnings'  => 0,
+            'lifetime_withdrawn' => 0,
+            'hold_days'          => 7,
+        ]);
+    }
+
+    protected function hasUsedIntroOffer(?string $email, ?string $cardFp, ?string $ownerUserId): bool
+    {
+        if (! $ownerUserId) {
+            return false;
+        }
+        $em = strtolower(trim((string) $email));
+        if (! $em && ! $cardFp) {
+            return false;
+        }
+        $q = OfferRedemption::where('owner_user_id', $ownerUserId)
+            ->where(function ($w) use ($em, $cardFp) {
+                if ($em) {
+                    $w->orWhere('customer_email', $em);
+                }
+                if ($cardFp) {
+                    $w->orWhere('card_fingerprint', $cardFp);
+                }
+            });
+
+        return $q->exists();
+    }
+
+    protected function hasLiveMembership(int $programId, string $customerId, string $email): bool
+    {
+        $statuses = ['active', 'trial', 'trialing', 'paused', 'past_due'];
+        $rows = ClassSubscription::where('program_id', $programId)
+            ->whereIn('status', $statuses)
+            ->where(function ($q) use ($customerId, $email) {
+                $q->where('customer_id', $customerId);
+                if ($email) {
+                    $q->orWhereRaw('LOWER(customer_email) = ?', [$email]);
+                }
+            })
+            ->get(['trial_status', 'trial_ends_at']);
+
+        $today = now()->toDateString();
+        foreach ($rows as $s) {
+            if ($s->trial_status === 'in_trial' && $s->trial_ends_at && $s->trial_ends_at->toDateString() < $today) {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function liveMembershipRows(string $customerId, string $email): array
+    {
+        $statuses = ['active', 'trial', 'trialing', 'paused', 'past_due'];
+        $rows = ClassSubscription::with('program')
+            ->whereIn('status', $statuses)
+            ->where(function ($q) use ($customerId, $email) {
+                $q->where('customer_id', $customerId);
+                if ($email) {
+                    $q->orWhereRaw('LOWER(customer_email) = ?', [$email]);
+                }
+            })
+            ->orderByDesc('created_at')
+            ->limit(40)
+            ->get()
+            ->unique('id')
+            ->values();
+
+        $today = now()->toDateString();
+        $out = [];
+        foreach ($rows as $s) {
+            if ($s->trial_status === 'in_trial' && $s->trial_ends_at && $s->trial_ends_at->toDateString() < $today) {
+                continue;
+            }
+            $out[] = ['sub' => $s, 'prog' => $s->program];
+        }
+
+        return $out;
+    }
+
+    protected function ensurePass(string $kind, string $refId, ?string $ownerUserId, ?string $customerId, ?string $email): ?EntryPass
+    {
+        $existing = EntryPass::where('kind', $kind)->where('ref_id', $refId)->first();
+        if ($existing) {
+            return $existing;
+        }
+        for ($i = 0; $i < 4; $i++) {
+            try {
+                return EntryPass::create([
+                    'kind'           => $kind,
+                    'ref_id'         => $refId,
+                    'owner_user_id'  => $ownerUserId,
+                    'customer_id'    => $customerId,
+                    'customer_email' => $email,
+                    'code'           => $this->genPassCode(),
+                ]);
+            } catch (\Throwable $e) {
+                $again = EntryPass::where('kind', $kind)->where('ref_id', $refId)->first();
+                if ($again) {
+                    return $again;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    protected function genPassCode(int $len = 6): string
+    {
+        $alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+        $out = '';
+        for ($i = 0; $i < $len; $i++) {
+            $out .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return float loyaltyApplied
+     */
+    protected function recordFirstCharge(
+        ClassSubscription $sub,
+        ClassProgram $program,
+        float $chargeGross,
+        float $chargePlatformFeeBeforeLoyalty,
+        float $firstChargeDiscount,
+        float $loyaltyRedeem,
+        ?ProviderWallet $wallet
+    ): float {
+        $fullGross = $chargeGross;
+        $disc = min(max(0, $firstChargeDiscount), $fullGross);
+        $gross = round($fullGross - $disc, 2);
+        $feeRate = $fullGross > 0 ? $chargePlatformFeeBeforeLoyalty / $fullGross : 0;
+        $platformFee = round($gross * $feeRate, 2);
+        $providerShare = round($gross - $platformFee, 2);
+        $loyalty = min(max(0, $loyaltyRedeem), $platformFee);
+        $netPlatformFee = round($platformFee - $loyalty, 2);
+        $currency = $program->currency ?: 'AED';
+
+        if (! $wallet) {
+            $ownerKey = $program->owner_user_id ?: ($program->mapped_owner_user_id ? (string) $program->mapped_owner_user_id : null);
+            if ($ownerKey) {
+                $wallet = $this->ensureSubscriptionWallet($ownerKey, $sub->country_id, $currency);
+            }
+        }
+        if (! $wallet) {
+            return $loyalty;
+        }
+
+        $recipient = '@provider';
+        if ($program->mapped_owner_user_id) {
+            $u = User::find($program->mapped_owner_user_id);
+            if ($u) {
+                $recipient = '@'.preg_replace('/\s+/', '', strtolower($u->name ?: 'provider'));
+            }
+        }
+
+        $desc = 'First membership charge';
+        $now = now();
+        $userId = $program->mapped_owner_user_id ?: 0;
+
+        Payment::create([
+            'booking_id'      => null,
+            'subscription_id' => $sub->id,
+            'source_type'     => 'subscription',
+            'type'            => 'subscription_commission',
+            'method'          => 'online',
+            'amount'          => $netPlatformFee,
+            'currency'        => $currency,
+            'recipient'       => '@bookboll',
+            'status'          => 'paid',
+            'paid_at'         => $now,
+            'date'            => $now->toDateString(),
+            'notes'           => $loyalty > 0 ? "{$desc} (− {$currency} {$loyalty} loyalty)" : $desc,
+            'payment_id'      => 'sub-c-'.Str::uuid(),
+            'user_id'         => $userId,
+        ]);
+
+        Payment::create([
+            'booking_id'      => null,
+            'subscription_id' => $sub->id,
+            'source_type'     => 'subscription',
+            'type'            => 'subscription_earning',
+            'method'          => 'online',
+            'amount'          => $providerShare,
+            'currency'        => $currency,
+            'recipient'       => $recipient,
+            'status'          => 'paid',
+            'paid_at'         => $now,
+            'date'            => $now->toDateString(),
+            'notes'           => $desc,
+            'payment_id'      => 'sub-e-'.Str::uuid(),
+            'user_id'         => $userId,
+        ]);
+
+        $holdDays = (int) ($wallet->hold_days ?: 7);
+        $availableOn = now()->addDays($holdDays)->toDateString();
+        $ownerKey = $wallet->owner_user_id;
+        $automatic = in_array($wallet->setup_method, ['stripe', 'stripe_connect', 'automatic'], true);
+
+        WalletTransaction::create([
+            'owner_user_id'       => $ownerKey,
+            'type'                => 'subscription_online',
+            'direction'           => 'credit',
+            'amount'              => round($gross - $loyalty, 2),
+            'provider_share'      => $providerShare,
+            'platform_fee'        => $netPlatformFee,
+            'source_id'           => $sub->uuid,
+            'source_label'        => 'Subscription · '.($sub->customer_name ?: $sub->customer_email ?: 'customer'),
+            'description'         => $desc,
+            'status'              => $automatic ? 'completed' : 'on_hold',
+            'currency'            => $currency,
+            'country_id'          => $wallet->country_id,
+            'wallet_id'           => $wallet->id,
+            'available_on'        => $automatic ? null : $availableOn,
+            'hold_days_snapshot'  => $automatic ? 0 : $holdDays,
+        ]);
+
+        if ($automatic) {
+            $this->wallets->applyDelta((string) $wallet->id, [
+                'earned'    => $providerShare,
+                'withdrawn' => $providerShare,
+            ]);
+        } else {
+            $this->wallets->applyDelta((string) $wallet->id, [
+                'pending' => $providerShare,
+                'earned'  => $providerShare,
+            ]);
+        }
+
+        return $loyalty;
+    }
+}

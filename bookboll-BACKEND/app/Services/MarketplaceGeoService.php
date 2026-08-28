@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Business;
+use App\Models\ClassProgram;
 use App\Models\Listing;
 use App\Models\Venue;
 use Illuminate\Http\Request;
@@ -144,10 +145,54 @@ class MarketplaceGeoService
             }
             $cid = (int) $venue->city_id;
             if (! isset($cityAgg[$cid])) {
-                $cityAgg[$cid] = ['count' => 0, 'sports' => []];
+                $cityAgg[$cid] = ['count' => 0, 'programCount' => 0, 'sports' => [], 'memberships' => []];
             }
             $cityAgg[$cid]['count']++;
             $sport = trim((string) ($listing->sport_category ?: ''));
+            if ($sport !== '') {
+                $sl = $this->slugify($sport);
+                if (! isset($cityAgg[$cid]['sports'][$sl])) {
+                    $cityAgg[$cid]['sports'][$sl] = ['name' => $sport, 'slug' => $sl, 'count' => 0];
+                }
+                $cityAgg[$cid]['sports'][$sl]['count']++;
+            }
+        }
+
+        $programs = ClassProgram::query()
+            ->where('status', 'active')
+            ->where(function ($q) {
+                $q->where('is_draft', false)->orWhereNull('is_draft');
+            })
+            ->where(function ($q) {
+                $q->where('show_on_marketplace', true)->orWhereNull('show_on_marketplace');
+            })
+            ->where(function ($q) {
+                $q->where('approval_status', 'approved')->orWhereNull('approval_status');
+            })
+            ->where(function ($q) {
+                $q->whereNull('eligibility_status')->orWhere('eligibility_status', '!=', 'paused');
+            })
+            ->whereNotNull('venue_id')
+            ->get(['venue_id', 'sport_category', 'category']);
+
+        foreach ($programs as $program) {
+            $venue = $venueCity->get($program->venue_id);
+            if (! $venue) {
+                $venue = Venue::query()->find($program->venue_id);
+            }
+            if (! $venue?->city_id) {
+                continue;
+            }
+            $cid = (int) $venue->city_id;
+            if (! isset($cityAgg[$cid])) {
+                $cityAgg[$cid] = ['count' => 0, 'programCount' => 0, 'sports' => [], 'memberships' => []];
+            }
+            $cityAgg[$cid]['programCount']++;
+            $cat = trim((string) ($program->category ?: 'academy'));
+            if ($cat !== '') {
+                $cityAgg[$cid]['memberships'][$cat] = ($cityAgg[$cid]['memberships'][$cat] ?? 0) + 1;
+            }
+            $sport = trim((string) ($program->sport_category ?: ''));
             if ($sport !== '') {
                 $sl = $this->slugify($sport);
                 if (! isset($cityAgg[$cid]['sports'][$sl])) {
@@ -174,7 +219,7 @@ class MarketplaceGeoService
 
         $byCountry = [];
         foreach ($cityAgg as $cid => $agg) {
-            if ($agg['count'] < 1) {
+            if (($agg['count'] ?? 0) < 1 && ($agg['programCount'] ?? 0) < 1) {
                 continue;
             }
             $city = $cities->get($cid);
@@ -192,14 +237,18 @@ class MarketplaceGeoService
                     'cities' => [],
                 ];
             }
-            $topSports = collect($agg['sports'])->values()->sortByDesc('count')->values()->all();
+            $topSports = collect($agg['sports'] ?? [])->values()->sortByDesc('count')->values()->all();
+            $memberships = collect($agg['memberships'] ?? [])
+                ->map(fn ($count, $cat) => ['category' => $cat, 'count' => $count])
+                ->values()
+                ->all();
             $byCountry[$key]['cities'][] = [
                 'name'          => $city->name,
                 'slug'          => $this->slugify($city->name),
-                'count'         => $agg['count'],
-                'programCount'  => 0,
+                'count'         => (int) ($agg['count'] ?? 0),
+                'programCount'  => (int) ($agg['programCount'] ?? 0),
                 'topSports'     => $topSports,
-                'memberships'   => [],
+                'memberships'   => $memberships,
             ];
         }
 
