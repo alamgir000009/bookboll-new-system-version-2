@@ -733,7 +733,12 @@ if (! function_exists('unlockListingSlot')) {
 }
 
 if (! function_exists('createBookingInvoiceWithNotification')) {
-    function createBookingInvoiceWithNotification($booking, $user)
+    /**
+     * @param bool $notify Pass false to generate the invoice without emailing
+     *                     anyone — used for bookings that are still waiting on
+     *                     a Stripe payment.
+     */
+    function createBookingInvoiceWithNotification($booking, $user, bool $notify = true)
     {
         try {
 
@@ -748,6 +753,10 @@ if (! function_exists('createBookingInvoiceWithNotification')) {
                 'booking_id'     => $booking->id,
                 'invoice_number' => $invoiceNumber,
             ]);
+
+            if (! $notify) {
+                return;
+            }
 
             $booking->load('venue:id,name,maps_url');
 
