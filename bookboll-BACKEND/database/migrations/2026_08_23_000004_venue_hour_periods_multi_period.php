@@ -16,6 +16,14 @@ return new class extends Migration
             return;
         }
 
+        try {
+            Schema::table('venue_hour_periods', function (Blueprint $table) {
+                $table->dropForeign(['venue_id']);
+            });
+        } catch (\Throwable $e) {
+            // Foreign key may already be absent.
+        }
+
         if (Schema::hasIndex('venue_hour_periods', 'venue_hour_periods_venue_id_day_unique')) {
             Schema::table('venue_hour_periods', function (Blueprint $table) {
                 $table->dropUnique('venue_hour_periods_venue_id_day_unique');
@@ -33,6 +41,14 @@ return new class extends Migration
     {
         if (! Schema::hasTable('venue_hour_periods')) {
             return;
+        }
+
+        try {
+            Schema::table('venue_hour_periods', function (Blueprint $table) {
+                $table->dropForeign(['venue_id']);
+            });
+        } catch (\Throwable $e) {
+            // ignore if the foreign key is not present
         }
 
         try {
