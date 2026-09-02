@@ -46,6 +46,12 @@ class SettingTableSeeder extends Seeder
                 'type'        => 'integer',
                 'description' => 'Auto-cancel unpaid deposit bookings after the following minutes',
             ],
+            [
+                'key'         => 'payment_timeout_grace_minutes',
+                'value'       => 2,
+                'type'        => 'integer',
+                'description' => 'Extra minutes allowed past the displayed payment timeout before an unpaid booking is auto-cancelled',
+            ],
 
             // Modules
             [

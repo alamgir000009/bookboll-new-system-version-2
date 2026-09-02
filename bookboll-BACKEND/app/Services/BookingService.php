@@ -3457,7 +3457,12 @@ class BookingService
             }
 
             if (! $isPaymentSkipped) {
-                createBookingInvoiceWithNotification($booking, $user);
+                // Bookings still awaiting a Stripe Checkout payment get their
+                // invoice generated, but no "booking created" email — nothing
+                // has been paid yet.
+                $awaitingStripePayment = $isOnlinePaymentPending || $isDepositPending;
+
+                createBookingInvoiceWithNotification($booking, $user, ! $awaitingStripePayment);
             }
 
             if ($paymentStatus == BookingPaymentStatus::FULLY_PAID) {

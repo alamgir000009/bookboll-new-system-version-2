@@ -430,6 +430,26 @@ class ListingService
                             "resources.$index.quantity",
                             "The selected resource requirements quantity ({$resourceData['quantity']}) exceeds the resource total stock ({$resource->total_quantity})."
                         );
+
+                        continue;
+                    }
+
+                    // A ceiling the shared pool can never reach is a contradiction:
+                    // with 2 units needed from a 2-unit pool, only 1 booking ever fits,
+                    // so max_bookings_per_slot of 2 would promise a court that cannot exist.
+                    $maxPerSlot  = (int) ($data['max_bookings_per_slot'] ?? 1);
+                    $requiredQty = (int) $resourceData['quantity'];
+
+                    if ($resource && $requiredQty > 0 && $maxPerSlot > 0) {
+                        $achievable = intdiv((int) $resource->total_quantity, $requiredQty);
+
+                        if ($maxPerSlot > $achievable) {
+                            $validator->errors()->add(
+                                'max_bookings_per_slot',
+                                "Max bookings per slot ({$maxPerSlot}) exceeds what {$resource->name} allows. "
+                                . "Each booking uses {$requiredQty} of {$resource->total_quantity}, so at most {$achievable} can run at once."
+                            );
+                        }
                     }
                 }
             }
@@ -1643,7 +1663,7 @@ class ListingService
 
         $slots = collect();
 
-        $listingResources = $listing->resources()->get(['resources.id', 'resources.total_quantity', 'listing_resource.quantity as required_qty']);
+        $listingResources = $this->listingResourceRequirements($listing);
 
         while ($start->lt($end)) {
             $slotStart     = $start->format('H:i');
@@ -1689,40 +1709,23 @@ class ListingService
                 $lockedCount = $slotLocks->where('listing_id', $listing->id)->count();
             }
 
-            $occupiedSpots  = $bookedCount + $lockedCount;
-            $availableCount = max($listing->max_bookings_per_slot - $occupiedSpots, 0);
+            $occupiedSpots = $bookedCount + $lockedCount;
 
-            $isLocked = ($listing->max_bookings_per_slot === 1 && $lockedCount > 0);
+            // What the shared pool still has left after every listing that draws on it.
+            $resourceAvailability = $this->calculateResourceAvailability($listingResources, $slotBookings, $slotLocks);
+            $resourceCapacity     = $resourceAvailability['capacity'];
+            $availableQty         = $resourceAvailability['available_units'];
 
-            $allResourcesAvailable = true;
-            $availableQty          = null;
+            $availableCount = max((int) $listing->max_bookings_per_slot - $occupiedSpots, 0);
 
-            foreach ($listingResources as $res) {
-
-                // Resources from bookings (any listing at the venue)
-                $bookedResourcesQty = $slotBookings->flatMap(function ($b) use ($res) {
-                    return $b->resourcesAllocated->where('id', $res->id)->map(function ($resource) {
-                        return $resource->pivot->quantity ?? 0;
-                    });
-                })->sum();
-
-                // Resources from locks (any listing at the venue)
-                $lockedResourcesQty = $slotLocks->flatMap(function ($lock) use ($res) {
-                    if (! $lock->listing) {
-                        return collect();
-                    }
-                    return $lock->listing->resources->where('id', $res->id)->map(function ($resource) {
-                        return $resource->pivot->quantity ?? 0;
-                    });
-                })->sum();
-
-                $availableQty = $res->total_quantity - ($bookedResourcesQty + $lockedResourcesQty);
-
-                if ($availableQty < $res->required_qty) {
-                    $allResourcesAvailable = false;
-                    break;
-                }
+            // The shared pool can be tighter than this listing's own ceiling: with
+            // 3 of 6 courts taken by another sport, a listing allowing 6 can only
+            // offer 3 more.
+            if ($resourceCapacity !== null) {
+                $availableCount = min($availableCount, $resourceCapacity);
             }
+
+            $isLocked = ((int) $listing->max_bookings_per_slot === 1 && $lockedCount > 0);
 
             $isPastSlot = false;
             if ($date) {
@@ -1742,7 +1745,8 @@ class ListingService
                 continue;
             }
 
-            $isAvailable = ! $isHoliday && $availableCount > 0 && $allResourcesAvailable && ! $isLocked;
+            // An exhausted pool now shows up as availableCount 0, so no separate resource flag is needed.
+            $isAvailable = ! $isHoliday && $availableCount > 0 && ! $isLocked;
 
             if ($isAvailable || $isLocked) {
 
@@ -2129,7 +2133,22 @@ class ListingService
                 }
             }
 
-            $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
+            // The listing has room, but the pool it shares with other listings may not.
+            $resourceCapacity = $this->remainingResourceCapacityForSlot(
+                $listing,
+                $date->toDateString(),
+                $startTime,
+                $endTime,
+                $sessionId
+            );
+
+            if ($resourceCapacity !== null && $resourceCapacity < 1) {
+                return sendError('This slot is no longer available. All courts are taken for this time.');
+            }
+
+            // ?: not ?? - intval() returns 0 rather than null for a missing or
+            // non-numeric setting, which would create locks that expire instantly.
+            $lockDuration = (int) Setting::where('key', 'default_bookings_slot_lock_time')->value('value') ?: 5;
 
             $lock = SlotLock::updateOrCreate(
                 [
@@ -2342,7 +2361,9 @@ class ListingService
                 return sendError('Slot lock not found');
             }
 
-            $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
+            // ?: not ?? - intval() returns 0 rather than null for a missing or
+            // non-numeric setting, which would create locks that expire instantly.
+            $lockDuration = (int) Setting::where('key', 'default_bookings_slot_lock_time')->value('value') ?: 5;
 
             $lock->locked_until = now()->addMinutes($lockDuration);
             $lock->save();
@@ -2420,12 +2441,31 @@ class ListingService
             $occupiedSpots  = $existingBookingCount + $existingLockCount;
             $availableSpots = max(0, $maxBookingsPerSlot - $occupiedSpots);
 
+            // Keep this in step with fetch-time-slots: the shared pool can be the tighter limit.
+            $resourceCapacity = $this->remainingResourceCapacityForSlot(
+                $listing,
+                $date->toDateString(),
+                $startTime,
+                $endTime,
+                $sessionId
+            );
+
+            if ($resourceCapacity !== null) {
+                $availableSpots = min($availableSpots, $resourceCapacity);
+            }
+
             if ($availableSpots <= 0) {
+                if ($resourceCapacity !== null && $resourceCapacity < 1) {
+                    $reason = 'All courts are taken for this time slot';
+                } elseif ($existingBookingCount >= $maxBookingsPerSlot) {
+                    $reason = 'Slot is already fully booked';
+                } else {
+                    $reason = 'All spots in this slot are currently locked';
+                }
+
                 return sendSuccess('Slot availability checked', [
                     'available'      => false,
-                    'reason'         => $existingBookingCount >= $maxBookingsPerSlot
-                        ? 'Slot is already fully booked'
-                        : 'All spots in this slot are currently locked',
+                    'reason'         => $reason,
                     'occupied_spots' => $occupiedSpots,
                     'max_bookings'   => $maxBookingsPerSlot,
                 ]);
@@ -2444,6 +2484,118 @@ class ListingService
             Log::error('Failed to check slot availability: ' . $e->getMessage(), ['exception' => $e]);
             return sendError('Failed to check slot availability: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * The resources a listing consumes for every booking it takes.
+     *
+     * Each row carries the shared pool size (total_quantity) and how many
+     * units of that pool one booking of this listing uses (required_qty).
+     */
+    protected function listingResourceRequirements($listing)
+    {
+        return $listing->resources()->get([
+            'resources.id',
+            'resources.total_quantity',
+            'listing_resource.quantity as required_qty',
+        ]);
+    }
+
+    /**
+     * How much of the shared resource pool is left for one slot.
+     *
+     * Listings can share a pool - e.g. badminton and pickleball both drawing
+     * from the same 6 courts - so a listing's own max_bookings_per_slot is not
+     * the whole story: what other listings already took has to be subtracted.
+     *
+     * @param  $listingResources  what this listing needs (id, total_quantity, required_qty)
+     * @param  $slotBookings      bookings overlapping the slot, with resourcesAllocated loaded
+     * @param  $slotLocks         other sessions' active locks overlapping the slot, with listing.resources loaded
+     * @return array{capacity: int|null, available_units: int|null}
+     *         capacity        - how many MORE bookings of this listing the pool allows
+     *         available_units - free units of the tightest resource
+     *         Both are null when the listing uses no resources, meaning the pool never limits it.
+     */
+    protected function calculateResourceAvailability($listingResources, $slotBookings, $slotLocks): array
+    {
+        if ($listingResources->isEmpty()) {
+            return ['capacity' => null, 'available_units' => null];
+        }
+
+        $capacity       = null;
+        $availableUnits = null;
+
+        foreach ($listingResources as $res) {
+
+            // Units held by bookings of any listing sharing this resource.
+            $usedByBookings = $slotBookings->sum(function ($booking) use ($res) {
+                return $booking->resourcesAllocated
+                    ->where('id', $res->id)
+                    ->sum(fn($resource) => (int) ($resource->pivot->quantity ?? 0));
+            });
+
+            // Units held by other sessions' locks on any listing sharing this resource.
+            $usedByLocks = $slotLocks->sum(function ($lock) use ($res) {
+                if (! $lock->listing) {
+                    return 0;
+                }
+                return $lock->listing->resources
+                    ->where('id', $res->id)
+                    ->sum(fn($resource) => (int) ($resource->pivot->quantity ?? 0));
+            });
+
+            $freeUnits   = max((int) $res->total_quantity - ($usedByBookings + $usedByLocks), 0);
+            $requiredQty = (int) $res->required_qty;
+
+            // A resource that costs nothing per booking can never be the limit.
+            $resourceCapacity = $requiredQty > 0 ? intdiv($freeUnits, $requiredQty) : PHP_INT_MAX;
+
+            // The tightest resource decides - so every one of them is visited.
+            $capacity       = $capacity === null ? $resourceCapacity : min($capacity, $resourceCapacity);
+            $availableUnits = $availableUnits === null ? $freeUnits : min($availableUnits, $freeUnits);
+        }
+
+        return ['capacity' => $capacity, 'available_units' => $availableUnits];
+    }
+
+    /**
+     * Remaining shared-pool capacity for a single slot, read straight from the
+     * database. Used by the lock/check endpoints, which handle one slot at a
+     * time and so have no pre-loaded collections to work from.
+     *
+     * Returns null when the listing uses no resources (nothing to limit it).
+     */
+    protected function remainingResourceCapacityForSlot($listing, string $date, string $startTime, string $endTime, ?string $sessionId): ?int
+    {
+        $listingResources = $this->listingResourceRequirements($listing);
+
+        if ($listingResources->isEmpty()) {
+            return null;
+        }
+
+        $bookings = Booking::where('venue_id', $listing->venue_id)
+            ->whereNotIn('status', [BookingStatus::CANCELLED, BookingStatus::COMPLETED])
+            ->where(function ($q) use ($date, $startTime, $endTime) {
+                applyBookingOverlapWhere($q, $date, $startTime, $endTime);
+            })
+            ->with('resourcesAllocated')
+            ->get();
+
+        // A session never blocks itself, so re-locking the same slot still works.
+        $locks = SlotLock::whereHas('listing', function ($q) use ($listing) {
+            $q->where('venue_id', $listing->venue_id);
+        })
+            ->where('session_id', '!=', $sessionId)
+            ->active()
+            ->where(function ($q) use ($date, $startTime, $endTime) {
+                applyBookingOverlapWhere($q, $date, $startTime, $endTime);
+            })
+            ->with(['listing' => function ($q) {
+                $q->with('resources');
+            }])
+            ->get();
+
+        return $this->calculateResourceAvailability($listingResources, $bookings, $locks)['capacity'];
     }
 
     protected function slotsOverlap($start1, $end1, $start2, $end2)

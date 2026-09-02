@@ -22,8 +22,14 @@
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
+        <!--
+            Availability queries use MySQL-only SQL (STR_TO_DATE / DATE_ADD in
+            applyBookingOverlapWhere), so tests run against a real MySQL schema.
+            bookboll_test is a throwaway database - RefreshDatabase wipes it on
+            every run, so it must never point at the live bookboll database.
+        -->
+        <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_DATABASE" value="bookboll_test"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
