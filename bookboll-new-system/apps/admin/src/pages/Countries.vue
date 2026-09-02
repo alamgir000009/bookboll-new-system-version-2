@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { MapPin, ChevronDown, Search, Check, Percent } from 'lucide-vue-next'
+import { MapPin, ChevronDown, Search, Check, Percent, Award, X, ToggleLeft, ToggleRight } from 'lucide-vue-next'
 import PaginationBar from '../components/PaginationBar.vue'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { pushToast } from '../lib/toast.js'
@@ -13,6 +13,7 @@ import {
   bulkUpdateCityStatus,
   saveCommissionRate,
 } from '../lib/geography.js'
+import { DEFAULT_LOYALTY, loadLoyaltyPrograms, saveLoyaltyProgram } from '../lib/loyalty.js'
 
 const { isSuperAdmin, isCountryAdmin } = useCurrentUser()
 const canManageGeo = computed(() => isSuperAdmin.value || isCountryAdmin.value)
@@ -142,7 +143,80 @@ function countryGoTo(p) {
   load(p)
 }
 
-onMounted(() => load(1))
+/* ── Loyalty programs (per country) ──────────────────────────────────────────
+   A country with no saved row falls back to DEFAULT_LOYALTY, so every country
+   always has an effective program — saving is what creates the row. */
+const loyaltyPrograms = ref({})    // { [country_id]: normalized program }
+const loyaltyLoaded = ref(false)
+
+async function loadLoyalty() {
+  if (!isSuperAdmin.value) return
+  const res = await loadLoyaltyPrograms()
+  if (res.error) { pushToast(res.error, 'error'); return }
+  loyaltyPrograms.value = res.byCountry
+  loyaltyLoaded.value = true
+}
+
+/** The saved row for a country, or null when it's still on platform defaults. */
+const programFor = (countryId) => loyaltyPrograms.value[countryId] || null
+/** What actually applies — the saved row, else the platform defaults. */
+const effectiveProgram = (countryId) => programFor(countryId) || DEFAULT_LOYALTY
+
+function loyaltySummary(country) {
+  const p = effectiveProgram(country.id)
+  const cur = country.currency_code || 'unit'
+  return `${p.earn_rate} pt per ${cur} · ${p.redeem_rate} pts = ${cur} 1 off`
+}
+
+const loyaltyCountry = ref(null)   // the country whose program is open in the editor
+const lForm = ref({ ...DEFAULT_LOYALTY })
+const lSaving = ref(false)
+const lTriedSave = ref(false)
+
+function openLoyalty(country) {
+  loyaltyCountry.value = country
+  lForm.value = { ...effectiveProgram(country.id) }
+  lTriedSave.value = false
+}
+function closeLoyalty() { loyaltyCountry.value = null }
+
+async function saveLoyalty() {
+  const country = loyaltyCountry.value
+  if (!country || lSaving.value) return
+  lTriedSave.value = true
+  if (!lForm.value.name?.trim()) { pushToast('Program name is required.', 'error'); return }
+
+  lSaving.value = true
+  const res = await saveLoyaltyProgram(country.id, lForm.value)
+  lSaving.value = false
+  if (res.error) { pushToast(res.error, 'error'); return }
+
+  loyaltyPrograms.value = { ...loyaltyPrograms.value, [country.id]: res.program }
+  logAudit({
+    action: AUDIT.UPDATED,
+    entity_type: 'loyalty_program',
+    entity_id: country.id,
+    details: `Saved loyalty program "${res.program.name}" for ${country.name}`,
+  })
+  pushToast(`Loyalty program saved for ${country.name}.`, 'success')
+  closeLoyalty()
+}
+
+/** Summary-card toggle: flips is_active on the saved row, creating it if needed. */
+async function toggleLoyaltyActive(country) {
+  const current = effectiveProgram(country.id)
+  const res = await saveLoyaltyProgram(country.id, { ...current, is_active: !current.is_active })
+  if (res.error) { pushToast(res.error, 'error'); return }
+  loyaltyPrograms.value = { ...loyaltyPrograms.value, [country.id]: res.program }
+  logAudit({
+    action: res.program.is_active ? AUDIT.ENABLED : AUDIT.DISABLED,
+    entity_type: 'loyalty_program',
+    entity_id: country.id,
+    details: `Loyalty program ${res.program.is_active ? 'activated' : 'deactivated'} for ${country.name}`,
+  })
+}
+
+onMounted(() => { load(1); loadLoyalty() })
 
 function citiesOf(countryId) {
   return citiesByCountry.value[countryId] || citiesByCountry.value[String(countryId)] || []
@@ -374,7 +448,31 @@ function cityCountLabel(country) {
             </div>
           </div>
 
-          <!-- Loyalty programs will move to Laravel in a later pass -->
+          <!-- Loyalty program summary (super admin only) -->
+          <div v-if="isSuperAdmin && loyaltyLoaded" class="loyalty-section">
+            <div class="loyalty-left">
+              <div class="ly-card-head" style="border:none; background:none; padding:0 0 8px;">
+                <Award :size="15" />Loyalty Program
+              </div>
+              <div class="loyalty-summary">
+                <button
+                  class="ly-status-toggle"
+                  :class="effectiveProgram(country.id).is_active ? 'on' : 'off'"
+                  :title="effectiveProgram(country.id).is_active ? 'Click to deactivate' : 'Click to activate'"
+                  @click.stop="toggleLoyaltyActive(country)"
+                >
+                  <ToggleRight v-if="effectiveProgram(country.id).is_active" :size="14" />
+                  <ToggleLeft v-else :size="14" />
+                  {{ effectiveProgram(country.id).is_active ? 'Active' : 'Inactive' }}
+                </button>
+                <span class="loyalty-sum-text">{{ loyaltySummary(country) }}</span>
+                <span v-if="!programFor(country.id)" class="loyalty-sum-text muted">· platform default</span>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" @click.stop="openLoyalty(country)">
+              <Award :size="13" />Edit
+            </button>
+          </div>
 
           <!-- Cities -->
           <div class="cities-panel-header">
@@ -417,6 +515,77 @@ function cityCountLabel(country) {
       @update:perPage="countryPerPage = $event"
       @goTo="countryGoTo"
     />
+
+    <!-- ── Loyalty program editor (per country) ─────────────────────────── -->
+    <Teleport to="body">
+      <div v-if="loyaltyCountry" class="ly-backdrop" @click.self="closeLoyalty">
+        <div class="ly-modal">
+          <div class="ly-head">
+            <div>
+              <div class="ly-title"><Award :size="17" />Loyalty Program — {{ loyaltyCountry.name }}</div>
+              <div class="ly-sub">Per-country earn &amp; redeem rules</div>
+            </div>
+            <div class="ly-head-right">
+              <button class="ly-toggle" @click="lForm.is_active = !lForm.is_active" :title="lForm.is_active ? 'Click to deactivate' : 'Click to activate'">
+                <ToggleRight v-if="lForm.is_active" :size="22" class="toggle-on" />
+                <ToggleLeft v-else :size="22" class="toggle-off" />
+                <span>{{ lForm.is_active ? 'Active' : 'Inactive' }}</span>
+              </button>
+              <button class="ly-x" @click="closeLoyalty"><X :size="18" /></button>
+            </div>
+          </div>
+
+          <div class="ly-body">
+            <div class="ly-card">
+              <div class="ly-card-head"><Award :size="15" />Earn &amp; Redeem Rules</div>
+              <div class="ly-card-body">
+                <div class="form-group">
+                  <label class="form-label">Program Name</label>
+                  <input v-model="lForm.name" :class="{ 'ly-invalid': lTriedSave && !lForm.name?.trim() }" placeholder="e.g. Bookboll Rewards" />
+                  <div v-if="lTriedSave && !lForm.name?.trim()" class="ly-err">Program name is required</div>
+                </div>
+                <div class="ly-rules-grid">
+                  <div class="form-group">
+                    <label class="form-label">Points per {{ loyaltyCountry.currency_code || 'unit' }} spent</label>
+                    <input type="number" v-model="lForm.earn_rate" min="0" step="0.1" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Points for {{ loyaltyCountry.currency_code || 'unit' }} 1 discount</label>
+                    <input type="number" v-model="lForm.redeem_rate" min="1" />
+                    <div class="ly-hint">e.g. 100 = 100 points redeem {{ loyaltyCountry.currency_code || 'unit' }} 1 off. Redemptions come out of Bookboll's fee, never the provider's share.</div>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Minimum points to redeem</label>
+                    <input type="number" v-model="lForm.min_redeem" min="0" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Max redeem % of booking</label>
+                    <input type="number" v-model="lForm.max_redeem_pct" min="0" max="100" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Points expire after (months, 0 = never)</label>
+                    <input type="number" v-model="lForm.expiry_months" min="0" />
+                  </div>
+                </div>
+                <div class="ly-hint">
+                  Membership tiers (Bronze → Platinum) are platform-wide, not per country, and are managed outside this page.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="ly-foot">
+            <div class="ly-foot-hint">Toggle <b>Active</b> above to disable rewards — every country falls back to the platform default program.</div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <button class="btn btn-secondary" @click="closeLoyalty">Cancel</button>
+              <button class="btn btn-primary" :disabled="lSaving" @click="saveLoyalty">
+                {{ lSaving ? 'Saving…' : (programFor(loyaltyCountry.id) ? 'Save changes' : 'Create program') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 

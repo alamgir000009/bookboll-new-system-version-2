@@ -12,12 +12,18 @@
  * is never reduced. So a redemption is always capped at the order's platform fee.
  * Loyalty is a Bookboll-marketplace feature only (not on provider white-label sites);
  * callers gate that with isWhiteLabel.
+ *
+ * Backed by Laravel: read /marketplace/loyalty-config (public, per country),
+ * list + save via /admin/geography/loyalty-programs (super admin only).
+ * Points are EARNED server-side on booking confirmation; there is no client-side
+ * ledger write, and redeem-at-checkout is not supported by the API yet.
  */
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 export const DEFAULT_LOYALTY = {
+  name: 'Bookboll Rewards',
   earn_rate: 1, redeem_rate: 100, redeem_value: 1,
-  min_redeem: 100, max_redeem_pct: 100, is_active: true,
+  min_redeem: 100, max_redeem_pct: 100, expiry_months: 12, is_active: true,
 }
 
 // Activity bonuses (flat, on top of any spend-based points) for games/events.
@@ -27,6 +33,9 @@ export const HOST_BONUS = 100   // published a game/tournament
 export function normalizeLoyalty(p) {
   if (!p) return { ...DEFAULT_LOYALTY }
   return {
+    id: p.id ?? null,
+    country_id: p.country_id ?? null,
+    name: (p.name || '').trim() || DEFAULT_LOYALTY.name,
     earn_rate: Number(p.earn_rate ?? DEFAULT_LOYALTY.earn_rate),
     redeem_rate: Number(p.redeem_rate) > 0 ? Number(p.redeem_rate) : DEFAULT_LOYALTY.redeem_rate,
     // Redemption is standardised at 1 currency unit per step for every currency —
@@ -35,17 +44,53 @@ export function normalizeLoyalty(p) {
     redeem_value: 1,
     min_redeem: Math.max(0, Number(p.min_redeem ?? DEFAULT_LOYALTY.min_redeem)),
     max_redeem_pct: Number(p.max_redeem_pct ?? DEFAULT_LOYALTY.max_redeem_pct),
+    expiry_months: Math.max(0, Number(p.expiry_months ?? DEFAULT_LOYALTY.expiry_months)),
     is_active: p.is_active !== false,
   }
 }
 
-/** Effective loyalty config for a country — the per-country row overrides the default. */
+/** Effective loyalty config for a country — the per-country row overrides the default.
+ *  Never throws: a backend blip falls back to the platform defaults. */
 export async function loadLoyaltyConfig(countryId) {
   if (!countryId) return { ...DEFAULT_LOYALTY }
   try {
-    const { data } = await supabase.from('loyalty_programs').select('*').eq('country_id', countryId).maybeSingle()
-    return data ? normalizeLoyalty(data) : { ...DEFAULT_LOYALTY }
+    const res = await apiFetch('/marketplace/loyalty-config', { query: { country_id: countryId } })
+    return res.success ? normalizeLoyalty(res.data?.loyalty) : { ...DEFAULT_LOYALTY }
   } catch { return { ...DEFAULT_LOYALTY } }
+}
+
+/** Every saved per-country program, keyed by country_id — for the Countries page.
+ *  Countries without a row simply aren't in the map and fall back to DEFAULT_LOYALTY. */
+export async function loadLoyaltyPrograms() {
+  const res = await apiFetch('/admin/geography/loyalty-programs')
+  if (!res.success) return { error: res.message || 'Could not load loyalty programs.', byCountry: {} }
+  const byCountry = {}
+  for (const row of res.data?.loyalty_programs || []) {
+    byCountry[row.country_id] = normalizeLoyalty(row)
+  }
+  return { ok: true, byCountry }
+}
+
+/** Create or update the program for one country. Returns { ok, program } | { error }. */
+export async function saveLoyaltyProgram(countryId, form) {
+  const res = await apiFetch('/admin/geography/loyalty-programs', {
+    method: 'PUT',
+    body: {
+      country_id: countryId,
+      name: (form.name || '').trim(),
+      earn_rate: Number(form.earn_rate) || 0,
+      redeem_rate: Math.max(1, Math.floor(Number(form.redeem_rate) || 1)),
+      min_redeem: Math.max(0, Math.floor(Number(form.min_redeem) || 0)),
+      max_redeem_pct: Math.min(100, Math.max(0, Math.floor(Number(form.max_redeem_pct) || 0))),
+      expiry_months: Math.max(0, Math.floor(Number(form.expiry_months) || 0)),
+      is_active: form.is_active !== false,
+    },
+  })
+  if (!res.success) {
+    const first = res.errors && Object.values(res.errors)[0]
+    return { error: (Array.isArray(first) ? first[0] : first) || res.message || 'Could not save the loyalty program.' }
+  }
+  return { ok: true, program: normalizeLoyalty(res.data?.loyalty_program) }
 }
 
 /** Whole points earned for spending `amount`. */
@@ -78,63 +123,30 @@ export function maxRedeemable({ points, platformFee, orderTotal, cfg = DEFAULT_L
   return { points: pts, amount }
 }
 
-/**
- * Award loyalty points for an action. Points = spend-based (amount × earn_rate) +
- * a flat bonus. IDEMPOTENT: a unique (customer_id, source_key) ledger row means the
- * same action can never grant twice, and every award is logged (auditable — the old
- * path was silent). Returns points granted (0 if nothing/already-awarded).
- * Best-effort: degrades to a direct bump if the ledger table isn't migrated yet.
- */
-export async function awardLoyalty({ customerId, countryId, amount = 0, flat = 0, sourceKey, reason = '', cfg }) {
-  if (!customerId || !countryId || !sourceKey) return 0
-  const c = cfg ? normalizeLoyalty(cfg) : await loadLoyaltyConfig(countryId)
-  if (!c.is_active) return 0
-  const pts = earnedPoints(amount, c) + Math.max(0, Math.floor(Number(flat) || 0))
-  if (pts <= 0) return 0
-  try {
-    // Idempotency gate: try to claim this source_key in the ledger.
-    const led = await supabase.from('loyalty_ledger')
-      .insert({ customer_id: customerId, country_id: countryId, source_key: sourceKey, points: pts, reason })
-      .select().maybeSingle()
-    if (led.error) {
-      // Already awarded for this action → do nothing (don't double-bump).
-      if (/duplicate|unique|conflict|23505/i.test(led.error.message || '')) return 0
-      // else: ledger table missing (pre-migration) → fall through to a legacy bump.
-    }
-    const { data: row } = await supabase.from('customer_loyalty')
-      .select('id, points, lifetime_points').eq('customer_id', customerId).eq('country_id', countryId).maybeSingle()
-    if (row) {
-      await supabase.from('customer_loyalty').update({
-        points: Number(row.points || 0) + pts,
-        lifetime_points: Number(row.lifetime_points || 0) + pts,
-      }).eq('id', row.id)
-    } else {
-      await supabase.from('customer_loyalty').insert({ customer_id: customerId, country_id: countryId, points: pts, lifetime_points: pts })
-    }
-  } catch { /* best-effort */ }
-  return pts
+// ── Ledger writes ────────────────────────────────────────────────────────────
+// These wrote to Supabase (customer_loyalty / loyalty_ledger) keyed by a Supabase
+// customer UUID; under Laravel those ids don't match and the tables aren't the
+// source of truth, so they are no-ops.
+//
+// Earning is server-side: BookingService stamps bookings.loyalty_points_earned
+// from listings.loyalty_points and credits the ledger once on confirmation.
+// Redeeming at checkout has no API parameter yet.
+
+/** @deprecated No-op. Laravel awards points server-side on booking confirmation. */
+export async function awardLoyalty() {
+  return 0
 }
 
-/** A customer's earning history (the ledger, newest first) — for the "how you earned" breakdown. */
-export async function loadLoyaltyLedger(customerId, { countryId = null, limit = 40 } = {}) {
-  if (!customerId) return []
+/** @deprecated No-op. The API has no redeem-at-checkout support yet. */
+export async function redeemLoyalty() {
+  return 0
+}
+
+/** A customer's earning history (newest first). Served by /customer/loyalty. */
+export async function loadLoyaltyLedger(_customerId, { limit = 40 } = {}) {
   try {
-    let q = supabase.from('loyalty_ledger').select('id, source_key, points, reason, created_at').eq('customer_id', customerId)
-    if (countryId) q = q.eq('country_id', countryId)
-    const { data, error } = await q.order('created_at', { ascending: false }).limit(limit)
-    return error ? [] : (data || [])
+    const res = await apiFetch('/customer/loyalty')
+    if (!res.success) return []
+    return (Array.isArray(res.data?.ledger) ? res.data.ledger : []).slice(0, limit)
   } catch { return [] }
-}
-
-/** Spend points from the balance (lifetime/tier unaffected). Best-effort. Returns points spent. */
-export async function redeemLoyalty({ customerId, countryId, points }) {
-  const p = Math.max(0, Math.floor(Number(points) || 0))
-  if (!customerId || !countryId || p <= 0) return 0
-  try {
-    const { data: row } = await supabase.from('customer_loyalty')
-      .select('id, points').eq('customer_id', customerId).eq('country_id', countryId).maybeSingle()
-    if (!row) return 0
-    await supabase.from('customer_loyalty').update({ points: Math.max(0, Number(row.points || 0) - p) }).eq('id', row.id)
-  } catch { /* best-effort */ }
-  return p
 }
