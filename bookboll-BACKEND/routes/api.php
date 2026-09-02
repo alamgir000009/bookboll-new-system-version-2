@@ -104,6 +104,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::patch('cities/{id}/status', [GeographyController::class, 'updateCityStatus'])->name('cities.status');
             Route::post('cities/bulk-status', [GeographyController::class, 'bulkUpdateCityStatus'])->name('cities.bulk-status');
             Route::put('commission-rates', [GeographyController::class, 'upsertCommission'])->name('commission-rates');
+            Route::put('loyalty-programs', [GeographyController::class, 'upsertLoyaltyProgram'])->name('loyalty-programs');
         });
 
         Route::prefix('roles')->name('roles.')->middleware('role:super_admin')->group(function () {
@@ -421,6 +422,7 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('directory', [MarketplaceCatalogController::class, 'directory'])->name('directory');
     Route::get('default-city', [MarketplaceCatalogController::class, 'defaultCity'])->name('default-city');
     Route::get('served-regions', [MarketplaceCatalogController::class, 'servedRegions'])->name('served-regions');
+    Route::get('loyalty-config', [MarketplaceCatalogController::class, 'loyaltyConfig'])->name('loyalty-config');
     Route::get('profiles/{uuid}', [PublicProfileController::class, 'show'])->name('profiles.show');
     Route::get('communities/probe', [CustomerCommunityController::class, 'probe'])->name('communities.probe');
     Route::get('communities', [CustomerCommunityController::class, 'index'])->name('communities.index');

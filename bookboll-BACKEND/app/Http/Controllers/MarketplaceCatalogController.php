@@ -63,4 +63,9 @@ class MarketplaceCatalogController extends Controller
     {
         return $this->geo->servedRegions($request);
     }
+
+    public function loyaltyConfig(Request $request)
+    {
+        return $this->catalog->loyaltyConfig($request);
+    }
 }

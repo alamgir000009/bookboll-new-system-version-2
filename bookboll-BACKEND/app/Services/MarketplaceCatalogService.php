@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Business;
 use App\Models\Listing;
+use App\Models\LoyaltyProgram;
 use App\Models\ProviderWallet;
 use App\Models\Setting;
 use App\Models\Venue;
@@ -219,6 +220,30 @@ class MarketplaceCatalogService
                 'holdMinutes'       => max(1, $holdMinutes),
             ],
         ]);
+    }
+
+    /**
+     * Loyalty earn/redeem config for a country. A country without a row uses the
+     * platform defaults, so this never 404s — the storefront always gets a config.
+     */
+    public function loyaltyConfig(Request $request)
+    {
+        $data = $request->validate([
+            'country_id' => 'nullable|integer',
+        ]);
+
+        $loyalty = LoyaltyProgram::defaults();
+
+        if (! empty($data['country_id'])) {
+            $row = LoyaltyProgram::query()->where('country_id', $data['country_id'])->first();
+            if ($row) {
+                $loyalty = $row->only(array_keys($loyalty));
+            } else {
+                $loyalty['country_id'] = (int) $data['country_id'];
+            }
+        }
+
+        return sendSuccess('Loyalty config fetched successfully', ['loyalty' => $loyalty]);
     }
 
     // ── Scope ────────────────────────────────────────────────────────────────

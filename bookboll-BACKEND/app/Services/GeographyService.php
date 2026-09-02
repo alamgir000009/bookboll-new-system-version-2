@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\CommissionRate;
+use App\Models\LoyaltyProgram;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Nnjeim\World\Models\City;
@@ -192,6 +193,36 @@ class GeographyService
         );
 
         return sendSuccess('Commission rate saved', ['commission_rate' => $rate]);
+    }
+
+    public function upsertLoyaltyProgram(Request $request)
+    {
+        $data = $request->validate([
+            'country_id'     => 'required|integer|exists:countries,id',
+            'earn_rate'      => 'required|numeric|min:0',
+            'redeem_rate'    => 'required|integer|min:1',
+            'min_redeem'     => 'required|integer|min:0',
+            'max_redeem_pct' => 'required|integer|min:0|max:100',
+            'is_active'      => 'required|boolean',
+        ]);
+
+        // redeem_value is standardised at 1 currency unit per step for every currency —
+        // the only tunable knob is redeem_rate ("points for 1 unit off").
+        $program = LoyaltyProgram::updateOrCreate(
+            [
+                'country_id' => $data['country_id'],
+            ],
+            [
+                'earn_rate'      => $data['earn_rate'],
+                'redeem_rate'    => $data['redeem_rate'],
+                'redeem_value'   => 1,
+                'min_redeem'     => $data['min_redeem'],
+                'max_redeem_pct' => $data['max_redeem_pct'],
+                'is_active'      => $data['is_active'],
+            ]
+        );
+
+        return sendSuccess('Loyalty program saved', ['loyalty_program' => $program]);
     }
 
     protected function mapCountry(Country $c): array
