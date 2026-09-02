@@ -12,7 +12,13 @@
  * auto-dismisses.
  */
 import { ref } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { apiFetch } from '../lib/api.js'
+
+// Holds live in Laravel `slot_locks`, scoped server-side to this device's session
+// (helpers.php getSessionId) — so a release only needs the listing id.
+function releaseListingHolds(listingId) {
+  return apiFetch('/unlock-all-slots', { method: 'POST', body: { listing_id: listingId } })
+}
 
 const KEY = 'bb_checkout_session'
 
@@ -44,9 +50,8 @@ export function setCheckoutSession(s) {
   const prev = checkoutSession.value
   // Single active session: switching to a DIFFERENT venue releases the previous venue's
   // holds (different listing_id, so this never touches the new venue's holds).
-  if (prev && prev.listingId !== s.listingId && prev.holdToken && prev.listingId) {
-    supabase.rpc('bb_release_holds', { p_held_by: prev.holdToken, p_listing_id: prev.listingId, p_date: null })
-      .then(() => {}, () => {})
+  if (prev && prev.listingId !== s.listingId && prev.listingId) {
+    releaseListingHolds(prev.listingId).catch(() => {})
   }
   checkoutSession.value = s
   persist()
@@ -65,8 +70,8 @@ export function clearCheckoutSession() {
 export async function endCheckoutSession() {
   const s = checkoutSession.value
   clearCheckoutSession()
-  if (s?.holdToken && s?.listingId) {
-    try { await supabase.rpc('bb_release_holds', { p_held_by: s.holdToken, p_listing_id: s.listingId, p_date: null }) }
+  if (s?.listingId) {
+    try { await releaseListingHolds(s.listingId) }
     catch { /* holds expire on their own anyway */ }
   }
 }

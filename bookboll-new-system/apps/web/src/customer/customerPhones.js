@@ -12,7 +12,7 @@
  * sees a reachable number. (Upgrading to a per-country DB table is a drop-in later.)
  */
 import { customer } from '../lib/customerSession.js'
-import { supabase } from '../lib/supabase.js'
+import { apiFetch } from '../lib/api.js'
 
 const KEY = 'bb_customer_phones'
 
@@ -40,7 +40,9 @@ export function saveCustomerPhone(countryId, phone) {
   if (customer.value?.id) {
     customer.value = { ...customer.value, phone: p }
     try { localStorage.setItem('bb_customer_identity', JSON.stringify(customer.value)) } catch { /* ignore */ }
-    supabase.from('customers').update({ phone: p }).eq('id', customer.value.id).then(() => {}, () => {})
+    // Fire-and-forget so a failed write never blocks checkout. Needs a signed-in
+    // Sanctum token; guests just keep the localStorage copy.
+    apiFetch('/customer/update-profile', { method: 'POST', body: { phone: p } }).catch(() => {})
   }
 }
 

@@ -5,7 +5,8 @@
  */
 import { apiFetch, getCustomerToken, setCustomerToken } from '../lib/api.js'
 
-const PAY_MAP = {
+/** UI payment method → the API's payment_method enum. */
+export const PAY_MAP = {
   cash: 'cash_on_arrival',
   deposit: 'deposit_remaining_on_arrival',
   online: 'online_payment',

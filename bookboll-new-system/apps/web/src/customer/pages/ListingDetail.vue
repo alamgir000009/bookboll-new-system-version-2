@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { selectedCountry, customer, isCustomer, customerSignIn } from '../../lib/customerSession.js'
+import { selectedCountry, customer, isCustomer } from '../../lib/customerSession.js'
 import { ensureSignedIn } from '../../lib/authGate.js'
 import { setCheckoutSession, clearCheckoutSession, checkoutSession } from '../../customer/bookingSession.js'
 import { useSeo, productLd } from '../../lib/seo.js'
@@ -9,12 +9,12 @@ import { facilityPath } from '../../lib/cityPages.js'
 import { hostDraft } from '../../customer/hostDraft.js'
 import { loadListing } from '../../customer/data.js'
 import { quoteBooking, isPerPerson, extensionsEnabled, extensionSlotPrice, extensionMaxSlots, addonAmount, paymentPlan, paymentSplit, effectivePaymentOptions } from '../../customer/booking.js'
-import { loadDayAvailability, buildDaySlots, dayScheduleInfo, createCustomerBookingsMulti, holdSlots, holdMinutes, releaseHolds, holdToken, loadMonthAvailability, cheapestAvailableForDay, resolveFacilityCommission } from '../../customer/apiBooking.js'
-import { validatePromo, recordRedemption } from '../../lib/promocodes.js'
-import { loadLoyaltyConfig, maxRedeemable, awardLoyalty, redeemLoyalty } from '../../lib/loyalty.js'
-import { loadCustomerLoyalty } from '../../lib/customerSession.js'
+import { loadDayAvailability, buildDaySlots, dayScheduleInfo, createCustomerBookingsMulti, holdSlots, holdMinutes, releaseHolds, holdToken, loadMonthAvailability, cheapestAvailableForDay, PAY_MAP } from '../../customer/apiBooking.js'
+import { validatePromo } from '../../lib/promocodes.js'
+import { loadLoyaltyConfig } from '../../lib/loyalty.js'
+import { loadCustomerLoyalty, clearCustomerLoyaltyCache } from '../../lib/customerSession.js'
 import { isWhiteLabel } from '../../lib/brand.js'
-import { getSavedPhone, saveCustomerPhone, migrateGuestPhones } from '../../customer/customerPhones.js'
+import { getSavedPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
 import { fmt12, dayPeriod, toMinutes, endMinutes } from '../../lib/slots.js'
 import DateField from '../components/DateField.vue'
 import PhoneInput from '../components/PhoneInput.vue'
@@ -278,17 +278,17 @@ const promoInput = ref('')
 const promo = ref(null)        // { code(row), discount } once applied
 const promoError = ref('')
 const promoBusy = ref(false)
-const checkoutEmail = computed(() => (isCustomer.value ? customer.value?.email : guest.value?.email) || '')
 const promoDiscount = computed(() => Math.min(Number(promo.value?.discount || 0), fullQuote.value.total))
 const payableTotal = computed(() => Math.max(0, fullQuote.value.total - promoDiscount.value))
 async function applyPromo() {
   promoError.value = ''
   promoBusy.value = true
+  // Preview only — the server re-validates and applies the discount at booking time.
   const res = await validatePromo(promoInput.value, {
-    amount: fullQuote.value.total, applicableTo: 'facility',
-    ownerUserId: loc.value?.owner_user_id || null, locationId: loc.value?.id || null,
-    listingId: route.params.id,
-    customerEmail: checkoutEmail.value,
+    amount: fullQuote.value.total,
+    locationId: loc.value?.id || null,
+    listingId: l.value?.id || route.params.id,
+    paymentMethod: PAY_MAP[payMethod.value],
   })
   promoBusy.value = false
   if (!res.ok) { promo.value = null; promoError.value = res.reason; return }
@@ -314,32 +314,15 @@ const PAY_DESC = {
   cash: 'Pay nothing now — pay the full amount in person when you arrive.',
 }
 
-// ── Loyalty points (Bookboll marketplace only; redeemed from Bookboll's platform fee) ──
-const bookbollOwned = computed(() => !loc.value?.owner_user_id)
+// ── Loyalty points (Bookboll marketplace only) ───────────────────────────────
+// Points are EARNED server-side: Laravel credits listings.loyalty_points on booking
+// confirmation. Spending them at checkout is not offered here — the API has no
+// redeem parameter, so a client-side discount would be shown but never charged.
+// Config + balance are still loaded for display and for the future redeem flow.
 const loyaltyCfg = ref(null)
-const loyaltyBalance = ref(0)         // customer's spendable points for this country
-const commissionRate = ref(0)         // effective Bookboll commission % (resolved at checkout)
-const useLoyalty = ref(false)
-// The Bookboll-funded amount this order can absorb a redemption from — points are
-// only ever redeemed against Bookboll's own money, never the provider's share:
-//  • Full online → the commission (whole amount if Bookboll-owned).
-//  • Deposit → the online deposit IS Bookboll's on the marketplace (the provider is
-//    paid the balance in cash on arrival), so points can cover up to the deposit.
-const platformFee = computed(() => {
-  if (payMethod.value === 'deposit') return paySplit.value.deposit
-  if (payMethod.value !== 'online') return 0
-  return bookbollOwned.value ? payableTotal.value : +(payableTotal.value * commissionRate.value / 100).toFixed(2)
-})
-const loyaltyMax = computed(() => loyaltyCfg.value
-  ? maxRedeemable({ points: loyaltyBalance.value, platformFee: platformFee.value, orderTotal: payableTotal.value, cfg: loyaltyCfg.value })
-  : { points: 0, amount: 0 })
-// Show the option only on the apex marketplace, signed in, paying online OR by deposit,
-// with redeemable points available.
-const loyaltyEligible = computed(() => !isWhiteLabel.value && isCustomer.value && (payMethod.value === 'online' || payMethod.value === 'deposit') && loyaltyMax.value.amount > 0)
-const loyaltyAmount = computed(() => (loyaltyEligible.value && useLoyalty.value) ? loyaltyMax.value.amount : 0)
-const loyaltyPoints = computed(() => (loyaltyEligible.value && useLoyalty.value) ? loyaltyMax.value.points : 0)
-// What's actually charged online today (pay-now minus the loyalty redemption).
-const chargeNow = computed(() => Math.max(0, +(paySplit.value.online - loyaltyAmount.value).toFixed(2)))
+const loyaltyBalance = ref(0)         // customer's points balance for this country
+// What's actually charged online today.
+const chargeNow = computed(() => paySplit.value.online)
 
 // "4 slots · 4 hrs" style detail for the order summary.
 const hoursLabel = computed(() => {
@@ -516,18 +499,15 @@ async function goCheckout() {
 }
 // Loyalty points are a Bookboll-marketplace perk only — skip on provider white-label sites.
 async function loadLoyalty() {
-  useLoyalty.value = false
-  loyaltyCfg.value = null; loyaltyBalance.value = 0; commissionRate.value = 0
+  loyaltyCfg.value = null; loyaltyBalance.value = 0
   if (isWhiteLabel.value || !isCustomer.value) return
   const countryId = selectedCountry.value?.id || null
-  const [cfg, bal, rate] = await Promise.all([
+  const [cfg, bal] = await Promise.all([
     loadLoyaltyConfig(countryId),
     loadCustomerLoyalty(),
-    bookbollOwned.value ? Promise.resolve(0) : resolveFacilityCommission(l.value, loc.value),
   ])
   loyaltyCfg.value = cfg
   loyaltyBalance.value = Number(bal?.points || 0)
-  commissionRate.value = Number(rate) || 0
 }
 // Going back to selection keeps the slots held (countdown continues) so the customer
 // doesn't lose them — they're only released on expiry, an empty selection, or leaving.
@@ -579,50 +559,37 @@ async function confirm() {
   err.value = ''
   if (!fullQuote.value.dates.length) { err.value = 'Please pick at least one time slot.'; return }
   saving.value = true
-  let cust = customer.value
+  // A Bookboll account is mandatory: openCheckout() gates step 2 behind
+  // ensureSignedIn(), so reaching here signed out means the session expired
+  // mid-checkout. The booking API needs a Sanctum token, so stop and re-gate
+  // rather than trying to create an identity here.
   if (!isCustomer.value) {
-    if (!guest.value.email.trim() || !guest.value.name.trim()) { err.value = 'Please add your name and email to book.'; saving.value = false; return }
-    const res = await customerSignIn({ email: guest.value.email, fullName: guest.value.name, phone: phone.value, countryId: selectedCountry.value?.id })
-    if (res.error) { err.value = res.error; saving.value = false; return }
-    cust = res.customer
-    migrateGuestPhones(cust.id)
+    saving.value = false
+    if (!(await ensureSignedIn())) { err.value = 'Please sign in to complete your booking.'; return }
+    saving.value = true
   }
+  const base = customer.value
+  if (!base) { err.value = 'Please sign in to complete your booking.'; saving.value = false; return }
+  let cust = base
   if (phone.value.trim()) cust = { ...cust, phone: phone.value.trim() }   // book with the entered number
   const appliedPromo = promo.value   // capture before the form resets
   const discount = promoDiscount.value
-  const loyaltyRedeem = loyaltyAmount.value          // currency off, funded by Bookboll's fee
-  const loyaltyPts = loyaltyPoints.value             // points to spend for it
-  const loyaltyCfgSnap = loyaltyCfg.value
-  const snap = { perDay: fullQuote.value.perDay, gross: fullQuote.value.total, discount, loyalty: loyaltyRedeem, total: payableTotal.value, method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount }
-  const res = await createCustomerBookingsMulti({ listing: l.value, location: loc.value, selectionByDate: selectedByDate.value, addons: selectedAddons.value, players: players.value, customer: cust, payment: { method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount, discount, loyaltyRedeem }, surface: surface.value, providerHasPayout: providerHasPayout.value })
+  const snap = { perDay: fullQuote.value.perDay, gross: fullQuote.value.total, discount, total: payableTotal.value, method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount }
+  // The promo CODE (not the client-side discount) goes to the server — Laravel
+  // re-validates it and applies the discount itself, so the charged amount always
+  // matches what it computed, and usage_count is incremented there.
+  const res = await createCustomerBookingsMulti({ listing: l.value, location: loc.value, selectionByDate: selectedByDate.value, addons: selectedAddons.value, players: players.value, customer: cust, payment: { method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount, promocode: appliedPromo?.code?.code || null }, surface: surface.value, providerHasPayout: providerHasPayout.value })
   saving.value = false
   if (res.error) { err.value = res.error; loadDay(); return }   // e.g. "just taken" → refresh grid
   if (res.redirect) return
   stopHoldTimer(); holdActive.value = false; holdExpiresAt.value = 0   // booked → holds released server-side
   clearCheckoutSession()   // checkout complete → dismiss the resume card
   saveCustomerPhone(selectedCountry.value?.id, phone.value)   // remember for this country
-  if (appliedPromo?.code && discount > 0) {   // best-effort redemption record (never blocks success)
-    recordRedemption({
-      code: appliedPromo.code,
-      customer: { email: cust?.email || '', name: cust?.full_name || cust?.name || '' },
-      source: { type: 'facility', id: res.bookings?.[0] || null, countryId: res.countryId || null },
-      amount: snap.gross, discount, currency: res.currency,
-    })
-  }
-  // Loyalty (apex only): spend the points used, then earn on the net cash paid.
-  // Idempotent + logged (source key = the booking id), and surfaced in the success card.
-  const loyCountry = res.countryId || selectedCountry.value?.id || null
-  const applied = Number(res.loyaltyApplied || 0)
-  let earnedPts = 0
-  if (!isWhiteLabel.value && cust?.id && loyCountry) {
-    if (applied > 0 && loyaltyPts > 0) await redeemLoyalty({ customerId: cust.id, countryId: loyCountry, points: loyaltyPts })
-    const netCash = Math.max(0, snap.total - applied)   // value spent in cash, net of loyalty
-    const bkId = res.bookings?.[0]
-    if (bkId) earnedPts = await awardLoyalty({ customerId: cust.id, countryId: loyCountry, amount: netCash, sourceKey: `bk:${bkId}`, reason: 'Venue booking', cfg: loyaltyCfgSnap })
-  }
-  success.value = { ...snap, loyalty: applied, earned: earnedPts, currency: res.currency }
+  // Points are credited by Laravel on confirmation (listings.loyalty_points) — nothing
+  // to award from here. Refresh the cached balance so Rewards reflects the booking.
+  clearCustomerLoyaltyCache()
+  success.value = { ...snap, currency: res.currency }
   promo.value = null; promoInput.value = ''
-  useLoyalty.value = false
   selectedByDate.value = {}
 }
 function bookAnother() { success.value = null; addonQty.value = {}; players.value = 1; step.value = 1; loadDay() }
@@ -667,11 +634,10 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             <div v-for="(b, i) in day.blocks" :key="i" class="ld-success-line"><Clock :size="14" /> {{ fmtTime(b.start) }} – {{ fmtTime(b.end) }}</div>
           </template>
           <div class="ld-success-total">
-            <template v-if="success.method === 'deposit'">Deposit <strong>{{ success.currency }} {{ Number(Math.max(0, paymentSplit('deposit', success.total, success.depositPct, success.depositAmount).online - (success.loyalty || 0))).toLocaleString() }}</strong> paid <span class="ld-plan-nr">non-refundable</span><span v-if="success.loyalty > 0" class="ld-success-loy"> · {{ success.currency }} {{ Number(success.loyalty).toLocaleString() }} paid with points</span> · <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount).arrival).toLocaleString() }}</strong> at the venue</template>
-            <template v-else-if="success.method === 'online'">Paid online <strong>{{ success.currency }} {{ Number(success.total - (success.loyalty || 0)).toLocaleString() }}</strong><span v-if="success.loyalty > 0" class="ld-success-loy"> · {{ success.currency }} {{ Number(success.loyalty).toLocaleString() }} paid with points</span></template>
+            <template v-if="success.method === 'deposit'">Deposit <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount).online).toLocaleString() }}</strong> paid <span class="ld-plan-nr">non-refundable</span> · <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount).arrival).toLocaleString() }}</strong> at the venue</template>
+            <template v-else-if="success.method === 'online'">Paid online <strong>{{ success.currency }} {{ Number(success.total).toLocaleString() }}</strong></template>
             <template v-else>Pay <strong>{{ success.currency }} {{ Number(success.total).toLocaleString() }}</strong> at the venue</template>
           </div>
-          <div v-if="success.earned > 0" class="ld-success-earned">🎉 You earned <strong>{{ Number(success.earned).toLocaleString() }} points</strong> — check your Rewards!</div>
           <div class="ld-sim-note">Payment is simulated for testing — no real charge.</div>
           <div class="ld-done-actions">
             <router-link to="/my-bookings" class="ld-book-btn">My bookings</router-link>
@@ -921,8 +887,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
               <div v-if="fullQuote.savings > 0" class="ld-bk-row ld-bk-save"><span>Extension savings</span><span>− {{ cur }} {{ Number(fullQuote.savings).toLocaleString() }}</span></div>
               <div v-if="fullQuote.addonsTotal > 0" class="ld-bk-row"><span>Add-ons</span><span>{{ cur }} {{ Number(fullQuote.addonsTotal).toLocaleString() }}</span></div>
               <div v-if="promoDiscount > 0" class="ld-bk-row ld-bk-save"><span>Promo {{ promo.code.code }}</span><span>− {{ cur }} {{ Number(promoDiscount).toLocaleString() }}</span></div>
-              <div v-if="loyaltyAmount > 0" class="ld-bk-row ld-bk-save"><span>Loyalty points</span><span>− {{ cur }} {{ Number(loyaltyAmount).toLocaleString() }}</span></div>
-              <div class="ld-bk-row ld-bk-total"><span>Total</span><strong>{{ cur }} {{ Number(payableTotal - loyaltyAmount).toLocaleString() }}</strong></div>
+              <div class="ld-bk-row ld-bk-total"><span>Total</span><strong>{{ cur }} {{ Number(payableTotal).toLocaleString() }}</strong></div>
             </div>
 
             <!-- Promo code -->
@@ -939,15 +904,8 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
               <div v-if="promoError" class="ld-promo-err">{{ promoError }}</div>
             </div>
 
-            <!-- Loyalty points (Bookboll marketplace only; paying online OR by deposit —
-                 points are redeemed from Bookboll's fee / the deposit, never the provider's cut) -->
-            <label v-if="loyaltyEligible" class="ld-loy">
-              <input type="checkbox" v-model="useLoyalty" class="ld-loy-cb" />
-              <span class="ld-loy-txt">
-                <span class="ld-loy-lbl"><Trophy :size="14" /> Use {{ loyaltyMax.points.toLocaleString() }} loyalty points</span>
-                <span class="ld-loy-sub">− {{ cur }} {{ Number(loyaltyMax.amount).toLocaleString() }} off {{ payMethod === 'deposit' ? 'your deposit' : 'today' }} · {{ loyaltyBalance.toLocaleString() }} available</span>
-              </span>
-            </label>
+            <!-- Spending loyalty points at checkout is disabled until the API supports
+                 it — showing a discount the server won't apply would undercharge. -->
 
             <div class="ld-sum-h">Payment plan</div>
             <div class="ld-plan">
@@ -956,7 +914,6 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
                   <div class="ld-plan-info">
                     <div class="ld-plan-lbl">Pay now <span class="ld-plan-tag">deposit · {{ plan.depositPct }}%</span> <span class="ld-plan-nr">non-refundable</span></div>
                     <div class="ld-plan-sub">Charged today to secure your booking · non-refundable</div>
-                    <div v-if="loyaltyAmount > 0" class="ld-plan-sub ld-plan-loy"><Trophy :size="12" /> {{ cur }} {{ Number(loyaltyAmount).toLocaleString() }} covered by points</div>
                   </div>
                   <strong class="ld-plan-amt">{{ cur }} {{ Number(chargeNow).toLocaleString() }}</strong>
                 </div>
@@ -1126,12 +1083,6 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
 .ld-promo-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: #065f46; }
 .ld-promo-x { background: none; border: none; color: #047857; font-size: 12.5px; font-weight: 700; cursor: pointer; text-decoration: underline; }
 .ld-promo-err { font-size: 12.5px; color: #dc2626; margin-top: 6px; }
-.ld-loy { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 11px 13px; border: 1.5px solid #fde68a; background: #fffbeb; border-radius: 12px; cursor: pointer; }
-.ld-loy-cb { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--brand); cursor: pointer; }
-.ld-loy-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.ld-loy-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 800; color: #0f172a; }
-.ld-loy-lbl svg { color: #d97706; }
-.ld-loy-sub { font-size: 12px; color: #92400e; font-weight: 600; }
 .ld-hold { display: flex; align-items: center; gap: 9px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 13.5px; font-weight: 600; padding: 10px 14px; border-radius: 12px; margin-bottom: 14px; }
 .ld-hold strong { font-variant-numeric: tabular-nums; font-weight: 800; }
 .ld-hold.urgent { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
@@ -1160,8 +1111,6 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
 .ld-success-day { font-size: 12.5px; font-weight: 800; color: var(--brand); margin-top: 8px; }
 .ld-success-line { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 14px; color: #334155; font-weight: 600; margin-bottom: 4px; }
 .ld-success-total { font-size: 14.5px; color: #0f172a; margin: 12px 0 6px; }
-.ld-success-earned { font-size: 13.5px; font-weight: 700; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 9px 12px; margin: 0 0 10px; }
-.ld-success-earned strong { color: #92400e; }
 .ld-sim-note { font-size: 11.5px; color: var(--text-light, #94a3b8); margin: 0 0 14px; font-style: italic; }
 .ld-success .ld-book-btn { margin-bottom: 10px; }
 
@@ -1208,7 +1157,6 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
 .ld-plan-lbl { font-size: 13.5px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ld-plan-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--brand); background: color-mix(in srgb, var(--brand) 18%, white); padding: 2px 7px; border-radius: 999px; }
 .ld-plan-sub { font-size: 12px; color: var(--text-muted, #64748b); margin-top: 3px; line-height: 1.4; }
-.ld-plan-loy { display: inline-flex; align-items: center; gap: 4px; color: #b45309; font-weight: 700; }
 .ld-plan-nr { display: inline-block; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; color: #b45309; background: #fef3c7; border-radius: 5px; padding: 1px 6px; vertical-align: middle; }
 .ld-plan-amt { font-size: 18px; font-weight: 900; color: #0f172a; white-space: nowrap; }
 .ld-plan-amt2 { font-size: 14.5px; font-weight: 800; color: #475569; white-space: nowrap; }
