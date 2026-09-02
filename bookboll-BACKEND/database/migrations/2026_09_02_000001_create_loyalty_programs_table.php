@@ -16,11 +16,13 @@ return new class extends Migration
             Schema::create('loyalty_programs', function (Blueprint $table) {
                 $table->id();
                 $table->unsignedBigInteger('country_id')->unique();
+                $table->string('name')->default('Bookboll Rewards');
                 $table->decimal('earn_rate', 8, 2)->default(1);
                 $table->unsignedInteger('redeem_rate')->default(100);
                 $table->decimal('redeem_value', 8, 2)->default(1);
                 $table->unsignedInteger('min_redeem')->default(100);
                 $table->unsignedTinyInteger('max_redeem_pct')->default(100);
+                $table->unsignedSmallInteger('expiry_months')->default(12);
                 $table->boolean('is_active')->default(true);
                 $table->timestamps();
             });

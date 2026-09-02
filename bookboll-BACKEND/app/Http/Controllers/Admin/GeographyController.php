@@ -40,6 +40,11 @@ class GeographyController extends Controller
         return $this->geography->upsertCommission($request);
     }
 
+    public function loyaltyPrograms()
+    {
+        return $this->geography->loyaltyPrograms();
+    }
+
     public function upsertLoyaltyProgram(Request $request)
     {
         return $this->geography->upsertLoyaltyProgram($request);

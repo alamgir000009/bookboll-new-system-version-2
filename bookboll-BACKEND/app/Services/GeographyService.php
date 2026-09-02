@@ -195,14 +195,27 @@ class GeographyService
         return sendSuccess('Commission rate saved', ['commission_rate' => $rate]);
     }
 
+    /** Every saved per-country program, for the Countries page summary cards. */
+    public function loyaltyPrograms()
+    {
+        $programs = LoyaltyProgram::query()->orderBy('country_id')->get();
+
+        return sendSuccess('Loyalty programs fetched', [
+            'loyalty_programs' => $programs,
+            'defaults'         => LoyaltyProgram::defaults(),
+        ]);
+    }
+
     public function upsertLoyaltyProgram(Request $request)
     {
         $data = $request->validate([
             'country_id'     => 'required|integer|exists:countries,id',
+            'name'           => 'required|string|max:100',
             'earn_rate'      => 'required|numeric|min:0',
             'redeem_rate'    => 'required|integer|min:1',
             'min_redeem'     => 'required|integer|min:0',
             'max_redeem_pct' => 'required|integer|min:0|max:100',
+            'expiry_months'  => 'required|integer|min:0|max:600',
             'is_active'      => 'required|boolean',
         ]);
 
@@ -213,11 +226,13 @@ class GeographyService
                 'country_id' => $data['country_id'],
             ],
             [
+                'name'           => $data['name'],
                 'earn_rate'      => $data['earn_rate'],
                 'redeem_rate'    => $data['redeem_rate'],
                 'redeem_value'   => 1,
                 'min_redeem'     => $data['min_redeem'],
                 'max_redeem_pct' => $data['max_redeem_pct'],
+                'expiry_months'  => $data['expiry_months'],
                 'is_active'      => $data['is_active'],
             ]
         );

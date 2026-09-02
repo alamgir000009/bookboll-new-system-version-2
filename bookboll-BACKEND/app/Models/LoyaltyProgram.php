@@ -11,11 +11,13 @@ class LoyaltyProgram extends Model
 
     protected $fillable = [
         'country_id',
+        'name',
         'earn_rate',
         'redeem_rate',
         'redeem_value',
         'min_redeem',
         'max_redeem_pct',
+        'expiry_months',
         'is_active',
     ];
 
@@ -28,6 +30,7 @@ class LoyaltyProgram extends Model
             'redeem_value'   => 'float',
             'min_redeem'     => 'integer',
             'max_redeem_pct' => 'integer',
+            'expiry_months'  => 'integer',
             'is_active'      => 'boolean',
         ];
     }
@@ -42,11 +45,13 @@ class LoyaltyProgram extends Model
     {
         return [
             'country_id'     => null,
+            'name'           => 'Bookboll Rewards',
             'earn_rate'      => 1.0,
             'redeem_rate'    => 100,
             'redeem_value'   => 1.0,
             'min_redeem'     => 100,
             'max_redeem_pct' => 100,
+            'expiry_months'  => 12,
             'is_active'      => true,
         ];
     }
@@ -60,11 +65,13 @@ class LoyaltyProgram extends Model
     {
         return [
             'country_id',
+            'name',
             'earn_rate',
             'redeem_rate',
             'redeem_value',
             'min_redeem',
             'max_redeem_pct',
+            'expiry_months',
             'is_active',
         ];
     }
