@@ -428,6 +428,26 @@ class ListingService
                             "resources.$index.quantity",
                             "The selected resource requirements quantity ({$resourceData['quantity']}) exceeds the resource total stock ({$resource->total_quantity})."
                         );
+
+                        continue;
+                    }
+
+                    // A ceiling the shared pool can never reach is a contradiction:
+                    // with 2 units needed from a 2-unit pool, only 1 booking ever fits,
+                    // so max_bookings_per_slot of 2 would promise a court that cannot exist.
+                    $maxPerSlot  = (int) ($data['max_bookings_per_slot'] ?? 1);
+                    $requiredQty = (int) $resourceData['quantity'];
+
+                    if ($resource && $requiredQty > 0 && $maxPerSlot > 0) {
+                        $achievable = intdiv((int) $resource->total_quantity, $requiredQty);
+
+                        if ($maxPerSlot > $achievable) {
+                            $validator->errors()->add(
+                                'max_bookings_per_slot',
+                                "Max bookings per slot ({$maxPerSlot}) exceeds what {$resource->name} allows. "
+                                . "Each booking uses {$requiredQty} of {$resource->total_quantity}, so at most {$achievable} can run at once."
+                            );
+                        }
                     }
                 }
             }
@@ -2092,7 +2112,9 @@ class ListingService
                 return sendError('This slot is no longer available. All courts are taken for this time.');
             }
 
-            $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
+            // ?: not ?? - intval() returns 0 rather than null for a missing or
+            // non-numeric setting, which would create locks that expire instantly.
+            $lockDuration = (int) Setting::where('key', 'default_bookings_slot_lock_time')->value('value') ?: 5;
 
             $lock = SlotLock::updateOrCreate(
                 [
@@ -2241,7 +2263,9 @@ class ListingService
                 return sendError('Slot lock not found');
             }
 
-            $lockDuration = intval(Setting::where('key', 'default_bookings_slot_lock_time')->value('value')) ?? 5;
+            // ?: not ?? - intval() returns 0 rather than null for a missing or
+            // non-numeric setting, which would create locks that expire instantly.
+            $lockDuration = (int) Setting::where('key', 'default_bookings_slot_lock_time')->value('value') ?: 5;
 
             $lock->locked_until = now()->addMinutes($lockDuration);
             $lock->save();
