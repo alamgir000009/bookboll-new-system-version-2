@@ -169,10 +169,15 @@ class StripeService
         // Membership subscriptions are billed by Stripe; bookings are one-off payments.
         $membership = app(MembershipBillingService::class);
 
-        if (str_starts_with($type, 'invoice.') || str_starts_with($type, 'customer.subscription.')) {
+        if (str_starts_with($type, 'invoice.')
+            || str_starts_with($type, 'invoice_payment.')
+            || str_starts_with($type, 'customer.subscription.')) {
             match ($type) {
                 'invoice.payment_succeeded'    => $membership->invoicePaid($event->data->object),
                 'invoice.payment_failed'       => $membership->invoiceFailed($event->data->object),
+                // Basil's replacement for invoice.payment_succeeded. Both may arrive;
+                // invoicePaid is keyed on the invoice id, so the second one is a no-op.
+                'invoice_payment.paid'         => $membership->invoicePaymentPaid($event->data->object),
                 'customer.subscription.updated' => $membership->subscriptionUpdated($event->data->object),
                 'customer.subscription.deleted' => $membership->subscriptionDeleted($event->data->object),
                 default                        => null,

@@ -285,7 +285,7 @@ class MembershipBillingService
     /** A paid invoice: record the money, credit the provider, spend loyalty once. */
     public function invoicePaid(object $invoice): void
     {
-        $sub = $this->subscriptionByStripeId($invoice->subscription ?? null);
+        $sub = $this->subscriptionByStripeId($this->invoiceSubscriptionId($invoice));
         if (! $sub) {
             return;
         }
@@ -314,7 +314,8 @@ class MembershipBillingService
             $sub->update([
                 'status'            => 'active',
                 'stripe_status'     => 'active',
-                'trial_status'      => 'converted',
+                // A membership sold without a trial has nothing to convert from.
+                'trial_status'      => $sub->trial_status === 'none' ? 'none' : 'converted',
                 'payment_failed_at' => null,
                 'first_charge_at'   => $sub->first_charge_at ?: now(),
             ]);
@@ -322,9 +323,43 @@ class MembershipBillingService
         });
     }
 
+    /**
+     * Basil emits `invoice_payment.paid` alongside `invoice.payment_succeeded`. Its
+     * payload is a thin payment record, so the invoice itself has to be fetched
+     * before the money can be booked.
+     */
+    public function invoicePaymentPaid(object $invoicePayment): void
+    {
+        $invoiceId = $invoicePayment->invoice ?? null;
+        if (is_object($invoiceId)) {
+            $invoiceId = $invoiceId->id ?? null;
+        }
+
+        if (! is_string($invoiceId) || $invoiceId === '') {
+            return;
+        }
+
+        // Cheap guard before spending an API call on a replay we would discard.
+        if (Payment::where('payment_id', $invoiceId)->exists()) {
+            return;
+        }
+
+        $secret = trim((string) config('services.stripe.secret'));
+        if ($secret === '') {
+            return;
+        }
+
+        try {
+            Stripe::setApiKey($secret);
+            $this->invoicePaid(\Stripe\Invoice::retrieve($invoiceId));
+        } catch (\Throwable $e) {
+            Log::error('Stripe invoice retrieve failed', ['id' => $invoiceId, 'error' => $e->getMessage()]);
+        }
+    }
+
     public function invoiceFailed(object $invoice): void
     {
-        $sub = $this->subscriptionByStripeId($invoice->subscription ?? null);
+        $sub = $this->subscriptionByStripeId($this->invoiceSubscriptionId($invoice));
         $sub?->update([
             'status'            => 'past_due',
             'stripe_status'     => 'past_due',
@@ -465,19 +500,77 @@ class MembershipBillingService
         }
     }
 
+    /**
+     * The subscription an invoice belongs to.
+     *
+     * Stripe's 2025-08-27.basil API dropped the top-level `subscription` field and
+     * moved it under `parent.subscription_details`. Webhooks arrive in the account's
+     * API version while our SDK calls pin an older one, so both shapes are live at
+     * once and both must be read.
+     */
+    protected function invoiceSubscriptionId(object $invoice): ?string
+    {
+        $id = $invoice->parent->subscription_details->subscription
+            ?? $invoice->subscription
+            ?? null;
+
+        // Expanded payloads give the object rather than the id.
+        if (is_object($id)) {
+            $id = $id->id ?? null;
+        }
+
+        return is_string($id) && $id !== '' ? $id : null;
+    }
+
+    /**
+     * End of the current billing period.
+     *
+     * Basil moved `current_period_end` off the subscription and onto each item; a
+     * membership has exactly one item, so the first one is the period we bill on.
+     */
     protected function periodEnd(object $stripeSub): ?\Illuminate\Support\Carbon
     {
-        $end = $stripeSub->current_period_end ?? null;
+        $end = $stripeSub->current_period_end
+            ?? ($stripeSub->items->data[0]->current_period_end ?? null);
 
         return $end ? now()->setTimestamp($end) : null;
     }
 
+    /**
+     * Advance the period from the invoice that just paid.
+     *
+     * Only the recurring line carries the billing period — one-off lines such as the
+     * joining fee sit at a single instant and would drag the period backwards, so the
+     * subscription line has to be picked out rather than assumed to be first.
+     */
     protected function syncPeriod(ClassSubscription $sub, object $invoice): void
     {
-        $end = $invoice->lines->data[0]->period->end ?? null;
-        if ($end) {
-            $sub->update(['current_period_end' => now()->setTimestamp($end), 'next_billing_at' => now()->setTimestamp($end)]);
+        $end = null;
+
+        foreach (($invoice->lines->data ?? []) as $line) {
+            $isSubscriptionLine = ($line->parent->type ?? null) === 'subscription_item_details'
+                || ($line->type ?? null) === 'subscription'
+                || ! empty($line->subscription);
+
+            if ($isSubscriptionLine && ($line->period->end ?? null)) {
+                $end = max($end, (int) $line->period->end);
+            }
         }
+
+        if (! $end) {
+            return;
+        }
+
+        // Never move the period backwards — a replayed or out-of-order webhook must
+        // not reopen a period the customer has already been billed past.
+        if ($sub->current_period_end && $sub->current_period_end->timestamp >= $end) {
+            return;
+        }
+
+        $sub->update([
+            'current_period_end' => now()->setTimestamp($end),
+            'next_billing_at'    => now()->setTimestamp($end),
+        ]);
     }
 
     /** Discount Stripe actually applied to this invoice, in major units. */
