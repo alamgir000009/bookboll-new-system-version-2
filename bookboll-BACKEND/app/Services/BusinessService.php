@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Support\AdminAlerts;
+
 use App\Models\Business;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -134,6 +136,11 @@ class BusinessService
 
             return sendError('Could not create business account.', [], 500);
         }
+
+        AdminAlerts::toPlatform('provider', 'ok',
+            'New provider signed up — '.($business->name ?: $user->name),
+            'Review their business in My Team', '/team',
+            $business->country_id ? (int) $business->country_id : null);
 
         $token = $user->createToken('bookboll-business-api-token')->plainTextToken;
 

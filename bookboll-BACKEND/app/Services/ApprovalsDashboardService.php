@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ClassProgram;
 use App\Models\CustomType;
 use App\Models\Listing;
+use App\Support\AdminAlerts;
 use App\Models\User;
 use App\Models\Venue;
 use Illuminate\Support\Facades\Log;
@@ -118,6 +119,10 @@ class ApprovalsDashboardService
             return sendError('Could not approve listing.');
         }
 
+        AdminAlerts::toVenueOwner($li->venue_id, 'approval', 'ok',
+            '“'.$li->name.'” is approved',
+            'It is now live on the marketplace', '/listings');
+
         $mapped = $this->mapListing($li->fresh(['venue', 'sportsCategory']));
 
         return sendSuccess('Listing approved', ['item' => array_merge($mapped, ['_type' => 'listing'])]);
@@ -168,6 +173,10 @@ class ApprovalsDashboardService
             ]);
         }
 
+        AdminAlerts::toVenueOwner($li->venue_id, 'approval', 'warn',
+            'Changes requested — “'.$li->name.'”',
+            $note ?: 'Update the listing and resubmit it for review', '/listings');
+
         return sendSuccess('Changes requested', [
             'item' => array_merge($this->mapListing($li->fresh(['venue', 'sportsCategory'])), ['_type' => 'listing']),
         ]);
@@ -189,6 +198,10 @@ class ApprovalsDashboardService
 
             return sendError('Could not approve program.');
         }
+
+        AdminAlerts::toUser($this->programOwnerId($pg), 'approval', 'ok',
+            '“'.$pg->name.'” is approved',
+            'It is now live on the marketplace', '/listings');
 
         $mapped = $this->mapProgram($pg->fresh());
 
@@ -240,9 +253,28 @@ class ApprovalsDashboardService
             ]);
         }
 
+        AdminAlerts::toUser($this->programOwnerId($pg), 'approval', 'warn',
+            'Changes requested — “'.$pg->name.'”',
+            $note ?: 'Update the program and resubmit it for review', '/listings');
+
         return sendSuccess('Changes requested', [
             'item' => array_merge($this->mapProgram($pg->fresh()), ['_type' => 'program']),
         ]);
+    }
+
+    /** A program's owner as a Laravel user id (imported rows key it by uuid). */
+    protected function programOwnerId(ClassProgram $pg): ?int
+    {
+        if ($pg->mapped_owner_user_id) {
+            return (int) $pg->mapped_owner_user_id;
+        }
+        if ($pg->venue_id) {
+            return (int) Venue::where('id', $pg->venue_id)->value('owner_user_id') ?: null;
+        }
+
+        return $pg->owner_user_id
+            ? (int) User::where('uuid', $pg->owner_user_id)->value('id') ?: null
+            : null;
     }
 
     // ── Queries / maps ───────────────────────────────────────────────────────

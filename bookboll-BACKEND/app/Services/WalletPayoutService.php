@@ -6,6 +6,7 @@ use App\Models\ClassProgram;
 use App\Models\ClassSubscription;
 use App\Models\Payment;
 use App\Models\ProviderWallet;
+use App\Support\AdminAlerts;
 use App\Models\WalletTransaction;
 use App\Models\WithdrawalRequest;
 use Illuminate\Support\Facades\DB;
@@ -304,6 +305,10 @@ class WalletPayoutService
             return sendError('No pending payout setups for this owner.', [], 404);
         }
 
+        AdminAlerts::toUser($this->ownerLaravelId($ownerUserId), 'wallet', 'ok',
+            'Payout method approved — payouts are live',
+            'Online money now flows to your wallet', '/wallet');
+
         return sendSuccess('Payout method approved', ['updated' => $count]);
     }
 
@@ -333,6 +338,9 @@ class WalletPayoutService
             return sendError('No pending payout setups for this owner.', [], 404);
         }
 
+        AdminAlerts::toUser($this->ownerLaravelId($ownerUserId), 'wallet', 'warn',
+            'Payout method needs attention', $reason, '/wallet');
+
         return sendSuccess('Payout method rejected', [
             'updated' => $count,
             'reason'  => $reason,
@@ -357,6 +365,10 @@ class WalletPayoutService
             'approved_at'  => now(),
             'processed_by' => $by,
         ]);
+
+        AdminAlerts::toUser($this->ownerLaravelId($wd->owner_user_id), 'wallet', 'ok',
+            'Withdrawal approved — '.$wd->amount.' '.$wd->currency,
+            'Approved and on its way to your bank', '/wallet');
 
         return sendSuccess('Withdrawal approved', ['withdrawal' => $this->mapWithdrawal($wd->fresh())]);
     }
@@ -444,6 +456,10 @@ class WalletPayoutService
                 ]);
             }
 
+            AdminAlerts::toUser($this->ownerLaravelId($wd->owner_user_id), 'wallet', 'warn',
+                'Withdrawal rejected — '.$wd->amount.' '.$wd->currency,
+                $wd->rejection_reason ?: 'Contact Bookboll for details', '/wallet');
+
             return sendSuccess('Withdrawal rejected', ['withdrawal' => $this->mapWithdrawal($wd->fresh())]);
         });
     }
@@ -476,6 +492,19 @@ class WalletPayoutService
 
             return sendSuccess('Withdrawal cancelled', ['withdrawal' => $this->mapWithdrawal($wd->fresh())]);
         });
+    }
+
+    /** Wallet rows key their owner by the legacy uuid or the numeric id. */
+    protected function ownerLaravelId(?string $ownerUserId): ?int
+    {
+        if (! $ownerUserId) {
+            return null;
+        }
+        if (is_numeric($ownerUserId)) {
+            return (int) $ownerUserId;
+        }
+
+        return (int) \App\Models\User::where('uuid', $ownerUserId)->value('id') ?: null;
     }
 
     public function createWithdrawal($request)
@@ -519,6 +548,11 @@ class WalletPayoutService
                 'available' => -$amount,
                 'pending'   => $amount,
             ]);
+
+            AdminAlerts::toPlatform('wallet', 'info',
+                'Withdrawal request — '.$wd->amount.' '.$wd->currency,
+                'Review it in Approvals', '/approvals',
+                is_numeric($wd->country_id) ? (int) $wd->country_id : null);
 
             return sendSuccess('Withdrawal requested', ['withdrawal' => $this->mapWithdrawal($wd->fresh())]);
         });

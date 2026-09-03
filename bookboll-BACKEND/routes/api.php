@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\GeographyController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
 use App\Http\Controllers\BusinessNotificationTemplateController;
 use App\Http\Controllers\CheckInController;
+use App\Http\Controllers\NotificationFeedController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
@@ -217,6 +218,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::apiResource('gift-cards', GiftCardController::class);
 
         Route::apiResource('resources', ResourceController::class);
+
+        // Notification bell feed (derived from recent domain activity)
+        Route::get('notifications/feed', [NotificationFeedController::class, 'index'])->name('notifications.feed');
+        Route::post('notifications/read-all', [NotificationFeedController::class, 'markAllRead'])->name('notifications.read-all');
 
         // Door check-in (admin app QR scanner)
         Route::prefix('checkin')->name('checkin.')->group(function () {
