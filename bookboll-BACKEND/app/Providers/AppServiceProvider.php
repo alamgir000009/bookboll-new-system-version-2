@@ -6,6 +6,7 @@ use App\Observers\BookingObserver;
 use App\Models\ClassSubscription;
 use App\Models\Booking;
 use Illuminate\Pagination\Paginator;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -16,6 +17,10 @@ class AppServiceProvider extends ServiceProvider
 
         Booking::observe(BookingObserver::class);
         ClassSubscription::observe(ClassSubscriptionObserver::class);
+
+        Gate::define('viewLogViewer', function ($user = null) {
+            return $user?->hasRole('super_admin') ?? false;
+        });
 
         $key    = trim((string) config('services.stripe.key'));
         $secret = trim((string) config('services.stripe.secret'));
