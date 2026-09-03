@@ -1,27 +1,24 @@
 <script setup>
 /**
  * AdminBell — the dashboard header's notification bell (providers + staff).
- * Feed is derived on each refresh by lib/bellFeed.js; unread = newer than the
- * per-user "last seen" stamp. Subscribes to Laravel Echo / Pusher
+ * Notifications are stored server-side and written when things happen; unread
+ * state is the notification's own read_at. Subscribes to Laravel Echo / Pusher
  * (private-refresh.{userId}) for live updates; falls back to a slow poll.
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
-import { loadBellFeed, getLastSeen, setLastSeen } from '../lib/bellFeed.js'
+import { loadBellFeed, markAllRead as apiMarkAllRead } from '../lib/bellFeed.js'
 import { subscribeStaffRefresh, unsubscribeStaffRefresh } from '../lib/echo.js'
 import { Bell, Inbox, CalendarCheck, GraduationCap, ListChecks, TriangleAlert as AlertTriangle, Banknote, UserPlus } from 'lucide-vue-next'
 
 const route = useRoute()
-const { currentUser, activeUserId, isSuperAdmin, isCountryAdmin, role, currentOwnerUserId, scopeLocations } = useCurrentUser()
-
-const isPlatform = computed(() => isSuperAdmin.value || isCountryAdmin.value || role.value === 'platform_staff')
+const { currentUser, activeUserId } = useCurrentUser()
 const uid = computed(() => activeUserId.value || currentUser.value?.id || '')
 
 const open = ref(false)
 const items = ref([])
-const lastSeen = ref(0)
+const unread = ref(0)
 let timer = null
 let busy = false
 let refreshChannel = null
@@ -31,16 +28,9 @@ async function refresh() {
   if (!uid.value || busy) return
   busy = true
   try {
-    lastSeen.value = getLastSeen(uid.value)
-    const { data } = await supabase.from('locations').select('id, name, owner_user_id, city_id')
-    let locs = data || []
-    locs = isPlatform.value ? scopeLocations(locs) : locs.filter(l => l.owner_user_id === currentOwnerUserId.value)
-    items.value = await loadBellFeed({
-      platform: isPlatform.value,
-      restricted: isPlatform.value && !isSuperAdmin.value,
-      ownerUserId: currentOwnerUserId.value,
-      locations: locs,
-    })
+    const feed = await loadBellFeed()
+    items.value = feed.items
+    unread.value = feed.unread
   } finally { busy = false }
 }
 
@@ -68,17 +58,21 @@ function teardownPusher() {
   }
 }
 
-const isUnread = (n) => new Date(n.ts).getTime() > lastSeen.value
-const unreadCount = computed(() => items.value.filter(isUnread).length)
+const isUnread = (n) => !n.read
+const unreadCount = computed(() => unread.value)
 
-function markAllSeen() {
-  setLastSeen(uid.value)
-  lastSeen.value = Date.now()
+async function markAllSeen() {
+  if (!unread.value) return
+  await apiMarkAllRead()
+  items.value = items.value.map(n => ({ ...n, read: true }))
+  unread.value = 0
 }
 function toggle() {
   open.value = !open.value
-  // Let the unread highlight register, then clear the badge.
-  if (open.value) refresh().then(() => setTimeout(markAllSeen, 1500))
+  // Opening only re-reads the feed. Unread items stay highlighted until the
+  // reader clears them with "Mark all read" — auto-clearing on open made that
+  // button dead and hid what was new before it could be seen.
+  if (open.value) refresh()
 }
 
 const rootEl = ref(null)
