@@ -32,6 +32,7 @@ class Post extends Model
         'content',
         'user_id',
         'featured',
+        'owner_user_id',
         'seo_title',
         'read_time',
         'created_by',
@@ -40,6 +41,22 @@ class Post extends Model
         'seo_description',
         'post_category_id',
     ];
+
+    /**
+     * Scope to one blog: a provider's own posts, or (owner null) the Bookboll
+     * platform blogs. Keeps provider posts off the marketplace and vice versa.
+     */
+    public function scopeForOwner($query, $ownerId = null)
+    {
+        return $ownerId
+            ? $query->where('owner_user_id', $ownerId)
+            : $query->whereNull('owner_user_id');
+    }
+
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_user_id');
+    }
 
     public function scopePublished($query)
     {

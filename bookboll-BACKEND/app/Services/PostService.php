@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Business;
 use App\Models\Post;
 use App\Models\PostCategory;
 use App\Models\Tag;
@@ -21,6 +22,7 @@ class PostService
         $search           = $request->search ?? null;
 
         $posts = $this->postModel->latest()
+            ->forOwner($this->adminBlogOwner())
             ->with(['author', 'category', 'tags'])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -94,6 +96,7 @@ class PostService
 
             $formData['type'] = $formData['type'] ?? Post::TYPE_MAIN;
             $formData['read_time'] = $formData['read_time'] ?? '5 min read';
+            $formData['owner_user_id'] = $this->adminBlogOwner();
 
             if ($formData['status'] == $this->postModel::PUBLISHED) {
                 $formData['published_at'] = now();
@@ -151,13 +154,13 @@ class PostService
 
     public function getPost($id)
     {
-        $post = $this->postModel::with(['author', 'category', 'tags'])->findOrFail($id);
+        $post = $this->findOwnedPost($id, ['author', 'category', 'tags']);
         return sendSuccess('Post fetched successfully', compact('post'));
     }
 
     public function update($request, $id)
     {
-        $post = $this->postModel->findOrFail($id);
+        $post = $this->findOwnedPost($id);
 
         $formData = $request->validate([
             'title'            => 'required|string|max:255',
@@ -249,7 +252,7 @@ class PostService
 
     public function delete($id)
     {
-        $post = $this->postModel->findOrFail($id);
+        $post = $this->findOwnedPost($id);
         $post->delete();
         return sendSuccess('Post deleted successfully');
     }
@@ -261,7 +264,7 @@ class PostService
             'status' => 'required|string|in:draft,published',
         ]);
 
-        $post = $this->postModel::findOrFail($request->id);
+        $post = $this->findOwnedPost($request->id);
 
         if ($request->status == $this->postModel::PUBLISHED) {
             $post->status       = $this->postModel::PUBLISHED;
@@ -281,10 +284,22 @@ class PostService
         $search           = $request->search ?? null;
         $category         = $request->category ?? null;
         $records_per_page = $request->records_per_page ?? 10;
+        $blog             = $this->resolveBlogOwner($request);
         $type             = $this->resolvePostType($request->type);
 
+        if ($blog['unknown']) {
+            return sendSuccess('Blog articles fetched successfully', [
+                'blogArticles'    => $this->postModel->whereRaw('1 = 0')->simplePaginate($records_per_page),
+                'featuredArticle' => null,
+            ]);
+        }
+
+        $ownerId = $blog['owner'];
+
         $blogArticles = $this->postModel->published()
-            ->where('type', $type)
+            ->forOwner($ownerId)
+            // A provider has one blog; only the platform blogs split by type.
+            ->when(! $ownerId, fn ($q) => $q->where('type', $type))
             ->with(['author', 'category', 'tags'])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -304,7 +319,8 @@ class PostService
 
         $featuredArticle = $this->postModel::with(['author', 'category', 'tags'])
             ->published()
-            ->where('type', $type)
+            ->forOwner($ownerId)
+            ->when(! $ownerId, fn ($q) => $q->where('type', $type))
             ->featured()
             ->first();
 
@@ -313,11 +329,18 @@ class PostService
 
     public function getPostBySlug($slug, $request = null)
     {
+        $blog = $this->resolveBlogOwner($request);
+        if ($blog['unknown']) {
+            return sendError('Post not found', [], 404);
+        }
+
+        $ownerId = $blog['owner'];
         $type = $this->resolvePostType($request?->type);
 
         $post = $this->postModel->where('slug', $slug)
             ->published()
-            ->where('type', $type)
+            ->forOwner($ownerId)
+            ->when(! $ownerId, fn ($q) => $q->where('type', $type))
             ->with(['author', 'category', 'tags'])
             ->first();
 
@@ -326,6 +349,53 @@ class PostService
         }
 
         return sendSuccess('Post fetched successfully', compact('post'));
+    }
+
+    /**
+     * The blog the signed-in admin manages: null for Bookboll staff (the platform
+     * blogs), otherwise the provider they belong to. Team members inherit their
+     * owner's blog.
+     */
+    protected function adminBlogOwner(): ?int
+    {
+        $user = auth()->user();
+        if (! $user || $user->hasRole(['super_admin', 'country_admin', 'platform_staff', 'admin'])) {
+            return null;
+        }
+
+        return (int) ($user->owner_user_id ?: $user->id);
+    }
+
+    /** Load a post the signed-in admin is allowed to touch. */
+    protected function findOwnedPost($id, array $with = []): Post
+    {
+        return $this->postModel::query()
+            ->when($with, fn ($q) => $q->with($with))
+            ->forOwner($this->adminBlogOwner())
+            ->findOrFail($id);
+    }
+
+    /**
+     * Whose blog the public request is asking for: a white-label brand's own
+     * posts (?brand_slug=), or null for the Bookboll platform blogs.
+     */
+    protected function resolveBlogOwner($request): array
+    {
+        $slug = strtolower(trim((string) ($request?->brand_slug ?? '')));
+        if ($slug === '') {
+            return ['owner' => null, 'unknown' => false];
+        }
+
+        $ownerId = Business::query()
+            ->where(function ($q) use ($slug) {
+                $q->whereRaw('LOWER(username) = ?', [$slug])
+                    ->orWhereRaw('LOWER(brand_subdomain) = ?', [$slug]);
+            })
+            ->value('owner_id');
+
+        // A brand was asked for but doesn't exist — show nothing rather than
+        // leaking the Bookboll blog onto an unknown subdomain.
+        return ['owner' => $ownerId, 'unknown' => ! $ownerId];
     }
 
     protected function resolvePostType(?string $type): string
