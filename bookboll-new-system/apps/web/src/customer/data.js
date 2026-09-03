@@ -367,10 +367,10 @@ export async function loadProgram(id) {
 }
 
 // Customer self-enrolment (marketplace membership checkout) — Laravel authoritative.
-export async function enrollInProgram(program, { customer, answers = {}, discount = 0, cardFp = '', loyaltyRedeem = 0 } = {}) {
+export async function enrollInProgram(program, { customer, answers = {}, discount = 0, loyaltyRedeem = 0 } = {}) {
   if (!program?.id) return { error: 'Program not found.' }
   if (!customer?.id) return { error: 'Please sign in to continue.' }
-  return apiEnrollInProgram(program, { answers, discount, cardFp, loyaltyRedeem })
+  return apiEnrollInProgram(program, { answers, discount, loyaltyRedeem })
 }
 
 // A customer's membership subscriptions (for the "My memberships" page / account widget).

@@ -46,18 +46,19 @@ export async function apiLoadProgram(id, brandOwner = null) {
   }
 }
 
-export async function apiEnrollInProgram(program, { answers = {}, discount = 0, cardFp = '', loyaltyRedeem = 0 } = {}) {
+export async function apiEnrollInProgram(program, { answers = {}, discount = 0, loyaltyRedeem = 0 } = {}) {
   if (!program?.id) return { error: 'Program not found.' }
   const res = await apiFetch(`/customer/programs/${encodeURIComponent(program.id)}/enroll`, {
     method: 'POST',
     body: {
       answers: answers || {},
       discount: Number(discount) || 0,
-      card_fp: cardFp || '',
       loyalty_redeem: Number(loyaltyRedeem) || 0,
     },
   })
   if (!res.success) return { error: formatErr(res, 'Could not complete sign-up.') }
+  // Paid memberships come back as a Stripe Checkout URL to redirect to.
+  if (res.data?.url) return { url: res.data.url, session_id: res.data.session_id }
   return {
     subscription: res.data?.subscription,
     charged: !!res.data?.charged,
@@ -99,6 +100,17 @@ export async function apiHasUsedIntroOffer({ email, cardFp, ownerUserId } = {}) 
   })
   if (!res.success) return false
   return !!res.data?.used
+}
+
+/** State of a Stripe Checkout return — 'processing' until the webhook lands. */
+export async function checkoutState(sessionId) {
+  const res = await apiFetch(`/customer/programs/checkout/${encodeURIComponent(sessionId)}`)
+  if (!res.success) return { status: 'error', error: formatErr(res, 'Could not confirm your sign-up.') }
+  return {
+    status: res.data?.status || 'processing',
+    subscription: res.data?.subscription || null,
+    trialEndsAt: res.data?.trial_ends_at || null,
+  }
 }
 
 export async function apiLoadMemberPassBundle() {

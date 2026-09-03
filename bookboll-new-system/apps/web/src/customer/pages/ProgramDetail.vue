@@ -1,23 +1,25 @@
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { loadProgram, intervalLabel, enrollInProgram, MEMBER_COUNT_MIN } from '../../customer/data.js'
+import { checkoutState } from '../../customer/apiPrograms.js'
 import { offerModeFor, discountedPrice } from '../../lib/billingPlans.js'
-import { customer, isCustomer, customerSignIn, selectedCountry, loadCustomerLoyalty } from '../../lib/customerSession.js'
+import { customer, isCustomer, selectedCountry, loadCustomerLoyalty, clearCustomerLoyaltyCache } from '../../lib/customerSession.js'
 import { isWhiteLabel } from '../../lib/brand.js'
-import { loadLoyaltyConfig, maxRedeemable, redeemLoyalty } from '../../lib/loyalty.js'
+import { loadLoyaltyConfig, maxRedeemable } from '../../lib/loyalty.js'
 import { ensureSignedIn } from '../../lib/authGate.js'
 import { asFields, hasForm, blankAnswers, validateAnswers } from '../../lib/customForms.js'
-import { validatePromo, recordRedemption } from '../../lib/promocodes.js'
-import { hasUsedIntroOffer, cardFingerprint } from '../../lib/offerGuard.js'
+import { validatePromo } from '../../lib/promocodes.js'
+import { hasUsedIntroOffer } from '../../lib/offerGuard.js'
 import { useSeo, productLd } from '../../lib/seo.js'
 import { fmt12 } from '../../lib/slots.js'
 import CustomFormFields from '../components/CustomFormFields.vue'
-import { ArrowLeft, MapPin, Dumbbell, Check, Phone, Clock, CalendarDays, Gift, X, CreditCard, Loader2, Tag, Expand, Users } from 'lucide-vue-next'
+import { ArrowLeft, MapPin, Dumbbell, Check, Phone, Clock, CalendarDays, Gift, X, CreditCard, Loader2, Tag, Expand, Users, ShieldCheck } from 'lucide-vue-next'
 import Lightbox from '../components/Lightbox.vue'
 import { categoryIsGym, audienceLabel, effectiveGenderPolicy, genderPolicyLabel } from '../../lib/membershipCategories.js'
 
 const route = useRoute()
+const router = useRouter()
 const data = ref(null)
 const loading = ref(true)
 
@@ -28,7 +30,7 @@ const heroPhoto = computed(() => gallery.value[activePhoto.value] || gallery.val
 const lightbox = ref(false)   // full-screen photo viewer
 
 async function load() { loading.value = true; activePhoto.value = 0; data.value = await loadProgram(route.params.id); loading.value = false }
-onMounted(load)
+onMounted(async () => { await load(); await resumeFromStripe() })
 watch(() => route.params.id, load)
 
 useSeo(() => {
@@ -128,7 +130,6 @@ const showCheckout = ref(false)
 const answers = ref({})
 const ansErrors = ref({})
 const contact = ref({ full_name: '', email: '', phone: '' })
-const card = ref({ number: '', exp: '', cvc: '' })
 // "When do I actually start?" — the next upcoming session from the weekly
 // schedule (day mask + time). Gym-access plans have no discrete sessions, so
 // access simply starts today. Shown while signing up AND on the success screen.
@@ -160,25 +161,6 @@ const enrolled = ref(null)
 // digits-only. The separator is NOT re-added while deleting, so backspace
 // doesn't fight the mask. Fingerprinting strips non-digits, so spaces are safe.
 let prevExp = ''
-function onExpInput() {
-  const raw = String(card.value.exp || '')
-  const deleting = raw.length < prevExp.length
-  let d = raw.replace(/\D/g, '').slice(0, 4)
-  if (d.length === 1 && Number(d) > 1) d = '0' + d          // "9" → "09"
-  let out
-  if (d.length < 2) out = d
-  else if (d.length === 2) out = deleting ? d : d + ' / '
-  else out = d.slice(0, 2) + ' / ' + d.slice(2)
-  card.value.exp = out
-  prevExp = out
-}
-function onCardNumInput() {
-  const d = String(card.value.number || '').replace(/\D/g, '').slice(0, 19)
-  card.value.number = (d.match(/.{1,4}/g) || []).join(' ')
-}
-function onCvcInput() {
-  card.value.cvc = String(card.value.cvc || '').replace(/\D/g, '').slice(0, 4)
-}
 const submitting = ref(false)
 const done = ref(false)
 const checkoutErr = ref('')
@@ -244,7 +226,6 @@ async function openCheckout() {
   done.value = false
   promo.value = null; promoInput.value = ''; promoError.value = ''
   contact.value = { full_name: customer.value?.full_name || '', email: customer.value?.email || '', phone: customer.value?.phone || '' }
-  card.value = { number: '', exp: '', cvc: '' }
   loadLoy()
   showCheckout.value = true
 }
@@ -256,46 +237,57 @@ async function submitCheckout() {
   if (!isCustomer.value) {
     if (!contact.value.full_name.trim() || !contact.value.email.trim()) { checkoutErr.value = 'Please enter your name and email.'; return }
   }
-  if (!card.value.number.trim() || !card.value.exp.trim() || !card.value.cvc.trim()) { checkoutErr.value = 'Enter your card details to continue.'; return }
-  submitting.value = true
-  if (!isCustomer.value) {
-    const r = await customerSignIn({ email: contact.value.email, fullName: contact.value.full_name, phone: contact.value.phone })
-    if (r.error) { submitting.value = false; checkoutErr.value = r.error; return }
+  // openCheckout() gates on ensureSignedIn(), so getting here signed out means the
+  // session expired. Enrolling needs a Sanctum token — re-gate instead of continuing.
+  if (!isCustomer.value && !(await ensureSignedIn())) {
+    checkoutErr.value = 'Please sign in to complete your sign-up.'
+    return
   }
-  // Anti-abuse: the CARD may match a previous trial even when the email is new. Never
-  // silently charge a different amount than shown — surface the change and let them
-  // confirm again at the updated (trial-less) total.
-  const cardFp = await cardFingerprint(card.value.number)
+  submitting.value = true
+  // Never quietly charge a different amount than shown: if the trial is already used
+  // at this business, surface the new total and make them confirm again.
   if (!introUsed.value && offerModeFor(p.value) === 'trial' && p.value.owner_user_id) {
-    const used = await hasUsedIntroOffer({ email: customer.value?.email || '', cardFp, ownerUserId: p.value.owner_user_id })
+    const used = await hasUsedIntroOffer({ email: customer.value?.email || '', ownerUserId: p.value.owner_user_id })
     if (used) {
       introUsed.value = true
       submitting.value = false
-      checkoutErr.value = 'A free trial was already used at this business with this account or card, so the trial no longer applies. Review the updated total, then confirm to join at standard pricing.'
+      checkoutErr.value = 'A free trial was already used at this business with this account, so the trial no longer applies. Review the updated total, then confirm to join at standard pricing.'
       return
     }
   }
-  const appliedPromo = promo.value
-  const loyaltyPts = loyaltyPoints.value   // capture before the form resets
-  const res = await enrollInProgram(p.value, { customer: customer.value, answers: answers.value, discount: promoDiscount.value, cardFp, loyaltyRedeem: loyaltyAmount.value })
+  const res = await enrollInProgram(p.value, { customer: customer.value, answers: answers.value, discount: promoDiscount.value, loyaltyRedeem: loyaltyAmount.value })
+  if (res.error) { submitting.value = false; checkoutErr.value = res.error; return }
+
+  // Paid memberships finish on Stripe; free ones complete here.
+  if (res.url) { window.location.href = res.url; return }
   submitting.value = false
-  if (res.error) { checkoutErr.value = res.error; return }
-  // Loyalty: spend the points actually applied against Bookboll's commission (apex only).
-  const applied = Number(res.loyaltyApplied || 0)
-  if (!isWhiteLabel.value && applied > 0 && loyaltyPts > 0 && customer.value?.id) {
-    await redeemLoyalty({ customerId: customer.value.id, countryId: res.countryId || loyaltyCountryId.value, points: loyaltyPts })
-  }
-  if (appliedPromo?.code && (res.discountApplied || 0) > 0) {   // best-effort redemption record
-    recordRedemption({
-      code: appliedPromo.code,
-      customer: { email: customer.value?.email || '', name: customer.value?.full_name || '' },
-      source: { type: 'program', id: res.subscription?.id || null, countryId: res.countryId || null },
-      amount: payPrice.value, discount: res.discountApplied, currency: res.currency,
-    })
-  }
+  clearCustomerLoyaltyCache()
   promo.value = null; promoInput.value = ''
   enrolled.value = res.subscription || null
   done.value = true
+}
+
+// Returning from Stripe: ?checkout=<session id> means paid, ?checkout=cancelled means
+// they backed out. The webhook is authoritative, so poll briefly until it lands.
+async function resumeFromStripe() {
+  const q = route.query.checkout
+  if (!q) return
+  const clean = () => router.replace({ path: route.path, query: {} })
+  if (q === 'cancelled') { clean(); return }
+
+  submitting.value = true
+  for (let i = 0; i < 6; i++) {
+    const st = await checkoutState(String(q))
+    if (st.status === 'ready') {
+      enrolled.value = st.subscription
+      done.value = true
+      break
+    }
+    await new Promise(r => setTimeout(r, 1500))
+  }
+  submitting.value = false
+  clearCustomerLoyaltyCache()
+  clean()
 }
 </script>
 
@@ -415,12 +407,12 @@ async function submitCheckout() {
 
           <div class="co-section">
             <div class="co-h"><CreditCard :size="15" /> Payment</div>
-            <input class="co-in" v-model="card.number" placeholder="Card number" inputmode="numeric" autocomplete="cc-number" @input="onCardNumInput" />
-            <div class="co-row">
-              <input class="co-in" v-model="card.exp" placeholder="MM / YY" inputmode="numeric" autocomplete="cc-exp" maxlength="7" @input="onExpInput" />
-              <input class="co-in" v-model="card.cvc" placeholder="CVC" inputmode="numeric" autocomplete="cc-csc" maxlength="4" @input="onCvcInput" />
+            <div class="co-stripe">
+              <ShieldCheck :size="15" />
+              <span>You'll finish on Stripe's secure page — card, Apple&nbsp;Pay or Google&nbsp;Pay.
+                <template v-if="hasTrial">Nothing is charged until your free trial ends.</template>
+              </span>
             </div>
-            <div class="co-demo">Demo checkout — no real charge is made.</div>
           </div>
 
           <div v-if="promoEligible" class="co-section">
@@ -612,6 +604,12 @@ async function submitCheckout() {
 .co-in:focus { outline: none; border-color: var(--brand, #7c3aed); }
 .co-row { display: flex; gap: 8px; }
 .co-row .co-in { margin-bottom: 0; }
+.co-stripe {
+  display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
+  background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px;
+  font-size: 12.5px; color: #166534; line-height: 1.5;
+}
+.co-stripe svg { flex-shrink: 0; margin-top: 1px; }
 .co-demo { font-size: 11.5px; color: var(--text-light, #94a3b8); margin-top: 6px; }
 .co-promo-form { display: flex; gap: 8px; }
 .co-promo-form .co-in { margin-bottom: 0; }
