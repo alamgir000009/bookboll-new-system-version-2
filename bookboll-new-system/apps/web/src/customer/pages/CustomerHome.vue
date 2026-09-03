@@ -56,7 +56,7 @@ async function load() {
 onMounted(async () => {
   load()
   // Blog row: marketplace posts on apex, the provider's own on their white-label site.
-  blogPosts.value = await loadPublishedPosts({ limit: 3, ownerId: activeBrand.value?.ownerUserId || null })
+  blogPosts.value = await loadPublishedPosts({ limit: 3 })
   if (!isWhiteLabel.value) {
     const dir = await loadDirectory()
     popularCities.value = dir.flatMap(g => g.cities.map(c => ({ ...c, country: g.country.name }))).sort((a, b) => b.count - a.count).slice(0, 12)

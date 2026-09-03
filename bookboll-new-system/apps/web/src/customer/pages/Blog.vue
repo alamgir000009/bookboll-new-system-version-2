@@ -8,11 +8,9 @@ import { Newspaper, ArrowRight } from 'lucide-vue-next'
 
 const posts = ref([])
 const loading = ref(true)
-// White-label → that provider's own posts; apex → the Bookboll marketplace posts.
-const ownerId = computed(() => activeBrand.value?.ownerUserId || null)
 const brandName = computed(() => (isWhiteLabel.value ? activeBrand.value?.name : platformBrand.value?.name) || 'Bookboll')
 
-onMounted(async () => { posts.value = await loadPublishedPosts({ ownerId: ownerId.value }); loading.value = false })
+onMounted(async () => { posts.value = await loadPublishedPosts(); loading.value = false })
 
 useSeo(() => ({
   title: 'Blog — tips, guides & stories',

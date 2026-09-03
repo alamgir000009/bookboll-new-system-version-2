@@ -22,10 +22,9 @@ onMounted(async () => {
       .map(c => ({ name: c.name, slug: slugifyCity(c.name) }))
   } catch { /* section simply hidden */ }
 })
-const ownerId = computed(() => activeBrand.value?.ownerUserId || null)
 const brandName = computed(() => (isWhiteLabel.value ? activeBrand.value?.name : platformBrand.value?.name) || 'Bookboll')
 
-async function load() { loading.value = true; post.value = await loadPostBySlug(route.params.slug, ownerId.value); loading.value = false }
+async function load() { loading.value = true; post.value = await loadPostBySlug(route.params.slug); loading.value = false }
 onMounted(load)
 watch(() => route.params.slug, load)
 

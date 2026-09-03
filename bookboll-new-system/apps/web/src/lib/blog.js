@@ -1,15 +1,15 @@
 /**
- * blog.js — data + helpers for the marketplace blog.
+ * blog.js — data + helpers for the marketplace blog (Laravel-backed).
  *
- * Public storefront uses the read helpers (published posts only, enforced by RLS).
- * The super-admin dashboard uses the CRUD helpers. Body is markdown, rendered by a small
- * XSS-safe subset renderer (no dependency): the source is HTML-escaped first, then a fixed
- * set of inline/block transforms are applied, so authored content can never inject tags.
+ * Posts come from the public endpoints /blog-articles and /blog-articles/{slug}.
+ * A white-label site passes ?brand_slug= and gets that provider's own blog; without
+ * it you get the Bookboll platform blogs, split by `type` ('main' = the marketplace
+ * blog at /blog, 'business' = the for-businesses blog).
  *
- * Best-effort: if the `blog_posts` table isn't migrated yet, reads return [] / null and the
- * pages render an empty state instead of throwing.
+ * Bodies are HTML from the admin editor and are rendered through the XSS-safe
+ * sanitizer below; older markdown posts still render via renderMarkdown.
  */
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 // ── Slug ─────────────────────────────────────────────────────────────────────
 export function slugify(s) {
@@ -21,144 +21,61 @@ export function slugify(s) {
     .slice(0, 80)
 }
 
-// Scope a query to the right blog: a provider's posts (ownerId set) or the Bookboll
-// MARKETPLACE posts (ownerId null/undefined → owner_user_id IS NULL).
-function scopeOwner(q, ownerId) {
-  return ownerId ? q.eq('owner_user_id', ownerId) : q.is('owner_user_id', null)
+const POST_TYPE = { marketplace: 'main', business: 'business' }
+
+/** The brand whose blog to read — set on a white-label site, empty on the apex.
+ *  Imported lazily: brand.js imports countPublishedPosts from here. */
+async function brandSlug() {
+  try {
+    const { activeBrand } = await import('./brand.js')
+    return activeBrand.value?.slug || ''
+  } catch { return '' }
 }
-// Bookboll-owned posts split into two blogs (migration 20260766000000):
-//   'marketplace' → the customer marketplace blog at /blog (NULL counts as marketplace —
-//                   pre-audience rows all belong there)
-//   'business'    → the for-businesses landing blog at /for-business/blog
-// Provider posts (ownerId set) ignore audience entirely.
-function scopeAudience(q, ownerId, audience) {
-  if (ownerId) return q
-  return audience === 'business'
-    ? q.eq('audience', 'business')
-    : q.or('audience.is.null,audience.neq.business')
-}
-// Pre-migration the owner_user_id column doesn't exist. For MARKETPLACE reads we then fall
-// back to the unscoped query (all posts = marketplace posts, since no provider posts exist
-// yet); provider reads just return empty. Keeps the marketplace blog working before the SQL.
-function ownerColMissing(error) {
-  return !!error && /owner_user_id/i.test(error.message || '') && /column|schema|exist/i.test(error.message || '')
-}
-// Same guard for the audience column: marketplace reads fall back to audience-unscoped
-// (all Bookboll posts were marketplace posts before the migration); business reads return
-// empty until the SQL is run.
-function audienceColMissing(error) {
-  return !!error && /audience/i.test(error.message || '') && /column|schema|exist/i.test(error.message || '')
+
+/** Laravel post row → the shape the blog pages read. */
+function mapPost(p) {
+  if (!p) return null
+  const tags = Array.isArray(p.tags)
+    ? p.tags.map(t => (typeof t === 'string' ? t : t?.name)).filter(Boolean)
+    : []
+  return {
+    id: p.id,
+    title: p.title || '',
+    slug: p.slug || '',
+    excerpt: p.excerpt || '',
+    body: p.content || '',
+    cover_image: p.featured_image || '',
+    author_name: p.author?.name || 'Bookboll',
+    tags,
+    meta_title: p.seo_title || '',
+    meta_description: p.seo_description || '',
+    published_at: p.published_at || null,
+    updated_at: p.updated_at || null,
+  }
 }
 
 // ── Reads (public) ───────────────────────────────────────────────────────────
-// `ownerId` = a provider's id for their white-label blog, else null = a Bookboll blog,
-// picked by `audience` ('marketplace' default, or 'business' for /for-business/blog).
-export async function loadPublishedPosts({ limit = 50, ownerId = null, audience = 'marketplace' } = {}) {
-  const base = () => supabase.from('blog_posts')
-    .select('id, title, slug, excerpt, cover_image, author_name, tags, published_at')
-    .eq('status', 'published')
-  const order = (q) => q.order('published_at', { ascending: false, nullsFirst: false }).limit(limit)
-  try {
-    let { data, error } = await order(scopeAudience(scopeOwner(base(), ownerId), ownerId, audience))
-    if (error && !ownerId && audienceColMissing(error)) {
-      if (audience === 'business') return []                       // no business blog before the SQL
-      ;({ data, error } = await order(scopeOwner(base(), ownerId)))
-    }
-    if (error && !ownerId && ownerColMissing(error)) ({ data, error } = await order(base()))
-    if (error) return []
-    return data || []
-  } catch { return [] }
+export async function loadPublishedPosts({ limit = 50, audience = 'marketplace' } = {}) {
+  const slug = await brandSlug()
+  const res = await apiFetch('/blog-articles', {
+    query: { type: POST_TYPE[audience] || 'main', records_per_page: limit, ...(slug ? { brand_slug: slug } : {}) },
+  })
+  if (!res.success) return []
+  return (res.data?.blogArticles?.data || []).map(mapPost).filter(Boolean)
 }
 
-export async function loadPostBySlug(slug, ownerId = null, audience = 'marketplace') {
-  const base = () => supabase.from('blog_posts').select('*').eq('slug', slug).eq('status', 'published')
-  try {
-    let { data, error } = await scopeAudience(scopeOwner(base(), ownerId), ownerId, audience).maybeSingle()
-    if (error && !ownerId && audienceColMissing(error)) {
-      if (audience === 'business') return null
-      ;({ data, error } = await scopeOwner(base(), ownerId).maybeSingle())
-    }
-    if (error && !ownerId && ownerColMissing(error)) ({ data, error } = await base().maybeSingle())
-    return data || null
-  } catch { return null }
+export async function loadPostBySlug(slug, audience = 'marketplace') {
+  if (!slug) return null
+  const brand = await brandSlug()
+  const res = await apiFetch(`/blog-articles/${encodeURIComponent(slug)}`, {
+    query: { type: POST_TYPE[audience] || 'main', ...(brand ? { brand_slug: brand } : {}) },
+  })
+  return res.success ? mapPost(res.data?.post) : null
 }
 
-// Count published posts for a scope — drives the storefront Blog-module visibility.
-// Only called for providers (ownerId set); errors (pre-migration) ⇒ 0 ⇒ module hidden.
-export async function countPublishedPosts(ownerId = null) {
-  try {
-    const { count } = await scopeOwner(
-      supabase.from('blog_posts').select('id', { count: 'exact', head: true }).eq('status', 'published'), ownerId
-    )
-    return count || 0
-  } catch { return 0 }
-}
-
-// ── CRUD (admin) ─────────────────────────────────────────────────────────────
-// `ownerId` set → a provider's own posts; null → a Bookboll blog picked by `audience`.
-export async function loadAllPosts(ownerId = null, audience = 'marketplace') {
-  const base = () => supabase.from('blog_posts').select('*').order('created_at', { ascending: false })
-  try {
-    let { data, error } = await scopeAudience(scopeOwner(base(), ownerId), ownerId, audience)
-    if (error && !ownerId && audienceColMissing(error)) {
-      if (audience === 'business') return { error: 'The business blog needs the audience column — run migration 20260766000000 in Supabase.' }
-      ;({ data, error } = await scopeOwner(base(), ownerId))
-    }
-    if (error && !ownerId && ownerColMissing(error)) ({ data, error } = await base())
-    if (error) return { error: error.message }
-    return { data: data || [] }
-  } catch (e) { return { error: e.message } }
-}
-
-export async function savePost(post, ownerId = null, audience = 'marketplace') {
-  const now = new Date().toISOString()
-  const row = {
-    title: (post.title || '').trim(),
-    slug: (post.slug || '').trim() || slugify(post.title),
-    excerpt: post.excerpt || '',
-    body: post.body || '',
-    cover_image: post.cover_image || '',
-    status: post.status === 'published' ? 'published' : 'draft',
-    author_name: (post.author_name || '').trim() || 'Bookboll',
-    tags: Array.isArray(post.tags) ? post.tags : [],
-    meta_title: post.meta_title || '',
-    meta_description: post.meta_description || '',
-    updated_at: now,
-  }
-  // Only stamp an owner for provider posts; marketplace posts leave it NULL (and stay
-  // writable even before the owner_user_id column is migrated).
-  if (ownerId) row.owner_user_id = ownerId
-  // Bookboll posts carry their blog (marketplace vs for-business landing). Provider
-  // posts don't — their scope is the owner.
-  else row.audience = audience === 'business' ? 'business' : 'marketplace'
-  // Stamp published_at the first time it goes live.
-  if (row.status === 'published' && !post.published_at) row.published_at = now
-  if (row.status !== 'published') row.published_at = post.published_at || null
-  else if (post.published_at) row.published_at = post.published_at
-
-  const write = (r) => post.id
-    ? supabase.from('blog_posts').update(r).eq('id', post.id).select().maybeSingle()
-    : supabase.from('blog_posts').insert(r).select().maybeSingle()
-  try {
-    let { data, error } = await write(row)
-    // Pre-migration fallback: marketplace posts still save without the audience column;
-    // a business post can't exist yet, so surface the missing migration instead.
-    if (error && audienceColMissing(error)) {
-      if (row.audience === 'business') return { error: 'The business blog needs the audience column — run migration 20260766000000 in Supabase.' }
-      const { audience: _a, ...noAud } = row
-      ;({ data, error } = await write(noAud))
-    }
-    if (error) return { error: error.message }
-    return { data }
-  } catch (e) { return { error: e.message } }
-}
-
-export async function deletePost(id) {
-  try {
-    const { error } = await supabase.from('blog_posts').delete().eq('id', id)
-    if (error) return { error: error.message }
-    return { ok: true }
-  } catch (e) { return { error: e.message } }
+/** Published-post count for the active blog — drives Blog-module visibility. */
+export async function countPublishedPosts() {
+  return (await loadPublishedPosts({ limit: 100 })).length
 }
 
 // ── Markdown (safe subset) ───────────────────────────────────────────────────

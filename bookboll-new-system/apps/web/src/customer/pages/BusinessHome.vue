@@ -42,7 +42,7 @@ async function load() {
 }
 onMounted(async () => {
   load()
-  blogPosts.value = await loadPublishedPosts({ limit: 3, ownerId: activeBrand.value?.ownerUserId || null })
+  blogPosts.value = await loadPublishedPosts({ limit: 3 })
 })
 watch(() => selectedCity.value?.id, load)
 

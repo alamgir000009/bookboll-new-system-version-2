@@ -225,7 +225,7 @@ async function loadBrandModules(ownerId) {
   const { data: ps } = await supabase.from('class_programs').select('show_on_provider_site').eq('owner_user_id', ownerId)
   programs = (ps || []).some(p => p.show_on_provider_site !== false)
   // Blog module: shown only once the provider has published at least one of their own posts.
-  const blog = (await countPublishedPosts(ownerId)) > 0
+  const blog = (await countPublishedPosts()) > 0
   return { venues, events: false, programs, blog }
 }
 
