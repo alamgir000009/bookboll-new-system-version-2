@@ -25,11 +25,6 @@ const confirmed = ref(false)  // attendance recorded for the current lookup
 const recent = ref([])
 const override = ref(false)   // staff explicitly admitting a non-active member
 
-const viewer = computed(() => ({
-  userId: currentOwnerUserId.value,
-  isPlatform: !isProviderScoped.value,
-}))
-
 // Read-only tiers (provider_viewer / guard) can LOOK UP a pass but recording an
 // attendance is a mutation — gate it on the manage cap like every other write.
 const { can } = useCurrentUser()
@@ -57,7 +52,7 @@ async function lookup() {
   const c = code.value.trim().toUpperCase()
   if (!c) return
   busy.value = true
-  const r = await lookupPass(c, viewer.value)
+  const r = await lookupPass(c)
   busy.value = false
   if (r.error) { err.value = r.error; buzz([40, 40, 40]); return }
   result.value = r
@@ -71,7 +66,6 @@ async function confirm() {
   busy.value = true
   const r = await recordAttendance({
     passId: result.value.pass.id,
-    checkedBy: currentUser.value?.id || null,
     note: override.value && !membershipActive.value ? `admitted despite status "${m?.status}"` : null,
     programId: m?.program_id || null,
     subscriptionId: m?.id || null,
@@ -90,13 +84,13 @@ const openSess = ref('')
 const marking = ref('')
 async function loadRoster() {
   if (!isProviderScoped.value || !currentOwnerUserId.value) { roster.value = []; return }
-  roster.value = await loadTodayRoster(currentOwnerUserId.value)
+  roster.value = await loadTodayRoster()
   if (roster.value.length === 1 && !openSess.value) openSess.value = roster.value[0].program.id
 }
 async function mark(sess, r) {
   if (!canRecord.value || marking.value) return
   marking.value = r.id
-  const res = await markPresent(r.sub, sess.program, currentUser.value?.id || null)
+  const res = await markPresent(r)
   marking.value = ''
   if (res.error) { err.value = res.error; return }
   r.checkedIn = true
@@ -109,7 +103,7 @@ function buzz(pattern) { try { navigator.vibrate?.(pattern) } catch { /* unsuppo
 function reset() { code.value = ''; result.value = null; err.value = ''; confirmed.value = false; override.value = false }
 
 async function loadRecent() {
-  recent.value = await loadRecentCheckins(currentOwnerUserId.value, !isProviderScoped.value)
+  recent.value = await loadRecentCheckins()
 }
 
 const fmtD = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }) : ''
