@@ -2,13 +2,17 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ClassProgram;
 use App\Services\CustomerProgramService;
+use App\Services\MembershipBillingService;
 use Illuminate\Http\Request;
 
 class CustomerProgramController extends Controller
 {
-    public function __construct(protected CustomerProgramService $programs)
-    {}
+    public function __construct(
+        protected CustomerProgramService $programs,
+        protected MembershipBillingService $billing,
+    ) {}
 
     public function index(Request $request)
     {
@@ -39,7 +43,23 @@ class CustomerProgramController extends Controller
             'loyalty_redeem'  => 'nullable|numeric|min:0',
         ]);
 
-        return $this->programs->enroll(auth()->user(), $uuid, $data);
+        $user = auth()->user();
+        $program = ClassProgram::with('venue')->where('uuid', $uuid)->first();
+        if (! $program) {
+            return sendError('Program not found.');
+        }
+
+        // Paid memberships always go through Stripe Checkout — the trial, the first
+        // charge and every renewal are Stripe's. Free programs enrol directly.
+        if ((float) ($program->monthly_price ?: 0) > 0) {
+            $res = $this->billing->createCheckoutSession($user, $program, $data);
+
+            return isset($res['error'])
+                ? sendError($res['error'])
+                : sendSuccess('Checkout session created', $res);
+        }
+
+        return $this->programs->enroll($user, $uuid, $data);
     }
 
     public function mine(Request $request)
@@ -50,6 +70,11 @@ class CustomerProgramController extends Controller
     public function cancel(string $uuid)
     {
         return $this->programs->cancel(auth()->user(), $uuid);
+    }
+
+    public function checkoutState(string $sessionId)
+    {
+        return $this->billing->checkoutState(auth()->user(), $sessionId);
     }
 
     public function passes()

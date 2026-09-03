@@ -8,6 +8,7 @@ use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\Admin\GeographyController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
 use App\Http\Controllers\BusinessNotificationTemplateController;
+use App\Http\Controllers\CheckInController;
 use App\Http\Controllers\GiftCardController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\ListingController;
@@ -217,6 +218,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         Route::apiResource('resources', ResourceController::class);
 
+        // Door check-in (admin app QR scanner)
+        Route::prefix('checkin')->name('checkin.')->group(function () {
+            Route::get('lookup', [CheckInController::class, 'lookup'])->name('lookup');
+            Route::get('recent', [CheckInController::class, 'recent'])->name('recent');
+            Route::get('roster', [CheckInController::class, 'roster'])->name('roster');
+            Route::post('attendance', [CheckInController::class, 'record'])->name('attendance');
+            Route::post('mark-present', [CheckInController::class, 'markPresent'])->name('mark-present');
+        });
+
         Route::get('audit-logs', [AuditLogController::class, 'index']);
         Route::post('audit-logs', [AuditLogController::class, 'store']);
         Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
@@ -398,6 +408,7 @@ Route::prefix('customer')->group(function () {
         Route::get('programs/offers/check', [CustomerProgramController::class, 'checkOffer'])->name('customer.programs.offers.check');
         Route::post('programs/offers/check', [CustomerProgramController::class, 'checkOffer'])->name('customer.programs.offers.check.post');
         Route::post('programs/{uuid}/enroll', [CustomerProgramController::class, 'enroll'])->name('customer.programs.enroll');
+        Route::get('programs/checkout/{sessionId}', [CustomerProgramController::class, 'checkoutState'])->name('customer.programs.checkout-state');
         Route::post('programs/subscriptions/{uuid}/cancel', [CustomerProgramController::class, 'cancel'])->name('customer.programs.cancel');
     });
 

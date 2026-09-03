@@ -166,9 +166,31 @@ class StripeService
     {
         $type = $event->type;
 
+        // Membership subscriptions are billed by Stripe; bookings are one-off payments.
+        $membership = app(MembershipBillingService::class);
+
+        if (str_starts_with($type, 'invoice.') || str_starts_with($type, 'customer.subscription.')) {
+            match ($type) {
+                'invoice.payment_succeeded'    => $membership->invoicePaid($event->data->object),
+                'invoice.payment_failed'       => $membership->invoiceFailed($event->data->object),
+                'customer.subscription.updated' => $membership->subscriptionUpdated($event->data->object),
+                'customer.subscription.deleted' => $membership->subscriptionDeleted($event->data->object),
+                default                        => null,
+            };
+
+            return;
+        }
+
         if ($type === 'checkout.session.completed') {
             /** @var StripeCheckoutSession $session */
             $session = $event->data->object;
+
+            if (($session->mode ?? '') === 'subscription') {
+                $membership->checkoutCompleted($session);
+
+                return;
+            }
+
             if (($session->payment_status ?? null) === 'paid') {
                 $this->fulfillPaidCheckoutSession($session->id, $session);
             }
@@ -187,6 +209,13 @@ class StripeService
         if ($type === 'checkout.session.expired') {
             /** @var StripeCheckoutSession $session */
             $session = $event->data->object;
+
+            if (($session->mode ?? '') === 'subscription') {
+                $membership->checkoutExpired($session);
+
+                return;
+            }
+
             $this->abandonCheckoutSession($session->id, cancelPendingBookings: true, expireStripeSession: false);
 
             return;

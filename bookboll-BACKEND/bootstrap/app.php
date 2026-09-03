@@ -23,7 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         $middleware->preventRequestForgery(except: [
-            'stripe/payment-webhook',
+            'stripe/bookboll-webhook',
             'broadcasting/auth',
             'api/broadcasting/auth',
         ]);

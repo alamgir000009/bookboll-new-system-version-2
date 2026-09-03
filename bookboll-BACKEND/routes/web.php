@@ -16,7 +16,7 @@ use Rap2hpoutre\LaravelLogViewer\LogViewerController;
 
 Route::get('newsletter/unsubscribe/{email}', [NewsletterController::class, 'unsubscribe'])->name('newsletter.unsubscribe');
 
-Route::post('/stripe/payment-webhook', [StripeWebhookController::class, 'handle'])->name('stripe.payment.webhook');
+Route::post('/stripe/bookboll-webhook', [StripeWebhookController::class, 'handle'])->name('stripe.payment.webhook');
 
 Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentSuccess'])->name('payment.success');
 Route::get('/payment/status/{session_id}', [PaymentController::class, 'paymentStatus'])->name('payment.status');

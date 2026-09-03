@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\ClassProgram;
 use App\Models\ClassSubscription;
 use App\Models\EntryPass;
+use App\Models\LoyaltyPoint;
+use App\Models\LoyaltyProgram;
 use App\Models\OfferRedemption;
 use App\Models\Payment;
 use App\Models\ProviderWallet;
@@ -94,20 +96,14 @@ class CustomerProgramService
 
         $programs = $query->orderBy('sort_order')->orderBy('name')->get();
 
-        // If city filter only matched orphans, prefer decorating with a venue from that city.
-        $fallbackVenue = null;
-        if ($cityId) {
-            $fallbackVenue = Venue::query()->where('city_id', (int) $cityId)->orderBy('id')->first();
-        }
+        // A program with no venue_id shows no venue name — never borrow another
+        // venue's, which would label every orphan with the same wrong place.
+        // Run ProgramVenuesFromSupabaseSeeder to link imported programs.
         $counts = $this->activeMemberCounts($programs->pluck('id')->all());
 
-        $cards = $programs->map(function (ClassProgram $p) use ($counts, $fallbackVenue) {
-            if (! $p->venue && $fallbackVenue) {
-                $p->setRelation('venue', $fallbackVenue);
-            }
-
-            return $this->mapCard($p, (int) ($counts[$p->id] ?? 0));
-        })->values()->all();
+        $cards = $programs->map(
+            fn (ClassProgram $p) => $this->mapCard($p, (int) ($counts[$p->id] ?? 0))
+        )->values()->all();
 
         return sendSuccess('Programs fetched', ['programs' => $cards]);
     }
@@ -316,7 +312,8 @@ class CustomerProgramService
                         $chargeFee,
                         $firstChargeDiscount,
                         $loyaltyRedeem,
-                        $wallet
+                        $wallet,
+                        $user
                     );
                 }
 
@@ -349,6 +346,8 @@ class CustomerProgramService
 
         $subs = ClassSubscription::query()
             ->with('program.venue')
+            // 'incomplete' is a checkout that was never paid for — not a membership.
+            ->where('status', '!=', 'incomplete')
             ->where(function ($q) use ($user, $email) {
                 $q->where('customer_id', $user->uuid);
                 if ($email) {
@@ -402,6 +401,14 @@ class CustomerProgramService
             || ($email && strtolower((string) $sub->customer_email) === $email);
         if (! $owns) {
             return sendError('Not allowed.', [], 403);
+        }
+
+        // Stripe-backed memberships stop at the end of the paid period, so access
+        // continues until then; the webhook flips the status when Stripe ends it.
+        if ($sub->stripe_subscription_id) {
+            $res = app(MembershipBillingService::class)->cancel($sub);
+
+            return isset($res['error']) ? sendError($res['error']) : sendSuccess('Cancelled', ['ok' => true]);
         }
 
         $sub->update([
@@ -469,7 +476,7 @@ class CustomerProgramService
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    protected function isVisible(ClassProgram $p, ?string $brandOwner): bool
+    public function isVisible(ClassProgram $p, ?string $brandOwner): bool
     {
         if (($p->status ?: '') !== 'active') {
             return false;
@@ -591,7 +598,7 @@ class CustomerProgramService
         ];
     }
 
-    protected function mapSubscriptionPublic(ClassSubscription $s, ?ClassProgram $p = null): array
+    public function mapSubscriptionPublic(ClassSubscription $s, ?ClassProgram $p = null): array
     {
         $p = $p ?: $s->program;
 
@@ -618,7 +625,7 @@ class CustomerProgramService
         ];
     }
 
-    protected function mapPass(EntryPass $p): array
+    public function mapPass(EntryPass $p): array
     {
         return [
             'id'             => $p->uuid,
@@ -824,7 +831,7 @@ class CustomerProgramService
         ]);
     }
 
-    protected function hasUsedIntroOffer(?string $email, ?string $cardFp, ?string $ownerUserId): bool
+    public function hasUsedIntroOffer(?string $email, ?string $cardFp, ?string $ownerUserId): bool
     {
         if (! $ownerUserId) {
             return false;
@@ -846,7 +853,7 @@ class CustomerProgramService
         return $q->exists();
     }
 
-    protected function hasLiveMembership(int $programId, string $customerId, string $email): bool
+    public function hasLiveMembership(int $programId, string $customerId, string $email): bool
     {
         $statuses = ['active', 'trial', 'trialing', 'paused', 'past_due'];
         $rows = ClassSubscription::where('program_id', $programId)
@@ -871,7 +878,7 @@ class CustomerProgramService
         return false;
     }
 
-    protected function liveMembershipRows(string $customerId, string $email): array
+    public function liveMembershipRows(string $customerId, string $email): array
     {
         $statuses = ['active', 'trial', 'trialing', 'paused', 'past_due'];
         $rows = ClassSubscription::with('program')
@@ -900,7 +907,7 @@ class CustomerProgramService
         return $out;
     }
 
-    protected function ensurePass(string $kind, string $refId, ?string $ownerUserId, ?string $customerId, ?string $email): ?EntryPass
+    public function ensurePass(string $kind, string $refId, ?string $ownerUserId, ?string $customerId, ?string $email): ?EntryPass
     {
         $existing = EntryPass::where('kind', $kind)->where('ref_id', $refId)->first();
         if ($existing) {
@@ -941,6 +948,132 @@ class CustomerProgramService
     /**
      * @return float loyaltyApplied
      */
+    /**
+     * Spend loyalty points for a currency amount off the first charge.
+     * Converts the amount to points with the country's program rate, caps it at the
+     * customer's balance, writes the debit, and returns the amount actually funded.
+     */
+    protected function spendLoyalty(?User $user, ClassSubscription $sub, float $amount): float
+    {
+        if (! $user || $amount <= 0) {
+            return 0;
+        }
+
+        $cfg = LoyaltyProgram::where('country_id', $sub->country_id)->first();
+        $rate = (int) ($cfg->redeem_rate ?? LoyaltyProgram::defaults()['redeem_rate']);
+        $unit = (float) ($cfg->redeem_value ?? LoyaltyProgram::defaults()['redeem_value']) ?: 1;
+
+        $points = (int) ceil($amount / $unit * $rate);
+        $balance = (int) (LoyaltyPoint::balance($user->id) ?? 0);
+        $points = min($points, $balance);
+        if ($points <= 0) {
+            return 0;
+        }
+
+        LoyaltyPoint::create([
+            'user_id' => $user->id,
+            'type'    => 'debit',
+            'points'  => $points,
+            'reason'  => 'Redeemed on membership sign-up',
+        ]);
+        $user->updateLoyaltyTier();
+
+        return round(min($amount, $points / $rate * $unit), 2);
+    }
+
+    /**
+     * Record a paid membership invoice: the two payment rows and the provider's
+     * wallet credit. The provider's share is always computed on the full price, so
+     * a discount or loyalty redemption only ever comes out of Bookboll's fee.
+     */
+    public function recordSubscriptionCharge(ClassSubscription $sub, float $amountPaid, float $loyalty, string $reference = ''): void
+    {
+        $program = $sub->program;
+        if (! $program) {
+            return;
+        }
+
+        $currency = $program->currency ?: 'AED';
+        $commission = (float) ($program->commission_percentage ?: 0);
+        $fullGross = round((float) $sub->monthly_amount + (! $sub->first_charge_at ? (float) $sub->joining_fee : 0), 2);
+
+        $providerShare = round($fullGross * (1 - $commission / 100), 2);
+        $providerShare = min($providerShare, $amountPaid);
+        $netPlatformFee = round($amountPaid - $providerShare, 2);
+
+        $ownerKey = $program->owner_user_id ?: ($program->mapped_owner_user_id ? (string) $program->mapped_owner_user_id : null);
+        $wallet = $sub->wallet_id
+            ? ProviderWallet::find($sub->wallet_id)
+            : ($ownerKey ? $this->ensureSubscriptionWallet($ownerKey, $sub->country_id, $currency) : null);
+
+        $user = User::where('uuid', $sub->customer_id)->first();
+        $desc = $sub->first_charge_at ? 'Membership renewal' : 'First membership charge';
+        $now = now();
+
+        Payment::create([
+            'subscription_id' => $sub->id,
+            'source_type'     => 'subscription',
+            'type'            => 'subscription_commission',
+            'method'          => 'online',
+            'amount'          => $netPlatformFee,
+            'currency'        => $currency,
+            'recipient'       => '@bookboll',
+            'status'          => 'paid',
+            'paid_at'         => $now,
+            'date'            => $now->toDateString(),
+            'notes'           => $loyalty > 0 ? "{$desc} (− {$currency} {$loyalty} loyalty)" : $desc,
+            'payment_id'      => $reference ?: 'sub-c-'.Str::uuid(),
+            'user_id'         => $user?->id,
+        ]);
+
+        Payment::create([
+            'subscription_id' => $sub->id,
+            'source_type'     => 'subscription',
+            'type'            => 'subscription_earning',
+            'method'          => 'online',
+            'amount'          => $providerShare,
+            'currency'        => $currency,
+            'recipient'       => '@provider',
+            'status'          => 'paid',
+            'paid_at'         => $now,
+            'date'            => $now->toDateString(),
+            'notes'           => $desc,
+            'payment_id'      => 'sub-e-'.Str::uuid(),
+            'user_id'         => $user?->id,
+        ]);
+
+        if (! $wallet) {
+            return;
+        }
+
+        $holdDays = (int) ($wallet->hold_days ?: 7);
+        $automatic = in_array($wallet->setup_method, ['stripe', 'stripe_connect', 'automatic'], true);
+
+        WalletTransaction::create([
+            'owner_user_id'      => $wallet->owner_user_id,
+            'type'               => 'subscription_online',
+            'direction'          => 'credit',
+            'amount'             => $amountPaid,
+            'provider_share'     => $providerShare,
+            'platform_fee'       => $netPlatformFee,
+            'source_id'          => $sub->uuid,
+            'source_label'       => 'Subscription · '.($sub->customer_name ?: $sub->customer_email ?: 'customer'),
+            'description'        => $desc,
+            'status'             => $automatic ? 'completed' : 'on_hold',
+            'currency'           => $currency,
+            'country_id'         => $wallet->country_id,
+            'wallet_id'          => $wallet->id,
+            'available_on'       => $automatic ? null : now()->addDays($holdDays)->toDateString(),
+            'hold_days_snapshot' => $automatic ? 0 : $holdDays,
+        ]);
+
+        $this->wallets->applyDelta((string) $wallet->id, $automatic
+            ? ['earned' => $providerShare, 'withdrawn' => $providerShare]
+            : ['pending' => $providerShare, 'earned' => $providerShare]);
+
+        $sub->update(['wallet_id' => $wallet->id, 'provider_payout' => $providerShare, 'platform_fee' => $netPlatformFee]);
+    }
+
     protected function recordFirstCharge(
         ClassSubscription $sub,
         ClassProgram $program,
@@ -948,7 +1081,8 @@ class CustomerProgramService
         float $chargePlatformFeeBeforeLoyalty,
         float $firstChargeDiscount,
         float $loyaltyRedeem,
-        ?ProviderWallet $wallet
+        ?ProviderWallet $wallet,
+        ?User $user = null
     ): float {
         $fullGross = $chargeGross;
         $disc = min(max(0, $firstChargeDiscount), $fullGross);
@@ -956,7 +1090,9 @@ class CustomerProgramService
         $feeRate = $fullGross > 0 ? $chargePlatformFeeBeforeLoyalty / $fullGross : 0;
         $platformFee = round($gross * $feeRate, 2);
         $providerShare = round($gross - $platformFee, 2);
-        $loyalty = min(max(0, $loyaltyRedeem), $platformFee);
+        // Redemption is capped by the platform fee AND by what the balance can fund;
+        // spendLoyalty writes the debit so points can't be redeemed twice.
+        $loyalty = $this->spendLoyalty($user, $sub, min(max(0, $loyaltyRedeem), $platformFee));
         $netPlatformFee = round($platformFee - $loyalty, 2);
         $currency = $program->currency ?: 'AED';
 
@@ -980,7 +1116,10 @@ class CustomerProgramService
 
         $desc = 'First membership charge';
         $now = now();
-        $userId = $program->mapped_owner_user_id ?: 0;
+        // payments.user_id is the paying customer (same convention as bookings).
+        // Imported programs have no mapped_owner_user_id, which used to write 0 here
+        // and break the FK on every paid sign-up.
+        $userId = $user?->id ?: $program->mapped_owner_user_id;
 
         Payment::create([
             'booking_id'      => null,
