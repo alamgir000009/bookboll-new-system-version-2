@@ -149,6 +149,34 @@ export async function createGame(game) {
   }
 }
 
+/**
+ * Every joinable event in a city — the Events page. The server drops finished and
+ * cancelled events; the page filters by search, sport and price on top.
+ */
+export async function loadGames(cityId) {
+  if (!cityId) return []
+  const res = await apiFetch('/marketplace/games', { query: { city_id: cityId } })
+  gamesEnabled.value = !!res.success
+  if (!res.success) return []
+  return res.data?.games || []
+}
+
+/** Events I'm hosting, with how the roster is filling up. */
+export async function loadMyHostedGames(customerId) {
+  if (!customerId) return []
+  const res = await apiFetch('/customer/games/mine/hosted')
+  if (!res.success) return []
+  return res.data?.games || []
+}
+
+/** Events I've asked to join, each with the event attached. */
+export async function loadMyJoinRequests(customerId) {
+  if (!customerId) return []
+  const res = await apiFetch('/customer/games/mine/joined')
+  if (!res.success) return []
+  return res.data?.requests || []
+}
+
 /** Events posted to a community — the community page's Meetups tab. */
 export async function loadCommunityEvents(communityId) {
   if (!communityId) return []
@@ -223,6 +251,18 @@ export async function requestToJoin(gameId, joiner = {}) {
     return { error: formatErr(res, 'Could not send your request.'), communityOnly: !!communityId, communityId }
   }
   return { request: res.data?.request }
+}
+
+/** Accept everyone waiting, oldest first, without going over the cap. */
+export async function acceptAllRequests(gameId) {
+  if (!gameId) return { error: 'Missing event.' }
+  const res = await apiFetch(`/customer/games/${encodeURIComponent(gameId)}/requests/accept-all`, { method: 'POST' })
+  if (!res.success) return { error: formatErr(res, 'Could not accept the requests.') }
+  return {
+    accepted: Number(res.data?.accepted) || 0,
+    leftover: Number(res.data?.leftover) || 0,
+    full: !!res.data?.full,
+  }
 }
 
 /** Host accepts or rejects someone. */

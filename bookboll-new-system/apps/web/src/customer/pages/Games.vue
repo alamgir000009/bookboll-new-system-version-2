@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { selectedCity } from '../../lib/customerSession.js'
-import { loadGames, gamesEnabled } from '../../customer/data.js'
+import { loadGames, gamesEnabled } from '../../customer/apiGames.js'
 import GameCard from '../components/GameCard.vue'
 import { Ticket, Plus, Search, X } from 'lucide-vue-next'
 import { useSeo } from '../../lib/seo.js'

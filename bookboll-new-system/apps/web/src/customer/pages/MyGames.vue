@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { customer, isCustomer } from '../../lib/customerSession.js'
-import { loadMyHostedGames, loadMyJoinRequests } from '../../customer/data.js'
+import { loadMyHostedGames, loadMyJoinRequests } from '../../customer/apiGames.js'
 import { Gamepad2, Plus, Users, Bell, ArrowRight, CalendarDays, Ticket } from 'lucide-vue-next'
 import { useSeo } from '../../lib/seo.js'
 useSeo({ title: 'My events', noindex: true, path: '/my-games' })

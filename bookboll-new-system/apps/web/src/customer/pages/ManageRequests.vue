@@ -8,7 +8,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { customer, isCustomer } from '../../lib/customerSession.js'
-import { loadGame, loadGameRequests, respondToRequest, markAttendance, acceptAllRequests } from '../../customer/data.js'
+import { loadGame, loadGameRequests, respondToRequest, markAttendance, acceptAllRequests } from '../../customer/apiGames.js'
 import { totalGames } from '../../customer/bracket.js'
 import { meetupState } from '../../customer/meetup.js'
 import { pushToast } from '../../lib/toast.js'

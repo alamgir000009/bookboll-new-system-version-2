@@ -1,7 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { selectedCity, selectedCountry, isCustomer, customer, loadCustomerLoyalty } from '../../lib/customerSession.js'
-import { loadFacilities, loadPrograms, loadGames, gamesEnabled } from '../../customer/data.js'
+import { loadFacilities, loadPrograms } from '../../customer/data.js'
+import { loadGames, gamesEnabled } from '../../customer/apiGames.js'
 import { brandShows, isWhiteLabel, activeBrand, platformBrand } from '../../lib/brand.js'
 import { useSeo, organizationLd, websiteLd, itemListLd, faqLd } from '../../lib/seo.js'
 import { loadDirectory, slugifyCity, slugifySport } from '../../lib/cityPages.js'
