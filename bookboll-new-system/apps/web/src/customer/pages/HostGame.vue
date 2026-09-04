@@ -8,9 +8,10 @@ import { loadLoyaltyConfig, maxRedeemable, redeemLoyalty } from '../../lib/loyal
 import { ensureSignedIn } from '../../lib/authGate.js'
 import { useSeo } from '../../lib/seo.js'
 useSeo({ title: 'Host a game, hangout or tournament', description: 'Set up your own pickup game, social hangout or tournament, pick a venue and invite players — host free on Bookboll.', path: '/host-game' })
-import { loadLocations, loadFacility, loadFacilities, loadListing, createGame, createTournament, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit, applyLifecycleFields, applyPlayFormat } from '../../customer/data.js'
+import { loadLocations, loadFacility, loadFacilities, loadListing, createTournament, applyLifecycleFields, applyPlayFormat } from '../../customer/data.js'
+import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit } from '../../customer/apiGames.js'
 import { PLAY_FORMATS } from '../../customer/matchmaking.js'
-import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../../customer/booking.js'
+import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../../customer/apiBooking.js'
 import { hostDraft, saveHostDraft, clearHostDraft } from '../../customer/hostDraft.js'
 import { applyCommunityId, loadCommunity } from '../../customer/community.js'
 import { getSavedPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
@@ -871,8 +872,6 @@ async function publishGame() {
   saving.value = true
   const own = ownSpot.value
   const seats = type.value === 'event' ? (f.value.limit_seats ? (Number(f.value.max_players) || 2) : 0) : (Number(f.value.max_players) || 10)
-  const loyPts = loyaltyPoints.value        // capture before saving (form/computeds may shift)
-  const loyCountryId = loyaltyCountryId.value
   const res = await createGame({
     host_customer_id: isCustomer.value ? customer.value.id : null,
     host_name: f.value.host_name, host_phone: f.value.host_phone, host_whatsapp: f.value.host_whatsapp || f.value.host_phone,
@@ -891,18 +890,20 @@ async function publishGame() {
     signup_form: signupForm.value,
     request_deadline: f.value.request_deadline ? new Date(f.value.request_deadline).toISOString() : null,
     approval_mode: f.value.approval_mode,
-    charge: { courtTotal: hostCharge.value.courtTotal, courtNow: hostCharge.value.courtNow, courtArrival: hostCharge.value.courtArrival, serviceFee: hostCharge.value.serviceFee, bookbollOwned: hostCharge.value.bookbollOwned, loyaltyRedeem: loyaltyAmount.value, ticketMode: effectiveTicketMode.value, stripeAccount: effectiveTicketMode.value === 'stripe' ? stripeAcct.value?.account_id : null },
+    // The server prices the bill and reserves the court — it only needs to know
+    // how the host wants to collect seat money and how many points to spend.
+    loyalty_redeem: loyaltyAmount.value,
+    ticket_mode: effectiveTicketMode.value,
+    // Saved with the game itself, so there's no follow-up write to go wrong.
+    community_id: communityId.value || null,
+    community_public: !!listPublic.value,
+    lock_minutes_before: Number(f.value.lock_minutes_before) || null,
+    play_format: type.value === 'game' ? (f.value.play_format || null) : null,
+    courts_count: type.value === 'game' && f.value.play_format ? (Number(f.value.courts_count) || 1) : null,
   })
   saving.value = false
   if (res.error) { err.value = res.error; return }
   saveCustomerPhone(selectedCountry.value?.id, f.value.host_whatsapp || f.value.host_phone)
-  // Spend the loyalty points actually applied against Bookboll's fee (marketplace only).
-  if (!isWhiteLabel.value && Number(res.loyaltyApplied || 0) > 0 && loyPts > 0 && customer.value?.id) {
-    await redeemLoyalty({ customerId: customer.value.id, countryId: loyCountryId, points: loyPts })
-  }
-  if (communityId.value) await applyCommunityId(res.game.id, communityId.value, listPublic.value)   // community page; public Events only if opted in
-  await applyLifecycleFields(res.game.id, { lock_minutes_before: Number(f.value.lock_minutes_before) || null })
-  if (type.value === 'game' && f.value.play_format) await applyPlayFormat(res.game.id, { play_format: f.value.play_format, courts_count: Number(f.value.courts_count) || 1, teamSize: Number(f.value.team_size) || 2 })
   clearHostDraft()   // published — drop the autosaved draft
   published.value = { id: res.game.id, type: type.value }   // show the share modal
 }
@@ -1541,7 +1542,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
         <div class="hg-final">
         <div class="hg-final-main">
         <h3 class="hg-h3">How players reach you</h3>
-        <div class="hg-row">
+        <div class="hg-column">
           <div><label class="hg-l">Your name *</label><input v-model="f.host_name" class="hg-in" /></div>
           <div><label class="hg-l">WhatsApp *</label><PhoneInput v-model="f.host_whatsapp" :default-iso="selectedCountry?.iso_code" placeholder="WhatsApp number" /></div>
         </div>

@@ -11,7 +11,7 @@ import {
   loadCommunityFeed, createCommunityPost, deleteCommunityPost, canManage, isMember,
   groupKey, communityChatUnread, updateCommunity,
 } from '../../customer/community.js'
-import { loadCommunityEvents } from '../../customer/data.js'
+import { loadCommunityEvents } from '../../customer/apiGames.js'
 import GameCard from '../components/GameCard.vue'
 import { useSeo } from '../../lib/seo.js'
 import { ArrowLeft, UsersRound, Lock, MapPin, Plus, MessageCircle, Send, Newspaper, CalendarDays, Info, Check, X, Shield, Trash2, ImagePlus, Loader, LogOut, Pencil } from 'lucide-vue-next'
