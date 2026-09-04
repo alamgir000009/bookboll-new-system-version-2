@@ -20,6 +20,7 @@ use App\Http\Controllers\EventModerationController;
 use App\Http\Controllers\CommunityModerationController;
 use App\Http\Controllers\CustomerSocialController;
 use App\Http\Controllers\CustomerCommunityController;
+use App\Http\Controllers\CustomerGameController;
 use App\Http\Controllers\CustomerProgramController;
 use App\Http\Controllers\PublicProfileController;
 use App\Http\Controllers\LocationCityController;
@@ -408,6 +409,19 @@ Route::prefix('customer')->group(function () {
         Route::get('messages/group', [CustomerCommunityController::class, 'loadGroupThread'])->name('customer.messages.group.index');
         Route::post('messages/group', [CustomerCommunityController::class, 'sendGroupMessage'])->name('customer.messages.group.store');
 
+        Route::post('games/quote', [CustomerGameController::class, 'quote'])->name('customer.games.quote');
+        Route::post('games', [CustomerGameController::class, 'store'])->name('customer.games.store');
+        Route::patch('games/{uuid}/community', [CustomerGameController::class, 'setCommunity'])->name('customer.games.community');
+        Route::get('games/{uuid}/requests', [CustomerGameController::class, 'requests'])->name('customer.games.requests');
+        Route::get('games/{uuid}/my-request', [CustomerGameController::class, 'myRequest'])->name('customer.games.my-request');
+        Route::post('games/{uuid}/join', [CustomerGameController::class, 'join'])->name('customer.games.join');
+        Route::patch('games/{uuid}', [CustomerGameController::class, 'update'])->name('customer.games.update');
+        Route::post('games/{uuid}/cancel', [CustomerGameController::class, 'cancel'])->name('customer.games.cancel');
+        Route::post('games/{uuid}/rounds', [CustomerGameController::class, 'saveRounds'])->name('customer.games.rounds');
+        Route::patch('game-requests/{requestUuid}', [CustomerGameController::class, 'respondToRequest'])->name('customer.game-requests.respond');
+        Route::delete('game-requests/{requestUuid}', [CustomerGameController::class, 'cancelRequest'])->name('customer.game-requests.cancel');
+        Route::post('game-requests/{requestUuid}/attendance', [CustomerGameController::class, 'attendance'])->name('customer.game-requests.attendance');
+
         Route::get('programs/mine', [CustomerProgramController::class, 'mine'])->name('customer.programs.mine');
         Route::get('programs/passes', [CustomerProgramController::class, 'passes'])->name('customer.programs.passes');
         Route::get('programs/offers/check', [CustomerProgramController::class, 'checkOffer'])->name('customer.programs.offers.check');
@@ -446,6 +460,9 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('communities/{uuid}', [CustomerCommunityController::class, 'show'])->name('communities.show');
     Route::get('communities/{uuid}/members', [CustomerCommunityController::class, 'members'])->name('communities.members');
     Route::get('communities/{uuid}/posts', [CustomerCommunityController::class, 'feed'])->name('communities.posts');
+    Route::get('communities/{uuid}/events', [CustomerGameController::class, 'communityEvents'])->name('communities.events');
+    Route::get('games/config', [CustomerGameController::class, 'config'])->name('games.config');
+    Route::get('games/{uuid}', [CustomerGameController::class, 'show'])->name('games.show');
     Route::get('programs', [CustomerProgramController::class, 'index'])->name('programs.index');
     Route::get('programs/{uuid}', [CustomerProgramController::class, 'show'])->name('programs.show');
     Route::get('programs/{uuid}/hours', [CustomerProgramController::class, 'hours'])->name('programs.hours');

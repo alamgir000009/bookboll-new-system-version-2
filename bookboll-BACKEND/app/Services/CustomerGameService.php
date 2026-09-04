@@ -1,0 +1,998 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Booking;
+use App\Models\Community;
+use App\Models\CommunityMember;
+use App\Models\GameJoinRequest;
+use App\Models\HostedGame;
+use App\Models\Listing;
+use App\Models\LoyaltyPoint;
+use App\Models\LoyaltyProgram;
+use App\Models\Payment;
+use App\Models\User;
+use App\Models\Venue;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+
+/**
+ * Hosting a game, hangout or tournament.
+ *
+ * A hosted game that uses a venue reserves the court with a real booking, exactly
+ * like a normal customer booking, and the host pays Bookboll up front: the court
+ * deposit (or the full price at a Bookboll-owned venue) plus a non-refundable
+ * seats service fee. The rest is settled with the venue on arrival.
+ *
+ * A hangout at the host's own spot books no court and costs nothing.
+ *
+ * All money is priced here from the listing and the platform's rates — the client
+ * sends what the host picked, never an amount.
+ */
+class CustomerGameService
+{
+    /** Used when neither the listing nor the country sets a rate. */
+    private const COURT_COMMISSION_PCT = 15;
+
+    private const SEAT_FEE_PCT = 10;
+
+    /** Points awarded for hosting, once per game. */
+    private const HOST_BONUS = 50;
+
+    public function __construct(protected CustomerBookingQuoteService $quotes) {}
+
+    /**
+     * What the wizard needs before it can show prices: whether the features are on,
+     * and the two percentages that drive the host's bill.
+     */
+    public function config(?int $listingId = null, bool $community = false)
+    {
+        $listing = $listingId ? Listing::find($listingId) : null;
+
+        return sendSuccess('Game config', [
+            'games_enabled'       => true,
+            'tournaments_enabled' => true,
+            'hangout_enabled'     => true,
+            'court_commission_pct' => $this->courtCommissionPct($listing),
+            'seat_fee_pct'         => $this->seatFeePct($listing, $community),
+            'bookboll_owned'       => $listing ? ! $this->venueFor($listing)?->owner_user_id : false,
+        ]);
+    }
+
+    /**
+     * Price the host's selection without creating anything, so the wizard can show
+     * the bill. Same numbers the create call will charge.
+     */
+    public function quote(User $host, array $data)
+    {
+        $listing = ! empty($data['listing_id']) ? Listing::find($data['listing_id']) : null;
+
+        if (! empty($data['listing_id']) && ! $listing) {
+            return sendError('Court not found.', [], 404);
+        }
+
+        return sendSuccess('Quote', ['charge' => $this->priceHost($host, $listing, $data)]);
+    }
+
+    /** Publish a game or a hangout. */
+    public function create(User $host, array $data)
+    {
+        if (! $host->uuid) {
+            return sendError('Please sign in to host.');
+        }
+
+        $listing = ! empty($data['listing_id']) ? Listing::find($data['listing_id']) : null;
+
+        if (! empty($data['listing_id']) && ! $listing) {
+            return sendError('Court not found.', [], 404);
+        }
+
+        // No court means a hangout at the host's own spot: nothing to reserve or pay.
+        $ownSpot = ! $listing;
+
+        if ($ownSpot && trim((string) ($data['custom_location_name'] ?? '')) === '') {
+            return sendError('Tell people where to meet.', [], 422);
+        }
+
+        $venue    = $listing ? $this->venueFor($listing) : null;
+        $charge   = $this->priceHost($host, $listing, $data);
+        $currency = $charge['currency'];
+
+        if (! $ownSpot && $this->slotTaken($listing->id, $data['game_date'], $data['start_time'], $data['end_time'])) {
+            return sendError('That court is already booked for this time. Pick another time or court.', [], 422);
+        }
+
+        $community = ! empty($data['community_id'])
+            ? Community::where('uuid', $data['community_id'])->first()
+            : null;
+
+        return DB::transaction(function () use ($host, $listing, $venue, $ownSpot, $data, $charge, $currency, $community) {
+            $booking = $ownSpot ? null : $this->reserveCourt($host, $listing, $venue, $data, $charge);
+
+            $game = HostedGame::create([
+                'host_customer_id'        => $host->uuid,
+                'host_name'               => $data['host_name'] ?? ($host->name ?: ''),
+                'host_phone'              => $data['host_phone'] ?? ($host->phone ?: ''),
+                'host_whatsapp'           => $data['host_whatsapp'] ?? ($data['host_phone'] ?? ''),
+                'listing_id'              => $listing?->id,
+                'location_id'             => $venue?->id,
+                'booking_id'              => $booking?->id,
+                'city_id'                 => $data['city_id'] ?? $venue?->city_id,
+                'country_id'              => $data['country_id'] ?? $venue?->country_id,
+                'title'                   => $data['title'] ?? '',
+                'sport'                   => $data['sport'] ?? '',
+                'game_type'               => $data['game_type'] ?? 'game',
+                'game_date'               => $data['game_date'],
+                'start_time'              => $data['start_time'],
+                'end_time'                => $data['end_time'],
+                'price_per_person'        => round((float) ($data['price_per_person'] ?? 0), 2),
+                'currency'                => $currency,
+                'max_players'             => (int) ($data['max_players'] ?? 0),
+                'skill_level'             => $data['skill_level'] ?? 'all',
+                'description'             => $data['description'] ?? '',
+                'status'                  => 'open',
+                'prize_pot'               => round((float) ($data['prize_pot'] ?? 0), 2),
+                'prize_note'              => $data['prize_note'] ?? null,
+                'custom_location_name'    => $data['custom_location_name'] ?? null,
+                'custom_location_address' => $data['custom_location_address'] ?? null,
+                'hide_location'           => (bool) ($data['hide_location'] ?? false),
+                'images'                  => $data['images'] ?? [],
+                'signup_form'             => $data['signup_form'] ?? [],
+                'request_deadline'        => $data['request_deadline'] ?? null,
+                'approval_mode'           => $data['approval_mode'] ?? 'review',
+                'allow_waitlist'          => ($data['allow_waitlist'] ?? true) !== false,
+                'lock_minutes_before'     => $data['lock_minutes_before'] ?? null,
+                'play_format'             => $data['play_format'] ?? null,
+                'courts_count'            => $data['courts_count'] ?? null,
+                'charge'                  => $charge,
+                'community_id'            => $community?->id,
+                'community_public'        => $community ? (bool) ($data['community_public'] ?? false) : false,
+                'moderation_status'       => 'active',
+            ]);
+
+            if ($booking) {
+                $this->recordHostPayments($host, $booking, $charge, $currency);
+            }
+
+            $this->awardHostBonus($host);
+
+            return sendSuccess('Game published', [
+                'game'   => $this->mapGame($game),
+                'charge' => $charge,
+            ]);
+        });
+    }
+
+    /** Events posted to a community — the community page's Meetups tab. */
+    public function communityEvents(string $communityUuid)
+    {
+        $community = Community::where('uuid', $communityUuid)->first();
+
+        if (! $community) {
+            return sendError('Community not found.', [], 404);
+        }
+
+        $games = HostedGame::where('community_id', $community->id)
+            ->where('moderation_status', '!=', 'removed')
+            ->where('status', '!=', 'cancelled')
+            ->get();
+
+        // Upcoming first (soonest first), then past (most recent first) — the order
+        // the community page has always shown.
+        $today    = now()->toDateString();
+        $upcoming = $games->filter(fn ($g) => ! $g->game_date || $g->game_date >= $today)
+            ->sortBy(fn ($g) => (string) ($g->game_date ?: '9999-12-31'));
+        $past = $games->filter(fn ($g) => $g->game_date && $g->game_date < $today)
+            ->sortByDesc(fn ($g) => (string) $g->game_date);
+
+        $ordered = $upcoming->concat($past)->values();
+
+        return sendSuccess('Community events', [
+            'events' => $this->decorateGames($ordered, $community)->all(),
+        ]);
+    }
+
+    /** Post an existing game to a community, or change whether it is publicly listed. */
+    public function setCommunity(User $host, string $gameUuid, ?string $communityUuid, ?bool $public)
+    {
+        $game = HostedGame::where('uuid', $gameUuid)->first();
+
+        if (! $game) {
+            return sendError('Event not found.', [], 404);
+        }
+
+        if ($game->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can change this event.', [], 403);
+        }
+
+        if ($communityUuid !== null) {
+            $community = Community::where('uuid', $communityUuid)->first();
+
+            if (! $community) {
+                return sendError('Community not found.', [], 404);
+            }
+
+            $game->community_id = $community->id;
+        }
+
+        if ($public !== null) {
+            $game->community_public = $public;
+        }
+
+        $game->save();
+
+        return sendSuccess('Event updated', ['game' => $this->mapGame($game)]);
+    }
+
+    // ── Money ────────────────────────────────────────────────────────────────
+
+    /**
+     * The host's bill. The court is priced from the listing's own rates; the seats
+     * service fee is a percentage of the seats the host is selling. Hosts selling
+     * tickets through their own Stripe pay no seats fee — Stripe collects it there.
+     */
+    protected function priceHost(User $host, ?Listing $listing, array $data): array
+    {
+        $venue    = $listing ? $this->venueFor($listing) : null;
+        $currency = $venue?->currency_override ?: 'AED';
+
+        if (! $listing) {
+            return $this->charge($currency, 0, 0, 0, false, 0);
+        }
+
+        $courtTotal = $this->courtPrice($listing, $data);
+
+        // A Bookboll-owned venue (no provider behind it) is paid in full online;
+        // everyone else takes a deposit now and the balance on arrival.
+        $bookbollOwned = ! $venue?->owner_user_id;
+        $courtNow      = $bookbollOwned
+            ? $courtTotal
+            : round($courtTotal * $this->courtCommissionPct($listing) / 100);
+
+        $seats      = max(0, (int) ($data['max_players'] ?? 0));
+        $seatsValue = round((float) ($data['price_per_person'] ?? 0), 2) * $seats;
+        $serviceFee = ($data['ticket_mode'] ?? '') === 'stripe'
+            ? 0
+            : round($seatsValue * $this->seatFeePct($listing, ! empty($data['community_id'])) / 100);
+
+        $loyalty = $this->loyaltyAllowed($host, (float) ($data['loyalty_redeem'] ?? 0), $courtNow + $serviceFee);
+
+        return $this->charge($currency, $courtTotal, $courtNow, $serviceFee, $bookbollOwned, $loyalty);
+    }
+
+    /** @return array<string, mixed> */
+    protected function charge(string $currency, float $courtTotal, float $courtNow, float $serviceFee, bool $owned, float $loyalty): array
+    {
+        return [
+            'currency'      => $currency,
+            'courtTotal'    => round($courtTotal, 2),
+            'courtNow'      => round($courtNow, 2),
+            'courtArrival'  => round($courtTotal - $courtNow, 2),
+            'serviceFee'    => round($serviceFee, 2),
+            'bookbollOwned' => $owned,
+            'loyaltyRedeem' => round($loyalty, 2),
+            'dueNow'        => round(max(0, $courtNow + $serviceFee - $loyalty), 2),
+            'dueArrival'    => round($courtTotal - $courtNow, 2),
+        ];
+    }
+
+    /** Court price for the host's date and time, straight from the listing's rates. */
+    protected function courtPrice(Listing $listing, array $data): float
+    {
+        try {
+            $quote = $this->quotes->quoteBlock(
+                $listing,
+                (string) $data['game_date'],
+                (string) $data['start_time'],
+                (string) $data['end_time'],
+                max(1, (int) ($data['max_players'] ?? 1))
+            );
+
+            return round((float) ($quote['subtotal'] ?? 0), 2);
+        } catch (\Throwable) {
+            return 0.0;
+        }
+    }
+
+    /** Listing override → the venue's country rate → platform default. */
+    protected function courtCommissionPct(?Listing $listing): float
+    {
+        if (! $listing) {
+            return self::COURT_COMMISSION_PCT;
+        }
+
+        if ($listing->commission_rate !== null && $listing->commission_rate !== '') {
+            return (float) $listing->commission_rate;
+        }
+
+        $rate = $this->countryRate($this->venueFor($listing)?->country_id, 'facility');
+
+        return $rate ?? self::COURT_COMMISSION_PCT;
+    }
+
+    /** Community rate → the venue's country event rate → platform default. */
+    protected function seatFeePct(?Listing $listing, bool $community = false): float
+    {
+        if ($community) {
+            $setting = $this->setting('community_commission');
+
+            if (is_numeric($setting)) {
+                return (float) $setting;
+            }
+        }
+
+        $rate = $this->countryRate($listing ? $this->venueFor($listing)?->country_id : null, 'event');
+
+        if ($rate !== null) {
+            return $rate;
+        }
+
+        $global = $this->setting('global_commission_event');
+
+        return is_numeric($global) ? (float) $global : self::SEAT_FEE_PCT;
+    }
+
+    protected function countryRate(?int $countryId, string $listingType): ?float
+    {
+        if (! $countryId) {
+            return null;
+        }
+
+        $rate = DB::table('commission_rates')
+            ->where('country_id', $countryId)
+            ->where('listing_type', $listingType)
+            ->value('rate_percent');
+
+        return $rate === null ? null : (float) $rate;
+    }
+
+    protected function setting(string $key): mixed
+    {
+        return DB::table('settings')->where('key', $key)->value('value');
+    }
+
+    /**
+     * How much loyalty the host may actually spend: never more than they hold, and
+     * never more than the amount Bookboll is collecting now. Points never reduce
+     * the venue's on-arrival balance — that is the provider's money.
+     */
+    protected function loyaltyAllowed(User $host, float $requested, float $bookbollNow): float
+    {
+        $wanted = min(max(0, $requested), max(0, $bookbollNow));
+
+        if ($wanted <= 0) {
+            return 0.0;
+        }
+
+        $config = LoyaltyProgram::where('country_id', $host->country_id)->first();
+        $rate   = (int) ($config->redeem_rate ?? LoyaltyProgram::defaults()['redeem_rate']);
+        $unit   = (float) ($config->redeem_value ?? LoyaltyProgram::defaults()['redeem_value']) ?: 1;
+        $held   = (int) (LoyaltyPoint::balance($host->id) ?? 0);
+
+        return round(min($wanted, $held / max(1, $rate) * $unit), 2);
+    }
+
+    // ── The court reservation ────────────────────────────────────────────────
+
+    /** Any confirmed booking overlapping this court and time blocks the host. */
+    protected function slotTaken(int $listingId, string $date, string $start, string $end): bool
+    {
+        return Booking::where('listing_id', $listingId)
+            ->where('date', $date)
+            ->where('status', '!=', 'cancelled')
+            ->where('start_time', '<', $end)
+            ->where('end_time', '>', $start)
+            ->exists();
+    }
+
+    protected function reserveCourt(User $host, Listing $listing, ?Venue $venue, array $data, array $charge): Booking
+    {
+        // Nothing to pay, everything up front, or a deposit with a balance on arrival.
+        if ($charge['courtTotal'] <= 0) {
+            $paymentStatus = 'payment_skipped';
+            $paymentMethod = 'payment_skipped';
+        } elseif ($charge['courtArrival'] <= 0) {
+            $paymentStatus = 'fully_paid';
+            $paymentMethod = 'online_payment';
+        } elseif ($charge['courtNow'] > 0) {
+            $paymentStatus = 'deposit_paid';
+            $paymentMethod = 'deposit_remaining_on_arrival';
+        } else {
+            $paymentStatus = 'pending';
+            $paymentMethod = 'cash_on_arrival';
+        }
+
+        return Booking::create([
+            'user_id'        => $host->id,
+            'listing_id'     => $listing->id,
+            'venue_id'       => $venue?->id,
+            'date'           => $data['game_date'],
+            'start_time'     => $data['start_time'],
+            'end_time'       => $data['end_time'],
+            'players'        => max(1, (int) ($data['max_players'] ?? 1)),
+            'subtotal'       => $charge['courtTotal'],
+            'total_price'    => $charge['courtTotal'],
+            'status'         => 'confirmed',
+            'payment_status' => $paymentStatus,
+            'payment_method' => $paymentMethod,
+            'origin'         => 'customer_game',
+            'notes'          => 'Hosted '.($data['game_type'] ?? 'game').': '.($data['title'] ?? $data['sport'] ?? '')
+                .'. Player seat payments handled offline; Bookboll service fee pre-paid by host.',
+        ]);
+    }
+
+    /**
+     * What the host paid, split the way the money actually moves: the deposit and
+     * the seats fee go to Bookboll now, the balance is owed to the venue on arrival.
+     * Loyalty is Bookboll's to give, so it comes off the service fee first, then
+     * the deposit — never the venue's balance.
+     */
+    protected function recordHostPayments(User $host, Booking $booking, array $charge, string $currency): void
+    {
+        $remaining = $charge['loyaltyRedeem'];
+
+        $serviceNet = max(0, $charge['serviceFee'] - $remaining);
+        $remaining  = max(0, $remaining - $charge['serviceFee']);
+
+        $courtNet  = max(0, $charge['courtNow'] - $remaining);
+        $remaining = max(0, $remaining - $charge['courtNow']);
+
+        $rows = [];
+
+        if ($courtNet > 0) {
+            $rows[] = [
+                'type'      => $charge['bookbollOwned'] ? 'full' : 'deposit',
+                'amount'    => $courtNet,
+                'recipient' => '@bookboll',
+                'status'    => 'paid',
+                'notes'     => $charge['bookbollOwned'] ? 'Court paid in full online' : 'Court deposit',
+            ];
+        }
+
+        if ($serviceNet > 0) {
+            $rows[] = [
+                'type'      => 'commission',
+                'amount'    => $serviceNet,
+                'recipient' => '@bookboll',
+                'status'    => 'paid',
+                'notes'     => 'Seats service fee (non-refundable)',
+            ];
+        }
+
+        if ($charge['courtArrival'] > 0) {
+            $rows[] = [
+                'type'      => 'remaining',
+                'amount'    => $charge['courtArrival'],
+                'recipient' => '@provider',
+                'status'    => 'pending',
+                'notes'     => 'Balance due to the venue on arrival',
+            ];
+        }
+
+        foreach ($rows as $row) {
+            Payment::create([
+                'payment_id'  => 'game-'.Str::uuid(),
+                'user_id'     => $host->id,
+                'booking_id'  => $booking->id,
+                'source_type' => 'booking',
+                'type'        => $row['type'],
+                'method'      => 'online',
+                'amount'      => $row['amount'],
+                'currency'    => $currency,
+                'recipient'   => $row['recipient'],
+                'status'      => $row['status'],
+                'date'        => now()->toDateString(),
+                'paid_at'     => $row['status'] === 'paid' ? now() : null,
+                'notes'       => $row['notes'],
+            ]);
+        }
+
+        if ($charge['loyaltyRedeem'] > 0) {
+            $this->spendLoyalty($host, $charge['loyaltyRedeem']);
+        }
+    }
+
+    protected function spendLoyalty(User $host, float $amount): void
+    {
+        $config = LoyaltyProgram::where('country_id', $host->country_id)->first();
+        $rate   = (int) ($config->redeem_rate ?? LoyaltyProgram::defaults()['redeem_rate']);
+        $unit   = (float) ($config->redeem_value ?? LoyaltyProgram::defaults()['redeem_value']) ?: 1;
+
+        $points = min((int) ceil($amount / $unit * $rate), (int) (LoyaltyPoint::balance($host->id) ?? 0));
+
+        if ($points <= 0) {
+            return;
+        }
+
+        LoyaltyPoint::create([
+            'user_id' => $host->id,
+            'type'    => 'debit',
+            'points'  => $points,
+            'reason'  => 'Redeemed on hosting',
+        ]);
+
+        $host->updateLoyaltyTier();
+    }
+
+    /** Hosting earns a flat bonus, once per game. */
+    protected function awardHostBonus(User $host): void
+    {
+        LoyaltyPoint::create([
+            'user_id' => $host->id,
+            'type'    => 'credit',
+            'points'  => self::HOST_BONUS,
+            'reason'  => 'Hosted a game',
+        ]);
+
+        $host->updateLoyaltyTier();
+    }
+
+
+    // ── Viewing and joining ──────────────────────────────────────────────────
+
+    /** One event, with the people context the detail page shows. */
+    public function show(string $uuid, ?User $viewer = null)
+    {
+        $game = HostedGame::where('uuid', $uuid)->first();
+
+        // Removed by a Bookboll admin — hidden even from a direct link.
+        if (! $game || $game->moderation_status === 'removed') {
+            return sendError('Event not found.', [], 404);
+        }
+
+        $community = $game->community_id ? Community::find($game->community_id) : null;
+        [$decorated] = $this->decorateGames(collect([$game]), $community)->all();
+
+        $mine = $viewer?->uuid
+            ? GameJoinRequest::where('game_id', $game->id)->where('joiner_customer_id', $viewer->uuid)->first()
+            : null;
+
+        return sendSuccess('Event', [
+            'game'      => $decorated,
+            'myRequest' => $mine ? $this->mapRequest($mine) : null,
+            'isHost'    => $viewer?->uuid && $viewer->uuid === $game->host_customer_id,
+        ]);
+    }
+
+    /** Everyone who asked to join — the host's roster. */
+    public function requests(User $host, string $uuid)
+    {
+        $game = HostedGame::where('uuid', $uuid)->first();
+
+        if (! $game) {
+            return sendError('Event not found.', [], 404);
+        }
+
+        if ($game->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can see the roster.', [], 403);
+        }
+
+        $rows = GameJoinRequest::where('game_id', $game->id)->orderBy('created_at')->get();
+
+        return sendSuccess('Requests', [
+            'requests' => $rows->map(fn ($r) => $this->mapRequest($r))->values()->all(),
+        ]);
+    }
+
+    /**
+     * Ask to join. Instant events skip approval, a full event queues on the
+     * waitlist, and a members-only community event is closed to non-members.
+     */
+    public function join(User $user, string $uuid, array $data)
+    {
+        $game = HostedGame::where('uuid', $uuid)->first();
+
+        if (! $game || $game->moderation_status === 'removed') {
+            return sendError('Event not found.', [], 404);
+        }
+
+        if ($game->request_deadline && $game->request_deadline->isPast()) {
+            return sendError('Requests for this event have closed.', [], 422);
+        }
+
+        $accepted = GameJoinRequest::where('game_id', $game->id)->where('status', 'accepted')->count();
+
+        // Once an event locks, starts or ends the roster is final.
+        $state = $this->meetupState($game, $accepted);
+
+        if ($state === 'locked') {
+            return sendError('This event is locked — the roster is final. Message the host if you still want in.', [], 422);
+        }
+
+        if ($state === 'active') {
+            return sendError('This event has already started.', [], 422);
+        }
+
+        if ($state === 'archived') {
+            return sendError('This event has ended.', [], 422);
+        }
+
+        if ($state === 'cancelled') {
+            return sendError('This event was cancelled.', [], 422);
+        }
+
+        // A community event that was never listed publicly is members-only.
+        if ($game->community_id && ! $game->community_public) {
+            $isMember = CommunityMember::where('community_id', $game->community_id)
+                ->where('customer_id', $user->uuid)
+                ->where('status', 'accepted')
+                ->exists();
+
+            if (! $isMember) {
+                return sendError('This is a members-only community event — join the community first.', [
+                    'community_id' => Community::find($game->community_id)?->uuid,
+                ], 422);
+            }
+        }
+
+        $cap = (int) $game->max_players;
+        $full = $cap > 0 && $accepted >= $cap;
+
+        if ($full && $game->allow_waitlist === false) {
+            return sendError('This event is full.', [], 422);
+        }
+
+        $status = $full ? 'waitlisted' : ($game->approval_mode === 'instant' ? 'accepted' : 'pending');
+
+        $request = GameJoinRequest::updateOrCreate(
+            ['game_id' => $game->id, 'joiner_customer_id' => $user->uuid],
+            [
+                'joiner_name'     => $data['joiner_name'] ?? ($user->name ?: ''),
+                'joiner_phone'    => $data['joiner_phone'] ?? ($user->phone ?: ''),
+                'joiner_whatsapp' => $data['joiner_whatsapp'] ?? ($data['joiner_phone'] ?? ''),
+                'joiner_message'  => $data['joiner_message'] ?? '',
+                'form_answers'    => $data['form_answers'] ?? [],
+                'status'          => $status,
+            ]
+        );
+
+        return sendSuccess('Request sent', ['request' => $this->mapRequest($request->fresh())]);
+    }
+
+    /** The joiner's own request, so the page knows what to show them. */
+    public function myRequest(User $user, string $uuid)
+    {
+        $game = HostedGame::where('uuid', $uuid)->first();
+
+        if (! $game) {
+            return sendError('Event not found.', [], 404);
+        }
+
+        $row = GameJoinRequest::where('game_id', $game->id)
+            ->where('joiner_customer_id', $user->uuid)
+            ->first();
+
+        return sendSuccess('My request', ['request' => $row ? $this->mapRequest($row) : null]);
+    }
+
+    /** Host accepts or rejects someone. Accepting never overfills the event. */
+    public function respondToRequest(User $host, string $requestUuid, string $status)
+    {
+        $request = GameJoinRequest::where('uuid', $requestUuid)->first();
+
+        if (! $request) {
+            return sendError('Request not found.', [], 404);
+        }
+
+        $game = HostedGame::find($request->game_id);
+
+        if (! $game || $game->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can decide this.', [], 403);
+        }
+
+        if ($status === 'accepted') {
+            $cap = (int) $game->max_players;
+            $accepted = GameJoinRequest::where('game_id', $game->id)
+                ->where('status', 'accepted')
+                ->where('id', '!=', $request->id)
+                ->count();
+
+            if ($cap > 0 && $accepted >= $cap) {
+                return sendError('This event is already full.', [], 422);
+            }
+        }
+
+        $request->update(['status' => $status]);
+
+        if ($status !== 'accepted') {
+            $this->promoteFromWaitlist($game);
+        }
+
+        return sendSuccess('Request updated', ['request' => $this->mapRequest($request->fresh())]);
+    }
+
+    /** A joiner drops out. Their spot goes to whoever waited longest. */
+    public function cancelRequest(User $user, string $requestUuid)
+    {
+        $request = GameJoinRequest::where('uuid', $requestUuid)->first();
+
+        if (! $request) {
+            return sendError('Request not found.', [], 404);
+        }
+
+        $game = HostedGame::find($request->game_id);
+        $isOwner = $request->joiner_customer_id === $user->uuid;
+        $isHost = $game && $game->host_customer_id === $user->uuid;
+
+        if (! $isOwner && ! $isHost) {
+            return sendError('You cannot drop this request.', [], 403);
+        }
+
+        // Close to kick-off the roster is fixed, so a confirmed spot can't be dropped.
+        if ($game && $request->status === 'accepted') {
+            $state = $this->meetupState($game, GameJoinRequest::where('game_id', $game->id)->where('status', 'accepted')->count());
+
+            if (in_array($state, ['locked', 'active'], true) && $isOwner) {
+                return sendError("This event is locked — spots can't be dropped this close to start. Message the host if you really can't make it.", [], 422);
+            }
+        }
+
+        $request->delete();
+
+        if ($game) {
+            $this->promoteFromWaitlist($game);
+        }
+
+        return sendSuccess('Request removed', ['ok' => true]);
+    }
+
+    /**
+     * Fill a freed spot from the waitlist, oldest first. An instant-join event
+     * takes them straight in; one the host reviews puts them back in the queue.
+     */
+    protected function promoteFromWaitlist(HostedGame $game): void
+    {
+        $cap = (int) $game->max_players;
+
+        if ($cap <= 0) {
+            return;
+        }
+
+        $accepted = GameJoinRequest::where('game_id', $game->id)->where('status', 'accepted')->count();
+
+        if ($accepted >= $cap) {
+            return;
+        }
+
+        $next = GameJoinRequest::where('game_id', $game->id)
+            ->where('status', 'waitlisted')
+            ->orderBy('created_at')
+            ->first();
+
+        $next?->update(['status' => $game->approval_mode === 'instant' ? 'accepted' : 'pending']);
+    }
+
+    /** Host edits the details people can safely be told about after publishing. */
+    public function updateGame(User $host, string $uuid, array $patch)
+    {
+        $game = HostedGame::where('uuid', $uuid)->first();
+
+        if (! $game) {
+            return sendError('Event not found.', [], 404);
+        }
+
+        if ($game->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can edit this event.', [], 403);
+        }
+
+        // The cap can never drop below the players already holding a spot.
+        if (array_key_exists('max_players', $patch) && (int) $patch['max_players'] > 0) {
+            $accepted = GameJoinRequest::where('game_id', $game->id)->where('status', 'accepted')->count();
+
+            if ($accepted > (int) $patch['max_players']) {
+                return sendError("$accepted players are already in — max players can't go below that.", [], 422);
+            }
+        }
+
+        $game->update($patch);
+
+        return sendSuccess('Event updated', ['game' => $this->mapGame($game->fresh())]);
+    }
+
+    /** Host calls the event off; the court reservation is released with it. */
+    public function cancelGame(User $host, string $uuid)
+    {
+        $game = HostedGame::where('uuid', $uuid)->first();
+
+        if (! $game) {
+            return sendError('Event not found.', [], 404);
+        }
+
+        if ($game->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can cancel this event.', [], 403);
+        }
+
+        $game->update(['status' => 'cancelled']);
+
+        if ($game->booking_id) {
+            Booking::where('id', $game->booking_id)->update(['status' => 'cancelled']);
+        }
+
+        return sendSuccess('Event cancelled', ['ok' => true]);
+    }
+
+    /** Host ticks off who actually turned up. */
+    public function markAttendance(User $host, string $requestUuid, bool $attended)
+    {
+        $request = GameJoinRequest::where('uuid', $requestUuid)->first();
+
+        if (! $request) {
+            return sendError('Request not found.', [], 404);
+        }
+
+        $game = HostedGame::find($request->game_id);
+
+        if (! $game || $game->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can mark attendance.', [], 403);
+        }
+
+        $request->update(['attended' => $attended]);
+
+        return sendSuccess('Attendance saved', ['ok' => true]);
+    }
+
+    /** The host's saved round/matchmaking sheet for an event. */
+    public function saveRounds(User $host, string $uuid, $rounds)
+    {
+        $game = HostedGame::where('uuid', $uuid)->first();
+
+        if (! $game) {
+            return sendError('Event not found.', [], 404);
+        }
+
+        if ($game->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can save rounds.', [], 403);
+        }
+
+        $game->update(['rounds' => $rounds]);
+
+        return sendSuccess('Rounds saved', ['ok' => true]);
+    }
+
+    /**
+     * Where an event is in its life: cancelled, ended, running, locked to new
+     * joins, full, or open. Mirrors meetup.js so both sides agree.
+     */
+    protected function meetupState(HostedGame $game, int $acceptedCount = 0): string
+    {
+        if ($game->status === 'cancelled') {
+            return 'cancelled';
+        }
+
+        $date = $game->game_date ? Carbon::parse($game->game_date)->toDateString() : null;
+
+        if ($date) {
+            $start = Carbon::parse($date.' '.($game->start_time ?: '00:00'));
+            $end = Carbon::parse($date.' '.($game->end_time ?: '23:59'));
+
+            if (now()->greaterThan($end)) {
+                return 'archived';
+            }
+
+            if (now()->greaterThanOrEqualTo($start)) {
+                return 'active';
+            }
+
+            $lockMinutes = (int) $game->lock_minutes_before;
+
+            if ($lockMinutes > 0 && now()->greaterThanOrEqualTo($start->copy()->subMinutes($lockMinutes))) {
+                return 'locked';
+            }
+        }
+
+        $cap = (int) $game->max_players;
+
+        if ($cap > 0 && $acceptedCount >= $cap) {
+            return 'waitlisted';
+        }
+
+        return 'open';
+    }
+
+    /** @return array<string, mixed> */
+    protected function mapRequest(GameJoinRequest $r): array
+    {
+        return [
+            'id'                 => $r->uuid,
+            'game_id'            => $r->game?->uuid,
+            'joiner_customer_id' => $r->joiner_customer_id,
+            'joiner_name'        => $r->joiner_name ?? '',
+            'joiner_phone'       => $r->joiner_phone ?? '',
+            'joiner_whatsapp'    => $r->joiner_whatsapp ?? '',
+            'joiner_message'     => $r->joiner_message ?? '',
+            'status'             => $r->status ?? 'pending',
+            'form_answers'       => $r->form_answers ?? [],
+            'attended'           => (bool) $r->attended,
+            'created_at'         => optional($r->created_at)?->toIso8601String(),
+        ];
+    }
+
+    // ── Shaping ──────────────────────────────────────────────────────────────
+
+
+    protected function venueFor(Listing $listing): ?Venue
+    {
+        return $listing->venue ?: Venue::find($listing->venue_id);
+    }
+
+    /**
+     * Add the people context the event cards show — who is going, who is hosting,
+     * and the community an event belongs to.
+     *
+     * @param  \Illuminate\Support\Collection<int, HostedGame>  $games
+     */
+    protected function decorateGames($games, ?Community $community = null)
+    {
+        $ids      = $games->pluck('id')->all();
+        $requests = $ids
+            ? GameJoinRequest::whereIn('game_id', $ids)->where('status', 'accepted')->get()
+            : collect();
+
+        $venues = Venue::whereIn('id', $games->pluck('location_id')->filter()->unique())->get()->keyBy('id');
+        $hosts  = User::whereIn('uuid', $games->pluck('host_customer_id')->filter()->unique())->get()->keyBy('uuid');
+
+        return $games->map(function (HostedGame $g) use ($requests, $venues, $hosts, $community) {
+            $going = $requests->where('game_id', $g->id);
+            $host  = $hosts->get($g->host_customer_id);
+            $venue = $g->location_id ? $venues->get($g->location_id) : null;
+
+            return $this->mapGame($g) + [
+                'locationName'    => $venue?->name ?? '',
+                'locationAddress' => $venue?->address ?? '',
+                'joinedCount'     => $going->count(),
+                // Legacy rows point at customers that were never migrated, so the
+                // name saved on the row is the dependable one.
+                'hostName'        => $host?->name ?: (string) $g->host_name,
+                'hostAvatar'      => $host?->image ?: '',
+                'communityName'   => $community?->name ?? '',
+                'communityAvatar' => $community?->avatar_image ?? '',
+                'goingAvatars'    => $going->take(5)->map(fn ($r) => [
+                    'name'   => (string) $r->joiner_name,
+                    'avatar' => '',
+                ])->values()->all(),
+                'goingNames'      => $going->take(2)
+                    ->map(fn ($r) => Str::before(trim((string) $r->joiner_name), ' '))
+                    ->filter()->values()->all(),
+            ];
+        });
+    }
+
+    /** @return array<string, mixed> */
+    protected function mapGame(HostedGame $g): array
+    {
+        return [
+            'id'                      => $g->uuid,
+            'host_customer_id'        => $g->host_customer_id,
+            'host_name'               => $g->host_name ?? '',
+            'title'                   => $g->title ?? '',
+            'sport'                   => $g->sport ?? '',
+            'game_type'               => $g->game_type ?? 'game',
+            'game_date'               => $g->game_date ? Carbon::parse($g->game_date)->toDateString() : null,
+            'start_time'              => $g->start_time,
+            'end_time'                => $g->end_time,
+            'price_per_person'        => (float) $g->price_per_person,
+            'currency'                => $g->currency ?? 'AED',
+            'max_players'             => (int) $g->max_players,
+            'skill_level'             => $g->skill_level ?? 'all',
+            'description'             => $g->description ?? '',
+            'status'                  => $g->status ?? 'open',
+            'prize_pot'               => (float) $g->prize_pot,
+            'prize_note'              => $g->prize_note ?? '',
+            'custom_location_name'    => $g->custom_location_name ?? '',
+            'custom_location_address' => $g->custom_location_address ?? '',
+            'hide_location'           => (bool) $g->hide_location,
+            'images'                  => $g->images ?? [],
+            'approval_mode'           => $g->approval_mode ?? 'review',
+            'allow_waitlist'          => $g->allow_waitlist !== false,
+            'request_deadline'        => optional($g->request_deadline)?->toIso8601String(),
+            'lock_minutes_before'     => $g->lock_minutes_before,
+            'play_format'             => $g->play_format,
+            'num_teams'               => (int) $g->num_teams,
+            'community_id'            => $g->community_id ? Community::find($g->community_id)?->uuid : null,
+            'community_public'        => (bool) $g->community_public,
+            'moderation_status'       => $g->moderation_status ?: 'active',
+            'created_at'              => optional($g->created_at)?->toIso8601String(),
+        ];
+    }
+}
