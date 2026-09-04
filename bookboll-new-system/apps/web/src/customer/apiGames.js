@@ -284,3 +284,101 @@ export async function loadCountryIso(id) {
   for (const c of rows) _iso[c.id] = c.iso_code || c.iso2 || ''
   return _iso[id] || ''
 }
+
+// ── Tournaments ──────────────────────────────────────────────────────────────
+
+/** Publish a knockout bracket. Every game reserves its own court. */
+export async function createTournament(t) {
+  const matches = Array.isArray(t.matches) ? t.matches : []
+  if (!matches.length) return { error: 'Please schedule every game.' }
+
+  for (const m of matches) {
+    if (!m.listing_id || !m.date || !m.start_time || !m.end_time) {
+      return { error: 'Every game needs a venue, court, date and time.' }
+    }
+  }
+
+  const res = await apiFetch('/customer/tournaments', {
+    method: 'POST',
+    body: {
+      title: t.title || '',
+      sport: t.sport || '',
+      num_teams: Number(t.num_teams) || 0,
+      city_id: t.city_id || null,
+      country_id: t.country_id || null,
+      price_per_person: Number(t.price_per_person) || 0,
+      max_players: Number(t.num_teams) || 0,
+      skill_level: t.skill_level || 'all',
+      description: t.description || '',
+      prize_pot: Number(t.prize_pot) || 0,
+      prize_note: t.prize_note || '',
+      signup_form: t.signup_form || [],
+      request_deadline: t.request_deadline || null,
+      approval_mode: t.approval_mode || 'review',
+      lock_minutes_before: t.lock_minutes_before || null,
+      community_id: t.community_id || null,
+      community_public: !!t.community_public,
+      host_name: t.host_name || '',
+      host_phone: t.host_phone || '',
+      host_whatsapp: t.host_whatsapp || t.host_phone || '',
+      loyalty_redeem: Number(t.loyalty_redeem) || 0,
+      ticket_mode: t.ticket_mode || 'arrival',
+      matches: matches.map((m) => ({
+        round: Number(m.round) || 0,
+        index: Number(m.index) || 0,
+        listing_id: m.listing_id,
+        date: m.date,
+        start_time: m.start_time,
+        end_time: m.end_time,
+      })),
+    },
+  })
+
+  if (!res.success || !res.data?.tournament) {
+    return { error: formatErr(res, 'Could not publish the tournament.') }
+  }
+
+  // The server already spent the points, so the caller must not redeem again.
+  return {
+    tournament: res.data.tournament,
+    charge: res.data.charge || null,
+    loyaltyApplied: Number(res.data.charge?.loyaltyRedeem) || 0,
+  }
+}
+
+/** A tournament with its bracket, matches and teams. */
+export async function loadTournament(id) {
+  if (!id) return null
+  const res = await apiFetch(`/marketplace/tournaments/${encodeURIComponent(id)}`)
+  if (!res.success || !res.data?.tournament) return null
+  return {
+    tournament: res.data.tournament,
+    matches: res.data.matches || [],
+    requests: res.data.requests || [],
+    totalRounds: Number(res.data.totalRounds) || 1,
+  }
+}
+
+/** Seed round one from the accepted teams. */
+export async function generateMatchups(tournamentId) {
+  const res = await apiFetch(`/customer/tournaments/${encodeURIComponent(tournamentId)}/matchups`, { method: 'POST' })
+  if (!res.success) return { error: formatErr(res, 'Could not seed the bracket.') }
+  return { count: res.data?.count || 0, overflow: res.data?.overflow || 0 }
+}
+
+/** Record a match result; the winner moves into the next round. */
+export async function setMatchWinner(tournamentId, match, side) {
+  const res = await apiFetch(`/customer/tournament-matches/${encodeURIComponent(match.id)}/winner`, {
+    method: 'PATCH',
+    body: { winner: side },
+  })
+  if (!res.success) return { error: formatErr(res, 'Could not save the result.') }
+  return { ok: true }
+}
+
+/** Undo a match result — refused once the winner has played on. */
+export async function clearMatchWinner(tournamentId, match) {
+  const res = await apiFetch(`/customer/tournament-matches/${encodeURIComponent(match.id)}/winner`, { method: 'DELETE' })
+  if (!res.success) return { error: formatErr(res, 'Could not clear the result.') }
+  return { ok: true }
+}

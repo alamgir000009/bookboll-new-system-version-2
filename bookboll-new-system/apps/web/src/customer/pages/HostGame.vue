@@ -4,16 +4,16 @@ import { appBaseUrl } from '../../lib/appBase.js'
 import { useRouter, useRoute } from 'vue-router'
 import { selectedCity, selectedCountry, customer, isCustomer, loadCustomerLoyalty } from '../../lib/customerSession.js'
 import { isWhiteLabel } from '../../lib/brand.js'
-import { loadLoyaltyConfig, maxRedeemable, redeemLoyalty } from '../../lib/loyalty.js'
+import { loadLoyaltyConfig, maxRedeemable } from '../../lib/loyalty.js'
 import { ensureSignedIn } from '../../lib/authGate.js'
 import { useSeo } from '../../lib/seo.js'
 useSeo({ title: 'Host a game, hangout or tournament', description: 'Set up your own pickup game, social hangout or tournament, pick a venue and invite players — host free on Bookboll.', path: '/host-game' })
-import { loadLocations, loadFacility, loadFacilities, loadListing, createTournament, applyLifecycleFields, applyPlayFormat } from '../../customer/data.js'
-import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit } from '../../customer/apiGames.js'
+import { loadLocations, loadFacility, loadFacilities, loadListing } from '../../customer/data.js'
+import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit, createTournament } from '../../customer/apiGames.js'
 import { PLAY_FORMATS } from '../../customer/matchmaking.js'
 import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../../customer/apiBooking.js'
 import { hostDraft, saveHostDraft, clearHostDraft } from '../../customer/hostDraft.js'
-import { applyCommunityId, loadCommunity } from '../../customer/community.js'
+import { loadCommunity } from '../../customer/community.js'
 import { getSavedPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
 import { loadStripeConnect, connectStripeDemo, isStripeConnected } from '../../customer/hostPayouts.js'
 import { TEAM_OPTIONS, roundsFor, matchesInRound, totalGames, roundName, fmtTime, consecutiveSlots, normTime, addMinutes } from '../../customer/bracket.js'
@@ -909,8 +909,6 @@ async function publishGame() {
 }
 async function publishTournament() {
   saving.value = true
-  const loyPts = loyaltyPoints.value        // capture before saving
-  const loyCountryId = loyaltyCountryId.value
   const res = await createTournament({
     host_customer_id: isCustomer.value ? customer.value.id : null,
     host_name: f.value.host_name, host_phone: f.value.host_phone, host_whatsapp: f.value.host_whatsapp || f.value.host_phone,
@@ -918,10 +916,12 @@ async function publishTournament() {
     title: f.value.title, sport: f.value.sport, skill_level: f.value.skill_level, description: f.value.description,
     price_per_person: Number(f.value.price_per_person) || 0, num_teams: numTeams.value,
     prize_pot: prizeTotal.value, prize_note: prizeBreakdown.value,
-    service_fee: hostCharge.value.serviceFee,
-    loyaltyRedeem: loyaltyAmount.value,
+    loyalty_redeem: loyaltyAmount.value,
+    ticket_mode: effectiveTicketMode.value,
     approval_mode: f.value.approval_mode,
-    charge: { serviceFee: hostCharge.value.serviceFee, ticketMode: effectiveTicketMode.value, stripeAccount: effectiveTicketMode.value === 'stripe' ? stripeAcct.value?.account_id : null },
+    community_id: communityId.value || null,
+    community_public: !!listPublic.value,
+    lock_minutes_before: Number(f.value.lock_minutes_before) || null,
     signup_form: signupForm.value,
     request_deadline: f.value.request_deadline ? new Date(f.value.request_deadline).toISOString() : null,
     matches: rounds.value.flatMap((rd, r) => rd.games.map((gm, g) => ({
@@ -934,12 +934,6 @@ async function publishTournament() {
   saving.value = false
   if (res.error) { err.value = res.error; return }
   saveCustomerPhone(selectedCountry.value?.id, f.value.host_whatsapp || f.value.host_phone)
-  // Spend the loyalty points actually applied against Bookboll's fee (marketplace only).
-  if (!isWhiteLabel.value && Number(res.loyaltyApplied || 0) > 0 && loyPts > 0 && customer.value?.id) {
-    await redeemLoyalty({ customerId: customer.value.id, countryId: loyCountryId, points: loyPts })
-  }
-  if (communityId.value) await applyCommunityId(res.tournament.id, communityId.value, listPublic.value)   // community page; public Events only if opted in
-  await applyLifecycleFields(res.tournament.id, { lock_minutes_before: Number(f.value.lock_minutes_before) || null })
   clearHostDraft()   // published — drop the autosaved draft
   published.value = { id: res.tournament.id, type: 'tournament' }   // show the share modal
 }
