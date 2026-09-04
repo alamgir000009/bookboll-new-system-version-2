@@ -409,10 +409,13 @@ Route::prefix('customer')->group(function () {
         Route::get('messages/group', [CustomerCommunityController::class, 'loadGroupThread'])->name('customer.messages.group.index');
         Route::post('messages/group', [CustomerCommunityController::class, 'sendGroupMessage'])->name('customer.messages.group.store');
 
+        Route::get('games/mine/hosted', [CustomerGameController::class, 'mineHosted'])->name('customer.games.mine.hosted');
+        Route::get('games/mine/joined', [CustomerGameController::class, 'mineJoined'])->name('customer.games.mine.joined');
         Route::post('games/quote', [CustomerGameController::class, 'quote'])->name('customer.games.quote');
         Route::post('games', [CustomerGameController::class, 'store'])->name('customer.games.store');
         Route::patch('games/{uuid}/community', [CustomerGameController::class, 'setCommunity'])->name('customer.games.community');
         Route::get('games/{uuid}/requests', [CustomerGameController::class, 'requests'])->name('customer.games.requests');
+        Route::post('games/{uuid}/requests/accept-all', [CustomerGameController::class, 'acceptAllRequests'])->name('customer.games.requests.accept-all');
         Route::get('games/{uuid}/my-request', [CustomerGameController::class, 'myRequest'])->name('customer.games.my-request');
         Route::post('games/{uuid}/join', [CustomerGameController::class, 'join'])->name('customer.games.join');
         Route::patch('games/{uuid}', [CustomerGameController::class, 'update'])->name('customer.games.update');
@@ -466,6 +469,7 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('communities/{uuid}/members', [CustomerCommunityController::class, 'members'])->name('communities.members');
     Route::get('communities/{uuid}/posts', [CustomerCommunityController::class, 'feed'])->name('communities.posts');
     Route::get('communities/{uuid}/events', [CustomerGameController::class, 'communityEvents'])->name('communities.events');
+    Route::get('games', [CustomerGameController::class, 'index'])->name('games.index');
     Route::get('games/config', [CustomerGameController::class, 'config'])->name('games.config');
     Route::get('tournaments/{uuid}', [CustomerGameController::class, 'showTournament'])->name('tournaments.show');
     Route::get('games/{uuid}', [CustomerGameController::class, 'show'])->name('games.show');

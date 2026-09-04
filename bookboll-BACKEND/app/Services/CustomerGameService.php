@@ -165,6 +165,87 @@ class CustomerGameService
         });
     }
 
+    /** Events I'm hosting, newest first, with how the roster is filling up. */
+    public function mineHosted(User $user)
+    {
+        $games = HostedGame::where('host_customer_id', $user->uuid)
+            ->orderByDesc('game_date')->get();
+
+        $counts = GameJoinRequest::whereIn('game_id', $games->pluck('id'))
+            ->get()->groupBy('game_id');
+
+        $idByUuid = $games->pluck('id', 'uuid');
+
+        $rows = $this->decorateGames($games)->map(function (array $g) use ($counts, $idByUuid) {
+            $mine = $counts->get($idByUuid->get($g['id']), collect());
+
+            return $g + [
+                'pendingCount'  => $mine->where('status', 'pending')->count(),
+                'acceptedCount' => $mine->where('status', 'accepted')->count(),
+            ];
+        })->values()->all();
+
+        return sendSuccess('My hosted events', ['games' => $rows]);
+    }
+
+    /** Events I've asked to join, each with the event attached. */
+    public function mineJoined(User $user)
+    {
+        $requests = GameJoinRequest::where('joiner_customer_id', $user->uuid)
+            ->orderByDesc('created_at')->get();
+
+        $games     = HostedGame::whereIn('id', $requests->pluck('game_id')->unique())->get();
+        $decorated = $this->decorateGames($games)->keyBy('id');
+        $uuidById  = $games->pluck('uuid', 'id');
+
+        $rows = $requests->map(function (GameJoinRequest $r) use ($decorated, $uuidById) {
+            $uuid = $uuidById->get($r->game_id);
+
+            return $this->mapRequest($r) + ['game' => $uuid ? $decorated->get($uuid) : null];
+        })->values()->all();
+
+        return sendSuccess('My join requests', ['requests' => $rows]);
+    }
+
+
+    /**
+     * Every event a city can join right now — the Events page.
+     *
+     * Only open events that haven't finished: a past date is out, and today's are
+     * out once their end time has gone. Events with no date stay (they're flexible).
+     * Community events are listed here on purpose — discovery is how communities
+     * grow — and membership is enforced when someone actually tries to join.
+     */
+    public function list(?int $cityId)
+    {
+        if (! $cityId) {
+            return sendSuccess('Events', ['games' => []]);
+        }
+
+        $today = now()->toDateString();
+
+        $games = HostedGame::where('city_id', $cityId)
+            ->where('status', 'open')
+            ->where('moderation_status', '!=', 'removed')
+            ->where(function ($w) use ($today) {
+                $w->whereNull('game_date')->orWhere('game_date', '>=', $today);
+            })
+            ->orderBy('game_date')
+            ->get()
+            ->filter(function (HostedGame $g) use ($today) {
+                $date = $g->game_date ? Carbon::parse($g->game_date)->toDateString() : null;
+
+                if (! $date || $date > $today || ! $g->end_time) {
+                    return true;
+                }
+
+                return substr((string) $g->end_time, 0, 5) >= now()->format('H:i');
+            })
+            ->values();
+
+        return sendSuccess('Events', ['games' => $this->decorateGames($games)->all()]);
+    }
+
     /** Events posted to a community — the community page's Meetups tab. */
     public function communityEvents(string $communityUuid)
     {
@@ -190,7 +271,7 @@ class CustomerGameService
         $ordered = $upcoming->concat($past)->values();
 
         return sendSuccess('Community events', [
-            'events' => $this->decorateGames($ordered, $community)->all(),
+            'events' => $this->decorateGames($ordered)->all(),
         ]);
     }
 
@@ -543,8 +624,7 @@ class CustomerGameService
             return sendError('Event not found.', [], 404);
         }
 
-        $community = $game->community_id ? Community::find($game->community_id) : null;
-        [$decorated] = $this->decorateGames(collect([$game]), $community)->all();
+        [$decorated] = $this->decorateGames(collect([$game]))->all();
 
         $mine = $viewer?->uuid
             ? GameJoinRequest::where('game_id', $game->id)->where('joiner_customer_id', $viewer->uuid)->first()
@@ -666,6 +746,56 @@ class CustomerGameService
             ->first();
 
         return sendSuccess('My request', ['request' => $row ? $this->mapRequest($row) : null]);
+    }
+
+    /**
+     * Accept everyone waiting, oldest first, but never past the cap — anyone who
+     * doesn't fit stays pending so the host can decide.
+     */
+    public function acceptAllRequests(User $host, string $uuid)
+    {
+        $game = HostedGame::where('uuid', $uuid)->first();
+
+        if (! $game) {
+            return sendError('Event not found.', [], 404);
+        }
+
+        if ($game->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can accept requests.', [], 403);
+        }
+
+        $rows     = GameJoinRequest::where('game_id', $game->id)->orderBy('created_at')->get();
+        $pending  = $rows->where('status', 'pending')->values();
+        $accepted = $rows->where('status', 'accepted')->count();
+
+        if ($pending->isEmpty()) {
+            return sendSuccess('Nothing to accept', ['accepted' => 0, 'leftover' => 0]);
+        }
+
+        // A tournament caps on teams; everything else on players.
+        $cap  = (int) ($game->game_type === 'tournament' ? ($game->num_teams ?: $game->max_players) : $game->max_players);
+        $take = $pending;
+
+        if ($cap > 0) {
+            $remaining = max(0, $cap - $accepted);
+
+            if ($remaining <= 0) {
+                return sendSuccess('Event is full', [
+                    'accepted' => 0,
+                    'leftover' => $pending->count(),
+                    'full'     => true,
+                ]);
+            }
+
+            $take = $pending->take($remaining);
+        }
+
+        GameJoinRequest::whereIn('id', $take->pluck('id'))->update(['status' => 'accepted']);
+
+        return sendSuccess('Requests accepted', [
+            'accepted' => $take->count(),
+            'leftover' => $pending->count() - $take->count(),
+        ]);
     }
 
     /** Host accepts or rejects someone. Accepting never overfills the event. */
@@ -1112,12 +1242,13 @@ class CustomerGameService
         }
 
         // The whole bracket's bill, with each match's line kept for the bookings.
+        // The bracket only counts as fully online if every one of its courts is.
         $total = $this->charge(
             $currency,
             array_sum(array_column($lines, 'courtTotal')),
             array_sum(array_column($lines, 'courtNow')),
             $serviceFee,
-            false,
+            $lines !== [] && ! in_array(false, array_column($lines, 'bookbollOwned'), true),
             $loyalty
         );
         $total['matches'] = $lines;
@@ -1135,8 +1266,7 @@ class CustomerGameService
             return sendError('Tournament not found.', [], 404);
         }
 
-        $community = $tournament->community_id ? Community::find($tournament->community_id) : null;
-        [$decorated] = $this->decorateGames(collect([$tournament]), $community)->all();
+        [$decorated] = $this->decorateGames(collect([$tournament]))->all();
 
         $matches  = TournamentMatch::where('tournament_id', $tournament->id)
             ->orderBy('round')->orderBy('match_index')->get();
@@ -1355,7 +1485,7 @@ class CustomerGameService
      *
      * @param  \Illuminate\Support\Collection<int, HostedGame>  $games
      */
-    protected function decorateGames($games, ?Community $community = null)
+    protected function decorateGames($games)
     {
         $ids      = $games->pluck('id')->all();
         $requests = $ids
@@ -1364,13 +1494,16 @@ class CustomerGameService
 
         $venues = Venue::whereIn('id', $games->pluck('location_id')->filter()->unique())->get()->keyBy('id');
         $hosts  = User::whereIn('uuid', $games->pluck('host_customer_id')->filter()->unique())->get()->keyBy('uuid');
+        // A list can mix communities, so load them all rather than assume one.
+        $communities = Community::whereIn('id', $games->pluck('community_id')->filter()->unique())->get()->keyBy('id');
 
-        return $games->map(function (HostedGame $g) use ($requests, $venues, $hosts, $community) {
+        return $games->map(function (HostedGame $g) use ($requests, $venues, $hosts, $communities) {
+            $community = $g->community_id ? $communities->get($g->community_id) : null;
             $going = $requests->where('game_id', $g->id);
             $host  = $hosts->get($g->host_customer_id);
             $venue = $g->location_id ? $venues->get($g->location_id) : null;
 
-            return $this->mapGame($g) + [
+            return $this->mapGame($g, $communities) + [
                 'locationName'    => $venue?->name ?? '',
                 'locationAddress' => $venue?->address ?? '',
                 'joinedCount'     => $going->count(),
@@ -1392,7 +1525,7 @@ class CustomerGameService
     }
 
     /** @return array<string, mixed> */
-    protected function mapGame(HostedGame $g): array
+    protected function mapGame(HostedGame $g, $communities = null): array
     {
         return [
             'id'                      => $g->uuid,
@@ -1422,7 +1555,9 @@ class CustomerGameService
             'lock_minutes_before'     => $g->lock_minutes_before,
             'play_format'             => $g->play_format,
             'num_teams'               => (int) $g->num_teams,
-            'community_id'            => $g->community_id ? Community::find($g->community_id)?->uuid : null,
+            'community_id'            => $g->community_id
+                ? ($communities?->get($g->community_id) ?? Community::find($g->community_id))?->uuid
+                : null,
             'community_public'        => (bool) $g->community_public,
             'moderation_status'       => $g->moderation_status ?: 'active',
             'created_at'              => optional($g->created_at)?->toIso8601String(),

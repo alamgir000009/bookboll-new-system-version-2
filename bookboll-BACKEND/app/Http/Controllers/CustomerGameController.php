@@ -52,6 +52,24 @@ class CustomerGameController extends Controller
         );
     }
 
+    /** Every joinable event in a city — the Events page. */
+    public function index(Request $request)
+    {
+        return $this->games->list($request->filled('city_id') ? (int) $request->query('city_id') : null);
+    }
+
+    /** Events I'm hosting. */
+    public function mineHosted()
+    {
+        return $this->games->mineHosted(auth()->user());
+    }
+
+    /** Events I've asked to join. */
+    public function mineJoined()
+    {
+        return $this->games->mineJoined(auth()->user());
+    }
+
     /** One event, for the detail page. */
     public function show(Request $request, string $uuid)
     {
@@ -82,6 +100,12 @@ class CustomerGameController extends Controller
     public function myRequest(string $uuid)
     {
         return $this->games->myRequest(auth()->user(), $uuid);
+    }
+
+    /** Host accepts everyone waiting, up to the cap. */
+    public function acceptAllRequests(string $uuid)
+    {
+        return $this->games->acceptAllRequests(auth()->user(), $uuid);
     }
 
     /** Host accepts or rejects a request. */
