@@ -143,6 +143,52 @@ class CustomerGameController extends Controller
         return $this->games->saveRounds(auth()->user(), $uuid, $data['rounds'] ?? []);
     }
 
+    /** Publish a knockout bracket. */
+    public function storeTournament(Request $request)
+    {
+        $rules = $this->rules();
+        unset($rules['game_type'], $rules['game_date'], $rules['start_time'], $rules['end_time'], $rules['listing_id']);
+
+        $data = $request->validate($rules + [
+            'num_teams'            => 'required|integer|in:4,8,16,32',
+            'matches'              => 'required|array|min:1',
+            'matches.*.round'      => 'required|integer|min:0',
+            'matches.*.index'      => 'required|integer|min:0',
+            'matches.*.listing_id' => 'required|integer|exists:listings,id',
+            'matches.*.date'       => 'required|date_format:Y-m-d',
+            'matches.*.start_time' => 'required|string|max:32',
+            'matches.*.end_time'   => 'required|string|max:32',
+        ]);
+
+        return $this->games->createTournament(auth()->user(), $data);
+    }
+
+    /** A tournament with its bracket. */
+    public function showTournament(Request $request, string $uuid)
+    {
+        return $this->games->showTournament($uuid, $this->optionalSanctumUser($request));
+    }
+
+    /** Host seeds round one from the accepted teams. */
+    public function generateMatchups(string $uuid)
+    {
+        return $this->games->generateMatchups(auth()->user(), $uuid);
+    }
+
+    /** Host records a match result. */
+    public function setMatchWinner(Request $request, string $matchUuid)
+    {
+        $data = $request->validate(['winner' => 'required|in:home,away']);
+
+        return $this->games->setMatchWinner(auth()->user(), $matchUuid, $data['winner']);
+    }
+
+    /** Host undoes a match result. */
+    public function clearMatchWinner(string $matchUuid)
+    {
+        return $this->games->clearMatchWinner(auth()->user(), $matchUuid);
+    }
+
     /**
      * A game page is public, but a signed-in viewer sees their own request, so the
      * token is read by hand rather than through auth middleware.

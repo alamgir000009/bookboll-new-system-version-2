@@ -11,6 +11,7 @@ use App\Models\Listing;
 use App\Models\LoyaltyPoint;
 use App\Models\LoyaltyProgram;
 use App\Models\Payment;
+use App\Models\TournamentMatch;
 use App\Models\User;
 use App\Models\Venue;
 use Illuminate\Support\Carbon;
@@ -428,7 +429,7 @@ class CustomerGameService
      * Loyalty is Bookboll's to give, so it comes off the service fee first, then
      * the deposit — never the venue's balance.
      */
-    protected function recordHostPayments(User $host, Booking $booking, array $charge, string $currency): void
+    protected function recordHostPayments(User $host, Booking $booking, array $charge, string $currency, bool $spendLoyalty = true): void
     {
         $remaining = $charge['loyaltyRedeem'];
 
@@ -488,7 +489,8 @@ class CustomerGameService
             ]);
         }
 
-        if ($charge['loyaltyRedeem'] > 0) {
+        // A bracket spends its points once for the whole thing, not per match.
+        if ($spendLoyalty && $charge['loyaltyRedeem'] > 0) {
             $this->spendLoyalty($host, $charge['loyaltyRedeem']);
         }
     }
@@ -908,7 +910,438 @@ class CustomerGameService
         ];
     }
 
+
+    // ── Tournaments ──────────────────────────────────────────────────────────
+
+    /**
+     * Publish a knockout bracket: one parent event plus a match per game, each
+     * holding its own court. If any court can't be reserved the whole thing is
+     * rolled back — a half-booked tournament would be worse than none.
+     */
+    public function createTournament(User $host, array $data)
+    {
+        if (! $host->uuid) {
+            return sendError('Please sign in to host.');
+        }
+
+        $teams = (int) ($data['num_teams'] ?? 0);
+
+        if (! in_array($teams, [4, 8, 16, 32], true)) {
+            return sendError('Pick how many teams will play.', [], 422);
+        }
+
+        $matches = $data['matches'] ?? [];
+
+        if (count($matches) !== $teams - 1) {
+            return sendError('Please schedule every game.', [], 422);
+        }
+
+        // Earliest game represents the tournament; the last one gives its end time.
+        usort($matches, fn ($a, $b) => strcmp($a['date'].'T'.$a['start_time'], $b['date'].'T'.$b['start_time']));
+        $first = $matches[0];
+        $last  = $matches[count($matches) - 1];
+
+        $listings = Listing::whereIn('id', array_filter(array_column($matches, 'listing_id')))->get()->keyBy('id');
+
+        foreach ($matches as $m) {
+            if (empty($m['listing_id']) || ! $listings->has($m['listing_id'])) {
+                return sendError('Every game needs a venue and court.', [], 422);
+            }
+        }
+
+        $charge   = $this->priceTournament($host, $listings, $matches, $data);
+        $currency = $charge['currency'];
+
+        $community = ! empty($data['community_id'])
+            ? Community::where('uuid', $data['community_id'])->first()
+            : null;
+
+        try {
+            return DB::transaction(function () use ($host, $data, $teams, $matches, $first, $last, $listings, $charge, $currency, $community) {
+                $firstListing = $listings->get($first['listing_id']);
+
+                $tournament = HostedGame::create([
+                    'host_customer_id'    => $host->uuid,
+                    'host_name'           => $data['host_name'] ?? ($host->name ?: ''),
+                    'host_phone'          => $data['host_phone'] ?? ($host->phone ?: ''),
+                    'host_whatsapp'       => $data['host_whatsapp'] ?? ($data['host_phone'] ?? ''),
+                    'listing_id'          => $firstListing?->id,
+                    'location_id'         => $firstListing ? $this->venueFor($firstListing)?->id : null,
+                    'city_id'             => $data['city_id'] ?? null,
+                    'country_id'          => $data['country_id'] ?? null,
+                    'title'               => $data['title'] ?? '',
+                    'sport'               => $data['sport'] ?? '',
+                    'game_type'           => 'tournament',
+                    'num_teams'           => $teams,
+                    'format'              => 'single_elim',
+                    'game_date'           => $first['date'],
+                    'start_time'          => $first['start_time'],
+                    'end_time'            => $last['end_time'],
+                    'price_per_person'    => round((float) ($data['price_per_person'] ?? 0), 2),
+                    'currency'            => $currency,
+                    'max_players'         => $teams,
+                    'skill_level'         => $data['skill_level'] ?? 'all',
+                    'description'         => $data['description'] ?? '',
+                    'status'              => 'open',
+                    'prize_pot'           => round((float) ($data['prize_pot'] ?? 0), 2),
+                    'prize_note'          => $data['prize_note'] ?? null,
+                    'signup_form'         => $data['signup_form'] ?? [],
+                    'request_deadline'    => $data['request_deadline'] ?? null,
+                    'approval_mode'       => $data['approval_mode'] ?? 'review',
+                    'allow_waitlist'      => ($data['allow_waitlist'] ?? true) !== false,
+                    'lock_minutes_before' => $data['lock_minutes_before'] ?? null,
+                    'charge'              => $charge,
+                    'community_id'        => $community?->id,
+                    'community_public'    => $community ? (bool) ($data['community_public'] ?? false) : false,
+                    'moderation_status'   => 'active',
+                ]);
+
+                $firstBooking = null;
+
+                foreach ($matches as $i => $m) {
+                    $listing = $listings->get($m['listing_id']);
+                    $venue   = $this->venueFor($listing);
+                    $line    = $charge['matches'][$i];
+
+                    if ($this->slotTaken($listing->id, $m['date'], $m['start_time'], $m['end_time'])) {
+                        throw new \RuntimeException(
+                            'That court is already booked on '.$m['date'].' at '.$m['start_time'].' — pick another time for that game.'
+                        );
+                    }
+
+                    $booking = $this->reserveCourt($host, $listing, $venue, [
+                        'game_date'   => $m['date'],
+                        'start_time'  => $m['start_time'],
+                        'end_time'    => $m['end_time'],
+                        'max_players' => $teams,
+                        'game_type'   => 'tournament',
+                        'title'       => ($data['title'] ?? $data['sport'] ?? '').' — round '.((int) $m['round'] + 1).', match '.((int) $m['index'] + 1),
+                    ], $line);
+
+                    $firstBooking ??= $booking;
+                    $this->recordHostPayments($host, $booking, $line, $currency, spendLoyalty: false);
+
+                    TournamentMatch::create([
+                        'tournament_id' => $tournament->id,
+                        'round'         => (int) $m['round'],
+                        'match_index'   => (int) $m['index'],
+                        'listing_id'    => $listing->id,
+                        'location_id'   => $venue?->id,
+                        'booking_id'    => $booking->id,
+                        'match_date'    => $m['date'],
+                        'start_time'    => $m['start_time'],
+                        'end_time'      => $m['end_time'],
+                        'status'        => 'scheduled',
+                    ]);
+                }
+
+                // One seats fee covers the whole bracket, so it is booked once
+                // against the first match rather than repeated per court.
+                if ($charge['serviceFee'] > 0 && $firstBooking) {
+                    $this->recordHostPayments($host, $firstBooking, $this->charge(
+                        $currency, 0, 0, $charge['serviceFee'], true, $charge['serviceFeeLoyalty']
+                    ), $currency, spendLoyalty: false);
+                }
+
+                // Points are spent once for the whole bracket, not per match.
+                if ($charge['loyaltyRedeem'] > 0) {
+                    $this->spendLoyalty($host, $charge['loyaltyRedeem']);
+                }
+
+                $this->awardHostBonus($host);
+
+                return sendSuccess('Tournament published', [
+                    'tournament' => $this->mapGame($tournament),
+                    'charge'     => $charge,
+                ]);
+            });
+        } catch (\RuntimeException $e) {
+            return sendError($e->getMessage(), [], 422);
+        }
+    }
+
+    /**
+     * The host's bill for a bracket: every match's court, plus one seats service
+     * fee for the whole thing. Loyalty comes off the fee first, then each court's
+     * deposit in order — never a venue's on-arrival balance.
+     *
+     * @return array<string, mixed>
+     */
+    protected function priceTournament(User $host, $listings, array $matches, array $data): array
+    {
+        $teams    = (int) ($data['num_teams'] ?? 0);
+        $currency = 'AED';
+        $lines    = [];
+        $bookbollNow = 0.0;
+
+        foreach ($matches as $m) {
+            $listing = $listings->get($m['listing_id']);
+            $venue   = $this->venueFor($listing);
+            $currency = $venue?->currency_override ?: $currency;
+
+            $courtTotal    = $this->courtPrice($listing, [
+                'game_date'   => $m['date'],
+                'start_time'  => $m['start_time'],
+                'end_time'    => $m['end_time'],
+                'max_players' => $teams,
+            ]);
+            $bookbollOwned = ! $venue?->owner_user_id;
+            $courtNow      = $bookbollOwned
+                ? $courtTotal
+                : round($courtTotal * $this->courtCommissionPct($listing) / 100);
+
+            $bookbollNow += $courtNow;
+            $lines[] = $this->charge($currency, $courtTotal, $courtNow, 0, $bookbollOwned, 0);
+        }
+
+        $seatsValue = round((float) ($data['price_per_person'] ?? 0), 2) * $teams;
+        $serviceFee = ($data['ticket_mode'] ?? '') === 'stripe'
+            ? 0
+            : round($seatsValue * $this->seatFeePct($listings->first(), ! empty($data['community_id'])) / 100);
+
+        $loyalty = $this->loyaltyAllowed($host, (float) ($data['loyalty_redeem'] ?? 0), $bookbollNow + $serviceFee);
+
+        // Spread the points: the seats fee first, then across each court in turn.
+        $budget = max(0, $loyalty - $serviceFee);
+
+        foreach ($lines as $i => $line) {
+            $take = min($budget, $line['courtNow']);
+            $budget = round($budget - $take, 2);
+            $lines[$i]['loyaltyRedeem'] = round($take, 2);
+            $lines[$i]['dueNow'] = round(max(0, $line['courtNow'] - $take), 2);
+        }
+
+        // The whole bracket's bill, with each match's line kept for the bookings.
+        $total = $this->charge(
+            $currency,
+            array_sum(array_column($lines, 'courtTotal')),
+            array_sum(array_column($lines, 'courtNow')),
+            $serviceFee,
+            false,
+            $loyalty
+        );
+        $total['matches'] = $lines;
+        $total['serviceFeeLoyalty'] = round(min($loyalty, $serviceFee), 2);
+
+        return $total;
+    }
+
+    /** A tournament with its bracket, for the tournament page. */
+    public function showTournament(string $uuid, ?User $viewer = null)
+    {
+        $tournament = HostedGame::where('uuid', $uuid)->where('game_type', 'tournament')->first();
+
+        if (! $tournament || $tournament->moderation_status === 'removed') {
+            return sendError('Tournament not found.', [], 404);
+        }
+
+        $community = $tournament->community_id ? Community::find($tournament->community_id) : null;
+        [$decorated] = $this->decorateGames(collect([$tournament]), $community)->all();
+
+        $matches  = TournamentMatch::where('tournament_id', $tournament->id)
+            ->orderBy('round')->orderBy('match_index')->get();
+        $listings = Listing::whereIn('id', $matches->pluck('listing_id')->filter()->unique())->get()->keyBy('id');
+        $requests = GameJoinRequest::where('game_id', $tournament->id)->orderBy('created_at')->get();
+
+        $mine = $viewer?->uuid ? $requests->firstWhere('joiner_customer_id', $viewer->uuid) : null;
+
+        return sendSuccess('Tournament', [
+            'tournament' => $decorated,
+            'matches'    => $matches->map(fn ($m) => $this->mapMatch($m, $listings))->values()->all(),
+            'requests'   => $requests->map(fn ($r) => $this->mapRequest($r))->values()->all(),
+            'totalRounds' => $this->roundsFor((int) $tournament->num_teams),
+            'myRequest'  => $mine ? $this->mapRequest($mine) : null,
+            'isHost'     => $viewer?->uuid && $viewer->uuid === $tournament->host_customer_id,
+        ]);
+    }
+
+    /**
+     * Seed the first round from the accepted teams, in the order they were
+     * accepted. A team left without an opponent walks into the next round.
+     */
+    public function generateMatchups(User $host, string $uuid)
+    {
+        $tournament = HostedGame::where('uuid', $uuid)->where('game_type', 'tournament')->first();
+
+        if (! $tournament) {
+            return sendError('Tournament not found.', [], 404);
+        }
+
+        if ($tournament->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can seed the bracket.', [], 403);
+        }
+
+        $accepted = GameJoinRequest::where('game_id', $tournament->id)
+            ->where('status', 'accepted')->orderBy('created_at')->get()->values();
+
+        $round0 = TournamentMatch::where('tournament_id', $tournament->id)
+            ->where('round', 0)->orderBy('match_index')->get();
+
+        $totalRounds = $this->roundsFor((int) $tournament->num_teams);
+
+        foreach ($round0 as $i => $match) {
+            $home = $accepted[$i * 2] ?? null;
+            $away = $accepted[$i * 2 + 1] ?? null;
+
+            $match->update([
+                'home_team'       => $home?->joiner_name ?? '',
+                'home_request_id' => $home?->id,
+                'away_team'       => $away?->joiner_name ?? '',
+                'away_request_id' => $away?->id,
+            ]);
+
+            // A lone team has nobody to beat, so it advances instead of stalling.
+            if ($home && ! $away) {
+                $match->update(['winner' => 'home', 'status' => 'done']);
+                $this->advanceWinner($tournament, $match, $home->joiner_name, $home->id, $totalRounds);
+            }
+        }
+
+        return sendSuccess('Bracket seeded', [
+            'count'    => $accepted->count(),
+            'overflow' => max(0, $accepted->count() - $round0->count() * 2),
+        ]);
+    }
+
+    /** Host records who won; the winner moves into the next round. */
+    public function setMatchWinner(User $host, string $matchUuid, string $side)
+    {
+        $match = TournamentMatch::where('uuid', $matchUuid)->first();
+
+        if (! $match) {
+            return sendError('Match not found.', [], 404);
+        }
+
+        $tournament = HostedGame::find($match->tournament_id);
+
+        if (! $tournament || $tournament->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can record results.', [], 403);
+        }
+
+        $team = $side === 'home' ? $match->home_team : $match->away_team;
+
+        if (! $team) {
+            return sendError('That side has no team yet.', [], 422);
+        }
+
+        $match->update(['winner' => $side, 'status' => 'done']);
+
+        $this->advanceWinner(
+            $tournament,
+            $match,
+            $team,
+            $side === 'home' ? $match->home_request_id : $match->away_request_id,
+            $this->roundsFor((int) $tournament->num_teams)
+        );
+
+        return sendSuccess('Result saved', ['ok' => true]);
+    }
+
+    /** Undo a result — only while the winner hasn't already played on. */
+    public function clearMatchWinner(User $host, string $matchUuid)
+    {
+        $match = TournamentMatch::where('uuid', $matchUuid)->first();
+
+        if (! $match) {
+            return sendError('Match not found.', [], 404);
+        }
+
+        $tournament = HostedGame::find($match->tournament_id);
+
+        if (! $tournament || $tournament->host_customer_id !== $host->uuid) {
+            return sendError('Only the host can change results.', [], 403);
+        }
+
+        $next = $this->nextMatchFor(
+            (int) $match->round,
+            (int) $match->match_index,
+            $this->roundsFor((int) $tournament->num_teams)
+        );
+
+        if ($next) {
+            $target = TournamentMatch::where('tournament_id', $tournament->id)
+                ->where('round', $next['round'])->where('match_index', $next['index'])->first();
+
+            if ($target?->winner) {
+                return sendError('That team already played their next match. Undo that later result first, then change this one.', [], 422);
+            }
+
+            $target?->update($next['slot'] === 'home'
+                ? ['home_team' => '', 'home_request_id' => null]
+                : ['away_team' => '', 'away_request_id' => null]);
+        }
+
+        $match->update(['winner' => null, 'status' => 'scheduled']);
+
+        return sendSuccess('Result cleared', ['ok' => true]);
+    }
+
+    /** Carry a winning team into its next-round slot. */
+    protected function advanceWinner(HostedGame $tournament, TournamentMatch $match, string $team, ?int $requestId, int $totalRounds): void
+    {
+        $next = $this->nextMatchFor((int) $match->round, (int) $match->match_index, $totalRounds);
+
+        if (! $next) {
+            return;
+        }
+
+        $target = TournamentMatch::where('tournament_id', $tournament->id)
+            ->where('round', $next['round'])->where('match_index', $next['index'])->first();
+
+        $target?->update($next['slot'] === 'home'
+            ? ['home_team' => $team, 'home_request_id' => $requestId]
+            : ['away_team' => $team, 'away_request_id' => $requestId]);
+    }
+
+    /** Rounds in a single-elimination bracket. Mirrors bracket.js. */
+    protected function roundsFor(int $teams): int
+    {
+        return max(1, (int) round(log(max(2, $teams), 2)));
+    }
+
+    /**
+     * Where the winner of (round, index) goes — null at the Final. Winners of the
+     * even-numbered match take the home slot, the odd one the away slot.
+     *
+     * @return array{round:int,index:int,slot:string}|null
+     */
+    protected function nextMatchFor(int $round, int $index, int $totalRounds): ?array
+    {
+        if ($round >= $totalRounds - 1) {
+            return null;
+        }
+
+        return [
+            'round' => $round + 1,
+            'index' => intdiv($index, 2),
+            'slot'  => $index % 2 === 0 ? 'home' : 'away',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    protected function mapMatch(TournamentMatch $m, $listings): array
+    {
+        return [
+            'id'              => $m->uuid,
+            'round'           => (int) $m->round,
+            'match_index'     => (int) $m->match_index,
+            'listing_id'      => $m->listing_id,
+            'listingName'     => $listings->get($m->listing_id)?->name ?? '',
+            'location_id'     => $m->location_id,
+            'match_date'      => $m->match_date ? Carbon::parse($m->match_date)->toDateString() : null,
+            'start_time'      => $m->start_time,
+            'end_time'        => $m->end_time,
+            'home_team'       => $m->home_team ?? '',
+            'away_team'       => $m->away_team ?? '',
+            'home_request_id' => $m->home_request_id,
+            'away_request_id' => $m->away_request_id,
+            'winner'          => $m->winner ?? '',
+            'status'          => $m->status ?? 'scheduled',
+        ];
+    }
+
     // ── Shaping ──────────────────────────────────────────────────────────────
+
 
 
     protected function venueFor(Listing $listing): ?Venue

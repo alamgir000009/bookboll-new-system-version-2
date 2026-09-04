@@ -422,6 +422,11 @@ Route::prefix('customer')->group(function () {
         Route::delete('game-requests/{requestUuid}', [CustomerGameController::class, 'cancelRequest'])->name('customer.game-requests.cancel');
         Route::post('game-requests/{requestUuid}/attendance', [CustomerGameController::class, 'attendance'])->name('customer.game-requests.attendance');
 
+        Route::post('tournaments', [CustomerGameController::class, 'storeTournament'])->name('customer.tournaments.store');
+        Route::post('tournaments/{uuid}/matchups', [CustomerGameController::class, 'generateMatchups'])->name('customer.tournaments.matchups');
+        Route::patch('tournament-matches/{matchUuid}/winner', [CustomerGameController::class, 'setMatchWinner'])->name('customer.tournament-matches.winner');
+        Route::delete('tournament-matches/{matchUuid}/winner', [CustomerGameController::class, 'clearMatchWinner'])->name('customer.tournament-matches.winner.clear');
+
         Route::get('programs/mine', [CustomerProgramController::class, 'mine'])->name('customer.programs.mine');
         Route::get('programs/passes', [CustomerProgramController::class, 'passes'])->name('customer.programs.passes');
         Route::get('programs/offers/check', [CustomerProgramController::class, 'checkOffer'])->name('customer.programs.offers.check');
@@ -462,6 +467,7 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('communities/{uuid}/posts', [CustomerCommunityController::class, 'feed'])->name('communities.posts');
     Route::get('communities/{uuid}/events', [CustomerGameController::class, 'communityEvents'])->name('communities.events');
     Route::get('games/config', [CustomerGameController::class, 'config'])->name('games.config');
+    Route::get('tournaments/{uuid}', [CustomerGameController::class, 'showTournament'])->name('tournaments.show');
     Route::get('games/{uuid}', [CustomerGameController::class, 'show'])->name('games.show');
     Route::get('programs', [CustomerProgramController::class, 'index'])->name('programs.index');
     Route::get('programs/{uuid}', [CustomerProgramController::class, 'show'])->name('programs.show');
