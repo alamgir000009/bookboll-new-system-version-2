@@ -9,7 +9,7 @@ import { ensureSignedIn } from '../../lib/authGate.js'
 import { useSeo } from '../../lib/seo.js'
 useSeo({ title: 'Host a game, hangout or tournament', description: 'Set up your own pickup game, social hangout or tournament, pick a venue and invite players — host free on Bookboll.', path: '/host-game' })
 import { loadLocations, loadFacility, loadFacilities, loadListing } from '../../customer/data.js'
-import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit, createTournament } from '../../customer/apiGames.js'
+import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit, createTournament, courtPaymentPlan, splitCourt, PAY_METHOD_LABEL } from '../../customer/apiGames.js'
 import { PLAY_FORMATS } from '../../customer/matchmaking.js'
 import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../../customer/apiBooking.js'
 import { hostDraft, saveHostDraft, clearHostDraft } from '../../customer/hostDraft.js'
@@ -128,6 +128,10 @@ const gHoldExpiresAt = ref(0)     // epoch ms the game's picked slots are reserv
 // The chosen court's commission rate — the SAME rate its normal venue bookings
 // use (listing → country → 15%), so the host's deposit matches a regular booking.
 const gCommissionPct = ref(null)
+// How this court may be paid for (the provider's own settings) and the host's pick.
+const payPlan = ref({ methods: [], depositAmount: 0, depositPercentage: 0 })
+const payMethod = ref('')
+const payLabel = PAY_METHOD_LABEL
 // Events per-seat commission — the chosen court's COUNTRY rate (admin-set on the
 // Countries page), else the platform default. Resolved async like gCommissionPct.
 const seatPct = ref(SEAT_FEE_PCT)
@@ -351,6 +355,13 @@ function applyCourt(card, d) {
   gOwned.value = d?.location ? !d.location.owner_user_id : false
   gCommissionPct.value = null   // → default rate until the court's own rate resolves
   courtCommissionPct(card.id).then(p => { if (gCourt.value === card.id) gCommissionPct.value = p })
+  payPlan.value = { methods: [], depositAmount: 0, depositPercentage: 0 }
+  payMethod.value = ''
+  courtPaymentPlan(card.id).then(pl => {
+    if (gCourt.value !== card.id) return
+    payPlan.value = pl
+    payMethod.value = pl.methods[0] || ''
+  })
   eventSeatFeePct(card.id, seatOpts()).then(p => { if (gCourt.value === card.id) seatPct.value = p })
   if (!f.value.sport && gCourtObj.value?.sport_category) f.value.sport = gCourtObj.value.sport_category
 }
@@ -422,12 +433,13 @@ const hostCharge = computed(() => {
     // Hangout at the host's own spot: no court, no service fee — free to publish.
     if (ownSpot.value) return { cur, courtTotal: 0, courtNow: 0, courtArrival: 0, serviceFee: 0, dueNow: 0, dueArrival: 0, bookbollOwned: false }
     const courtTotal = gSel.value.reduce((n, s) => n + (Number(s.price) || 0), 0)
-    // Deposit at the court's OWN commission rate — same as a regular venue booking.
-    const courtNow = gOwned.value ? courtTotal : courtDeposit(courtTotal, gCommissionPct.value)
+    // Pay the court the way the provider allows — the same options and deposit a
+    // regular booking of this court would offer.
+    const courtNow = splitCourt(courtTotal, payMethod.value, payPlan.value).now
     // Seats = the cap (games always; hangouts only when "limit seats" is on, else unlimited → 0 → no fee).
     const seats = type.value === 'event' ? (f.value.limit_seats ? (Number(f.value.max_players) || 0) : 0) : (Number(f.value.max_players) || 0)
     const serviceFee = effectiveTicketMode.value === 'stripe' ? 0 : seatFeeAt((Number(f.value.price_per_person) || 0) * seats, seatPct.value)
-    return { cur, courtTotal, courtNow, courtArrival: courtTotal - courtNow, serviceFee, dueNow: courtNow + serviceFee, dueArrival: courtTotal - courtNow, bookbollOwned: gOwned.value }
+    return { cur, courtTotal, courtNow, courtArrival: courtTotal - courtNow, serviceFee, dueNow: courtNow + serviceFee, dueArrival: courtTotal - courtNow, bookbollOwned: payMethod.value === 'online', payMethod: payMethod.value }
   }
   let courtTotal = 0, courtNow = 0
   rounds.value.forEach(rd => rd.games.forEach(gm => {
@@ -894,6 +906,7 @@ async function publishGame() {
     // how the host wants to collect seat money and how many points to spend.
     loyalty_redeem: loyaltyAmount.value,
     ticket_mode: effectiveTicketMode.value,
+    payment_method: payMethod.value || null,
     // Saved with the game itself, so there's no follow-up write to go wrong.
     community_id: communityId.value || null,
     community_public: !!listPublic.value,
@@ -918,6 +931,7 @@ async function publishTournament() {
     prize_pot: prizeTotal.value, prize_note: prizeBreakdown.value,
     loyalty_redeem: loyaltyAmount.value,
     ticket_mode: effectiveTicketMode.value,
+    payment_method: payMethod.value || null,
     approval_mode: f.value.approval_mode,
     community_id: communityId.value || null,
     community_public: !!listPublic.value,
@@ -1608,8 +1622,26 @@ function goToPublished() { const p = publishedPath.value; published.value = null
         </div>
 
         <div class="hg-pay">
+          <!-- Only what this venue actually accepts — the same choice a customer
+               booking the court would get. Hidden when there's nothing to choose. -->
+          <div v-if="!ownSpot && payPlan.methods.length > 1" class="hg-paypick">
+            <div class="hg-pay-h">How do you want to pay the venue?</div>
+            <label v-for="m in payPlan.methods" :key="m" class="hg-paypick-opt" :class="{ on: payMethod === m }">
+              <input type="radio" :value="m" v-model="payMethod" />
+              <span class="hg-paypick-txt">
+                <span class="hg-paypick-lbl">{{ payLabel[m] }}</span>
+                <span class="hg-paypick-sub">
+                  <template v-if="m === 'online'">{{ hostCharge.cur }} {{ hostCharge.courtTotal.toLocaleString() }} now</template>
+                  <template v-else-if="m === 'cash'">Nothing now — settle it at the venue</template>
+                  <template v-else>{{ hostCharge.cur }} {{ splitCourt(hostCharge.courtTotal, 'deposit', payPlan).now.toLocaleString() }} now, the rest at the venue</template>
+                </span>
+              </span>
+            </label>
+          </div>
+
           <div class="hg-pay-h">What you'll pay now</div>
           <div v-if="hostCharge.courtNow > 0" class="hg-pay-row"><span><template v-if="hostCharge.courtArrival > 0">Venue deposit (secures the venue{{ type === 'tournament' ? 's' : '' }}) <span class="hg-pay-nr">non-refundable</span></template><template v-else>Venue — full online</template></span><b>{{ hostCharge.cur }} {{ hostCharge.courtNow.toLocaleString() }}</b></div>
+          <div v-else-if="!ownSpot && hostCharge.courtTotal > 0" class="hg-pay-row"><span>Venue — paid on arrival</span><b class="hg-pay-free">{{ hostCharge.cur }} 0</b></div>
           <div v-if="effectiveTicketMode === 'stripe'" class="hg-pay-row"><span>Service fee · split from each Stripe ticket automatically</span><b class="hg-pay-free">{{ hostCharge.cur }} 0</b></div>
           <div v-else class="hg-pay-row"><span>Service fee · {{ seatPct }}% of {{ type === 'tournament' ? 'team entries' : 'seats' }} <span class="hg-pay-nr">non-refundable</span></span><b>{{ hostCharge.cur }} {{ hostCharge.serviceFee.toLocaleString() }}</b></div>
           <div class="hg-pay-row hg-pay-total"><span>Total due now</span><b>{{ hostCharge.cur }} {{ hostCharge.dueNow.toLocaleString() }}</b></div>
@@ -2038,6 +2070,12 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-pay-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--brand); margin-bottom: 8px; }
 .hg-pay-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: #334155; padding: 5px 0; }
 .hg-pay-row b { color: #0f172a; font-weight: 800; }
+.hg-paypick { margin-bottom: 14px; }
+.hg-paypick-opt { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; margin-top: 8px; cursor: pointer; }
+.hg-paypick-opt.on { border-color: var(--brand, #0f766e); background: color-mix(in srgb, var(--brand, #0f766e) 6%, transparent); }
+.hg-paypick-txt { display: flex; flex-direction: column; gap: 2px; }
+.hg-paypick-lbl { font-weight: 600; font-size: 13px; }
+.hg-paypick-sub { font-size: 12px; opacity: .7; }
 .hg-pay-nr { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: #b91c1c; background: #fee2e2; padding: 2px 7px; border-radius: 999px; margin-left: 6px; }
 .hg-pay-total { border-top: 1px solid #99f6e4; margin-top: 4px; padding-top: 9px; font-size: 15px; }
 .hg-pay-total b { font-size: 19px; font-weight: 900; }

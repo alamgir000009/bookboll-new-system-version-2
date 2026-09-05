@@ -295,3 +295,23 @@ export async function cancelCustomerBooking(id, reason) {
   if (!res.success) return { error: res.message || 'Sorry — the booking could not be cancelled. Please try again.' }
   return { ok: true, booking: res.data?.booking }
 }
+
+/**
+ * The bookings a Stripe checkout just paid for. Stripe sends the customer back to
+ * /thank-you with the ids, so the page can confirm exactly what was booked.
+ */
+export async function loadBookingsByIds(ids) {
+  const list = (Array.isArray(ids) ? ids : String(ids || '').split(','))
+    .map(v => String(v).trim()).filter(Boolean)
+  if (!list.length) return []
+
+  const res = await apiFetch('/customer/bookings/by-ids', { query: { booking_ids: list.join(',') } })
+  if (!res.success) return []
+
+  return bookingList(res).map(row => ({
+    ...mapCustomerBooking(row),
+    due: Number(row.due_amount) || 0,
+    statusLabel: row.status_label || '',
+    paymentMethod: row.payment_method || '',
+  }))
+}

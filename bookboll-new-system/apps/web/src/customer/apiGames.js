@@ -51,6 +51,9 @@ export async function gameConfig(listingId = null, community = false) {
     courtCommissionPct: Number(data.court_commission_pct ?? 15),
     seatFeePct: Number(data.seat_fee_pct ?? SEAT_FEE_PCT),
     bookbollOwned: !!data.bookboll_owned,
+    paymentMethods: Array.isArray(data.payment_methods) ? data.payment_methods : [],
+    depositAmount: Number(data.deposit_amount ?? 0),
+    depositPercentage: Number(data.deposit_percentage ?? 0),
   }
   return _config[key]
 }
@@ -83,6 +86,36 @@ export async function eventSeatFeePct(listingId, { community = false } = {}) {
 
 export async function courtCommissionPct(listingId) {
   return (await gameConfig(listingId)).courtCommissionPct
+}
+
+/**
+ * How this court may be paid for — the provider's own settings, the same ones a
+ * customer booking it would see.
+ */
+export async function courtPaymentPlan(listingId) {
+  const c = await gameConfig(listingId)
+  return { methods: c.paymentMethods, depositAmount: c.depositAmount, depositPercentage: c.depositPercentage }
+}
+
+/**
+ * Split a court total the way the chosen method pays it. Mirrors the server so the
+ * wizard shows exactly what will be charged.
+ */
+export function splitCourt(total, method, plan = {}) {
+  const amount = Number(total) || 0
+  if (method === 'online') return { now: amount, arrival: 0 }
+  if (method === 'cash') return { now: 0, arrival: amount }
+  const flat = Number(plan.depositAmount) || 0
+  const pct = Number(plan.depositPercentage) || 0
+  const deposit = Math.max(0, Math.min(flat > 0 ? flat : Math.floor(amount * (pct > 0 ? pct : 20) / 100), amount))
+  return { now: deposit, arrival: amount - deposit }
+}
+
+/** Labels for the host's payment choice. */
+export const PAY_METHOD_LABEL = {
+  online: 'Pay the venue in full now',
+  deposit: 'Pay a deposit now, the rest at the venue',
+  cash: 'Pay the venue on arrival',
 }
 
 /** Everything the host chose. The server prices it and reserves the court. */

@@ -32,6 +32,8 @@ import Rewards from './customer/pages/Rewards.vue'
 import Account from './customer/pages/Account.vue'
 import MyGames from './customer/pages/MyGames.vue'
 import MyBookings from './customer/pages/MyBookings.vue'
+import ThankYou from './customer/pages/ThankYou.vue'
+import PaymentCancelled from './customer/pages/PaymentCancelled.vue'
 import MyMemberships from './customer/pages/MyMemberships.vue'
 import Messages from './customer/pages/Messages.vue'
 import PublicProfile from './customer/pages/PublicProfile.vue'
@@ -86,6 +88,8 @@ const router = createRouter({
     customer('/account', Account),
     customer('/my-games', MyGames),
     customer('/my-bookings', MyBookings),
+    customer('/thank-you', ThankYou),
+    customer('/payment/cancel', PaymentCancelled),
     customer('/my-memberships', MyMemberships),
     customer('/messages', Messages),
     customer('/messages/:id', Messages),
