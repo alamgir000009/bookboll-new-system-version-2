@@ -1,44 +1,71 @@
 /**
- * hostPayouts.js — Stripe Connect for event HOSTS (customers), Luma-style.
+ * hostPayouts.js — how an event HOST gets paid when their tickets sell online.
  *
- * SIMULATED (like every payment rail in this app): "connecting" writes a demo
- * account object to customers.stripe_connect; production swaps connectStripeDemo
- * for Stripe's OAuth/Account-Links flow with the same stored shape.
+ * Two ways, and the host picks one:
+ *   • connect — Bookboll creates a Stripe Express account and Stripe hosts the
+ *     onboarding form. Bookboll's commission is taken automatically from each
+ *     ticket, so there's no upfront seats fee.
+ *   • keys — the host pastes their own Stripe keys and joiners are charged
+ *     straight on their account. The secret only ever travels to our backend,
+ *     which verifies it with Stripe before storing it encrypted.
  *
- * Why hosts connect: with Stripe tickets on an event, joiners pay ONLINE and
- * Bookboll's service fee is split from each ticket automatically — so the host
- * skips the upfront per-seat fee, and proceeds land on their Stripe payout
- * schedule instead of being collected in cash.
+ * Everything here is real: no account is "connected" until Stripe says the
+ * account can actually take charges.
  */
-import { supabase } from '../lib/supabase.js'
+import { apiFetch } from '../lib/api.js'
 
-export async function loadStripeConnect(customerId) {
-  if (!customerId) return null
-  const { data, error } = await supabase.from('customers').select('stripe_connect').eq('id', customerId).maybeSingle()
-  if (error) return null           // column missing (migration not run) → treated as not connected
-  return data?.stripe_connect || null
-}
-
-export async function connectStripeDemo(customerId, { country } = {}) {
-  if (!customerId) return { error: 'Sign in first.' }
-  const acct = {
-    connected: true,
-    account_id: 'acct_demo_' + Math.random().toString(36).slice(2, 10),
-    country: country || '',
-    connected_at: new Date().toISOString(),
+function formatErr(res, fallback) {
+  const errors = res?.errors
+  if (errors && typeof errors === 'object') {
+    for (const v of Object.values(errors)) {
+      const msg = Array.isArray(v) ? v[0] : v
+      if (msg) return String(msg)
+    }
   }
-  const { error } = await supabase.from('customers').update({ stripe_connect: acct }).eq('id', customerId)
-  if (error) {
-    return { error: /stripe_connect|schema cache/i.test(error.message || '')
-      ? 'Run migration 20260736000000 (host Stripe Connect) first.'
-      : error.message }
-  }
-  return { account: acct }
+  return res?.message || fallback
 }
 
-export async function disconnectStripe(customerId) {
-  if (!customerId) return
-  await supabase.from('customers').update({ stripe_connect: null }).eq('id', customerId)
+/** The host's payout setup, or null when they haven't set one up. */
+export async function loadStripeConnect() {
+  const res = await apiFetch('/customer/stripe/payouts')
+  if (!res.success) return null
+  return res.data?.account || null
 }
 
-export const isStripeConnected = (sc) => !!(sc && sc.connected && sc.account_id)
+/**
+ * Start Stripe's hosted onboarding. Returns the URL to send the host to — they
+ * come back to `returnUrl`, where we re-check the account with Stripe.
+ */
+export async function startStripeConnect({ returnUrl, refreshUrl }) {
+  const res = await apiFetch('/customer/stripe/payouts/connect', {
+    method: 'POST',
+    body: { return_url: returnUrl, refresh_url: refreshUrl },
+  })
+  if (!res.success || !res.data?.url) return { error: formatErr(res, 'Could not start Stripe onboarding.') }
+  return { url: res.data.url, account: res.data.account }
+}
+
+/** Re-read the connected account from Stripe (after onboarding, or on demand). */
+export async function syncStripeConnect() {
+  const res = await apiFetch('/customer/stripe/payouts/sync', { method: 'POST' })
+  if (!res.success) return { error: formatErr(res, 'Could not refresh from Stripe.') }
+  return { account: res.data?.account || null }
+}
+
+/** Verify and save the host's own Stripe keys. */
+export async function saveStripeKeys({ secretKey, publishableKey }) {
+  const res = await apiFetch('/customer/stripe/payouts/keys', {
+    method: 'POST',
+    body: { secret_key: secretKey, publishable_key: publishableKey || null },
+  })
+  if (!res.success) return { error: formatErr(res, 'Could not verify those keys.') }
+  return { account: res.data?.account || null }
+}
+
+export async function disconnectStripe() {
+  const res = await apiFetch('/customer/stripe/payouts', { method: 'DELETE' })
+  return res.success ? { ok: true } : { error: formatErr(res, 'Could not disconnect.') }
+}
+
+/** Only an account Stripe says can take charges may sell tickets. */
+export const isStripeConnected = (a) => !!(a && a.ready)

@@ -15,7 +15,7 @@ import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../.
 import { hostDraft, saveHostDraft, clearHostDraft } from '../../customer/hostDraft.js'
 import { loadCommunity } from '../../customer/community.js'
 import { getSavedPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
-import { loadStripeConnect, connectStripeDemo, isStripeConnected } from '../../customer/hostPayouts.js'
+import { loadStripeConnect, startStripeConnect, syncStripeConnect, saveStripeKeys, disconnectStripe, isStripeConnected } from '../../customer/hostPayouts.js'
 import { TEAM_OPTIONS, roundsFor, matchesInRound, totalGames, roundName, fmtTime, consecutiveSlots, normTime, addMinutes } from '../../customer/bracket.js'
 import PhoneInput from '../components/PhoneInput.vue'
 import LiabilityWaiver from '../components/LiabilityWaiver.vue'
@@ -395,17 +395,55 @@ const gameRange = computed(() => {
 // ticket automatically — so the host skips the upfront per-seat service fee.
 const stripeAcct = ref(null)
 const stripeBusy = ref(false)
+const stripeErr = ref('')
 const stripeConnected = computed(() => isStripeConnected(stripeAcct.value))
-async function loadStripe() { stripeAcct.value = isCustomer.value ? await loadStripeConnect(customer.value.id) : null }
+// 'connect' = Bookboll opens a Stripe account for them; 'keys' = they bring their own.
+const payoutTab = ref('connect')
+const keyForm = ref({ secret: '', publishable: '' })
+
+async function loadStripe() { stripeAcct.value = isCustomer.value ? await loadStripeConnect() : null }
 watch(() => customer.value?.id, loadStripe, { immediate: true })
+
 async function connectStripe() {
   if (!isCustomer.value && !(await ensureSignedIn())) return
   stripeBusy.value = true
-  const r = await connectStripeDemo(customer.value.id, { country: selectedCountry.value?.name })
+  stripeErr.value = ''
+  const base = window.location.origin + route.path + '?community=' + (route.query.community || '')
+  const r = await startStripeConnect({ returnUrl: base + '&stripe=done', refreshUrl: base + '&stripe=retry' })
   stripeBusy.value = false
-  if (r.error) { err.value = r.error; return }
+  if (r.error) { stripeErr.value = r.error; return }
+  // Onboarding happens on Stripe, so keep their progress before leaving.
+  saveHostDraft({ type: type.value, basics: { ...f.value }, communityId: communityId.value })
+  window.location.href = r.url
+}
+
+async function submitStripeKeys() {
+  if (!isCustomer.value && !(await ensureSignedIn())) return
+  stripeBusy.value = true
+  stripeErr.value = ''
+  const r = await saveStripeKeys({ secretKey: keyForm.value.secret, publishableKey: keyForm.value.publishable })
+  stripeBusy.value = false
+  if (r.error) { stripeErr.value = r.error; return }
   stripeAcct.value = r.account
+  keyForm.value = { secret: '', publishable: '' }
   f.value.ticket_mode = 'stripe'
+}
+
+async function refreshStripe() {
+  stripeBusy.value = true
+  stripeErr.value = ''
+  const r = await syncStripeConnect()
+  stripeBusy.value = false
+  if (r.account) stripeAcct.value = r.account
+  else if (r.error) stripeErr.value = r.error
+}
+
+async function unlinkStripe() {
+  stripeBusy.value = true
+  await disconnectStripe()
+  stripeBusy.value = false
+  stripeAcct.value = null
+  stripeErr.value = ''
 }
 // Effective mode: Stripe tickets apply to ALL event types, but only once connected.
 const effectiveTicketMode = computed(() =>
@@ -985,6 +1023,11 @@ const published = ref(null)   // { id, type } once created
 const nowTick = ref(Date.now())
 let holdTicker = null
 onMounted(() => { holdTicker = setInterval(() => { nowTick.value = Date.now() }, 1000) })
+onMounted(async () => {
+  if (route.query.stripe !== 'done' || !isCustomer.value) return
+  await refreshStripe()
+  router.replace({ path: route.path, query: { ...route.query, stripe: undefined } })
+})
 onBeforeUnmount(() => { if (holdTicker) clearInterval(holdTicker) })
 // The soonest any currently-picked court is released (0 = nothing held / holds not live).
 const holdDeadline = computed(() => {
@@ -1230,15 +1273,74 @@ function goToPublished() { const p = publishedPath.value; published.value = null
             </button>
           </div>
           <div v-if="f.ticket_mode === 'stripe'" class="hg-tk-connect" :class="{ ok: stripeConnected }">
+            <!-- Already taking payments -->
             <template v-if="stripeConnected">
-              <Check :size="14" /> Stripe connected <span class="hg-tk-acct">{{ stripeAcct.account_id }}</span>
+              <div class="hg-sc-ok">
+                <Check :size="14" />
+                <span>
+                  Payouts go to <b>{{ stripeAcct.account_name || stripeAcct.account_id }}</b>
+                  <span class="hg-tk-acct">{{ stripeAcct.account_id }}</span>
+                  <span v-if="!stripeAcct.livemode" class="hg-sc-chip">test mode</span>
+                  <span v-if="stripeAcct.mode === 'keys'" class="hg-sc-chip">your own Stripe</span>
+                </span>
+              </div>
+              <div v-if="!stripeAcct.payouts_enabled" class="hg-sc-warn">
+                <Info :size="13" /> Stripe can take payments but hasn't enabled payouts yet — finish your details in Stripe to get paid out.
+              </div>
+              <div class="hg-sc-links">
+                <button type="button" class="hg-sc-link" :disabled="stripeBusy" @click="refreshStripe">Refresh status</button>
+                <button type="button" class="hg-sc-link" :disabled="stripeBusy" @click="unlinkStripe">Disconnect</button>
+              </div>
             </template>
+
+            <!-- Onboarding started but Stripe won't let them charge yet -->
+            <template v-else-if="stripeAcct && stripeAcct.mode === 'connect'">
+              <span>Your Stripe account isn't finished yet, so this event falls back to pay on arrival.</span>
+              <div class="hg-sc-links">
+                <button type="button" class="hg-tk-btn" :disabled="stripeBusy" @click="connectStripe">
+                  <Loader v-if="stripeBusy" :size="14" class="hg-spin" /> Finish Stripe setup
+                </button>
+                <button type="button" class="hg-sc-link" :disabled="stripeBusy" @click="refreshStripe">I've finished — re-check</button>
+              </div>
+            </template>
+
+            <!-- Nothing set up yet: two ways to get paid -->
             <template v-else>
-              <span>Connect your Stripe account to enable online tickets — until then this event falls back to pay on arrival.</span>
-              <button type="button" class="hg-tk-btn" :disabled="stripeBusy" @click="connectStripe">
-                <Loader v-if="stripeBusy" :size="14" class="hg-spin" /> {{ stripeBusy ? 'Connecting…' : 'Connect Stripe account' }}
-              </button>
+              <span>Get paid for tickets — pick how the money reaches you. Until then this event falls back to pay on arrival.</span>
+              <div class="hg-sc-tabs">
+                <button type="button" :class="{ on: payoutTab === 'connect' }" @click="payoutTab = 'connect'">Connect with Stripe</button>
+                <button type="button" :class="{ on: payoutTab === 'keys' }" @click="payoutTab = 'keys'">Use my own Stripe keys</button>
+              </div>
+
+              <div v-if="payoutTab === 'connect'" class="hg-sc-pane">
+                <p class="hg-sc-p">
+                  We'll open a Stripe account in your name — Stripe handles the form and your
+                  details never touch Bookboll. Bookboll's {{ seatPct }}% comes off each ticket
+                  automatically, so there's nothing to pay upfront.
+                </p>
+                <button type="button" class="hg-tk-btn" :disabled="stripeBusy" @click="connectStripe">
+                  <Loader v-if="stripeBusy" :size="14" class="hg-spin" /> {{ stripeBusy ? 'Opening Stripe…' : 'Connect with Stripe' }}
+                </button>
+              </div>
+
+              <div v-else class="hg-sc-pane">
+                <p class="hg-sc-p">
+                  Already run Stripe? Paste your keys and joiners are charged straight on your
+                  own account. We check them with Stripe before saving, and the secret key is
+                  encrypted. Bookboll's {{ seatPct }}% is <b>not</b> taken from these tickets —
+                  it'll be billed to you separately.
+                </p>
+                <label class="hg-sc-lbl">Secret key</label>
+                <input v-model="keyForm.secret" type="password" class="hg-in" placeholder="sk_live_… or sk_test_…" autocomplete="off" />
+                <label class="hg-sc-lbl">Publishable key <span class="hg-sc-opt">(optional)</span></label>
+                <input v-model="keyForm.publishable" type="text" class="hg-in" placeholder="pk_live_… or pk_test_…" autocomplete="off" />
+                <button type="button" class="hg-tk-btn" :disabled="stripeBusy || !keyForm.secret" @click="submitStripeKeys">
+                  <Loader v-if="stripeBusy" :size="14" class="hg-spin" /> {{ stripeBusy ? 'Checking with Stripe…' : 'Verify & save keys' }}
+                </button>
+              </div>
             </template>
+
+            <div v-if="stripeErr" class="hg-sc-err">{{ stripeErr }}</div>
           </div>
         </div>
 
@@ -1845,6 +1947,19 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-tk-connect { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px; border: 1px dashed #cbd5e1; border-radius: 10px; font-size: 12.5px; color: #475569; line-height: 1.45; }
 .hg-tk-connect.ok { border-style: solid; border-color: #bbf7d0; background: #f0fdf4; color: #166534; font-weight: 700; }
 .hg-tk-connect > span:first-child { flex: 1; min-width: 180px; }
+.hg-sc-ok { display: flex; gap: 7px; align-items: flex-start; }
+.hg-sc-chip { margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: rgba(127,127,127,.16); }
+.hg-sc-warn { display: flex; gap: 6px; align-items: center; margin-top: 8px; font-size: 12.5px; opacity: .8; }
+.hg-sc-links { display: flex; gap: 12px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.hg-sc-link { background: none; border: 0; padding: 0; font-size: 12.5px; font-weight: 600; text-decoration: underline; cursor: pointer; color: inherit; opacity: .8; }
+.hg-sc-tabs { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
+.hg-sc-tabs button { flex: 1; min-width: 150px; font-size: 12.5px; font-weight: 600; padding: 7px 10px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line, #e5e7eb); background: transparent; color: inherit; }
+.hg-sc-tabs button.on { border-color: var(--brand, #0f766e); background: color-mix(in srgb, var(--brand, #0f766e) 8%, transparent); }
+.hg-sc-pane { display: flex; flex-direction: column; gap: 6px; }
+.hg-sc-p { margin: 0 0 4px; font-size: 12.5px; line-height: 1.55; opacity: .8; }
+.hg-sc-lbl { font-size: 12px; font-weight: 600; margin-top: 4px; }
+.hg-sc-opt { font-weight: 400; opacity: .6; }
+.hg-sc-err { margin-top: 10px; font-size: 12.5px; color: #dc2626; }
 .hg-tk-acct { font-family: ui-monospace, monospace; font-size: 11.5px; font-weight: 600; color: #15803d; background: #dcfce7; padding: 2px 8px; border-radius: 999px; }
 .hg-tk-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: none; border-radius: 999px; background: #635bff; color: #fff; font-size: 12.5px; font-weight: 800; cursor: pointer; white-space: nowrap; }
 .hg-tk-btn:disabled { opacity: .6; cursor: default; }
