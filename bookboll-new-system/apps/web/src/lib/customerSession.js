@@ -7,7 +7,6 @@
  *  • Loyalty tier helpers shared by the home badge + Rewards page.
  */
 import { ref, computed } from 'vue'
-import { supabase } from './supabase.js'
 import { apiFetch, getCustomerToken, setCustomerToken, clearCustomerToken } from './api.js'
 
 const LOC_KEY  = 'bb_customer_location'
@@ -184,45 +183,6 @@ function formatApiError(res, fallback) {
   return res?.message || fallback
 }
 
-/** Find or create the storefront `customers` row used by games/communities/loyalty. */
-async function upsertStorefrontCustomer({ email, fullName, phone, countryId, marketing, avatarUrl }) {
-  const cleanEmail = (email || '').trim().toLowerCase()
-  if (!cleanEmail) return { error: 'Please enter your email.' }
-
-  const { data: existing } = await supabase.from('customers').select('*').ilike('email', cleanEmail).maybeSingle()
-  if (existing) return { customer: existing }
-
-  const base = {
-    full_name: (fullName || '').trim() || cleanEmail.split('@')[0],
-    email: cleanEmail,
-    phone: (phone || '').trim(),
-    country_id: countryId || selectedCountry.value?.id || null,
-    status: 'active',
-    loyalty_tier: 'Rookie',
-    loyalty_points: 0,
-  }
-  if (avatarUrl) base.avatar_url = avatarUrl
-  const m = marketing || {}
-  const row = {
-    ...base,
-    marketing_email: !!m.email,
-    marketing_sms: !!m.sms,
-    marketing_whatsapp: !!m.whatsapp,
-  }
-  let { data: created, error } = await supabase.from('customers').insert(row).select().maybeSingle()
-  if (error && /marketing_|avatar_url|column/i.test(error.message || '')) {
-    const r = await supabase.from('customers').insert(base).select().maybeSingle()
-    created = r.data; error = r.error
-  }
-  if (error && /avatar_url|column/i.test(error.message || '')) {
-    const { avatar_url: _avatar, ...noAvatar } = base
-    const r = await supabase.from('customers').insert(noAvatar).select().maybeSingle()
-    created = r.data; error = r.error
-  }
-  if (error) return { error: error.message }
-  return { customer: created }
-}
-
 function mapLaravelUserToCustomer(user, preferences = {}) {
   const marketingEmail = !!(preferences?.notifications?.marketing_emails)
   return {
@@ -325,14 +285,6 @@ export async function customerResetPassword({ email, otp, password, passwordConf
   if (!res.success) return { error: formatApiError(res, 'Failed to reset password. Please check your OTP and try again.') }
   if (res.data?.token) return applyLaravelAuth(res.data.user, res.data.token)
   return { ok: true, message: res.message || 'Password has been reset successfully.' }
-}
-
-// Guest checkout fallback: create/find the storefront identity without a password.
-export async function customerSignIn({ email, fullName, phone, countryId, marketing }) {
-  const linked = await upsertStorefrontCustomer({ email, fullName, phone, countryId, marketing })
-  if (linked.error) return linked
-  persistCustomer(linked.customer)
-  return { customer: linked.customer }
 }
 
 export async function customerSignOut() {

@@ -22,7 +22,6 @@ import FacilityCard from '../components/FacilityCard.vue'
 import VisitUs from '../components/VisitUs.vue'
 import ProgramCard from '../components/ProgramCard.vue'
 import { CalendarCheck, Dumbbell, ArrowRight, Phone, Mail, MapPin, Clock, MessageCircle, Newspaper, Sparkles, Navigation } from 'lucide-vue-next'
-import { supabase } from '../../lib/supabase.js'
 import { fmt12 } from '../../lib/slots.js'
 
 useSeo(() => ({ title: activeBrand.value?.name, noindex: true, path: '/' }))

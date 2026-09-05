@@ -18,6 +18,7 @@
  */
 import { ref, computed } from 'vue'
 import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 import { appBaseUrl } from './appBase.js'
 import { setBrandScope, loadServedRegions } from '../customer/data.js'
 import { normalizeBanners } from './heroBanners.js'
@@ -62,7 +63,7 @@ export const activeBrand = ref(null)
 export const isWhiteLabel = computed(() => !!activeBrand.value)
 
 // The PLATFORM brand — the main Bookboll marketplace (apex site, no white-label).
-// Editable by the super admin in My Website; stored as platform_settings keys.
+// Editable by the super admin in My Website; stored as Laravel settings keys.
 export const platformBrand = ref({
   name: 'Bookboll', tagline: '', logo: '', primary: DEFAULT_PRIMARY, accent: DEFAULT_ACCENT,
   metaTitle: '', metaDescription: '',
@@ -71,13 +72,11 @@ export const platformBrand = ref({
   tracking: { metaPixel: '', ga4: '', gtm: '', head: '' },   // marketplace (apex) analytics/pixels
 })
 
-// Load the marketplace branding from platform_settings (best-effort → defaults on any error).
+// Load the marketplace branding from the API (best-effort → defaults on any error).
 export async function loadPlatformBrand() {
   try {
-    const { data } = await supabase.from('platform_settings').select('key, value')
-      .in('key', ['brand_name', 'brand_tagline', 'brand_logo_url', 'brand_primary', 'brand_accent', 'brand_meta_title', 'brand_meta_description', 'storefront_sort_space', 'storefront_sort_venue', 'hero_banners', 'tracking_meta_pixel', 'tracking_ga4', 'tracking_gtm', 'tracking_head'])
-    const m = {}
-    for (const row of (data || [])) m[row.key] = row.value
+    const res = await apiFetch('/marketplace/platform-brand')
+    const m = res.success ? (res.data?.settings || {}) : {}
     platformBrand.value = {
       name:    m.brand_name    || 'Bookboll',
       tagline: m.brand_tagline || '',
