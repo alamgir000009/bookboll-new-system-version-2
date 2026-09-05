@@ -31,6 +31,12 @@ class CustomerCommunityController extends Controller
         return $this->communities->mine(auth()->user());
     }
 
+    /** Everyone waiting to join any community I run. */
+    public function pendingMembers()
+    {
+        return $this->communities->pendingMembers(auth()->user());
+    }
+
     public function store(Request $request)
     {
         $data = $request->validate([
@@ -249,6 +255,16 @@ class CustomerCommunityController extends Controller
         ]);
 
         return $this->communities->streetCredCounts($data['customer_id']);
+    }
+
+    /** How many direct messages are waiting for me — the header badge. */
+    public function unreadMessages()
+    {
+        $count = \App\Models\CustomerMessage::where('recipient_id', auth()->user()->uuid)
+            ->whereNull('read_at')
+            ->count();
+
+        return sendSuccess('Unread messages', ['count' => $count]);
     }
 
     protected function optionalSanctumUser(Request $request): ?User

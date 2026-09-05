@@ -389,6 +389,7 @@ Route::prefix('customer')->group(function () {
 
         Route::get('communities/mine', [CustomerCommunityController::class, 'mine'])->name('customer.communities.mine');
         Route::get('communities/membership-check', [CustomerCommunityController::class, 'membershipCheck'])->name('customer.communities.membership-check');
+        Route::get('communities/pending-members', [CustomerCommunityController::class, 'pendingMembers'])->name('customer.communities.pending-members');
         Route::post('communities', [CustomerCommunityController::class, 'store'])->name('customer.communities.store');
         Route::patch('communities/{uuid}', [CustomerCommunityController::class, 'update'])->name('customer.communities.update');
         Route::post('communities/{uuid}/join', [CustomerCommunityController::class, 'join'])->name('customer.communities.join');
@@ -406,9 +407,12 @@ Route::prefix('customer')->group(function () {
         Route::delete('community-posts/{postUuid}', [CustomerCommunityController::class, 'deletePostById'])->name('customer.community-posts.destroy');
         Route::post('communities/{uuid}/chat/read', [CustomerCommunityController::class, 'markChatRead'])->name('customer.communities.chat.read');
         Route::get('communities/{uuid}/chat/unread', [CustomerCommunityController::class, 'chatUnread'])->name('customer.communities.chat.unread');
+        Route::get('messages/unread-count', [CustomerCommunityController::class, 'unreadMessages'])->name('customer.messages.unread');
+        Route::get('notifications/feed', [CustomerGameController::class, 'notificationFeed'])->name('customer.notifications.feed');
         Route::get('messages/group', [CustomerCommunityController::class, 'loadGroupThread'])->name('customer.messages.group.index');
         Route::post('messages/group', [CustomerCommunityController::class, 'sendGroupMessage'])->name('customer.messages.group.store');
 
+        Route::get('games/mine/due-matches', [CustomerGameController::class, 'dueMatches'])->name('customer.games.mine.due-matches');
         Route::get('games/mine/hosted', [CustomerGameController::class, 'mineHosted'])->name('customer.games.mine.hosted');
         Route::get('games/mine/joined', [CustomerGameController::class, 'mineJoined'])->name('customer.games.mine.joined');
         Route::post('games/quote', [CustomerGameController::class, 'quote'])->name('customer.games.quote');

@@ -58,6 +58,18 @@ class CustomerGameController extends Controller
         return $this->games->list($request->filled('city_id') ? (int) $request->query('city_id') : null);
     }
 
+    /** Tournament games waiting on a result from me. */
+    public function dueMatches()
+    {
+        return $this->games->dueTournamentMatches(auth()->user());
+    }
+
+    /** Raw rows behind the notification bell. */
+    public function notificationFeed()
+    {
+        return $this->games->notificationFeed(auth()->user());
+    }
+
     /** Events I'm hosting. */
     public function mineHosted()
     {

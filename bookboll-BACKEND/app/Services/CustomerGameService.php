@@ -165,6 +165,129 @@ class CustomerGameService
         });
     }
 
+    /**
+     * Tournament games whose time has passed with no winner recorded — the host
+     * still has to advance the bracket. Powers the bell and the on-login prompt.
+     */
+    public function dueTournamentMatches(User $user)
+    {
+        $tournaments = HostedGame::where('host_customer_id', $user->uuid)
+            ->where('game_type', 'tournament')
+            ->where('status', 'open')
+            ->get()
+            ->keyBy('id');
+
+        if ($tournaments->isEmpty()) {
+            return sendSuccess('Due matches', ['due' => []]);
+        }
+
+        $matches = TournamentMatch::whereIn('tournament_id', $tournaments->keys())
+            ->whereNotNull('match_date')
+            ->orderBy('match_date')->orderBy('start_time')
+            ->get();
+
+        $today = now()->toDateString();
+        $nowHM = now()->format('H:i');
+
+        $due = $matches->filter(function (TournamentMatch $m) use ($today, $nowHM) {
+            // Only a match that can actually be decided: both teams known, no winner.
+            if ($m->winner || ! $m->home_team || ! $m->away_team) {
+                return false;
+            }
+
+            $date = Carbon::parse($m->match_date)->toDateString();
+            $end  = substr((string) ($m->end_time ?: '23:59'), 0, 5);
+
+            return $date < $today || ($date === $today && $end <= $nowHM);
+        })->map(function (TournamentMatch $m) use ($tournaments) {
+            $t = $tournaments->get($m->tournament_id);
+
+            return [
+                'match'       => $this->mapMatch($m, collect()),
+                'tournament'  => $this->mapGame($t),
+                'totalRounds' => $this->roundsFor((int) ($t->num_teams ?: $t->max_players)),
+            ];
+        })->values()->all();
+
+        return sendSuccess('Due matches', ['due' => $due]);
+    }
+
+    /**
+     * The rows the notification bell builds its list from. The wording and links
+     * stay in the storefront — this only supplies the data behind them.
+     */
+    public function notificationFeed(User $user)
+    {
+        $hosted = HostedGame::where('host_customer_id', $user->uuid)->get();
+
+        $hostRequests = $hosted->isEmpty() ? collect() : GameJoinRequest::whereIn('game_id', $hosted->pluck('id'))
+            ->whereIn('status', ['pending', 'accepted'])
+            ->orderByDesc('created_at')->limit(60)->get();
+
+        $myRequests = GameJoinRequest::where('joiner_customer_id', $user->uuid)
+            ->whereIn('status', ['pending', 'accepted', 'rejected'])
+            ->orderByDesc('created_at')->limit(60)->get();
+
+        $myGames = HostedGame::whereIn('id', $myRequests->pluck('game_id')->unique())->get();
+
+        // Decided matches in tournaments I have a team in, so we can tell someone
+        // they advanced or were knocked out.
+        $myTournamentIds = $myGames->where('game_type', 'tournament')->pluck('id');
+        $matches = $myTournamentIds->isEmpty() ? collect() : TournamentMatch::whereIn('tournament_id', $myTournamentIds)
+            ->whereNotNull('winner')->where('winner', '!=', '')->limit(80)->get();
+
+        return sendSuccess('Notification feed', [
+            'dueMatches'   => $this->dueTournamentMatches($user)->getData(true)['data']['due'] ?? [],
+            'hostedGames'  => $hosted->map(fn ($g) => $this->mapNotificationGame($g))->values()->all(),
+            'hostRequests' => $hostRequests->map(fn ($r) => $this->mapNotificationRequest($r))->values()->all(),
+            'myRequests'   => $myRequests->map(fn ($r) => $this->mapNotificationRequest($r))->values()->all(),
+            'myGames'      => $myGames->map(fn ($g) => $this->mapNotificationGame($g))->values()->all(),
+            'matches'      => $matches->map(fn ($m) => [
+                'id'              => $m->uuid,
+                'tournament_id'   => $myGames->firstWhere('id', $m->tournament_id)?->uuid,
+                'round'           => (int) $m->round,
+                'match_index'     => (int) $m->match_index,
+                'home_team'       => $m->home_team ?? '',
+                'away_team'       => $m->away_team ?? '',
+                'home_request_id' => $m->home_request_id ? GameJoinRequest::find($m->home_request_id)?->uuid : null,
+                'away_request_id' => $m->away_request_id ? GameJoinRequest::find($m->away_request_id)?->uuid : null,
+                'winner'          => $m->winner ?? '',
+                'match_date'      => $m->match_date ? Carbon::parse($m->match_date)->toDateString() : null,
+            ])->values()->all(),
+        ]);
+    }
+
+    /** @return array<string, mixed> */
+    protected function mapNotificationGame(HostedGame $g): array
+    {
+        return [
+            'id'                => $g->uuid,
+            'title'             => $g->title ?? '',
+            'sport'             => $g->sport ?? '',
+            'game_type'         => $g->game_type ?? 'game',
+            'status'            => $g->status ?? 'open',
+            'game_date'         => $g->game_date ? Carbon::parse($g->game_date)->toDateString() : null,
+            'start_time'        => $g->start_time,
+            'approval_mode'     => $g->approval_mode ?? 'review',
+            'num_teams'         => (int) $g->num_teams,
+            'moderation_status' => $g->moderation_status ?: 'active',
+            'moderation_reason' => $g->moderation_reason ?? '',
+            'moderated_at'      => optional($g->moderated_at)?->toIso8601String(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    protected function mapNotificationRequest(GameJoinRequest $r): array
+    {
+        return [
+            'id'          => $r->uuid,
+            'game_id'     => $r->game?->uuid,
+            'joiner_name' => $r->joiner_name ?? '',
+            'status'      => $r->status ?? 'pending',
+            'created_at'  => optional($r->created_at)?->toIso8601String(),
+        ];
+    }
+
     /** Events I'm hosting, newest first, with how the roster is filling up. */
     public function mineHosted(User $user)
     {

@@ -127,6 +127,48 @@ class CustomerCommunityService
         return sendSuccess('My communities', ['communities' => $decorated]);
     }
 
+    /**
+     * Everyone waiting to be let into a community I run — across all of them at
+     * once, so the notification bell doesn't ask community by community.
+     */
+    public function pendingMembers(User $user)
+    {
+        if (! $user->uuid) {
+            return sendSuccess('Pending members', ['members' => []]);
+        }
+
+        $managedIds = CommunityMember::where('customer_id', $user->uuid)
+            ->where('status', 'accepted')
+            ->whereIn('role', ['owner', 'admin'])
+            ->pluck('community_id');
+
+        if ($managedIds->isEmpty()) {
+            return sendSuccess('Pending members', ['members' => []]);
+        }
+
+        $communities = Community::whereIn('id', $managedIds)
+            ->where(function ($w) {
+                $w->where('moderation_status', 'active')->orWhereNull('moderation_status');
+            })
+            ->get()->keyBy('id');
+
+        $pending = CommunityMember::whereIn('community_id', $communities->keys())
+            ->where('status', 'pending')
+            ->where('customer_id', '!=', $user->uuid)
+            ->orderBy('joined_at')
+            ->get();
+
+        $members = $pending->map(fn (CommunityMember $m) => [
+            'id'             => $m->uuid,
+            'community_id'   => $communities->get($m->community_id)?->uuid,
+            'community_name' => $communities->get($m->community_id)?->name ?? '',
+            'customer_id'    => $m->customer_id,
+            'joined_at'      => optional($m->joined_at)?->toIso8601String(),
+        ])->values()->all();
+
+        return sendSuccess('Pending members', ['members' => $members]);
+    }
+
     public function create(User $user, array $fields)
     {
         if (! $user->uuid) {
