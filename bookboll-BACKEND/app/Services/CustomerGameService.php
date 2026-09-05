@@ -51,6 +51,8 @@ class CustomerGameService
     {
         $listing = $listingId ? Listing::find($listingId) : null;
 
+        $plan = $listing ? $this->paymentPlan($listing, $this->venueFor($listing)) : null;
+
         return sendSuccess('Game config', [
             'games_enabled'       => true,
             'tournaments_enabled' => true,
@@ -58,6 +60,11 @@ class CustomerGameService
             'court_commission_pct' => $this->courtCommissionPct($listing),
             'seat_fee_pct'         => $this->seatFeePct($listing, $community),
             'bookboll_owned'       => $listing ? ! $this->venueFor($listing)?->owner_user_id : false,
+            // What the provider takes on this court, so the host is offered the
+            // same choice a customer booking it would get.
+            'payment_methods'      => $plan['methods'] ?? [],
+            'deposit_amount'       => $plan['deposit_amount'] ?? 0,
+            'deposit_percentage'   => $plan['deposit_percentage'] ?? 0,
         ]);
     }
 
@@ -433,6 +440,87 @@ class CustomerGameService
     // ── Money ────────────────────────────────────────────────────────────────
 
     /**
+     * What the provider actually lets someone pay with on this court, and the
+     * deposit they set. Same source of truth a normal booking uses, so hosting a
+     * game can never offer a method the venue doesn't take.
+     *
+     * @return array{methods: array<int,string>, deposit_amount: float, deposit_percentage: float}
+     */
+    protected function paymentPlan(Listing $listing, ?Venue $venue): array
+    {
+        $options = is_array($listing->payment_options) ? $listing->payment_options : [];
+        $deposit = is_array($options['deposit'] ?? null) ? $options['deposit'] : [];
+
+        $methods = [];
+
+        if ($listing->online_payment || filter_var($options['online_payment_enabled'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $methods[] = 'online';
+        }
+
+        if ($deposit !== [] || filter_var($options['deposit_enabled'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $methods[] = 'deposit';
+        }
+
+        if (filter_var($options['cash_on_arrival'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $methods[] = 'cash';
+        }
+
+        // Nothing configured yet — fall back on ownership, as the booking flow does.
+        if ($methods === []) {
+            $methods = $venue?->owner_user_id ? ['deposit'] : ['online'];
+        }
+
+        return [
+            'methods'            => $methods,
+            'deposit_amount'     => (float) ($deposit['amount'] ?? 0),
+            'deposit_percentage' => (float) ($deposit['percentage'] ?? 0),
+        ];
+    }
+
+    /**
+     * Split a court total the way the chosen method pays for it: all now, all on
+     * arrival, or the provider's deposit now and the rest at the venue.
+     *
+     * @return array{now: float, arrival: float}
+     */
+    protected function splitCourt(float $total, string $method, array $plan): array
+    {
+        if ($method === 'online') {
+            return ['now' => $total, 'arrival' => 0.0];
+        }
+
+        if ($method === 'cash') {
+            return ['now' => 0.0, 'arrival' => $total];
+        }
+
+        // A flat deposit wins over a percentage — the rule the booking flow uses.
+        $deposit = $plan['deposit_amount'] > 0
+            ? $plan['deposit_amount']
+            : floor($total * ($plan['deposit_percentage'] > 0 ? $plan['deposit_percentage'] : 20) / 100);
+
+        $deposit = max(0, min($deposit, $total));
+
+        return ['now' => round($deposit, 2), 'arrival' => round($total - $deposit, 2)];
+    }
+
+    /** The method to charge on: what the host picked, if the provider allows it. */
+    protected function resolveMethod(array $plan, ?string $wanted): string
+    {
+        if ($wanted && in_array($wanted, $plan['methods'], true)) {
+            return $wanted;
+        }
+
+        // Otherwise take the most-paid-up-front option the provider does allow.
+        foreach (['online', 'deposit', 'cash'] as $method) {
+            if (in_array($method, $plan['methods'], true)) {
+                return $method;
+            }
+        }
+
+        return 'cash';
+    }
+
+    /**
      * The host's bill. The court is priced from the listing's own rates; the seats
      * service fee is a percentage of the seats the host is selling. Hosts selling
      * tickets through their own Stripe pay no seats fee — Stripe collects it there.
@@ -448,12 +536,12 @@ class CustomerGameService
 
         $courtTotal = $this->courtPrice($listing, $data);
 
-        // A Bookboll-owned venue (no provider behind it) is paid in full online;
-        // everyone else takes a deposit now and the balance on arrival.
-        $bookbollOwned = ! $venue?->owner_user_id;
-        $courtNow      = $bookbollOwned
-            ? $courtTotal
-            : round($courtTotal * $this->courtCommissionPct($listing) / 100);
+        // Pay for the court the way the provider allows — the same choice and the
+        // same deposit a customer booking this court would get.
+        $plan   = $this->paymentPlan($listing, $venue);
+        $method = $this->resolveMethod($plan, $data['payment_method'] ?? null);
+        $split  = $this->splitCourt($courtTotal, $method, $plan);
+        $courtNow = $split['now'];
 
         $seats      = max(0, (int) ($data['max_players'] ?? 0));
         $seatsValue = round((float) ($data['price_per_person'] ?? 0), 2) * $seats;
@@ -463,7 +551,11 @@ class CustomerGameService
 
         $loyalty = $this->loyaltyAllowed($host, (float) ($data['loyalty_redeem'] ?? 0), $courtNow + $serviceFee);
 
-        return $this->charge($currency, $courtTotal, $courtNow, $serviceFee, $bookbollOwned, $loyalty);
+        $charge = $this->charge($currency, $courtTotal, $courtNow, $serviceFee, $method === 'online', $loyalty);
+        $charge['paymentMethod']  = $method;
+        $charge['paymentMethods'] = $plan['methods'];
+
+        return $charge;
     }
 
     /** @return array<string, mixed> */
@@ -593,19 +685,19 @@ class CustomerGameService
 
     protected function reserveCourt(User $host, Listing $listing, ?Venue $venue, array $data, array $charge): Booking
     {
-        // Nothing to pay, everything up front, or a deposit with a balance on arrival.
+        // Record it under the method the host actually paid on.
         if ($charge['courtTotal'] <= 0) {
             $paymentStatus = 'payment_skipped';
             $paymentMethod = 'payment_skipped';
-        } elseif ($charge['courtArrival'] <= 0) {
-            $paymentStatus = 'fully_paid';
-            $paymentMethod = 'online_payment';
-        } elseif ($charge['courtNow'] > 0) {
+        } elseif (($charge['paymentMethod'] ?? '') === 'cash') {
+            $paymentStatus = 'pending';
+            $paymentMethod = 'cash_on_arrival';
+        } elseif ($charge['courtArrival'] > 0) {
             $paymentStatus = 'deposit_paid';
             $paymentMethod = 'deposit_remaining_on_arrival';
         } else {
-            $paymentStatus = 'pending';
-            $paymentMethod = 'cash_on_arrival';
+            $paymentStatus = 'fully_paid';
+            $paymentMethod = 'online_payment';
         }
 
         return Booking::create([
@@ -1332,19 +1424,22 @@ class CustomerGameService
             $venue   = $this->venueFor($listing);
             $currency = $venue?->currency_override ?: $currency;
 
-            $courtTotal    = $this->courtPrice($listing, [
+            $courtTotal = $this->courtPrice($listing, [
                 'game_date'   => $m['date'],
                 'start_time'  => $m['start_time'],
                 'end_time'    => $m['end_time'],
                 'max_players' => $teams,
             ]);
-            $bookbollOwned = ! $venue?->owner_user_id;
-            $courtNow      = $bookbollOwned
-                ? $courtTotal
-                : round($courtTotal * $this->courtCommissionPct($listing) / 100);
+
+            $plan     = $this->paymentPlan($listing, $venue);
+            $method   = $this->resolveMethod($plan, $data['payment_method'] ?? null);
+            $split    = $this->splitCourt($courtTotal, $method, $plan);
+            $courtNow = $split['now'];
 
             $bookbollNow += $courtNow;
-            $lines[] = $this->charge($currency, $courtTotal, $courtNow, 0, $bookbollOwned, 0);
+            $line = $this->charge($currency, $courtTotal, $courtNow, 0, $method === 'online', 0);
+            $line['paymentMethod'] = $method;
+            $lines[] = $line;
         }
 
         $seatsValue = round((float) ($data['price_per_person'] ?? 0), 2) * $teams;

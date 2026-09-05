@@ -294,6 +294,8 @@ class CustomerGameController extends Controller
             // the bill and caps redemption at the balance they actually hold.
             'loyalty_redeem'          => 'nullable|numeric|min:0',
             'ticket_mode'             => 'nullable|in:arrival,stripe',
+            // How the host pays for the court — refused if the provider doesn't take it.
+            'payment_method'          => 'nullable|in:online,deposit,cash',
         ];
     }
 }
