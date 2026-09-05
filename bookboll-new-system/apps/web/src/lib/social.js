@@ -6,6 +6,7 @@
 // gracefully (returns safe defaults) if the social migration hasn't been run yet.
 import { ref } from 'vue'
 import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 // ── Profile strength (drives the "complete your profile" nudge) ────────────────
 // A simple 0–100 score from the things hosts look at when accepting a join request.
@@ -202,8 +203,7 @@ export const unreadMessages = ref(0)
 export async function refreshUnread(meId) {
   if (!meId) { unreadMessages.value = 0; return }
   try {
-    const { count } = await supabase.from('customer_messages')
-      .select('id', { count: 'exact', head: true }).eq('recipient_id', meId).is('read_at', null)
-    unreadMessages.value = count || 0
+    const res = await apiFetch('/customer/messages/unread-count')
+    unreadMessages.value = res.success ? (Number(res.data?.count) || 0) : 0
   } catch { unreadMessages.value = 0 }
 }

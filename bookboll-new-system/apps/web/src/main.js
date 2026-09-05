@@ -5,7 +5,6 @@ import GoogleSignInPlugin from 'vue3-google-signin'
 import './style.css'
 import App from './App.vue'
 import { installUnsavedGuards } from './lib/unsavedGuard.js'
-import { initAuth, authLoading } from './lib/auth.js'
 import { resolveBrand, isWhiteLabel, brandShows, moduleForPath, brandPageEnabled, activeBrand } from './lib/brand.js'
 import { isScopedEmbed, embedAllows, embedHome } from './lib/embed.js'
 import { ensureDefaultLocation, ensureBrandLocation } from './lib/customerSession.js'
@@ -149,7 +148,6 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  if (authLoading.value) await initAuth()
   const area = to.meta?.area || 'customer'
   const barePath = to.path === '/ar' ? '/' : to.path.startsWith('/ar/') ? to.path.slice(3) : to.path
 

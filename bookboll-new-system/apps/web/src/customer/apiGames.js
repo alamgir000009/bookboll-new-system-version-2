@@ -422,3 +422,22 @@ export async function clearMatchWinner(tournamentId, match) {
   if (!res.success) return { error: formatErr(res, 'Could not clear the result.') }
   return { ok: true }
 }
+
+/**
+ * Tournament games whose time has passed with no winner yet — the host still has
+ * to advance the bracket. Powers the bell and the on-login prompt.
+ */
+export async function loadDueTournamentMatches(customerId) {
+  if (!customerId) return []
+  const res = await apiFetch('/customer/games/mine/due-matches')
+  if (!res.success) return []
+  return res.data?.due || []
+}
+
+/** Raw rows the notification bell builds its list from. */
+export async function loadNotificationFeed(customerId) {
+  if (!customerId) return null
+  const res = await apiFetch('/customer/notifications/feed')
+  if (!res.success) return null
+  return res.data || null
+}

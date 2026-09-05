@@ -12,9 +12,8 @@
  * snapshots the current statuses, clearing the badge.
  */
 import { ref } from 'vue'
-import { supabase } from '../lib/supabase.js'
-import { loadDueTournamentMatches } from './data.js'
-import { myCommunities, loadMembers } from './community.js'
+import { loadNotificationFeed } from './apiGames.js'
+import { myCommunities, loadPendingMembers } from './community.js'
 
 const SEEN_KEY = 'bb_game_notif_seen'
 
@@ -45,10 +44,8 @@ export async function loadNotifications(customerId) {
   // ── HOST: pending requests on games/tournaments I host ──
   // Pull moderation fields too (with a pre-migration fallback) so we can also tell
   // the host when Bookboll has taken one of their events down.
-  let mine = await supabase.from('hosted_games')
-    .select('id, title, sport, game_type, status, game_date, start_time, approval_mode, moderation_status, moderation_reason, moderated_at')
-    .eq('host_customer_id', customerId)
-  if (mine.error) mine = await supabase.from('hosted_games').select('id, title, sport, game_type, status, game_date, start_time').eq('host_customer_id', customerId)
+  const feed = await loadNotificationFeed(customerId)
+  const mine = { error: !feed, data: feed?.hostedGames || [] }
   const today = new Date(); const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const TODAY = ymd(today); const TMRW = ymd(new Date(today.getTime() + 864e5))
   if (!mine.error) {
@@ -79,9 +76,7 @@ export async function loadNotifications(customerId) {
       // Pending requests (review events) AND accepted joins on INSTANT events —
       // an instant join never passes through 'pending', so the host would
       // otherwise never hear that someone got in.
-      const rq = await supabase.from('game_join_requests')
-        .select('id, game_id, joiner_name, status, created_at')
-        .in('game_id', ids).in('status', ['pending', 'accepted']).order('created_at', { ascending: false }).limit(60)
+      const rq = { data: (feed?.hostRequests || []).filter(r => ids.includes(r.game_id)) }
       for (const r of (rq.data || [])) {
         const g = byId[r.game_id]
         if (r.status === 'pending') {
@@ -104,8 +99,8 @@ export async function loadNotifications(customerId) {
   // ── HOST: a tournament game's time has passed with no result recorded ──
   // One item per finished-but-undecided match; disappears once the winner is set.
   try {
-    const due = await loadDueTournamentMatches(customerId)
-    for (const d of due) {
+    // Comes with the feed above — the on-login bracket prompt fetches it separately.
+    for (const d of (feed?.dueMatches || [])) {
       items.push({
         id: 'r_' + d.match.id, kind: 'result', reqId: 'res_' + d.match.id, status: 'due',
         text: `“${d.match.home_team}” vs “${d.match.away_team}” in “${gameLabel(d.tournament)}” has finished — record the result to advance the bracket`,
@@ -131,30 +126,26 @@ export async function loadNotifications(customerId) {
           })
         }
       }
-      const managed = mine.filter((c) => c.membership?.status === 'accepted' && ['owner', 'admin'].includes(c.membership?.role))
-      for (const c of managed) {
-        const members = await loadMembers(c.id)
-        for (const p of members.filter((m) => m.status === 'pending')) {
-          if (p.customer_id === customerId) continue
-          items.push({
-            id: 'cmp_' + p.id, kind: 'host', reqId: 'cmp_' + p.id, status: 'pending',
-            text: `Someone wants to join “${cById[c.id]?.name || 'your community'}”`,
-            link: `/communities/${c.id}`, ts: p.joined_at, unread: seen['cmp_' + p.id] !== 'pending',
-          })
-        }
+      // One call covers every community I run — asking per community meant a
+      // request each on every page load.
+      for (const p of await loadPendingMembers()) {
+        if (p.customer_id === customerId) continue
+        items.push({
+          id: 'cmp_' + p.id, kind: 'host', reqId: 'cmp_' + p.id, status: 'pending',
+          text: `Someone wants to join “${p.community_name || cById[p.community_id]?.name || 'your community'}”`,
+          link: `/communities/${p.community_id}`, ts: p.joined_at, unread: seen['cmp_' + p.id] !== 'pending',
+        })
       }
     }
   } catch { /* communities API unavailable */ }
 
   // ── JOINER: my own requests — decisions, cancellations, reminders, results ──
-  const mineReqs = await supabase.from('game_join_requests')
-    .select('id, game_id, status, created_at')
-    .eq('joiner_customer_id', customerId).in('status', ['pending', 'accepted', 'rejected']).order('created_at', { ascending: false }).limit(60)
+  const mineReqs = { error: !feed, data: feed?.myRequests || [] }
   if (!mineReqs.error) {
     const reqs = mineReqs.data || []
     const gids = [...new Set(reqs.map(r => r.game_id))]
     let games = []
-    if (gids.length) { const g = await supabase.from('hosted_games').select('id, title, sport, game_type, status, game_date, start_time, num_teams').in('id', gids); games = g.data || [] }
+    if (gids.length) games = (feed?.myGames || []).filter(g => gids.includes(g.id))
     const byId = Object.fromEntries(games.map(g => [g.id, g]))
     const myReqIds = new Set(reqs.map(r => r.id))
 
@@ -189,9 +180,7 @@ export async function loadNotifications(customerId) {
     const tourGids = games.filter(g => g.game_type === 'tournament').map(g => g.id)
     if (tourGids.length) {
       try {
-        const { data: ms } = await supabase.from('tournament_matches')
-          .select('id, tournament_id, round, match_index, home_team, away_team, home_request_id, away_request_id, winner, match_date')
-          .in('tournament_id', tourGids).neq('winner', '').limit(80)
+        const ms = (feed?.matches || []).filter(m => tourGids.includes(m.tournament_id))
         for (const m of (ms || [])) {
           const iAmHome = myReqIds.has(m.home_request_id), iAmAway = myReqIds.has(m.away_request_id)
           if (!iAmHome && !iAmAway) continue

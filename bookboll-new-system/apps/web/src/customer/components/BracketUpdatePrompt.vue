@@ -10,7 +10,7 @@
  */
 import { ref, watch } from 'vue'
 import { customer, isCustomer } from '../../lib/customerSession.js'
-import { loadDueTournamentMatches, setMatchWinner } from '../../customer/data.js'
+import { loadDueTournamentMatches, setMatchWinner } from '../../customer/apiGames.js'
 import { roundName } from '../../customer/bracket.js'
 import { fmt12 } from '../../lib/slots.js'
 import { Trophy, X, Check, Loader } from 'lucide-vue-next'

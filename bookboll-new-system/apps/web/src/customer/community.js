@@ -32,4 +32,5 @@ export {
   giveStreetCred,
   myPropsForGame,
   streetCredCounts,
+  loadPendingMembers,
 } from './apiCommunity.js'

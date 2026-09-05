@@ -254,3 +254,10 @@ export async function streetCredCounts(customerId) {
   if (!res.success) return []
   return res.data?.streetCred || []
 }
+
+/** Everyone waiting to join any community I run — one call, not one per community. */
+export async function loadPendingMembers() {
+  const res = await apiFetch('/customer/communities/pending-members')
+  if (!res.success) return []
+  return res.data?.members || []
+}
