@@ -34,6 +34,30 @@ class MarketplaceCatalogController extends Controller
         return $this->catalog->listing($id, $request);
     }
 
+    /**
+     * The marketplace's own branding — name, colours, logo and meta, as the super
+     * admin set them. Public: the storefront needs it before anyone signs in.
+     */
+    public function platformBrand()
+    {
+        $keys = [
+            'brand_name', 'brand_tagline', 'brand_logo_url', 'brand_primary', 'brand_accent',
+            'brand_meta_title', 'brand_meta_description',
+            'storefront_sort_space', 'storefront_sort_venue', 'hero_banners',
+            'tracking_meta_pixel', 'tracking_ga4', 'tracking_gtm', 'tracking_head',
+        ];
+
+        $settings = \Illuminate\Support\Facades\DB::table('settings')
+            ->whereIn('key', $keys)
+            ->pluck('value', 'key');
+
+        return sendSuccess('Platform brand', [
+            'settings' => collect($keys)->mapWithKeys(
+                fn ($key) => [$key => $settings->get($key) ?? '']
+            )->all(),
+        ]);
+    }
+
     public function countries(Request $request)
     {
         return $this->geo->countries($request);
