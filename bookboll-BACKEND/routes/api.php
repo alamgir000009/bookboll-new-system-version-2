@@ -42,6 +42,7 @@ use App\Http\Controllers\SpecialDayController;
 use App\Http\Controllers\SportsCategoryController;
 use App\Http\Controllers\SportsTypeController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\MarketingController;
 use App\Http\Controllers\MarketplaceCatalogController;
 use App\Http\Controllers\VenueController;
 use App\Http\Controllers\WhatsappController;
@@ -504,3 +505,6 @@ Route::get('listings', [ListingController::class, 'mobileListingsList'])->name('
 Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode'])->name('promocodes.applyPromocode');
 
 Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe'])->name('newsletter.subscribe');
+
+// One-click unsubscribe from a marketing email — no session, the token is the credential.
+Route::post('marketing/unsubscribe', [MarketingController::class, 'unsubscribe'])->name('marketing.unsubscribe');

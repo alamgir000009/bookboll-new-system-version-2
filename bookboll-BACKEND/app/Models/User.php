@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Hash;
 use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
 use App\Traits\GeneratesUuid;
+use App\Traits\HasUnsubscribeToken;
 use App\Traits\LogsModelActivity;
 use App\Traits\TracksCreator;
 use Spatie\Activitylog\Traits\CausesActivity;
@@ -15,7 +16,7 @@ use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use Billable, CausesActivity, GeneratesUuid, HasApiTokens, HasFactory, HasRoles, LogsModelActivity, Notifiable, TracksCreator;
+    use Billable, CausesActivity, GeneratesUuid, HasApiTokens, HasFactory, HasRoles, HasUnsubscribeToken, LogsModelActivity, Notifiable, TracksCreator;
 
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
@@ -49,11 +50,14 @@ class User extends Authenticatable
         'marketing_email',
         'marketing_sms',
         'marketing_whatsapp',
+        'unsubscribe_token',
+        'marketing_updated_at',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        'unsubscribe_token',
         'stripe_id',
         'pm_type',
         'pm_last_four',
@@ -73,6 +77,7 @@ class User extends Authenticatable
             'marketing_email'       => 'boolean',
             'marketing_sms'         => 'boolean',
             'marketing_whatsapp'    => 'boolean',
+            'marketing_updated_at'  => 'datetime',
             'is_private'            => 'boolean',
         ];
     }
