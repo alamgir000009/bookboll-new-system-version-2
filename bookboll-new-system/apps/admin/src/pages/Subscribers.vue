@@ -6,7 +6,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
+import { loadReferenceData } from '../lib/referenceData.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { pushToast } from '../lib/toast.js'
@@ -90,11 +90,9 @@ const jCountries = computed(() => scopeCountries(countries.value))
 const jCities = computed(() => scopeCities(cities.value))
 
 async function loadAll() {
-  const [dash, lo, ci, co] = await Promise.all([
+  const [dash, ref] = await Promise.all([
     fetchSubscriptionsDashboard(),
-    supabase.from('locations').select('*').order('name'),
-    supabase.from('cities').select('id, name, country_id').order('name'),
-    supabase.from('countries').select('id, name, currency_code').order('name'),
+    loadReferenceData(),
   ])
   if (!dash.success) {
     pushToast(firstError(dash, 'Could not load subscriptions.'), 'error')
@@ -104,9 +102,9 @@ async function loadAll() {
   programs.value = dash.data?.programs || []
   sessions.value = dash.data?.sessions || []
   providers.value = dash.data?.providers || []
-  locations.value = lo.data || []
-  cities.value = ci.data || []
-  countries.value = co.data || []
+  locations.value = ref.venues
+  cities.value = ref.cities
+  countries.value = ref.countries
 }
 
 const route = useRoute()

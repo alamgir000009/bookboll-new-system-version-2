@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
+import { loadReferenceData } from '../lib/referenceData.js'
 import { askConfirm } from '../lib/confirm.js'
 import { askInput } from '../lib/inputPrompt.js'
 import { pushToast } from '../lib/toast.js'
@@ -525,13 +525,12 @@ async function openRequest(wd) {
   reqLoading.value = true
   reqTxns.value = []; reqLedger.value = []; reqEarnings.value = []
   reqHistory.value = []; reqPrograms.value = []; reqMembers.value = 0
-  const [txRes, wdRes, reviewRes, provRes] = await Promise.all([
+  const [txRes, wdRes, reviewRes] = await Promise.all([
     fetchTransactions(wd.wallet_id
       ? { wallet_id: wd.wallet_id, limit: 500 }
       : { owner_user_id: wd.owner_user_id, limit: 500 }),
     fetchWithdrawals({ owner_user_id: wd.owner_user_id, limit: 30 }),
     fetchOwnerWalletReview(wd.owner_user_id),
-    supabase.from('admin_users').select('*').eq('id', wd.owner_user_id).maybeSingle(),
   ])
   const txs = txRes.success ? (txRes.data?.transactions || []) : []
   reqLedger.value  = txs
@@ -539,7 +538,8 @@ async function openRequest(wd) {
   reqWallet.value = wd.wallet_id
     ? (wallets.value.find(x => x.id === wd.wallet_id) || null)
     : (wallets.value.find(x => x.owner_user_id === wd.owner_user_id && x.country_id === wd.country_id && x.is_current !== false) || null)
-  reqProvider.value = provRes.data
+  // The provider directory is already loaded and scoped, so no extra lookup.
+  reqProvider.value = providerDirectory.value.find(p => String(p.id) === String(wd.owner_user_id)) || null
   reqHistory.value = (wdRes.success ? (wdRes.data?.withdrawals || []) : []).filter(r => r.id !== wd.id)
   reqPrograms.value = reviewRes.success ? (reviewRes.data?.programs || []) : []
   reqMembers.value = reviewRes.success ? (reviewRes.data?.member_count || 0) : 0
@@ -755,13 +755,9 @@ function rowInJurisdiction(row) {
 // ── Load ──────────────────────────────────────────────────────────────────────
 async function loadAll() {
   await releaseDueHolds()
-  const [money, co, lo, ci, ap] = await Promise.all([
+  const [money, ref] = await Promise.all([
     fetchWalletPayoutsDashboard(),
-    supabase.from('countries').select('id, name, iso_code, currency_code'),
-    supabase.from('locations').select('id, owner_user_id, city_id, currency_override'),
-    supabase.from('cities').select('id, country_id'),
-    // Same source as pre-Laravel Wallet / Approvals — UUID ids match provider_wallets.owner_user_id
-    supabase.from('admin_users').select('id, business_name, full_name, email, country_id, role').eq('role', 'provider_admin'),
+    loadReferenceData(),
   ])
   if (!money.success) {
     pushToast(wpErr(money, 'Could not load wallets.'), 'error')
@@ -775,10 +771,12 @@ async function loadAll() {
     withdrawals.value = money.data?.withdrawals || []
     activeSubsByWallet.value = money.data?.active_subs_by_wallet || {}
   }
-  countries.value = co.data || []
-  locationsData.value = lo.data || []
-  citiesData.value = ci.data || []
-  providerDirectory.value = (ap.error ? [] : (ap.data || [])).map(u => ({
+  countries.value = ref.countries
+  locationsData.value = ref.venues
+  citiesData.value = ref.cities
+  // Keep the whole record — the withdrawal review reads phone / created_at too.
+  providerDirectory.value = ref.providers.map(u => ({
+    ...u,
     id: String(u.id),
     business_name: u.business_name || u.full_name || u.email || '—',
     full_name: u.full_name || '',
@@ -812,13 +810,8 @@ async function loadAll() {
     ...wallets.value.map(w => w.owner_user_id),
   ].filter(Boolean).map(String))]
   if (ownerIds.length) {
-    const { data: owners } = await supabase.from('admin_users')
-      .select('id, business_name, full_name, email').in('id', ownerIds)
     const map = { ...requestOwners.value }
-    for (const o of (owners || [])) map[String(o.id)] = o
-    for (const p of providerDirectory.value) {
-      if (!map[p.id]) map[p.id] = p
-    }
+    for (const p of providerDirectory.value) map[String(p.id)] = p
     requestOwners.value = map
   }
 }
