@@ -641,7 +641,9 @@ const qrPayAvailable = computed(() => {
   return hasActivePayoutMethodFor(ownerWallets.value, 'bookings')
     && ownerWallets.value.some(w => isWalletReady(w) && isAutomaticPayout(w))
 })
-const payLink = computed(() => payLinkOverride.value || (booking.value ? `${appBaseUrl()}/pay/${booking.value.id}` : ''))
+// Fallback link when a Stripe link can't be minted. It uses the booking's uuid,
+// not its id — the page is public, so the identifier in it is the credential.
+const payLink = computed(() => payLinkOverride.value || (booking.value?.uuid ? `${appBaseUrl()}/pay/${booking.value.uuid}` : ''))
 // While the sheet is open the poll refreshes payments — when the customer pays
 // online, the row flips to paid and the sheet switches to its success state.
 const collectRowPaid = computed(() =>
