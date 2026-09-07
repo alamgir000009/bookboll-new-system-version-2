@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\BrandResolutionService;
 use App\Services\MarketplaceCatalogService;
 use App\Services\MarketplaceGeoService;
 use Illuminate\Http\Request;
@@ -11,7 +12,17 @@ class MarketplaceCatalogController extends Controller
     public function __construct(
         protected MarketplaceCatalogService $catalog,
         protected MarketplaceGeoService $geo,
+        protected BrandResolutionService $brand,
     ) {
+    }
+
+    /**
+     * Resolve a provider's white-label storefront from its subdomain slug.
+     * Public: the storefront calls this before first paint, signed-out.
+     */
+    public function brand(Request $request)
+    {
+        return $this->brand->resolve($request);
     }
 
     public function listings(Request $request)

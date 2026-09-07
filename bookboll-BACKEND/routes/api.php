@@ -476,6 +476,7 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('brand-locations', [MarketplaceCatalogController::class, 'brandLocations'])->name('brand-locations');
     Route::get('listings/{id}', [MarketplaceCatalogController::class, 'listing'])->name('listings.show');
     Route::get('platform-brand', [MarketplaceCatalogController::class, 'platformBrand'])->name('platform-brand');
+    Route::get('brand', [MarketplaceCatalogController::class, 'brand'])->name('brand');
     Route::get('countries', [MarketplaceCatalogController::class, 'countries'])->name('countries');
     Route::get('cities', [MarketplaceCatalogController::class, 'cities'])->name('cities');
     Route::get('cities/{id}', [MarketplaceCatalogController::class, 'city'])->name('cities.show');
