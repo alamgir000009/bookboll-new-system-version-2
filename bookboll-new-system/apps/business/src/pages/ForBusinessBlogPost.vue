@@ -22,7 +22,7 @@ const loading = ref(true)
 
 async function load() {
   loading.value = true
-  post.value = await loadPostBySlug(route.params.slug, null, 'business')
+  post.value = await loadPostBySlug(route.params.slug, 'business')
   loading.value = false
 }
 onMounted(load)

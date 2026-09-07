@@ -2,8 +2,10 @@
  * adminBrand.js — branding for the ADMIN DASHBOARD chrome itself (the internal
  * back-office), separate from the customer-facing marketplace brand (lib/brand.js).
  *
- * The super admin sets these in Settings → Appearance; they're stored as key/value
- * rows in `platform_settings` (`admin_logo_url`, `admin_primary`) — no schema change.
+ * The super admin sets these in Settings → Appearance; they're stored as Laravel
+ * settings rows (`admin_logo_url`, `admin_primary`) and served, unauthenticated,
+ * by GET /api/marketplace/platform-brand — the sign-in and signup screens show
+ * this mark before anyone has a session.
  *   - logo    → the mark shown in the sidebar, collapsed rail and auth screens
  *               (falls back to the built-in Bookboll glyph when unset)
  *   - primary → the accent colour for dashboard buttons, active nav and the logo
@@ -13,7 +15,7 @@
  * `.app` element in App.vue) so they never leak into the customer storefront.
  */
 import { ref, computed } from 'vue'
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 export const DEFAULT_ADMIN_PRIMARY = '#0f766e'   // Bookboll teal (matches --primary)
 
@@ -24,12 +26,11 @@ let loaded = false
 export async function loadAdminBrand(force = false) {
   if (loaded && !force) return adminBrand.value
   try {
-    const { data } = await supabase.from('platform_settings')
-      .select('key, value').in('key', ['admin_logo_url', 'admin_primary'])
-    const m = Object.fromEntries((data || []).map(r => [r.key, r.value]))
+    const res = await apiFetch('/marketplace/platform-brand', { token: '' })
+    const m = res.success ? (res.data?.settings || {}) : {}
     adminBrand.value = { logo: m.admin_logo_url || '', primary: m.admin_primary || '' }
   } catch {
-    // Pre-migration / offline: keep the built-in defaults.
+    // Offline / API down: keep the built-in defaults rather than blocking the page.
   }
   loaded = true
   return adminBrand.value
@@ -66,16 +67,3 @@ export const adminLogoSquareStyle = computed(() => {
   const c = adminBrand.value.primary || DEFAULT_ADMIN_PRIMARY
   return { background: `linear-gradient(135deg, color-mix(in srgb, ${c}, #fff 18%), ${c})` }
 })
-
-/** Persist the dashboard branding (best-effort) and apply it live. Used by the
- *  My Website "Admin dashboard" card so changes take effect the moment you make
- *  them — no separate Save required. */
-export async function saveAdminBrand({ logo = '', primary = '' } = {}) {
-  const now = new Date().toISOString()
-  const { error } = await supabase.from('platform_settings').upsert([
-    { key: 'admin_logo_url', value: logo || '', updated_at: now },
-    { key: 'admin_primary', value: primary || '', updated_at: now },
-  ], { onConflict: 'key' })
-  if (!error) adminBrand.value = { logo: logo || '', primary: primary || '' }
-  return !error
-}
