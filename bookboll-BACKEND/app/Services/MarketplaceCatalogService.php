@@ -85,6 +85,71 @@ class MarketplaceCatalogService
         return sendSuccess('Venues fetched successfully', ['venues' => $cards]);
     }
 
+    /**
+     * Every venue a provider operates, with its weekly opening hours and the
+     * listings inside it — the white-label "Our locations" page and the
+     * "Visit Us" block. Brand-scoped: with no brand_slug there is nothing to show.
+     */
+    public function brandLocations(Request $request)
+    {
+        $scope = $this->resolveScope($request);
+        if ($scope['empty'] || ! $scope['ownerId']) {
+            return sendSuccess('Brand locations fetched successfully', ['locations' => []]);
+        }
+
+        $venues = Venue::query()
+            ->where('status', Venue::ACTIVE)
+            ->where('owner_user_id', $scope['ownerId'])
+            ->with(['city:id,name', 'hourPeriods'])
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get();
+
+        if ($venues->isEmpty()) {
+            return sendSuccess('Brand locations fetched successfully', ['locations' => []]);
+        }
+
+        $listings = $this->listingQuery($scope)
+            ->whereIn('venue_id', $venues->pluck('id'))
+            ->with(['sportsCategory:id,name', 'pricingGroups', 'assets'])
+            ->orderBy('name')
+            ->get()
+            ->groupBy('venue_id');
+
+        $locations = $venues->map(function (Venue $venue) use ($listings) {
+            $courts = $listings->get($venue->id) ?? collect();
+            $photos = $this->photos($venue);
+            $prices = $courts->map(fn (Listing $l) => $this->startingPrice($l))
+                ->filter(fn ($p) => $p !== null && $p > 0);
+            $sports = $courts->map(fn (Listing $l) => $this->sportName($l))->filter()->unique()->values();
+
+            return [
+                'id'         => $venue->id,
+                'name'       => $venue->name,
+                'photo'      => $photos[0] ?? '',
+                'address'    => $venue->address ?: '',
+                'cityName'   => $venue->city?->name ?: '',
+                'mapsUrl'    => $this->mapsUrl($venue),
+                'price'      => $prices->isNotEmpty() ? $prices->min() : null,
+                'sportsText' => $sports->implode(' · '),
+                'listings'   => $courts->map(function (Listing $l) use ($photos) {
+                    $courtPhotos = $this->photos($l);
+
+                    return [
+                        'id'    => $l->id,
+                        'name'  => $l->name,
+                        'sport' => $this->sportName($l),
+                        'photo' => $courtPhotos[0] ?? ($photos[0] ?? ''),
+                        'price' => $this->startingPrice($l),
+                    ];
+                })->values()->all(),
+                'hours'      => $this->weeklyHours($venue),
+            ];
+        })->values();
+
+        return sendSuccess('Brand locations fetched successfully', ['locations' => $locations]);
+    }
+
     public function venue($id, Request $request)
     {
         $scope = $this->resolveScope($request);
@@ -597,6 +662,150 @@ class MarketplaceCatalogService
         }
 
         return url('storage/' . ltrim($path, '/'));
+    }
+
+    /**
+     * Weekly opening hours in the storefront's shape — Monday first, a 12-hour
+     * range per day (several periods joined by a comma), "Closed" for a day with
+     * none. An empty array when the venue has no hours at all, so the page can
+     * say "Hours not set" rather than print seven closed days.
+     *
+     * `from` / `to` carry the day's widest window in 24-hour form, so a caller can
+     * compare and summarise days without parsing the display label.
+     *
+     * @return array<int, array{day: string, open: bool, label: string, from: string, to: string}>
+     */
+    protected function weeklyHours(Venue $venue): array
+    {
+        $rows = $venue->relationLoaded('hourPeriods')
+            ? $venue->hourPeriods
+            : $venue->hourPeriods()->get();
+
+        $byDay = [];
+        foreach ($rows as $row) {
+            $dow = $row->day_of_week;
+            if ($dow === null || ! $row->is_open) {
+                continue;
+            }
+            $open  = $this->hm($row->open_time);
+            $close = $this->hm($row->close_time);
+            if (! $open || ! $close) {
+                continue;
+            }
+            $byDay[$dow][] = ['open' => $open, 'close' => $close];
+        }
+
+        if (! $byDay) {
+            return [];
+        }
+
+        $labels = [0 => 'Sun', 1 => 'Mon', 2 => 'Tue', 3 => 'Wed', 4 => 'Thu', 5 => 'Fri', 6 => 'Sat'];
+        $out = [];
+        foreach ([1, 2, 3, 4, 5, 6, 0] as $dow) {
+            $periods = $this->mergePeriods($byDay[$dow] ?? []);
+            $ranges = array_map(
+                fn ($p) => $this->fmt12m($p['open']) . ' – ' . $this->fmt12m($p['close']),
+                $periods
+            );
+            $out[] = [
+                'day'   => $labels[$dow],
+                'open'  => (bool) $periods,
+                'label' => $ranges ? implode(', ', $ranges) : 'Closed',
+                'from'  => $periods ? $this->hmFromMinutes($periods[0]['open']) : '',
+                'to'    => $periods ? $this->hmFromMinutes(end($periods)['close']) : '',
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Collapse a day's rows into the windows a customer actually reads.
+     *
+     * Hours can be stored one row per bookable slot (09:00–09:30, 09:30–10:00, …),
+     * which would otherwise print as a list of half-hours. Touching or overlapping
+     * rows merge; a genuine gap (a morning block and an evening block) stays split.
+     * Works in minutes so a close of 00:00 reads as end-of-day, not midnight-past.
+     *
+     * @param  array<int, array{open: string, close: string}>  $periods
+     * @return array<int, array{open: int, close: int}>
+     */
+    protected function mergePeriods(array $periods): array
+    {
+        $spans = [];
+        foreach ($periods as $p) {
+            $open = $this->toMinutes($p['open']);
+            $close = $this->toMinutes($p['close']);
+            if ($close <= $open) {
+                $close = 1440;   // closes at/after midnight → end of day
+            }
+            $spans[] = ['open' => $open, 'close' => $close];
+        }
+        if (! $spans) {
+            return [];
+        }
+
+        usort($spans, fn ($a, $b) => $a['open'] <=> $b['open']);
+
+        $merged = [array_shift($spans)];
+        foreach ($spans as $span) {
+            $last = &$merged[count($merged) - 1];
+            if ($span['open'] <= $last['close']) {
+                $last['close'] = max($last['close'], $span['close']);
+            } else {
+                $merged[] = $span;
+            }
+            unset($last);
+        }
+
+        return $merged;
+    }
+
+    protected function toMinutes(string $hm): int
+    {
+        [$h, $m] = array_pad(explode(':', $hm), 2, '0');
+
+        return ((int) $h) * 60 + (int) $m;
+    }
+
+    protected function hmFromMinutes(int $mins): string
+    {
+        $mins = min($mins, 1439);
+
+        return sprintf('%02d:%02d', intdiv($mins, 60), $mins % 60);
+    }
+
+    /** Minutes-since-midnight → "9:00 AM"; 1440 is end-of-day, shown as 12:00 AM. */
+    protected function fmt12m(int $mins): string
+    {
+        return $this->fmt12(sprintf('%02d:%02d', intdiv($mins, 60) % 24, $mins % 60));
+    }
+
+    /** "HH:MM" from a time column, cast or raw. */
+    protected function hm($value): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('H:i');
+        }
+
+        return substr((string) $value, 0, 5);
+    }
+
+    /** "09:00" → "9:00 AM" — the storefront prints 12-hour times. */
+    protected function fmt12(string $hm): string
+    {
+        [$h, $m] = array_pad(explode(':', $hm), 2, '00');
+        $h = (int) $h;
+        $suffix = $h >= 12 ? 'PM' : 'AM';
+        $h12 = $h % 12;
+        if ($h12 === 0) {
+            $h12 = 12;
+        }
+
+        return $h12 . ':' . str_pad((string) (int) $m, 2, '0', STR_PAD_LEFT) . ' ' . $suffix;
     }
 
     protected function mapsUrl(?Venue $venue): string

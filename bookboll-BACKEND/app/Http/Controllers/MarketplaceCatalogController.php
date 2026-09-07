@@ -35,6 +35,15 @@ class MarketplaceCatalogController extends Controller
     }
 
     /**
+     * A provider's venues with opening hours — the white-label "Our locations"
+     * page and the "Visit Us" block. Public: the storefront renders it signed-out.
+     */
+    public function brandLocations(Request $request)
+    {
+        return $this->catalog->brandLocations($request);
+    }
+
+    /**
      * The marketplace's own branding — name, colours, logo and meta, as the super
      * admin set them. Public: the storefront needs it before anyone signs in.
      */
