@@ -160,6 +160,9 @@ if (! class_exists('PaymentType')) {
         public const REMAINING = 'remaining';
         public const SUBSCRIPTION_COMMISSION = 'subscription_commission';
         public const SUBSCRIPTION_EARNING    = 'subscription_earning';
+        // Split-ledger rows for a full online BOOKING payment (BookingWalletService).
+        public const BOOKING_COMMISSION      = 'booking_commission';
+        public const BOOKING_EARNING         = 'booking_earning';
 
         public static function list()
         {
@@ -169,6 +172,8 @@ if (! class_exists('PaymentType')) {
                 self::REMAINING,
                 self::SUBSCRIPTION_COMMISSION,
                 self::SUBSCRIPTION_EARNING,
+                self::BOOKING_COMMISSION,
+                self::BOOKING_EARNING,
             ];
         }
     }
@@ -611,10 +616,12 @@ if (! function_exists('generatePaymentId')) {
     function generatePaymentId(int $bookingId, string $type): string
     {
         $typeAbbr = match (strtolower($type)) {
-            'deposit'   => 'DEP',
-            'remaining' => 'REM',
-            'full'      => 'FUL',
-            default     => 'PAY',
+            'deposit'            => 'DEP',
+            'remaining'          => 'REM',
+            'full'               => 'FUL',
+            'booking_commission' => 'COM',
+            'booking_earning'    => 'EARN',
+            default              => 'PAY',
         };
 
         $uniqueSuffix = substr(str_replace('.', '', microtime(true)), -6);

@@ -742,6 +742,13 @@ class StripeService
             return;
         }
 
+        // Was anything already collected on this booking? If so, this is a balance
+        // and Bookboll's fee was taken with the deposit — see creditProviderWallet.
+        $depositAlreadyPaid = $booking->payments()
+            ->where('status', PaymentStatus::PAID)
+            ->whereIn('type', [PaymentType::DEPOSIT, PaymentType::FULL, PaymentType::REMAINING])
+            ->exists();
+
         $pendingPayments = $booking->payments()
             ->where('status', PaymentStatus::PENDING)
             ->whereIn('type', [PaymentType::REMAINING, PaymentType::FULL])
@@ -772,6 +779,48 @@ class StripeService
             'payment_status'        => BookingPaymentStatus::FULLY_PAID,
             'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
         ]);
+
+        $this->creditProviderWallet($booking, $pendingPayments->sum('amount'), $depositAlreadyPaid);
+    }
+
+    /**
+     * A provider-owned venue's online money is theirs minus Bookboll's commission,
+     * so record the split and credit their wallet.
+     *
+     * Commission is charged only when this collection is the WHOLE total. Under the
+     * deposit model the deposit already WAS Bookboll's fee, so a balance collected
+     * after a deposit is 100% the provider's.
+     *
+     * Best-effort: a booking is paid whether or not the ledger writes, and the
+     * payment must never be rolled back over an accounting error.
+     */
+    protected function creditProviderWallet($booking, float $collected, bool $depositAlreadyPaid): void
+    {
+        try {
+            $venue = $booking->venue;
+            $ownerUserId = $venue?->owner_user_id;
+            if (! $ownerUserId || $collected <= 0) {
+                return;   // Bookboll-run venue — no provider to pay
+            }
+
+            $wallets = app(BookingWalletService::class);
+            $listing = $booking->listing;
+
+            $wallets->recordBookingOnlinePayment([
+                'bookingId'     => $booking->id,
+                'ownerUserId'   => $ownerUserId,
+                'countryId'     => $wallets->countryIdForVenue($venue),
+                'total'         => $collected,
+                'currency'      => $venue?->currency_override ?: (config('services.stripe.currency') ?: 'QAR'),
+                'ratePct'       => $depositAlreadyPaid ? 0 : $wallets->courtCommissionPct($listing),
+                'customerLabel' => $booking->user?->name ?: 'QR payment',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Provider wallet credit failed', [
+                'booking_id' => $booking->id ?? null,
+                'error'      => $e->getMessage(),
+            ]);
+        }
     }
 
     protected function resolveBookingIdsFromSession(StripeCheckoutSession $session): array
