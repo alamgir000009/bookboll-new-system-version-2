@@ -9,9 +9,9 @@
  */
 import { slugifyCity, slugifySport, resolveCity, resolveCountry, priceRange } from './cityPages.js'
 import { slugify } from './blog.js'
+import { apiFetch } from './api.js'
 import { loadPrograms } from '../customer/data.js'
 import { MEMBERSHIP_CATEGORIES, MEMBERSHIP_CATEGORY_BY_KEY } from './membershipCategories.js'
-import { supabase } from './supabase.js'
 
 export { priceRange }
 
@@ -64,7 +64,8 @@ export async function loadPlacePrograms(slug, segment = null) {
 
   const country = await resolveCountry(slug)
   if (country) {
-    const { data: ccities } = await supabase.from('cities').select('id, name').eq('country_id', country.id).eq('status', 'active')
+    const res = await apiFetch('/marketplace/cities', { query: { country_id: country.id, limit: 500 } })
+    const ccities = res.success ? (res.data?.cities || []) : []
     const perCity = await Promise.all((ccities || []).map(async c => ({ c, list: await loadPrograms(c.id) })))
     const all = perCity.flatMap(x => x.list)
     const cities = perCity.filter(x => x.list.length).map(x => ({ name: x.c.name, slug: slugifyCity(x.c.name), count: x.list.length })).sort((a, b) => b.count - a.count)

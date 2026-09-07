@@ -5,10 +5,11 @@
  * customers are emailable from the admin Customers page. Every customer has a stable
  * `unsubscribe_token` so each marketing email carries a one-click unsubscribe link.
  *
- * Delivery is "record & preview": we store the campaign + render the exact compliant HTML
- * (sender disclaimer + unsubscribe button). Swap `recordCampaign` for a real ESP/edge function later.
+ * The storefront's job here is the receiving end: render the compliant email HTML
+ * (sender disclaimer + unsubscribe button) and honour the unsubscribe link. Sending
+ * campaigns is an admin-app concern and lives there.
  */
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 export const MARKETING_CHANNELS = ['email', 'sms', 'whatsapp']
 export const MARKETING_LABELS = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp' }
@@ -58,26 +59,14 @@ export function marketingEmailHtml({ subject = '', body = '', senderLabel = 'Boo
   </div></body></html>`
 }
 
-/** Record a sent campaign (best-effort; tolerates a pre-migration DB). */
-export async function recordCampaign({ ownerUserId = null, createdBy = null, senderLabel = 'Bookboll', channel = 'email', audience = '', subject = '', body = '', html = '', recipientCount = 0 } = {}) {
-  const row = { owner_user_id: ownerUserId, created_by: createdBy, sender_label: senderLabel, channel, audience, subject, body, html, recipient_count: recipientCount }
-  try {
-    const { data, error } = await supabase.from('marketing_campaigns').insert(row).select().maybeSingle()
-    return { data, error }
-  } catch (e) { return { error: e } }
-}
-
 /** Public unsubscribe: flip the requested channel(s) off for the customer holding `token`. */
 export async function applyUnsubscribe(token, channel = 'email') {
-  if (!token) return { error: 'Missing token.' }
-  const patch = channel === 'all'
-    ? { marketing_email: false, marketing_sms: false, marketing_whatsapp: false }
-    : { [MARKETING_COL[channel] || 'marketing_email']: false }
-  patch.marketing_updated_at = new Date().toISOString()
-  try {
-    const { data, error } = await supabase.from('customers').update(patch).eq('unsubscribe_token', token).select('id, full_name, email').maybeSingle()
-    if (error) return { error: error.message }
-    if (!data) return { error: 'This unsubscribe link is invalid or has expired.' }
-    return { ok: true, customer: data }
-  } catch (e) { return { error: String(e) } }
+  if (!token) return { error: 'This unsubscribe link is missing its code. Open the link from your email again.' }
+  const res = await apiFetch('/marketing/unsubscribe', {
+    method: 'POST',
+    token: '',   // works signed-out — the token in the link is the credential
+    body: { token, channel: MARKETING_COL[channel] ? channel : (channel === 'all' ? 'all' : 'email') },
+  })
+  if (!res.success) return { error: res.message || 'This unsubscribe link is invalid or has expired.' }
+  return { ok: true, customer: res.data?.customer || null, consent: res.data?.consent || null }
 }
