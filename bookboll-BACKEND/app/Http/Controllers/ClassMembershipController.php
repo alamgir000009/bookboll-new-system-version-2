@@ -75,6 +75,24 @@ class ClassMembershipController extends Controller
         return $this->service->winback($request, $id);
     }
 
+    /** Create a membership programme (approval staging decided server-side). */
+    public function storeProgram(Request $request)
+    {
+        return app(\App\Services\ProgramSaveService::class)->store($request);
+    }
+
+    /** Edit a membership programme. */
+    public function updateProgram(Request $request, $id)
+    {
+        return app(\App\Services\ProgramSaveService::class)->update($request, $id);
+    }
+
+    /** Activate / archive, or pause / resume a programme. */
+    public function setProgramState(Request $request, $id)
+    {
+        return app(\App\Services\ProgramSaveService::class)->setState($request, $id);
+    }
+
     public function destroyProgram($id)
     {
         return $this->service->destroyProgram($id);

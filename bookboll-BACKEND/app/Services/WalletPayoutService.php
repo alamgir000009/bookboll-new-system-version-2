@@ -16,6 +16,44 @@ use Illuminate\Support\Facades\DB;
  */
 class WalletPayoutService
 {
+    /**
+     * The id columns here are char(36) — they held Supabase UUIDs before the port,
+     * and the wallet rows still store ids as strings. The dashboard now sources
+     * country ids from Laravel (nnjeim/world), where they are INTEGERS, so a
+     * request would fail a `string` rule on a value that is perfectly valid.
+     *
+     * Normalising to strings before validation keeps storage consistent and lets
+     * either form through.
+     *
+     * @param  string[]  $keys        scalar id fields
+     * @param  string[]  $arrayKeys   fields holding a list of ids
+     */
+    protected function stringifyIds($request, array $keys, array $arrayKeys = []): void
+    {
+        $patch = [];
+
+        foreach ($keys as $k) {
+            $v = $request->input($k);
+            if (is_int($v) || is_float($v)) {
+                $patch[$k] = (string) $v;
+            }
+        }
+
+        foreach ($arrayKeys as $k) {
+            $v = $request->input($k);
+            if (is_array($v)) {
+                $patch[$k] = array_values(array_map(
+                    fn ($x) => is_scalar($x) ? (string) $x : $x,
+                    $v
+                ));
+            }
+        }
+
+        if ($patch) {
+            $request->merge($patch);
+        }
+    }
+
     public function dashboard($request)
     {
         $wallets = ProviderWallet::query()->orderByDesc('updated_at')->get()->map(fn ($w) => $this->mapWallet($w))->values()->all();
@@ -139,6 +177,8 @@ class WalletPayoutService
 
     public function createWallet($request)
     {
+        $this->stringifyIds($request, ['owner_user_id', 'country_id'], []);
+
         $data = $request->validate([
             'owner_user_id' => 'required|string|max:36',
             'country_id'    => 'nullable|string|max:36',
@@ -210,6 +250,8 @@ class WalletPayoutService
 
     public function applyMethod($request)
     {
+        $this->stringifyIds($request, ['owner_user_id'], ['country_ids']);
+
         $data = $request->validate([
             'owner_user_id' => 'required|string|max:36',
             'purpose'       => 'nullable|string|max:32',
@@ -509,6 +551,8 @@ class WalletPayoutService
 
     public function createWithdrawal($request)
     {
+        $this->stringifyIds($request, ['owner_user_id', 'country_id', 'wallet_id'], []);
+
         $data = $request->validate([
             'owner_user_id'  => 'required|string|max:36',
             'amount'         => 'required|numeric|min:0.01',
@@ -563,6 +607,8 @@ class WalletPayoutService
      */
     public function createPaidWithdrawal($request)
     {
+        $this->stringifyIds($request, ['owner_user_id', 'country_id', 'wallet_id'], []);
+
         $data = $request->validate([
             'owner_user_id'  => 'required|string|max:36',
             'amount'         => 'required|numeric|min:0.01',
@@ -619,6 +665,8 @@ class WalletPayoutService
 
     public function createTransaction($request)
     {
+        $this->stringifyIds($request, ['owner_user_id', 'country_id', 'wallet_id', 'source_id'], []);
+
         $data = $request->validate([
             'owner_user_id'       => 'required|string|max:36',
             'type'                => 'nullable|string|max:64',

@@ -242,6 +242,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::get('subscriptions/dashboard', [ClassMembershipController::class, 'dashboard'])->name('subscriptions.dashboard');
             Route::post('subscriptions/dashboard', [ClassMembershipController::class, 'store'])->name('subscriptions.dashboard.store');
             Route::post('subscriptions/dashboard/bulk-cancel', [ClassMembershipController::class, 'bulkCancel'])->name('subscriptions.dashboard.bulk-cancel');
+            Route::post('subscriptions/programs', [ClassMembershipController::class, 'storeProgram'])->name('subscriptions.programs.store');
+            Route::put('subscriptions/programs/{id}', [ClassMembershipController::class, 'updateProgram'])->name('subscriptions.programs.update');
+            Route::patch('subscriptions/programs/{id}/state', [ClassMembershipController::class, 'setProgramState'])->name('subscriptions.programs.state');
             Route::delete('subscriptions/programs/{id}', [ClassMembershipController::class, 'destroyProgram'])->name('subscriptions.programs.destroy');
             Route::get('subscriptions/dashboard/{id}', [ClassMembershipController::class, 'show'])->name('subscriptions.dashboard.show');
             Route::get('subscriptions/dashboard/{id}/payments', [ClassMembershipController::class, 'payments'])->name('subscriptions.dashboard.payments');
