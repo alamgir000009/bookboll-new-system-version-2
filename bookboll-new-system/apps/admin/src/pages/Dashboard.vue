@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadAnalytics } from '../lib/analytics.js'
 import {
   DollarSign, BookOpen, Users, Building2, TrendingUp, ArrowUpRight, Clock,
   CircleCheck as CheckCircle2, TriangleAlert as AlertTriangle, Calendar,
@@ -110,36 +110,21 @@ const scopedBookings = computed(() => {
 
 async function load() {
   loading.value = true
-  const [b, c, p, l, lo, pg, wl, wr, ci, co, sb, sp, hg, gj] = await Promise.all([
-    supabase.from('bookings').select('*').order('created_at', { ascending: false }),
-    supabase.from('customers').select('id, full_name, status'),
-    supabase.from('admin_users').select('*').eq('role', 'provider_admin'),
-    supabase.from('listings').select('id, location_id, name, status, approval_status'),
-    supabase.from('locations').select('id, owner_user_id, name, city_id'),
-    supabase.from('class_programs').select('id, name, currency, owner_user_id, location_id, approval_status, status'),
-    supabase.from('provider_wallets').select('*'),
-    supabase.from('withdrawal_requests').select('*'),
-    supabase.from('cities').select('id, name, country_id'),
-    supabase.from('countries').select('id, name, currency_code'),
-    supabase.from('class_subscriptions').select('id, program_id, status, trial_status, started_at, monthly_amount, cancelled_during_trial_at, updated_at'),
-    supabase.from('booking_payments').select('id, amount, currency, status, paid_at, created_at, subscription_id').eq('source_type', 'subscription'),
-    supabase.from('hosted_games').select('id, sport, game_date, status, max_players, country_id, city_id, created_at'),
-    supabase.from('game_join_requests').select('id, game_id, status'),
-  ])
-  bookings.value   = b.data  || []
-  customers.value  = c.data  || []
-  providers.value  = p.data  || []
-  listings.value   = l.data  || []
-  locations.value  = lo.data || []
-  programs.value   = pg.data || []
-  wallets.value    = wl.data || []
-  withdrawals.value = wr.data || []
-  cities.value     = ci.data || []
-  countries.value  = co.data || []
-  allSubscriptions.value = sb.data || []
-  subPayments.value = (sp.data || []).filter(x => x.status === 'paid')
-  games.value = hg.data || []
-  gameJoins.value = gj.data || []
+  const d = await loadAnalytics()
+  bookings.value    = d.bookings
+  customers.value   = d.customers
+  providers.value   = d.providers
+  listings.value    = d.listings
+  locations.value   = d.locations
+  programs.value    = d.programs
+  wallets.value     = d.wallets
+  withdrawals.value = d.withdrawals
+  cities.value      = d.cities
+  countries.value   = d.countries
+  allSubscriptions.value = d.subscriptions
+  subPayments.value = d.subPayments
+  games.value       = d.games
+  gameJoins.value   = d.gameJoins
 
   loading.value = false
 

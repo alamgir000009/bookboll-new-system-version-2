@@ -62,11 +62,15 @@ export function mapLaravelUserToAdmin(user, roles = []) {
     business_status: business?.status || null,
     business_id: business?.id ? String(business.id) : null,
     username: business?.username || null,
-    country_id: user.country_id != null ? String(user.country_id) : null,
+    // Geography ids stay as Laravel sends them (numbers). Stringifying was a
+    // Supabase-UUID habit, and it silently broke jurisdiction filtering: a Set of
+    // string country ids never matches the numeric country_id on a city or venue,
+    // so a country_admin / platform_staff saw nothing at all.
+    country_id: user.country_id ?? null,
     owner_user_id: user.owner_user_id != null ? String(user.owner_user_id) : null,
     custom_permissions: null,
     assigned_country_ids: Array.isArray(user.assigned_country_ids)
-      ? user.assigned_country_ids.map(String)
+      ? user.assigned_country_ids.map(Number).filter(Number.isFinite)
       : [],
     assigned_location_ids: [],
     assigned_listing_ids: [],
