@@ -7,6 +7,7 @@ use App\Http\Controllers\BookingPayLinkController;
 use App\Http\Controllers\BusinessController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\Admin\GeographyController;
+use App\Http\Controllers\Admin\AnalyticsController;
 use App\Http\Controllers\Admin\OverviewController;
 use App\Http\Controllers\Admin\PaymentAccountController;
 use App\Http\Controllers\Admin\StorefrontSortController;
@@ -115,6 +116,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Landing page: onboarding checklist + the caller's venues (Home, SetupCoach).
         Route::get('overview', [OverviewController::class, 'index'])->name('overview');
+
+        // Analytics dashboard dataset (/dashboard) — raw collections, scoped.
+        Route::get('dashboard/analytics', [AnalyticsController::class, 'index'])->name('dashboard.analytics');
 
         // A provider's connected bank account (Listings → payment account).
         Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
