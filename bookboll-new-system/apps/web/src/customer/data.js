@@ -246,6 +246,19 @@ async function ownerSuspended(ownerId) {
   return (await suspendedOwners()).has(ownerId)
 }
 
+// The active white-label brand's slug, for endpoints scoped to one provider and
+// nothing else. Resolved lazily to avoid a circular import at module init.
+export async function brandSlug() {
+  try {
+    const { activeBrand } = await import('../lib/brand.js')
+    return activeBrand.value?.slug || ''
+  } catch { return '' }
+}
+async function brandQuery() {
+  const slug = await brandSlug()
+  return slug ? { brand_slug: slug } : {}
+}
+
 // Catalog query for Laravel marketplace endpoints. City UUIDs from the Supabase
 // location picker cannot be sent as city_id — we match Laravel world cities by name.
 async function marketplaceQuery(cityId, extra = {}) {
@@ -290,34 +303,11 @@ export async function loadLocations(cityId, extra = {}) {
 // (where "locations" would span every provider — the marketplace uses /venues instead).
 export async function loadBrandLocations() {
   if (!brandOwnerId) return []
-  const { data: locs } = await supabase.from('locations').select('*')
-    .eq('owner_user_id', brandOwnerId).eq('status', 'active').order('sort_order').order('name')
-  const list = locs || []
-  const ids = list.map(l => l.id)
-  if (!ids.length) return []
-  const { data: liData } = await supabase.from('listings').select('*').in('location_id', ids)
-  const listings = (liData || []).filter(listingVisible)
-  const priceMap = await startingPriceMap(listings)
-  const hours = await Promise.all(list.map(l => loadLocationHours(l.id)))
-  const cityIds = [...new Set(list.map(l => l.city_id).filter(Boolean))]
-  const cityName = {}
-  if (cityIds.length) {
-    const { data: cs } = await supabase.from('cities').select('id, name').in('id', cityIds)
-    ;(cs || []).forEach(c => { cityName[c.id] = c.name })
-  }
-  return list.map((l, i) => {
-    const courts = listings.filter(x => x.location_id === l.id)
-    const prices = courts.map(c => priceMap[c.id]).filter(p => p != null && p > 0)
-    const sports = [...new Set(courts.map(c => c.sport_category).filter(Boolean))]
-    return {
-      id: l.id, name: l.name, photo: firstPhoto(l), address: l.address || '',
-      cityName: cityName[l.city_id] || '', mapsUrl: mapsUrl(l),
-      price: prices.length ? Math.min(...prices) : null,
-      sportsText: sports.join(' · '),
-      listings: courts.map(c => ({ id: c.id, name: c.name, sport: c.sport_category || '', photo: firstPhoto(c) || firstPhoto(l), price: priceMap[c.id] ?? null })),
-      hours: hours[i] || [],
-    }
-  })
+  // Brand slug only — this page spans EVERY city the provider operates in, so the
+  // visitor's selected city must not narrow it.
+  const res = await apiFetch('/marketplace/brand-locations', { query: await brandQuery() })
+  if (!res.success) return []
+  return Array.isArray(res.data?.locations) ? res.data.locations : []
 }
 
 export async function loadFacility(id) {

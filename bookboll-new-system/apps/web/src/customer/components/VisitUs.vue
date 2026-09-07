@@ -6,7 +6,7 @@
  * and a Directions link. Used on the business home page AND /contact.
  */
 import { ref, computed, onMounted } from 'vue'
-import { supabase } from '../../lib/supabase.js'
+import { loadBrandLocations } from '../../customer/data.js'
 import { activeBrand, brandShows } from '../../lib/brand.js'
 import { fmt12 } from '../../lib/slots.js'
 import { CalendarCheck, MapPin, Clock, Navigation } from 'lucide-vue-next'
@@ -15,37 +15,26 @@ const brand = computed(() => activeBrand.value || {})
 const contact = computed(() => brand.value.pages?.contact || {})
 const venues = ref([])
 
+// One compact line from the venue's weekly hours: how many days it opens and the
+// widest window across them ("Daily · 9:00 AM – 10:00 PM"). Falls back to the
+// hours the provider typed on their Contact page when no schedule is set.
+function scheduleLine(hours) {
+  const openDays = (hours || []).filter(d => d.open && d.from && d.to)
+  if (!openDays.length) return contact.value.hours || ''
+  const from = openDays.map(d => d.from).sort()[0]
+  const to = openDays.map(d => d.to).sort().slice(-1)[0]
+  const span = openDays.length >= 7 ? 'Daily' : `${openDays.length} days/week`
+  return `${span} · ${fmt12(from)} – ${fmt12(to)}`
+}
+
 onMounted(async () => {
-  const ownerId = brand.value.ownerUserId
-  if (!ownerId) return
-  const { data: locs } = await supabase.from('locations')
-    .select('id, name, address, google_maps_url, status')
-    .eq('owner_user_id', ownerId).eq('status', 'active').order('name')
-  const list = locs || []
-  if (!list.length) return
-  const { data: ls } = await supabase.from('listings')
-    .select('id, location_id').in('location_id', list.map(l => l.id))
-  const byLoc = {}
-  for (const l of (ls || [])) (byLoc[l.location_id] = byLoc[l.location_id] || []).push(l.id)
-  const allIds = (ls || []).map(l => l.id)
-  let hours = []
-  if (allIds.length) {
-    const { data: h } = await supabase.from('listing_hours')
-      .select('listing_id, day_of_week, is_open, open_time, close_time').in('listing_id', allIds)
-    hours = h || []
-  }
-  venues.value = list.map(loc => {
-    const ids = new Set(byLoc[loc.id] || [])
-    const rows = hours.filter(h => ids.has(h.listing_id) && h.is_open && h.open_time && h.close_time)
-    let sched = ''
-    if (rows.length) {
-      const open = rows.map(r => r.open_time.slice(0, 5)).sort()[0]
-      const close = rows.map(r => r.close_time.slice(0, 5)).sort().slice(-1)[0]
-      const days = new Set(rows.map(r => r.day_of_week)).size
-      sched = `${days >= 7 ? 'Daily' : `${days} days/week`} · ${fmt12(open)} – ${fmt12(close)}`
-    } else if (contact.value.hours) sched = contact.value.hours
-    return { ...loc, sched }
-  })
+  if (!brand.value.ownerUserId) return
+  const list = await loadBrandLocations()
+  venues.value = list.map(loc => ({
+    ...loc,
+    google_maps_url: loc.mapsUrl || '',
+    sched: scheduleLine(loc.hours),
+  }))
 })
 </script>
 
