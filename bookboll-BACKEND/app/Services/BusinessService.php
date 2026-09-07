@@ -20,6 +20,36 @@ class BusinessService
         private UserService $userService,
     ) {}
 
+    /**
+     * Subdomains a provider may never take, because their white-label site is
+     * served at <username>.bookboll.com.
+     *
+     * Two separate reasons:
+     *   • Ours — www / app / admin / api / business / staging / dev already point
+     *     at Bookboll's own hosts. The storefront treats these as the apex
+     *     (apps/web lib/brand.js RESERVED_SUBS), so such a site would never even
+     *     resolve — the visitor would land on the marketplace instead.
+     *   • Infrastructure — mail/smtp/ns1/… are conventional records; handing one
+     *     to a provider risks breaking mail or DNS for the whole domain.
+     *
+     * Keep the first group in step with RESERVED_SUBS in apps/web/src/lib/brand.js.
+     */
+    public const RESERVED_USERNAMES = [
+        // Bookboll's own hosts
+        'www', 'app', 'admin', 'api', 'business', 'staging', 'dev',
+        // Reserved for us
+        'bookboll', 'support', 'help', 'status', 'blog', 'docs', 'careers',
+        'about', 'contact', 'legal', 'privacy', 'terms', 'security',
+        'billing', 'account', 'accounts', 'login', 'signup', 'register',
+        'dashboard', 'portal', 'partner', 'partners', 'pay', 'checkout',
+        // Infrastructure / DNS conventions
+        'mail', 'smtp', 'imap', 'pop', 'webmail', 'email', 'ftp', 'sftp',
+        'ns', 'ns1', 'ns2', 'ns3', 'dns', 'mx', 'cdn', 'static', 'assets',
+        'img', 'images', 'media', 'files', 'download', 'downloads',
+        'test', 'testing', 'demo', 'sandbox', 'preview', 'beta', 'alpha',
+        'internal', 'private', 'secure', 'vpn', 'proxy', 'gateway',
+    ];
+
     public static function normalizeUsername(?string $username): string
     {
         $u = strtolower(trim((string) $username));
@@ -27,6 +57,11 @@ class BusinessService
         $u = trim($u, '-');
 
         return substr($u, 0, 30);
+    }
+
+    public static function isReservedUsername(string $username): bool
+    {
+        return in_array(strtolower($username), self::RESERVED_USERNAMES, true);
     }
 
     public function usernameAvailable(Request $request)
@@ -46,6 +81,14 @@ class BusinessService
                 'available' => false,
                 'username'  => $username,
                 'reason'    => 'Invalid username format.',
+            ]);
+        }
+
+        if (self::isReservedUsername($username)) {
+            return sendSuccess('Username checked', [
+                'available' => false,
+                'username'  => $username,
+                'reason'    => 'That name is reserved. Please choose another.',
             ]);
         }
 
@@ -98,6 +141,12 @@ class BusinessService
         if (strlen($username) < 3 || ! preg_match('/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/', $username)) {
             return sendError('Invalid username. Use 3–30 letters, numbers or hyphens.', [
                 'username' => ['Invalid username format.'],
+            ], 422);
+        }
+
+        if (self::isReservedUsername($username)) {
+            return sendError('That name is reserved. Please choose another.', [
+                'username' => ['That name is reserved. Please choose another.'],
             ], 422);
         }
 
@@ -159,7 +208,10 @@ class BusinessService
 
     public function updateBrand(Request $request)
     {
-        $business = $request->user()?->ownedBusiness();
+        // The relation PROPERTY (the Business), not the method (a HasOne) — a
+        // relation object is always truthy, so the guard below never fired and
+        // building the response then blew up on HasOne::fresh().
+        $business = $request->user()?->ownedBusiness;
 
         if (! $business) {
             return sendError('No business found for this account.', [], 404);

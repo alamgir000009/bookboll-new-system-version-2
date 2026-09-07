@@ -65,6 +65,9 @@ class MarketplaceCatalogController extends Controller
             'brand_meta_title', 'brand_meta_description',
             'storefront_sort_space', 'storefront_sort_venue', 'hero_banners',
             'tracking_meta_pixel', 'tracking_ga4', 'tracking_gtm', 'tracking_head',
+            // Branding for the back-office chrome itself — the business site's
+            // sign-in/signup screens share that mark, so it is served here too.
+            'admin_logo_url', 'admin_primary',
         ];
 
         $settings = \Illuminate\Support\Facades\DB::table('settings')
