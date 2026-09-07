@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadReferenceData } from '../lib/referenceData.js'
 import {
   CircleCheck as CheckCircle, Boxes,
   TriangleAlert as AlertTriangle, ArrowRight, RefreshCw, CirclePause as PauseCircle,
@@ -27,6 +27,9 @@ import {
   approveContent,
   requestContentChanges,
   bulkApproveContent,
+  // aliased: the page's own handlers keep the plain names
+  suspendBusiness as apiSuspendBusiness,
+  reinstateBusiness as apiReinstateBusiness,
 } from '../lib/approvals.js'
 import {
   firstError as moneyErr,
@@ -54,13 +57,10 @@ const tab = ref('all')   // 'all' | 'content' (listings & programs) | 'money' (w
 const search = ref('')
 
 async function load() {
-  const [dash, money, ap, lo, ci, co] = await Promise.all([
+  const [dash, money, ref] = await Promise.all([
     fetchApprovalsDashboard(),
     fetchWalletPayoutsDashboard(),
-    supabase.from('admin_users').select('*').eq('role', 'provider_admin'),
-    supabase.from('locations').select('*'),
-    supabase.from('cities').select('*'),
-    supabase.from('countries').select('*').eq('status', 'active'),
+    loadReferenceData(),
   ])
   if (!dash.success) {
     pushToast(firstError(dash, 'Could not load approvals queue.'), 'error')
@@ -79,16 +79,15 @@ async function load() {
     withdrawals.value = open
     wallets.value = money.data?.wallets || []
   }
-  // Prefer Supabase provider_admin rows for business_status / contact; merge Laravel owners if missing.
-  const fromSb = ap.data || []
-  const fromApi = dash.success ? (dash.data?.providers || []) : []
+  // The approvals queue names the owner of each item; reference-data carries the
+  // fuller provider record (contact details, business_status), so it wins on merge.
   const byId = new Map()
-  for (const p of fromApi) byId.set(String(p.id), p)
-  for (const p of fromSb) byId.set(String(p.id), p)
+  for (const p of (dash.success ? (dash.data?.providers || []) : [])) byId.set(String(p.id), p)
+  for (const p of ref.providers) byId.set(String(p.id), { ...(byId.get(String(p.id)) || {}), ...p })
   allProviders.value = [...byId.values()]
-  allLocations.value = lo.data || []
-  allCities.value = ci.data || []
-  allCountries.value = co.data || []
+  allLocations.value = ref.venues
+  allCities.value = ref.cities
+  allCountries.value = ref.countries.filter(c => (c.status || 'active') === 'active')
 }
 onMounted(load)
 watch(() => currentUser.value?.id, load)
@@ -529,11 +528,10 @@ async function suspendBusiness(ownerId) {
     danger: true, confirmText: 'Suspend business', cancelText: 'Keep active',
   }))) return
   suspending.value = true
-  const { error } = await supabase.from('admin_users').update({ business_status: 'suspended' }).eq('id', ownerId)
+  const res = await apiSuspendBusiness(ownerId)
   suspending.value = false
-  if (error) { pushToast('Could not suspend the business.', 'error'); return }
+  if (!res.success) { pushToast(firstError(res, 'Could not suspend the business.'), 'error'); return }
   logAudit({ action: AUDIT.DISABLED, entity_type: 'business', entity_id: ownerId, details: `Suspended business ${name} from the marketplace` })
-  notifyBusiness({ ownerUserId: ownerId, kind: 'approval', tone: 'warn', title: 'Your business was suspended on the Bookboll marketplace', sub: 'Your listings are hidden from the marketplace. Contact Bookboll support for details.', link: '/listings' })
   pushToast(`${name} suspended from the marketplace`, 'success')
   load()
 }
@@ -544,10 +542,9 @@ async function reinstateBusiness(ownerId) {
     message: 'Their approved venues, listings and programs return to the Bookboll marketplace.',
     danger: false, confirmText: 'Reinstate',
   }))) return
-  const { error } = await supabase.from('admin_users').update({ business_status: 'approved' }).eq('id', ownerId)
-  if (error) { pushToast('Could not reinstate the business.', 'error'); return }
+  const res = await apiReinstateBusiness(ownerId)
+  if (!res.success) { pushToast(firstError(res, 'Could not reinstate the business.'), 'error'); return }
   logAudit({ action: AUDIT.ENABLED, entity_type: 'business', entity_id: ownerId, details: `Reinstated business ${name} on the marketplace` })
-  notifyBusiness({ ownerUserId: ownerId, kind: 'approval', tone: 'ok', title: 'Your business is back on the Bookboll marketplace', sub: 'Your approved listings and programs are visible again.', link: '/listings' })
   pushToast(`${name} reinstated`, 'success')
   load()
 }

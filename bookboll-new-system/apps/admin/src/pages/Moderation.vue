@@ -8,11 +8,11 @@
  *               (a derived notice appears in their bell, see notifications.js).
  *   • Restore → back to active / live.
  *
- * Events + Communities moderation state lives on Laravel (dual-written to Supabase
- * so the customer storefront stays in sync). Owner/city labels still use Supabase.
+ * Events + Communities moderation state lives on Laravel; the storefront reads
+ * moderation_status off the same rows, so a change here is live immediately.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadReferenceData } from '../lib/referenceData.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { useConfirm } from '../lib/confirm.js'
@@ -85,29 +85,22 @@ const lbOpen = ref(false)
 async function load() {
   loading.value = true
 
-  // Providers are scoped to events held at venues they own.
+  // reference-data is already scoped by the API: a provider gets only the venues
+  // their business owns, a platform admin gets their jurisdiction.
+  const ref = await loadReferenceData()
+  cities.value = ref.cities
+  countries.value = ref.countries
+  allLocations.value = ref.venues
+
   let scopedLocationIds = null
   if (!isPlatformAdmin.value) {
-    const ownerId = currentOwnerUserId.value
-    const lr = ownerId ? await supabase.from('locations').select('id').eq('owner_user_id', ownerId) : { data: [] }
-    scopedLocationIds = (lr.data || []).map(l => l.id)
+    scopedLocationIds = ref.venues.map(l => String(l.id))
     if (!scopedLocationIds.length) {   // provider with no venues → nothing to moderate
-      const [ciR, coR] = await Promise.all([
-        supabase.from('cities').select('id, name, country_id'),
-        supabase.from('countries').select('id, name').order('name'),
-      ])
-      cities.value = ciR.data || []; countries.value = coR.data || []
       rows.value = []; loading.value = false; return
     }
   }
 
-  const [dash, ci, co] = await Promise.all([
-    fetchEventModerationDashboard(),
-    supabase.from('cities').select('id, name, country_id'),
-    supabase.from('countries').select('id, name').order('name'),
-  ])
-  cities.value = ci.data || []
-  countries.value = co.data || []
+  const dash = await fetchEventModerationDashboard()
 
   let games = []
   const joinStats = dash.success ? (dash.data?.join_stats || {}) : {}
@@ -125,8 +118,6 @@ async function load() {
   // Jurisdiction (country_admin / platform_staff): only events at venues in scope,
   // plus custom-location events whose city is inside the jurisdiction's countries.
   if (isPlatformAdmin.value && !isSuperAdmin.value) {
-    const pl = await supabase.from('locations').select('id, city_id, owner_user_id')
-    allLocations.value = pl.data || []
     const allowed = allowedLocationIds.value
     const cSet = jurisdictionCountryIds.value
     if (allowed) games = games.filter(x => x.location_id
@@ -134,12 +125,7 @@ async function load() {
       : cSet.has(cities.value.find(c => c.id === x.city_id)?.country_id))
   }
 
-  // venue names (geo still Supabase)
-  const locIds = [...new Set(games.map(x => x.location_id).filter(Boolean))]
-  const locsRes = locIds.length
-    ? await supabase.from('locations').select('id, name').in('id', locIds)
-    : { data: [] }
-  const locName = id => (locsRes.data || []).find(l => l.id === id)?.name || ''
+  const locName = id => allLocations.value.find(l => String(l.id) === String(id))?.name || ''
 
   rows.value = games.map(x => {
     const stats = joinStats[x.id] || joinStats[String(x.id)] || {}
@@ -167,18 +153,13 @@ async function load() {
           const cSet = jurisdictionCountryIds.value
           comms = comms.filter(x => !x.country_id || cSet.has(x.country_id))
         }
-        const ownerIds = [...new Set(comms.map(x => x.owner_customer_id).filter(Boolean))]
-        const owners = ownerIds.length
-          ? (await supabase.from('customers').select('id, full_name').in('id', ownerIds)).data || []
-          : []
-        const ownerName = id => owners.find(o => o.id === id)?.full_name || 'Player'
         commRows.value = comms.map(x => {
           const stats = memberStats[x.id] || memberStats[String(x.id)] || {}
           return {
             ...x,
             moderation_status: x.moderation_status || 'active',
             cityName: cities.value.find(c => c.id === x.city_id)?.name || '',
-            ownerName: ownerName(x.owner_customer_id),
+            ownerName: x.owner_name || 'Player',
             memberCount: stats.accepted || 0,
           }
         })
@@ -310,9 +291,6 @@ async function applyModeration(g, status, reason) {
     moderated_at: updated.moderated_at ?? new Date().toISOString(),
     moderated_by: updated.moderated_by ?? (currentUser.value?.id || currentUser.value?.full_name || 'admin'),
   })
-  if (res.data?.supabase_synced === false) {
-    toast.info('Saved in Bookboll — storefront sync lagged; refresh if needed.')
-  }
   return true
 }
 
@@ -367,9 +345,6 @@ async function applyCommunityMod(c, status, reason) {
     moderated_at: updated.moderated_at ?? new Date().toISOString(),
     moderated_by: updated.moderated_by ?? (currentUser.value?.id || currentUser.value?.full_name || 'admin'),
   })
-  if (res.data?.supabase_synced === false) {
-    toast.info('Saved in Bookboll — storefront sync lagged; refresh if needed.')
-  }
   return true
 }
 async function flagCommunity(c) {
