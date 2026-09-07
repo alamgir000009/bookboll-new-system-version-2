@@ -968,28 +968,18 @@ if (! function_exists('pusherTrigger')) {
 }
 
 if (! function_exists('applyVenueFilter')) {
+    /**
+     * Constrain a query to the venues the signed-in admin may see.
+     *
+     * Delegates to App\Support\AccessScope, which understands OWNERSHIP
+     * (a provider's own venues, inherited by their team) as well as the older
+     * user_venue pins and platform jurisdiction. Previously this only honoured
+     * the pivot, so a provider who owned venues but had no pivot rows — which is
+     * every provider created by signup — matched nothing at all.
+     */
     function applyVenueFilter($query, string $venueColumn = 'venue_id')
     {
-        $user = auth()->user();
-
-        if (! $user) {
-            return $query->whereRaw('1 = 0');
-        }
-
-        if ($user->hasAnyRole(['super_admin', 'admin'])) {
-            return $query;
-        }
-
-        $venueIds = DB::table('user_venue')
-            ->where('user_id', $user->id)
-            ->pluck('venue_id')
-            ->toArray();
-
-        if (empty($venueIds)) {
-            return $query->whereRaw('1 = 0');
-        }
-
-        return $query->whereIn($venueColumn, $venueIds);
+        return App\Support\AccessScope::applyVenue($query, $venueColumn);
     }
 }
 
@@ -1002,14 +992,11 @@ if (! function_exists('applyVenueFilterToPayments')) {
             return $query->whereRaw('1 = 0');
         }
 
-        if ($user->hasAnyRole(['super_admin', 'admin'])) {
+        $venueIds = App\Support\AccessScope::allowedVenueIds($user);
+
+        if ($venueIds === null) {
             return $query;
         }
-
-        $venueIds = DB::table('user_venue')
-            ->where('user_id', $user->id)
-            ->pluck('venue_id')
-            ->toArray();
 
         if (empty($venueIds)) {
             return $query->whereRaw('1 = 0');

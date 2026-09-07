@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Hash;
 use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
 use App\Traits\GeneratesUuid;
+use App\Traits\HasCapabilities;
 use App\Traits\HasUnsubscribeToken;
 use App\Traits\LogsModelActivity;
 use App\Traits\TracksCreator;
@@ -16,7 +17,7 @@ use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use Billable, CausesActivity, GeneratesUuid, HasApiTokens, HasFactory, HasRoles, HasUnsubscribeToken, LogsModelActivity, Notifiable, TracksCreator;
+    use Billable, CausesActivity, GeneratesUuid, HasApiTokens, HasCapabilities, HasFactory, HasRoles, HasUnsubscribeToken, LogsModelActivity, Notifiable, TracksCreator;
 
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
@@ -52,6 +53,12 @@ class User extends Authenticatable
         'marketing_whatsapp',
         'unsubscribe_token',
         'marketing_updated_at',
+        // Permission scoping (see the 2026_09_07 migration)
+        'custom_permissions',
+        'assigned_location_ids',
+        'assigned_listing_ids',
+        'assigned_program_ids',
+        'business_status',
     ];
 
     protected $hidden = [
@@ -74,6 +81,10 @@ class User extends Authenticatable
             'email_verified_at'     => 'datetime',
             'last_login_at'         => 'datetime',
             'assigned_country_ids'  => 'array',
+            'custom_permissions'    => 'array',
+            'assigned_location_ids' => 'array',
+            'assigned_listing_ids'  => 'array',
+            'assigned_program_ids'  => 'array',
             'marketing_email'       => 'boolean',
             'marketing_sms'         => 'boolean',
             'marketing_whatsapp'    => 'boolean',

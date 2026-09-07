@@ -290,6 +290,20 @@ class UserService
                 'permissions'     => $permissionNames,
                 'assigned_venues' => $user->venues,
                 'access'          => \App\Support\RolePermissionMatrix::accessFromPermissionNames($permissionNames),
+                // Same shape as /me, so the dashboard can gate its UI from the
+                // login response instead of waiting for a second round trip.
+                'capabilities'       => $user->capabilities(),
+                'custom_permissions' => $user->capabilityOverrides(),
+                'scope'              => [
+                    'owner_user_id'         => \App\Support\AccessScope::ownerUserId($user),
+                    'is_global'             => \App\Support\AccessScope::isGlobal($user),
+                    'is_platform'           => \App\Support\AccessScope::isPlatform($user),
+                    'is_provider_scoped'    => \App\Support\AccessScope::isProviderScoped($user),
+                    'assigned_country_ids'  => array_values((array) ($user->assigned_country_ids ?? [])),
+                    'assigned_location_ids' => array_values((array) ($user->assigned_location_ids ?? [])),
+                    'assigned_listing_ids'  => array_values((array) ($user->assigned_listing_ids ?? [])),
+                    'assigned_program_ids'  => array_values((array) ($user->assigned_program_ids ?? [])),
+                ],
             ];
 
             return sendSuccess('Login successful', $response);
@@ -566,6 +580,21 @@ class UserService
             'permissions'     => $permissionNames,
             'assigned_venues' => $user->venues,
             'access'          => \App\Support\RolePermissionMatrix::accessFromPermissionNames($permissionNames),
+            // What the dashboard's can(CAP.…) needs: the effective capability list
+            // (role base ± per-user overrides) plus the scope pins, so the UI hides
+            // exactly what the API would refuse.
+            'capabilities'        => $user->capabilities(),
+            'custom_permissions'  => $user->capabilityOverrides(),
+            'scope'               => [
+                'owner_user_id'         => \App\Support\AccessScope::ownerUserId($user),
+                'is_global'             => \App\Support\AccessScope::isGlobal($user),
+                'is_platform'           => \App\Support\AccessScope::isPlatform($user),
+                'is_provider_scoped'    => \App\Support\AccessScope::isProviderScoped($user),
+                'assigned_country_ids'  => array_values((array) ($user->assigned_country_ids ?? [])),
+                'assigned_location_ids' => array_values((array) ($user->assigned_location_ids ?? [])),
+                'assigned_listing_ids'  => array_values((array) ($user->assigned_listing_ids ?? [])),
+                'assigned_program_ids'  => array_values((array) ($user->assigned_program_ids ?? [])),
+            ],
         ];
 
         return sendSuccess('Logged in user fetched susccessfully', $response);

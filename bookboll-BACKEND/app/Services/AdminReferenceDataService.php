@@ -1,0 +1,159 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Business;
+use App\Models\Listing;
+use App\Models\User;
+use App\Models\Venue;
+use App\Support\AccessScope;
+use Illuminate\Http\Request;
+use Nnjeim\World\Models\City;
+use Nnjeim\World\Models\Country;
+
+/**
+ * The reference bundle the dashboard needs to build scope filters and dropdowns:
+ * providers, venues, listings, cities and countries.
+ *
+ * Nine pages (Moderation, Wallet, Approvals, Subscribers, Banners, Home,
+ * Dashboard, Listings, Memberships) each queried these four tables directly in
+ * the Supabase build. Serving them together keeps every page's idea of "what I
+ * may see" identical, and already narrowed: a provider gets only their own
+ * business, a country_admin only their countries.
+ */
+class AdminReferenceDataService
+{
+    public function index(Request $request)
+    {
+        $user = $request->user();
+        if (! $user) {
+            return sendError('Unauthenticated.', [], 401);
+        }
+
+        $venueIds = AccessScope::allowedVenueIds($user);   // null = unrestricted
+        $ownerId  = AccessScope::ownerUserId($user);
+
+        $venueQuery = Venue::query()->select([
+            'id', 'name', 'status', 'owner_user_id', 'city_id', 'country_id',
+            'address', 'currency_override', 'timezone_override', 'sort_order',
+            'approval_status', 'eligibility_status',
+        ])->orderBy('sort_order')->orderBy('name');
+
+        if ($venueIds !== null) {
+            $venueQuery->whereIn('id', $venueIds ?: [0]);
+        }
+        $venues = $venueQuery->get();
+
+        $listings = Listing::query()
+            ->select(['id', 'name', 'venue_id', 'status', 'sport_category', 'category', 'calendar_color', 'approval_status', 'eligibility_status'])
+            ->when($venueIds !== null, fn ($q) => $q->whereIn('venue_id', $venueIds ?: [0]))
+            ->orderBy('name')
+            ->get();
+
+        return sendSuccess('Reference data fetched successfully', [
+            'providers' => $this->providers($user, $ownerId),
+            'venues'    => $venues,
+            'listings'  => $listings,
+            'cities'    => $this->cities($user, $venues),
+            'countries' => $this->countries($user),
+            'scope'     => [
+                'owner_user_id'  => $ownerId,
+                'is_global'      => AccessScope::isGlobal($user),
+                'is_platform'    => AccessScope::isPlatform($user),
+                'venue_ids'      => $venueIds,
+                'country_ids'    => AccessScope::jurisdictionCountryIds($user),
+            ],
+        ]);
+    }
+
+    /**
+     * Business owners. A provider only ever sees their own business; platform
+     * roles see the providers inside their jurisdiction.
+     */
+    protected function providers(User $user, ?int $ownerId)
+    {
+        $query = User::query()
+            ->whereHas('roles', fn ($q) => $q->where('name', 'provider_admin'))
+            ->with(['ownedBusiness:id,owner_id,name,username,status,brand_enabled,brand_subdomain'])
+            ->select(['id', 'uuid', 'name', 'email', 'phone', 'country_id', 'status', 'business_status', 'owner_user_id']);
+
+        if (AccessScope::isProviderScoped($user)) {
+            $query->where('id', $ownerId ?: 0);
+        } elseif (! AccessScope::isGlobal($user)) {
+            $countryIds = AccessScope::jurisdictionCountryIds($user);
+            if (is_array($countryIds)) {
+                $ownersInScope = Venue::whereIn('id', AccessScope::allowedVenueIds($user) ?: [0])
+                    ->whereNotNull('owner_user_id')->distinct()->pluck('owner_user_id')->all();
+
+                $query->where(function ($q) use ($countryIds, $ownersInScope) {
+                    $q->whereIn('country_id', $countryIds ?: [0]);
+                    if ($ownersInScope) {
+                        $q->orWhereIn('id', $ownersInScope);
+                    }
+                });
+            }
+        }
+
+        return $query->orderBy('name')->get()->map(function (User $u) {
+            $b = $u->ownedBusiness;
+
+            return [
+                'id'              => (string) $u->id,
+                'uuid'            => $u->uuid,
+                'full_name'       => $u->name,
+                'email'           => $u->email,
+                'phone'           => $u->phone,
+                'role'            => 'provider_admin',
+                'country_id'      => $u->country_id,
+                'status'          => $u->status,
+                'business_status' => $u->business_status ?: ($b?->status),
+                'business_name'   => $b?->name,
+                'username'        => $b?->username,
+                'brand_enabled'   => (bool) ($b?->brand_enabled),
+                'brand_subdomain' => $b?->brand_subdomain,
+            ];
+        })->values();
+    }
+
+    /** Cities in the user's jurisdiction, always including those their venues sit in. */
+    protected function cities(User $user, $venues)
+    {
+        $countryIds = AccessScope::jurisdictionCountryIds($user);
+        $venueCityIds = $venues->pluck('city_id')->filter()->unique()->all();
+
+        $query = City::query()->select(['id', 'name', 'country_id']);
+
+        if (AccessScope::isProviderScoped($user)) {
+            $query->whereIn('id', $venueCityIds ?: [0]);
+        } elseif (is_array($countryIds)) {
+            $query->where(function ($q) use ($countryIds, $venueCityIds) {
+                $q->whereIn('country_id', $countryIds ?: [0]);
+                if ($venueCityIds) {
+                    $q->orWhereIn('id', $venueCityIds);
+                }
+            });
+        }
+
+        return $query->orderBy('name')->get();
+    }
+
+    /** Countries, narrowed to the jurisdiction for platform roles. */
+    protected function countries(User $user)
+    {
+        $countryIds = AccessScope::jurisdictionCountryIds($user);
+
+        $query = Country::query()->with('currency')->select(['id', 'name', 'iso2', 'status']);
+
+        if (is_array($countryIds)) {
+            $query->whereIn('id', $countryIds ?: [0]);
+        }
+
+        return $query->orderBy('name')->get()->map(fn (Country $c) => [
+            'id'            => $c->id,
+            'name'          => $c->name,
+            'iso_code'      => $c->iso2,
+            'status'        => $c->status,
+            'currency_code' => $c->currency?->code ?: 'AED',
+        ])->values();
+    }
+}

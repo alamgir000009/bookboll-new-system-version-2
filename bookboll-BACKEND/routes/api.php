@@ -7,6 +7,7 @@ use App\Http\Controllers\BookingPayLinkController;
 use App\Http\Controllers\BusinessController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\Admin\GeographyController;
+use App\Http\Controllers\Admin\ReferenceDataController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
 use App\Http\Controllers\BusinessNotificationTemplateController;
 use App\Http\Controllers\CheckInController;
@@ -86,12 +87,28 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::delete('{user}', [BusinessController::class, 'teamDestroy'])->name('destroy');
     });
 
-    Route::prefix('admin')->middleware(['checkRoles:super_admin,country_admin,platform_staff,admin,senior_employee,junior_employee,guard'])->group(function () {
+    /*
+    |--------------------------------------------------------------------------
+    | Admin portal  (/api/admin/*)
+    |--------------------------------------------------------------------------
+    | Everyone who can open the dashboard reaches this group — platform staff AND
+    | providers. What each may DO is decided per section by the `capability`
+    | middleware, mirroring PAGE_CAP in the dashboard's lib/permissions.js, and
+    | WHICH ROWS they see is decided by App\Support\AccessScope (ownership for
+    | providers, jurisdiction for platform roles).
+    */
+    Route::prefix('admin')->middleware(['checkRoles:super_admin,admin,country_admin,platform_staff,provider_admin,facility_admin,provider_supervisor,staff,provider_viewer,senior_employee,junior_employee,guard'])->group(function () {
 
-        Route::apiResource('post-categories', PostCategoryController::class);
-        Route::apiResource('posts', PostController::class);
-        Route::post('posts/change-status', [PostController::class, 'changeStatus']);
-        Route::get('posts-tags', [PostController::class, 'postTagsList']);
+        // Marketplace blog (Bookboll HQ)
+        Route::middleware('capability:manage_platform_blog')->group(function () {
+            Route::apiResource('post-categories', PostCategoryController::class);
+            Route::apiResource('posts', PostController::class);
+            Route::post('posts/change-status', [PostController::class, 'changeStatus']);
+            Route::get('posts-tags', [PostController::class, 'postTagsList']);
+        });
+
+        // Shared scope/filter bundle — any admin role, already narrowed per caller.
+        Route::get('reference-data', [ReferenceDataController::class, 'index'])->name('reference-data');
 
         Route::get('locations/countries', [LocationController::class, 'countries'])->name('locations.countries');
         Route::get('locations/states', [LocationController::class, 'states'])->name('locations.states');
@@ -104,15 +121,18 @@ Route::middleware(['auth:sanctum'])->group(function () {
         });
 
         // Countries & Cities admin page (World package + commission rates)
-        Route::prefix('geography')->name('geography.')->group(function () {
-            Route::get('countries', [GeographyController::class, 'countries'])->name('countries');
-            Route::get('cities', [GeographyController::class, 'cities'])->name('cities');
-            Route::patch('countries/{id}/status', [GeographyController::class, 'updateCountryStatus'])->name('countries.status');
-            Route::patch('cities/{id}/status', [GeographyController::class, 'updateCityStatus'])->name('cities.status');
-            Route::post('cities/bulk-status', [GeographyController::class, 'bulkUpdateCityStatus'])->name('cities.bulk-status');
-            Route::put('commission-rates', [GeographyController::class, 'upsertCommission'])->name('commission-rates');
-            Route::get('loyalty-programs', [GeographyController::class, 'loyaltyPrograms'])->name('loyalty-programs.index');
-            Route::put('loyalty-programs', [GeographyController::class, 'upsertLoyaltyProgram'])->name('loyalty-programs');
+        // Countries, cities, commission & loyalty
+        Route::middleware('capability:manage_geography,manage_loyalty')->group(function () {
+            Route::prefix('geography')->name('geography.')->group(function () {
+                Route::get('countries', [GeographyController::class, 'countries'])->name('countries');
+                Route::get('cities', [GeographyController::class, 'cities'])->name('cities');
+                Route::patch('countries/{id}/status', [GeographyController::class, 'updateCountryStatus'])->name('countries.status');
+                Route::patch('cities/{id}/status', [GeographyController::class, 'updateCityStatus'])->name('cities.status');
+                Route::post('cities/bulk-status', [GeographyController::class, 'bulkUpdateCityStatus'])->name('cities.bulk-status');
+                Route::put('commission-rates', [GeographyController::class, 'upsertCommission'])->name('commission-rates');
+                Route::get('loyalty-programs', [GeographyController::class, 'loyaltyPrograms'])->name('loyalty-programs.index');
+                Route::put('loyalty-programs', [GeographyController::class, 'upsertLoyaltyProgram'])->name('loyalty-programs');
+            });
         });
 
         Route::prefix('roles')->name('roles.')->middleware('role:super_admin')->group(function () {
@@ -124,77 +144,95 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::delete('{role}', [RolePermissionController::class, 'destroy'])->name('destroy');
         });
 
-        Route::get('venues/dashboard', [VenueController::class, 'dashboard'])->name('venues.dashboard');
-        Route::post('venues/dashboard', [VenueController::class, 'dashboardStore'])->name('venues.dashboard.store');
-        Route::post('venues/dashboard/sort', [VenueController::class, 'dashboardSort'])->name('venues.dashboard.sort');
-        Route::get('venues/dashboard/{id}', [VenueController::class, 'dashboardShow'])->name('venues.dashboard.show');
-        Route::put('venues/dashboard/{id}', [VenueController::class, 'dashboardUpdate'])->name('venues.dashboard.update');
-        Route::patch('venues/dashboard/{id}', [VenueController::class, 'dashboardPatch'])->name('venues.dashboard.patch');
-        Route::delete('venues/dashboard/{id}', [VenueController::class, 'dashboardDestroy'])->name('venues.dashboard.destroy');
-        Route::post('venues/dashboard/{id}/apply-hours', [VenueController::class, 'dashboardApplyHours'])->name('venues.dashboard.apply-hours');
-        Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
-        Route::post('venues/{id}/move', [VenueController::class, 'move'])->name('venues.move');
-        Route::get('fetch-venues', [VenueController::class, 'adminFetchVenues'])->name('fetch-venues');
-        Route::apiResource('venues', VenueController::class);
+        // Venues
+        Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
+            Route::get('venues/dashboard', [VenueController::class, 'dashboard'])->name('venues.dashboard');
+            Route::post('venues/dashboard', [VenueController::class, 'dashboardStore'])->name('venues.dashboard.store');
+            Route::post('venues/dashboard/sort', [VenueController::class, 'dashboardSort'])->name('venues.dashboard.sort');
+            Route::get('venues/dashboard/{id}', [VenueController::class, 'dashboardShow'])->name('venues.dashboard.show');
+            Route::put('venues/dashboard/{id}', [VenueController::class, 'dashboardUpdate'])->name('venues.dashboard.update');
+            Route::patch('venues/dashboard/{id}', [VenueController::class, 'dashboardPatch'])->name('venues.dashboard.patch');
+            Route::delete('venues/dashboard/{id}', [VenueController::class, 'dashboardDestroy'])->name('venues.dashboard.destroy');
+            Route::post('venues/dashboard/{id}/apply-hours', [VenueController::class, 'dashboardApplyHours'])->name('venues.dashboard.apply-hours');
+            Route::post('venues/sort', [VenueController::class, 'sort'])->name('venues.sort');
+            Route::post('venues/{id}/move', [VenueController::class, 'move'])->name('venues.move');
+            Route::get('fetch-venues', [VenueController::class, 'adminFetchVenues'])->name('fetch-venues');
+            Route::apiResource('venues', VenueController::class);
+        });
 
-        Route::get('listings/dashboard', [ListingController::class, 'dashboard'])->name('listings.dashboard');
-        Route::post('listings/dashboard', [ListingController::class, 'dashboardStore'])->name('listings.dashboard.store');
-        Route::post('listings/dashboard/sort', [ListingController::class, 'dashboardSort'])->name('listings.dashboard.sort');
-        Route::get('listings/dashboard/{id}', [ListingController::class, 'dashboardShow'])->name('listings.dashboard.show');
-        Route::put('listings/dashboard/{id}', [ListingController::class, 'dashboardUpdate'])->name('listings.dashboard.update');
-        Route::patch('listings/dashboard/{id}', [ListingController::class, 'dashboardPatch'])->name('listings.dashboard.patch');
-        Route::delete('listings/dashboard/{id}', [ListingController::class, 'dashboardDestroy'])->name('listings.dashboard.destroy');
+        // Listings dashboard
+        Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
+            Route::get('listings/dashboard', [ListingController::class, 'dashboard'])->name('listings.dashboard');
+            Route::post('listings/dashboard', [ListingController::class, 'dashboardStore'])->name('listings.dashboard.store');
+            Route::post('listings/dashboard/sort', [ListingController::class, 'dashboardSort'])->name('listings.dashboard.sort');
+            Route::get('listings/dashboard/{id}', [ListingController::class, 'dashboardShow'])->name('listings.dashboard.show');
+            Route::put('listings/dashboard/{id}', [ListingController::class, 'dashboardUpdate'])->name('listings.dashboard.update');
+            Route::patch('listings/dashboard/{id}', [ListingController::class, 'dashboardPatch'])->name('listings.dashboard.patch');
+            Route::delete('listings/dashboard/{id}', [ListingController::class, 'dashboardDestroy'])->name('listings.dashboard.destroy');
+        });
 
-        Route::get('approvals/dashboard', [ApprovalsController::class, 'dashboard'])->name('approvals.dashboard');
-        Route::post('approvals/bulk-approve', [ApprovalsController::class, 'bulkApprove'])->name('approvals.bulk-approve');
-        Route::post('approvals/{type}/{id}/approve', [ApprovalsController::class, 'approve'])->name('approvals.approve');
-        Route::post('approvals/{type}/{id}/request-changes', [ApprovalsController::class, 'requestChanges'])->name('approvals.request-changes');
+        // Approvals
+        Route::middleware('capability:approve_listings,approve_withdrawals')->group(function () {
+            Route::get('approvals/dashboard', [ApprovalsController::class, 'dashboard'])->name('approvals.dashboard');
+            Route::post('approvals/bulk-approve', [ApprovalsController::class, 'bulkApprove'])->name('approvals.bulk-approve');
+            Route::post('approvals/{type}/{id}/approve', [ApprovalsController::class, 'approve'])->name('approvals.approve');
+            Route::post('approvals/{type}/{id}/request-changes', [ApprovalsController::class, 'requestChanges'])->name('approvals.request-changes');
+        });
 
-        Route::get('moderation/events/dashboard', [EventModerationController::class, 'dashboard'])->name('moderation.events.dashboard');
-        Route::post('moderation/events/{id}/flag', [EventModerationController::class, 'flag'])->name('moderation.events.flag');
-        Route::post('moderation/events/{id}/remove', [EventModerationController::class, 'remove'])->name('moderation.events.remove');
-        Route::post('moderation/events/{id}/restore', [EventModerationController::class, 'restore'])->name('moderation.events.restore');
+        // Event & community moderation
+        Route::middleware('capability:moderate_events')->group(function () {
+            Route::get('moderation/events/dashboard', [EventModerationController::class, 'dashboard'])->name('moderation.events.dashboard');
+            Route::post('moderation/events/{id}/flag', [EventModerationController::class, 'flag'])->name('moderation.events.flag');
+            Route::post('moderation/events/{id}/remove', [EventModerationController::class, 'remove'])->name('moderation.events.remove');
+            Route::post('moderation/events/{id}/restore', [EventModerationController::class, 'restore'])->name('moderation.events.restore');
 
-        Route::get('moderation/communities/dashboard', [CommunityModerationController::class, 'dashboard'])->name('moderation.communities.dashboard');
-        Route::post('moderation/communities/{id}/flag', [CommunityModerationController::class, 'flag'])->name('moderation.communities.flag');
-        Route::post('moderation/communities/{id}/remove', [CommunityModerationController::class, 'remove'])->name('moderation.communities.remove');
-        Route::post('moderation/communities/{id}/restore', [CommunityModerationController::class, 'restore'])->name('moderation.communities.restore');
+            Route::get('moderation/communities/dashboard', [CommunityModerationController::class, 'dashboard'])->name('moderation.communities.dashboard');
+            Route::post('moderation/communities/{id}/flag', [CommunityModerationController::class, 'flag'])->name('moderation.communities.flag');
+            Route::post('moderation/communities/{id}/remove', [CommunityModerationController::class, 'remove'])->name('moderation.communities.remove');
+            Route::post('moderation/communities/{id}/restore', [CommunityModerationController::class, 'restore'])->name('moderation.communities.restore');
+        });
 
-        Route::get('wallet-payouts/dashboard', [WalletPayoutController::class, 'dashboard'])->name('wallet-payouts.dashboard');
-        Route::get('wallet-payouts/owners/{ownerUserId}/review', [WalletPayoutController::class, 'ownerReview'])->name('wallet-payouts.owners.review');
-        Route::get('wallet-payouts/wallets', [WalletPayoutController::class, 'listWallets'])->name('wallet-payouts.wallets.index');
-        Route::post('wallet-payouts/wallets', [WalletPayoutController::class, 'createWallet'])->name('wallet-payouts.wallets.store');
-        Route::put('wallet-payouts/wallets/{id}', [WalletPayoutController::class, 'updateWallet'])->name('wallet-payouts.wallets.update');
-        Route::delete('wallet-payouts/wallets/{id}', [WalletPayoutController::class, 'deleteWallet'])->name('wallet-payouts.wallets.destroy');
-        Route::post('wallet-payouts/wallets/apply-method', [WalletPayoutController::class, 'applyMethod'])->name('wallet-payouts.wallets.apply-method');
-        Route::post('wallet-payouts/kyc/{ownerUserId}/approve', [WalletPayoutController::class, 'approveKyc'])->name('wallet-payouts.kyc.approve');
-        Route::post('wallet-payouts/kyc/{ownerUserId}/reject', [WalletPayoutController::class, 'rejectKyc'])->name('wallet-payouts.kyc.reject');
-        Route::get('wallet-payouts/withdrawals', [WalletPayoutController::class, 'listWithdrawals'])->name('wallet-payouts.withdrawals.index');
-        Route::post('wallet-payouts/withdrawals', [WalletPayoutController::class, 'createWithdrawal'])->name('wallet-payouts.withdrawals.store');
-        Route::post('wallet-payouts/withdrawals/paid-record', [WalletPayoutController::class, 'createPaidWithdrawal'])->name('wallet-payouts.withdrawals.paid-record');
-        Route::post('wallet-payouts/withdrawals/{id}/approve', [WalletPayoutController::class, 'approveWithdrawal'])->name('wallet-payouts.withdrawals.approve');
-        Route::post('wallet-payouts/withdrawals/{id}/mark-paid', [WalletPayoutController::class, 'markWithdrawalPaid'])->name('wallet-payouts.withdrawals.mark-paid');
-        Route::post('wallet-payouts/withdrawals/{id}/reject', [WalletPayoutController::class, 'rejectWithdrawal'])->name('wallet-payouts.withdrawals.reject');
-        Route::post('wallet-payouts/withdrawals/{id}/cancel', [WalletPayoutController::class, 'cancelWithdrawal'])->name('wallet-payouts.withdrawals.cancel');
-        Route::post('wallet-payouts/delta', [WalletPayoutController::class, 'applyDelta'])->name('wallet-payouts.delta');
-        Route::get('wallet-payouts/transactions', [WalletPayoutController::class, 'listTransactions'])->name('wallet-payouts.transactions.index');
-        Route::post('wallet-payouts/transactions', [WalletPayoutController::class, 'createTransaction'])->name('wallet-payouts.transactions.store');
-        Route::put('wallet-payouts/transactions/{id}', [WalletPayoutController::class, 'updateTransaction'])->name('wallet-payouts.transactions.update');
+        // Wallets & payouts
+        Route::middleware('capability:view_wallet,manage_payouts,withdraw_funds,approve_withdrawals,approve_payouts')->group(function () {
+            Route::get('wallet-payouts/dashboard', [WalletPayoutController::class, 'dashboard'])->name('wallet-payouts.dashboard');
+            Route::get('wallet-payouts/owners/{ownerUserId}/review', [WalletPayoutController::class, 'ownerReview'])->name('wallet-payouts.owners.review');
+            Route::get('wallet-payouts/wallets', [WalletPayoutController::class, 'listWallets'])->name('wallet-payouts.wallets.index');
+            Route::post('wallet-payouts/wallets', [WalletPayoutController::class, 'createWallet'])->name('wallet-payouts.wallets.store');
+            Route::put('wallet-payouts/wallets/{id}', [WalletPayoutController::class, 'updateWallet'])->name('wallet-payouts.wallets.update');
+            Route::delete('wallet-payouts/wallets/{id}', [WalletPayoutController::class, 'deleteWallet'])->name('wallet-payouts.wallets.destroy');
+            Route::post('wallet-payouts/wallets/apply-method', [WalletPayoutController::class, 'applyMethod'])->name('wallet-payouts.wallets.apply-method');
+            Route::post('wallet-payouts/kyc/{ownerUserId}/approve', [WalletPayoutController::class, 'approveKyc'])->name('wallet-payouts.kyc.approve');
+            Route::post('wallet-payouts/kyc/{ownerUserId}/reject', [WalletPayoutController::class, 'rejectKyc'])->name('wallet-payouts.kyc.reject');
+            Route::get('wallet-payouts/withdrawals', [WalletPayoutController::class, 'listWithdrawals'])->name('wallet-payouts.withdrawals.index');
+            Route::post('wallet-payouts/withdrawals', [WalletPayoutController::class, 'createWithdrawal'])->name('wallet-payouts.withdrawals.store');
+            Route::post('wallet-payouts/withdrawals/paid-record', [WalletPayoutController::class, 'createPaidWithdrawal'])->name('wallet-payouts.withdrawals.paid-record');
+            Route::post('wallet-payouts/withdrawals/{id}/approve', [WalletPayoutController::class, 'approveWithdrawal'])->name('wallet-payouts.withdrawals.approve');
+            Route::post('wallet-payouts/withdrawals/{id}/mark-paid', [WalletPayoutController::class, 'markWithdrawalPaid'])->name('wallet-payouts.withdrawals.mark-paid');
+            Route::post('wallet-payouts/withdrawals/{id}/reject', [WalletPayoutController::class, 'rejectWithdrawal'])->name('wallet-payouts.withdrawals.reject');
+            Route::post('wallet-payouts/withdrawals/{id}/cancel', [WalletPayoutController::class, 'cancelWithdrawal'])->name('wallet-payouts.withdrawals.cancel');
+            Route::post('wallet-payouts/delta', [WalletPayoutController::class, 'applyDelta'])->name('wallet-payouts.delta');
+            Route::get('wallet-payouts/transactions', [WalletPayoutController::class, 'listTransactions'])->name('wallet-payouts.transactions.index');
+            Route::post('wallet-payouts/transactions', [WalletPayoutController::class, 'createTransaction'])->name('wallet-payouts.transactions.store');
+            Route::put('wallet-payouts/transactions/{id}', [WalletPayoutController::class, 'updateTransaction'])->name('wallet-payouts.transactions.update');
+        });
 
-        Route::get('subscriptions/dashboard', [ClassMembershipController::class, 'dashboard'])->name('subscriptions.dashboard');
-        Route::post('subscriptions/dashboard', [ClassMembershipController::class, 'store'])->name('subscriptions.dashboard.store');
-        Route::post('subscriptions/dashboard/bulk-cancel', [ClassMembershipController::class, 'bulkCancel'])->name('subscriptions.dashboard.bulk-cancel');
-        Route::delete('subscriptions/programs/{id}', [ClassMembershipController::class, 'destroyProgram'])->name('subscriptions.programs.destroy');
-        Route::get('subscriptions/dashboard/{id}', [ClassMembershipController::class, 'show'])->name('subscriptions.dashboard.show');
-        Route::get('subscriptions/dashboard/{id}/payments', [ClassMembershipController::class, 'payments'])->name('subscriptions.dashboard.payments');
-        Route::post('subscriptions/dashboard/{id}/charge', [ClassMembershipController::class, 'charge'])->name('subscriptions.dashboard.charge');
-        Route::post('subscriptions/dashboard/{id}/retry-charge', [ClassMembershipController::class, 'retryCharge'])->name('subscriptions.dashboard.retry-charge');
-        Route::post('subscriptions/dashboard/{id}/cancel', [ClassMembershipController::class, 'cancel'])->name('subscriptions.dashboard.cancel');
-        Route::post('subscriptions/dashboard/{id}/pause', [ClassMembershipController::class, 'pause'])->name('subscriptions.dashboard.pause');
-        Route::post('subscriptions/dashboard/{id}/resume', [ClassMembershipController::class, 'resume'])->name('subscriptions.dashboard.resume');
-        Route::post('subscriptions/dashboard/{id}/mark-past-due', [ClassMembershipController::class, 'markPastDue'])->name('subscriptions.dashboard.mark-past-due');
-        Route::post('subscriptions/dashboard/{id}/retention/month-off', [ClassMembershipController::class, 'retentionMonthOff'])->name('subscriptions.dashboard.retention');
-        Route::post('subscriptions/dashboard/{id}/winback', [ClassMembershipController::class, 'winback'])->name('subscriptions.dashboard.winback');
+        // Memberships & subscriptions
+        Route::middleware('capability:view_subscriptions,manage_subscriptions')->group(function () {
+            Route::get('subscriptions/dashboard', [ClassMembershipController::class, 'dashboard'])->name('subscriptions.dashboard');
+            Route::post('subscriptions/dashboard', [ClassMembershipController::class, 'store'])->name('subscriptions.dashboard.store');
+            Route::post('subscriptions/dashboard/bulk-cancel', [ClassMembershipController::class, 'bulkCancel'])->name('subscriptions.dashboard.bulk-cancel');
+            Route::delete('subscriptions/programs/{id}', [ClassMembershipController::class, 'destroyProgram'])->name('subscriptions.programs.destroy');
+            Route::get('subscriptions/dashboard/{id}', [ClassMembershipController::class, 'show'])->name('subscriptions.dashboard.show');
+            Route::get('subscriptions/dashboard/{id}/payments', [ClassMembershipController::class, 'payments'])->name('subscriptions.dashboard.payments');
+            Route::post('subscriptions/dashboard/{id}/charge', [ClassMembershipController::class, 'charge'])->name('subscriptions.dashboard.charge');
+            Route::post('subscriptions/dashboard/{id}/retry-charge', [ClassMembershipController::class, 'retryCharge'])->name('subscriptions.dashboard.retry-charge');
+            Route::post('subscriptions/dashboard/{id}/cancel', [ClassMembershipController::class, 'cancel'])->name('subscriptions.dashboard.cancel');
+            Route::post('subscriptions/dashboard/{id}/pause', [ClassMembershipController::class, 'pause'])->name('subscriptions.dashboard.pause');
+            Route::post('subscriptions/dashboard/{id}/resume', [ClassMembershipController::class, 'resume'])->name('subscriptions.dashboard.resume');
+            Route::post('subscriptions/dashboard/{id}/mark-past-due', [ClassMembershipController::class, 'markPastDue'])->name('subscriptions.dashboard.mark-past-due');
+            Route::post('subscriptions/dashboard/{id}/retention/month-off', [ClassMembershipController::class, 'retentionMonthOff'])->name('subscriptions.dashboard.retention');
+            Route::post('subscriptions/dashboard/{id}/winback', [ClassMembershipController::class, 'winback'])->name('subscriptions.dashboard.winback');
+        });
 
         Route::get('registrations/requests', [UserController::class, 'listPendingUsers'])->name('users.pending');
         Route::post('registrations/{id}/approve', [UserController::class, 'approveUser'])->name('users.approve');
@@ -229,18 +267,24 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('notifications/read-all', [NotificationFeedController::class, 'markAllRead'])->name('notifications.read-all');
 
         // Door check-in (admin app QR scanner)
-        Route::prefix('checkin')->name('checkin.')->group(function () {
-            Route::get('lookup', [CheckInController::class, 'lookup'])->name('lookup');
-            Route::get('recent', [CheckInController::class, 'recent'])->name('recent');
-            Route::get('roster', [CheckInController::class, 'roster'])->name('roster');
-            Route::post('attendance', [CheckInController::class, 'record'])->name('attendance');
-            Route::post('mark-present', [CheckInController::class, 'markPresent'])->name('mark-present');
+        // Door check-in
+        Route::middleware('capability:view_subscriptions,manage_subscriptions')->group(function () {
+            Route::prefix('checkin')->name('checkin.')->group(function () {
+                Route::get('lookup', [CheckInController::class, 'lookup'])->name('lookup');
+                Route::get('recent', [CheckInController::class, 'recent'])->name('recent');
+                Route::get('roster', [CheckInController::class, 'roster'])->name('roster');
+                Route::post('attendance', [CheckInController::class, 'record'])->name('attendance');
+                Route::post('mark-present', [CheckInController::class, 'markPresent'])->name('mark-present');
+            });
         });
 
-        Route::get('audit-logs', [AuditLogController::class, 'index']);
-        Route::post('audit-logs', [AuditLogController::class, 'store']);
-        Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
-        Route::get('audit-logs/export', [AuditLogController::class, 'export']);
+        // Audit logs
+        Route::middleware('capability:platform_admin')->group(function () {
+            Route::get('audit-logs', [AuditLogController::class, 'index']);
+            Route::post('audit-logs', [AuditLogController::class, 'store']);
+            Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
+            Route::get('audit-logs/export', [AuditLogController::class, 'export']);
+        });
         Route::post('notifications/whatsapp', [WhatsappController::class, 'send']);
         Route::get('notifications/owner-phone', [WhatsappController::class, 'ownerPhone']);
 
@@ -252,15 +296,18 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::delete('listings/{id}/images', [ListingController::class, 'deleteImage'])->name('listings.deleteImage');
         Route::apiResource('listings', ListingController::class);
 
-        Route::get('promocodes/options', [PromocodeController::class, 'options'])->name('promocodes.options');
-        Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues'])->name('promocodes.venues.search');
-        Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings'])->name('promocodes.listings.search');
-        Route::post('promocodes/validate', [PromocodeController::class, 'validate'])->name('promocodes.validate');
-        Route::get('promocodes/{id}/redemptions', [PromocodeController::class, 'redemptions'])->name('promocodes.redemptions');
-        Route::post('promocodes/{id}/redemptions', [PromocodeController::class, 'storeRedemption'])->name('promocodes.redemptions.store');
-        Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply'])->name('promocodes.apply');
-        Route::post('promocodes/{booking}/remove', [PromocodeController::class, 'remove'])->name('promocodes.remove');
-        Route::apiResource('promocodes', PromocodeController::class);
+        // Promotions
+        Route::middleware('capability:manage_promocodes,manage_promocodes_platform')->group(function () {
+            Route::get('promocodes/options', [PromocodeController::class, 'options'])->name('promocodes.options');
+            Route::get('promocodes/venues/search', [PromocodeController::class, 'searchVenues'])->name('promocodes.venues.search');
+            Route::get('promocodes/listings/search', [PromocodeController::class, 'searchListings'])->name('promocodes.listings.search');
+            Route::post('promocodes/validate', [PromocodeController::class, 'validate'])->name('promocodes.validate');
+            Route::get('promocodes/{id}/redemptions', [PromocodeController::class, 'redemptions'])->name('promocodes.redemptions');
+            Route::post('promocodes/{id}/redemptions', [PromocodeController::class, 'storeRedemption'])->name('promocodes.redemptions.store');
+            Route::post('promocodes/{promocode}/apply', [PromocodeController::class, 'apply'])->name('promocodes.apply');
+            Route::post('promocodes/{booking}/remove', [PromocodeController::class, 'remove'])->name('promocodes.remove');
+            Route::apiResource('promocodes', PromocodeController::class);
+        });
 
         Route::get('extra-data', [HelperController::class, 'extraData'])->name('extra-data');
         Route::get('extra-customers', [HelperController::class, 'extraCustomers'])->name('extra-customers');
@@ -274,62 +321,74 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('dashboard-data', [BookingController::class, 'dashboardData'])->name('dashboard-data');
         Route::get('dashboard/chart', [BookingController::class, 'dashboardChart'])->name('dashboard.chart');
 
-        Route::get('bookings/dashboard', [BookingController::class, 'dashboard'])->name('bookings.dashboard');
-        Route::get('bookings/occupancy', [BookingController::class, 'occupancy'])->name('bookings.occupancy');
-        Route::get('bookings/special-days', [BookingController::class, 'dashboardSpecialDays'])->name('bookings.special-days');
-        Route::post('bookings/dashboard', [BookingController::class, 'dashboardStore'])->name('bookings.dashboard.store');
-        Route::post('bookings/dashboard-cancel', [BookingController::class, 'dashboardCancel'])->name('bookings.dashboard.cancel');
-        Route::post('bookings/dashboard-payment-link', [BookingController::class, 'dashboardPaymentLink'])->name('bookings.dashboard.payment-link');
-        Route::get('bookings/{id}/crm', [BookingController::class, 'crm'])->name('bookings.crm');
-        Route::put('bookings/{id}/dashboard', [BookingController::class, 'dashboardUpdate'])->name('bookings.dashboard.update');
-        Route::put('bookings/{id}/payments/{paymentId}/collect', [BookingController::class, 'dashboardCollect'])->name('bookings.dashboard.collect');
-        Route::get('bookings/list', [BookingController::class, 'mobileBookingsList'])->name('bookings.list');
-        Route::get('bookings/filter-options', [BookingController::class, 'mobileBookingsFilterOptions'])->name('bookings.filter-options');
+        // Bookings & calendar
+        Route::middleware('capability:view_bookings,manage_bookings,view_calendar')->group(function () {
+            Route::get('bookings/dashboard', [BookingController::class, 'dashboard'])->name('bookings.dashboard');
+            Route::get('bookings/occupancy', [BookingController::class, 'occupancy'])->name('bookings.occupancy');
+            Route::get('bookings/special-days', [BookingController::class, 'dashboardSpecialDays'])->name('bookings.special-days');
+            Route::post('bookings/dashboard', [BookingController::class, 'dashboardStore'])->name('bookings.dashboard.store');
+            Route::post('bookings/dashboard-cancel', [BookingController::class, 'dashboardCancel'])->name('bookings.dashboard.cancel');
+            Route::post('bookings/dashboard-payment-link', [BookingController::class, 'dashboardPaymentLink'])->name('bookings.dashboard.payment-link');
+            Route::get('bookings/{id}/crm', [BookingController::class, 'crm'])->name('bookings.crm');
+            Route::put('bookings/{id}/dashboard', [BookingController::class, 'dashboardUpdate'])->name('bookings.dashboard.update');
+            Route::put('bookings/{id}/payments/{paymentId}/collect', [BookingController::class, 'dashboardCollect'])->name('bookings.dashboard.collect');
+            Route::get('bookings/list', [BookingController::class, 'mobileBookingsList'])->name('bookings.list');
+            Route::get('bookings/filter-options', [BookingController::class, 'mobileBookingsFilterOptions'])->name('bookings.filter-options');
 
-        Route::post('bookings/completed', [BookingController::class, 'completed'])->name('bookings.completed');
-        Route::post('bookings/confirm', [BookingController::class, 'confirm'])->name('bookings.confirm');
-        Route::post('bookings/generate-invoice', [BookingController::class, 'generateInvoice'])->name('bookings.generate-invoice');
-        Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory'])->name('bookings.customer.history');
-        Route::get('bookings/form-data', [BookingController::class, 'formData'])->name('bookings.form-data');
-        Route::get('bookings/payment-methods', [BookingController::class, 'getPaymentMethods'])->name('bookings.payment-methods');
-        Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar'])->name('bookings.calendar');
-        Route::get('bookings/calendar-dashboard', [BookingController::class, 'calendarDashboard'])->name('bookings.calendar-dashboard');
-        Route::post('bookings/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
-        Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings'])->name('bookings.due');
-        Route::get('bookings/export', [BookingController::class, 'export'])->name('bookings.export');
-        Route::apiResource('bookings', BookingController::class);
+            Route::post('bookings/completed', [BookingController::class, 'completed'])->name('bookings.completed');
+            Route::post('bookings/confirm', [BookingController::class, 'confirm'])->name('bookings.confirm');
+            Route::post('bookings/generate-invoice', [BookingController::class, 'generateInvoice'])->name('bookings.generate-invoice');
+            Route::get('bookings/customer/{customerId}/history', [BookingController::class, 'customerHistory'])->name('bookings.customer.history');
+            Route::get('bookings/form-data', [BookingController::class, 'formData'])->name('bookings.form-data');
+            Route::get('bookings/payment-methods', [BookingController::class, 'getPaymentMethods'])->name('bookings.payment-methods');
+            Route::get('bookings/calendar', [BookingController::class, 'bookingsForCalendar'])->name('bookings.calendar');
+            Route::get('bookings/calendar-dashboard', [BookingController::class, 'calendarDashboard'])->name('bookings.calendar-dashboard');
+            Route::post('bookings/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
+            Route::get('bookings/due/{customer_id?}', [BookingController::class, 'customerDueBookings'])->name('bookings.due');
+            Route::get('bookings/export', [BookingController::class, 'export'])->name('bookings.export');
+            Route::apiResource('bookings', BookingController::class);
+        });
 
-        Route::post('payments/confirm', [PaymentController::class, 'confirmPayment'])->name('payments.confirm');
-        Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink'])->name('payments.generate-link');
-        Route::post('payments/mark-booking-paid', [PaymentController::class, 'markBookingAsPaid'])->name('payments.mark-booking-paid');
-        Route::get('payments/dashboard', [PaymentController::class, 'dashboard'])->name('payments.dashboard');
-        Route::get('payments/export', [PaymentController::class, 'export'])->name('payments.export');
-        Route::post('payments/{id}/mark-received', [PaymentController::class, 'markPaymentAsReceived'])->name('payments.mark-received');
-        Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice'])->name('payments.invoice');
-        Route::apiResource('payments', PaymentController::class);
+        // Payments
+        Route::middleware('capability:accept_payments')->group(function () {
+            Route::post('payments/confirm', [PaymentController::class, 'confirmPayment'])->name('payments.confirm');
+            Route::post('payments/generate-link', [PaymentController::class, 'generatePaymentLink'])->name('payments.generate-link');
+            Route::post('payments/mark-booking-paid', [PaymentController::class, 'markBookingAsPaid'])->name('payments.mark-booking-paid');
+            Route::get('payments/dashboard', [PaymentController::class, 'dashboard'])->name('payments.dashboard');
+            Route::get('payments/export', [PaymentController::class, 'export'])->name('payments.export');
+            Route::post('payments/{id}/mark-received', [PaymentController::class, 'markPaymentAsReceived'])->name('payments.mark-received');
+            Route::get('payments/{id}/invoice', [PaymentController::class, 'downloadInvoice'])->name('payments.invoice');
+            Route::apiResource('payments', PaymentController::class);
+        });
 
-        Route::get('special-days/dashboard', [SpecialDayController::class, 'dashboard'])->name('special-days.dashboard');
-        Route::post('special-days/dashboard', [SpecialDayController::class, 'dashboardStore'])->name('special-days.dashboard.store');
-        Route::put('special-days/dashboard/{id}', [SpecialDayController::class, 'dashboardUpdate'])->name('special-days.dashboard.update');
-        Route::delete('special-days/dashboard/{id}', [SpecialDayController::class, 'dashboardDestroy'])->name('special-days.dashboard.destroy');
-        Route::post('special-days/dashboard-clear', [SpecialDayController::class, 'dashboardBulkClear'])->name('special-days.dashboard.clear');
-        Route::post('special-days/dashboard-conflicts', [SpecialDayController::class, 'dashboardConflicts'])->name('special-days.dashboard.conflicts');
-        Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar'])->name('special-days.calendar');
-        Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate'])->name('special-days.bulk');
-        Route::apiResource('special-days', SpecialDayController::class);
+        // Special days
+        Route::middleware('capability:manage_listings')->group(function () {
+            Route::get('special-days/dashboard', [SpecialDayController::class, 'dashboard'])->name('special-days.dashboard');
+            Route::post('special-days/dashboard', [SpecialDayController::class, 'dashboardStore'])->name('special-days.dashboard.store');
+            Route::put('special-days/dashboard/{id}', [SpecialDayController::class, 'dashboardUpdate'])->name('special-days.dashboard.update');
+            Route::delete('special-days/dashboard/{id}', [SpecialDayController::class, 'dashboardDestroy'])->name('special-days.dashboard.destroy');
+            Route::post('special-days/dashboard-clear', [SpecialDayController::class, 'dashboardBulkClear'])->name('special-days.dashboard.clear');
+            Route::post('special-days/dashboard-conflicts', [SpecialDayController::class, 'dashboardConflicts'])->name('special-days.dashboard.conflicts');
+            Route::get('special-days/calendar/{venueId}', [SpecialDayController::class, 'calendar'])->name('special-days.calendar');
+            Route::post('special-days/bulk', [SpecialDayController::class, 'bulkCreate'])->name('special-days.bulk');
+            Route::apiResource('special-days', SpecialDayController::class);
+        });
 
-        Route::get('customers/dashboard', [CustomerController::class, 'dashboard'])->name('customers.dashboard');
-        Route::get('customers/export', [CustomerController::class, 'export'])->name('customers.export');
-        Route::get('customers/list', [CustomerController::class, 'listOptimized'])->name('customers.listOptimized');
-        Route::get('customers/{id}/crm', [CustomerController::class, 'crm'])->name('customers.crm');
-        Route::get('customers/{id}/profile', [CustomerController::class, 'adminProfile'])->name('customers.profile');
-        Route::get('customers/{id}/bookings', [CustomerController::class, 'adminBookings'])->name('customers.bookings');
-        Route::put('customers/{id}/tags', [CustomerController::class, 'updateTags'])->name('customers.updateTags');
-        Route::put('customers/{id}/status', [CustomerController::class, 'updateStatus'])->name('customers.updateStatus');
-        Route::put('customers/{id}/loyalty', [CustomerController::class, 'replaceLoyalty'])->name('customers.loyalty.replace');
-        Route::post('customers/{id}/loyalty', [CustomerController::class, 'upsertLoyalty'])->name('customers.loyalty.upsert');
-        Route::delete('customers/{id}/loyalty/{countryId}', [CustomerController::class, 'deleteLoyalty'])->name('customers.loyalty.delete');
-        Route::apiResource('customers', CustomerController::class);
+        // Customers / CRM
+        Route::middleware('capability:manage_customers')->group(function () {
+            Route::get('customers/dashboard', [CustomerController::class, 'dashboard'])->name('customers.dashboard');
+            Route::get('customers/export', [CustomerController::class, 'export'])->name('customers.export');
+            Route::get('customers/list', [CustomerController::class, 'listOptimized'])->name('customers.listOptimized');
+            Route::get('customers/{id}/crm', [CustomerController::class, 'crm'])->name('customers.crm');
+            Route::get('customers/{id}/profile', [CustomerController::class, 'adminProfile'])->name('customers.profile');
+            Route::get('customers/{id}/bookings', [CustomerController::class, 'adminBookings'])->name('customers.bookings');
+            Route::put('customers/{id}/tags', [CustomerController::class, 'updateTags'])->name('customers.updateTags');
+            Route::put('customers/{id}/status', [CustomerController::class, 'updateStatus'])->name('customers.updateStatus');
+            Route::put('customers/{id}/loyalty', [CustomerController::class, 'replaceLoyalty'])->name('customers.loyalty.replace');
+            Route::post('customers/{id}/loyalty', [CustomerController::class, 'upsertLoyalty'])->name('customers.loyalty.upsert');
+            Route::delete('customers/{id}/loyalty/{countryId}', [CustomerController::class, 'deleteLoyalty'])->name('customers.loyalty.delete');
+            Route::apiResource('customers', CustomerController::class);
+        });
 
     });
 

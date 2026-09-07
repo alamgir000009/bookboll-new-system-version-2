@@ -20,6 +20,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'checkRoles' => \App\Http\Middleware\CheckRole::class,
             'role' => \App\Http\Middleware\CheckRole::class,
+            // Capability gate — the server-side twin of the dashboard's can(CAP.…).
+            // Several capabilities mean "any of", as in PAGE_CAP.
+            'capability' => \App\Http\Middleware\CheckCapability::class,
         ]);
 
         $middleware->preventRequestForgery(except: [
