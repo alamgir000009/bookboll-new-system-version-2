@@ -21,6 +21,7 @@ use App\Http\Controllers\CommunityModerationController;
 use App\Http\Controllers\CustomerSocialController;
 use App\Http\Controllers\CustomerCommunityController;
 use App\Http\Controllers\CustomerGameController;
+use App\Http\Controllers\CustomerMessageController;
 use App\Http\Controllers\HostPayoutController;
 use App\Http\Controllers\CustomerProgramController;
 use App\Http\Controllers\PublicProfileController;
@@ -413,6 +414,12 @@ Route::prefix('customer')->group(function () {
         Route::get('notifications/feed', [CustomerGameController::class, 'notificationFeed'])->name('customer.notifications.feed');
         Route::get('messages/group', [CustomerCommunityController::class, 'loadGroupThread'])->name('customer.messages.group.index');
         Route::post('messages/group', [CustomerCommunityController::class, 'sendGroupMessage'])->name('customer.messages.group.store');
+
+        // Direct messages (the inbox also lists community group chats)
+        Route::get('messages/thread', [CustomerMessageController::class, 'thread'])->name('customer.messages.thread');
+        Route::post('messages/read', [CustomerMessageController::class, 'markRead'])->name('customer.messages.read');
+        Route::get('messages', [CustomerMessageController::class, 'index'])->name('customer.messages.index');
+        Route::post('messages', [CustomerMessageController::class, 'store'])->name('customer.messages.store');
 
         Route::get('games/mine/due-matches', [CustomerGameController::class, 'dueMatches'])->name('customer.games.mine.due-matches');
         Route::get('games/mine/hosted', [CustomerGameController::class, 'mineHosted'])->name('customer.games.mine.hosted');
