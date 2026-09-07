@@ -9,7 +9,7 @@
  */
 import { apiFetch } from './api.js'
 
-const EMPTY = { providers: [], venues: [], listings: [], cities: [], countries: [], scope: {} }
+const EMPTY = { providers: [], venues: [], listings: [], cities: [], countries: [], commissionRates: [], scope: {} }
 
 /** @returns {Promise<{providers:Array,venues:Array,listings:Array,cities:Array,countries:Array,scope:object}>} */
 export async function loadReferenceData() {
@@ -22,6 +22,7 @@ export async function loadReferenceData() {
     listings: d.listings || [],
     cities: d.cities || [],
     countries: d.countries || [],
+    commissionRates: d.commission_rates || [],
     scope: d.scope || {},
   }
 }

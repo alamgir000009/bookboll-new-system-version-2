@@ -1,6 +1,11 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadReferenceData } from '../lib/referenceData.js'
+import {
+  fetchPaymentAccount, createPaymentAccount, updatePaymentAccount, deletePaymentAccount,
+  fetchStorefrontSort, saveStorefrontSortValue,
+} from '../lib/paymentAccounts.js'
+import { fetchWallets } from '../lib/walletPayouts.js'
 import {
   fetchVenuesDashboard, fetchVenueDashboard, deleteVenue, patchVenue, sortVenues,
   firstError as venueFirstError,
@@ -404,17 +409,15 @@ async function loadList() {
   const ownerQuery = (!isSuperAdmin.value && currentOwnerUserId.value)
     ? { owner_user_id: currentOwnerUserId.value }
     : {}
-  const [venuesRes, listingsRes, ci, co, addOnsRes, resourcesRes, cr] = await Promise.all([
+  const [venuesRes, listingsRes, ref, addOnsRes, resourcesRes] = await Promise.all([
     fetchVenuesDashboard(ownerQuery),
     fetchListingsDashboard(ownerQuery),
-    supabase.from('cities').select('*').eq('status', 'active').order('name'),
-    supabase.from('countries').select('*').eq('status', 'active').order('name'),
+    loadReferenceData(),
     fetchAddOns(),
     fetchResources(),
-    supabase.from('commission_rates').select('*'),
   ])
-  cities.value = ci.data || []
-  countries.value = co.data || []
+  cities.value = ref.cities
+  countries.value = ref.countries
   // Narrow to the user's assigned venues (Managers/Staff); owners/admins unaffected.
   locations.value = scopeLocations(venuesRes.data?.locations || [])
   // Platform jurisdiction: country_admin / platform_staff only keep venues in their scope.
@@ -425,7 +428,7 @@ async function loadList() {
   allAddons.value = addOnsRes.success ? (addOnsRes.data || []) : []
   allResources.value = resourcesRes.success ? (resourcesRes.data || []) : []
   const rates = {}
-  for (const row of (cr.data || [])) {
+  for (const row of ref.commissionRates) {
     if (!rates[row.country_id]) rates[row.country_id] = { facility: 20, program: 20 }
     rates[row.country_id][row.listing_type] = Number(row.rate_percent)
   }
@@ -1040,11 +1043,11 @@ async function checkProviderOnline(locationId) {
   // "Active" means Stripe is connected OR a manual (Bookboll Wallet) method has been
   // APPROVED by Bookboll. A merely-submitted ('pending_review') method does not count.
   // select('*') so newer columns (purpose, payout_paused) are seen whenever they exist.
-  const { data: ws } = await supabase.from('provider_wallets')
-    .select('*').eq('owner_user_id', loc.owner_user_id)
+  const wRes = await fetchWallets({ owner_user_id: loc.owner_user_id })
+  const ws = wRes.success ? (wRes.data?.wallets || []) : []
   // Full online payment for venue bookings requires an ACTIVE payout method on a BOOKINGS wallet
   // (the Bookboll Wallet shortcut is subscription-only, so venue online needs a real rail).
-  ownerWalletActive.value = hasActivePayoutMethodFor(ws || [], 'bookings')
+  ownerWalletActive.value = hasActivePayoutMethodFor(ws, 'bookings')
   // Enforce the gate in the form: a provider venue without an active wallet
   // can't have full online payment on. Keep at least one method enabled.
   if (!ownerWalletActive.value && pay.value?.online_payment_enabled) {
@@ -1052,9 +1055,9 @@ async function checkProviderOnline(locationId) {
     if (!pay.value.deposit_enabled && !pay.value.cash_on_arrival) pay.value.deposit_enabled = true
   }
   // (legacy) keep the connected payout account in view if one exists.
-  const { data } = await supabase.from('payment_accounts').select('*').eq('owner_user_id', loc.owner_user_id).limit(1)
-  if (data && data.length) {
-    providerAccount.value = data[0]
+  const acct = await fetchPaymentAccount(loc.owner_user_id)
+  if (acct) {
+    providerAccount.value = acct
     providerHasOnline.value = true
   }
 }
@@ -1080,18 +1083,11 @@ function openPayAcctManage() {
 async function savePayAcct() {
   const loc = locations.value.find(l => l.id === form.value.location_id)
   const ownerId = loc?.owner_user_id || currentOwnerUserId.value
-  if (payAcctEditing.value && providerAccount.value) {
-    const { data } = await supabase.from('payment_accounts')
-      .update({ ...payAcctForm.value })
-      .eq('id', providerAccount.value.id)
-      .select().maybeSingle()
-    if (data) providerAccount.value = data
-  } else {
-    const { data } = await supabase.from('payment_accounts')
-      .insert({ owner_user_id: ownerId, is_primary: true, verified: false, ...payAcctForm.value })
-      .select().maybeSingle()
-    if (data) providerAccount.value = data
-  }
+  const res = payAcctEditing.value && providerAccount.value
+    ? await updatePaymentAccount(providerAccount.value.id, { ...payAcctForm.value })
+    : await createPaymentAccount({ ...payAcctForm.value }, ownerId)
+  if (!res.success) { toast.error(res.message || 'Could not save the payment account.'); return }
+  providerAccount.value = res.data?.account || null
   providerHasOnline.value = !!providerAccount.value
   payAcctModal.value = false
 }
@@ -1102,8 +1098,8 @@ async function deletePayAcct() {
     message: 'This payment account will be removed and online payments will be disabled for this listing.',
     confirmText: 'Disconnect',
   }))) return
-  const { error } = await supabase.from('payment_accounts').delete().eq('id', providerAccount.value.id)
-  if (error) { toast.error('Could not remove the payment account.'); return }
+  const res = await deletePaymentAccount(providerAccount.value.id)
+  if (!res.success) { toast.error(res.message || 'Could not remove the payment account.'); return }
   providerAccount.value = null
   providerHasOnline.value = false
   pay.value.online_payment_enabled = false
@@ -2139,14 +2135,7 @@ const layout = ref('grouped') // 'grouped' | 'flat'
 const sortOptions = SORT_OPTIONS
 const storefrontSort = ref({ space: 'recommended', venue: 'recommended' })
 async function loadStorefrontSort() {
-  if (isSuperAdmin.value) {
-    const { data } = await supabase.from('platform_settings').select('key, value').in('key', ['storefront_sort_space', 'storefront_sort_venue'])
-    const m = {}; for (const r of (data || [])) m[r.key] = r.value
-    storefrontSort.value = { space: m.storefront_sort_space || 'recommended', venue: m.storefront_sort_venue || 'recommended' }
-  } else if (currentOwnerUserId.value) {
-    const { data } = await supabase.from('admin_users').select('sort_space, sort_venue').eq('id', currentOwnerUserId.value).maybeSingle()
-    storefrontSort.value = { space: data?.sort_space || 'recommended', venue: data?.sort_venue || 'recommended' }
-  }
+  storefrontSort.value = await fetchStorefrontSort()
 }
 onMounted(loadStorefrontSort)
 // The control targets the view currently shown: flat → space, grouped → venue.
@@ -2157,15 +2146,9 @@ const storefrontSortModel = computed({
 })
 async function saveStorefrontSort(view, value) {
   storefrontSort.value = { ...storefrontSort.value, [view]: value }
-  if (isSuperAdmin.value) {
-    const key = view === 'space' ? 'storefront_sort_space' : 'storefront_sort_venue'
-    const { error } = await supabase.from('platform_settings').upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
-    if (error) { toast.error('Could not save the order — try again.'); return }
-  } else if (currentOwnerUserId.value) {
-    const col = view === 'space' ? 'sort_space' : 'sort_venue'
-    const { error } = await supabase.from('admin_users').update({ [col]: value }).eq('id', currentOwnerUserId.value)
-    if (error) { toast.error(/column|schema cache|sort_/i.test(error.message || '') ? 'Run the storefront-sort migration (SQL) first.' : 'Could not save the order — try again.'); return }
-  } else { return }
+  const res = await saveStorefrontSortValue(view, value)
+  if (!res.success) { toast.error(res.message || 'Could not save the order — try again.'); return }
+  if (res.data?.sort) storefrontSort.value = res.data.sort
   toast.success('Customer site order updated')
 }
 
