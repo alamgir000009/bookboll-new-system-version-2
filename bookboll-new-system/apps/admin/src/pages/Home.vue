@@ -10,7 +10,7 @@ import { useCurrentUser } from '../lib/currentUser.js'
 import { canAccessPage } from '../lib/permissions.js'
 import { brandPreviewUrl, brandPreviewById, providerSlug } from '../lib/brand.js'
 import { pushToast } from '../lib/toast.js'
-import { supabase } from '../lib/supabase.js'
+import { loadOverview } from '../lib/overview.js'
 import { fmt12, fmtRange12 } from '../lib/slots.js'
 import {
   LayoutDashboard, Calendar, Building2, Users, Wallet, Ticket, Globe as Globe2,
@@ -63,22 +63,10 @@ const cards = computed(() => ALL_CARDS.filter(c => canAccessPage(c.to, role.valu
 const route = useRoute()
 const isWelcome = computed(() => route.query.welcome === '1')   // fresh from the signup wizard
 
+// Checklist state + the venue cards come from one call; the API decides what
+// this account may see (its own business, or a platform admin's jurisdiction).
 const walletReady = ref(false)      // any active payout method on any wallet
 const hasOwnerProgram = ref(false)  // programs can exist without a location
-async function loadSetupState() {
-  const ownerId = currentOwnerUserId.value
-  if (!isProvider.value || !ownerId) return
-  try {
-    const [w, p] = await Promise.all([
-      supabase.from('provider_wallets').select('*').eq('owner_user_id', ownerId).eq('setup_status', 'active'),
-      supabase.from('class_programs').select('id').eq('owner_user_id', ownerId).limit(1),
-    ])
-    // A paused payout method doesn't count — the earning gates treat it as inactive.
-    walletReady.value = (w.data || []).some(x => x.payout_paused !== true)
-    hasOwnerProgram.value = !!(p.data || []).length
-  } catch { /* best-effort — checklist just shows steps as not done */ }
-}
-onMounted(loadSetupState)
 
 const hasLocation = computed(() => locations.value.length > 0)
 const hasListing = computed(() => hasOwnerProgram.value || locations.value.some(l => (l.listings?.length || 0) + (l.programs?.length || 0) > 0))
@@ -133,37 +121,12 @@ function scheduleFor(loc) {
 function toggleLoc(id) { openLocId.value = openLocId.value === id ? null : id }
 
 async function loadLocations() {
-  const ownerId = currentOwnerUserId.value
-  if (!isProvider.value || !ownerId) return
   locLoading.value = true
   try {
-    const { data: locs } = await supabase.from('locations')
-      .select('id, name, address, city_id, photos, status')
-      .eq('owner_user_id', ownerId).order('sort_order').order('created_at')
-    const list = locs || []
-    const ids = list.map(l => l.id)
-    if (!ids.length) { locations.value = []; return }
-
-    const [hoursRes, liRes, pgRes, ciRes] = await Promise.all([
-      supabase.from('location_hours').select('location_id, day_of_week, is_open, open_time, close_time').in('location_id', ids),
-      supabase.from('listings').select('id, name, location_id, sport_category, status, photo_url').in('location_id', ids),
-      supabase.from('class_programs').select('id, name, location_id, status').in('location_id', ids),
-      supabase.from('cities').select('id, name').in('id', list.map(l => l.city_id).filter(Boolean)),
-    ])
-    const cityName = {}
-    for (const c of (ciRes.data || [])) cityName[c.id] = c.name
-    const hoursBy = {}, liBy = {}, pgBy = {}
-    for (const h of (hoursRes.data || [])) (hoursBy[h.location_id] ||= []).push(h)
-    for (const l of (liRes.data || [])) (liBy[l.location_id] ||= []).push(l)
-    for (const p of (pgRes.data || [])) (pgBy[p.location_id] ||= []).push(p)
-
-    locations.value = list.map(l => ({
-      ...l,
-      cityName: cityName[l.city_id] || '',
-      hours: hoursBy[l.id] || [],
-      listings: liBy[l.id] || [],
-      programs: pgBy[l.id] || [],
-    }))
+    const { setup, locations: locs } = await loadOverview()
+    locations.value = locs
+    walletReady.value = !!setup.wallet_ready
+    hasOwnerProgram.value = !!setup.has_program
   } catch { locations.value = [] }
   finally { locLoading.value = false }
 }

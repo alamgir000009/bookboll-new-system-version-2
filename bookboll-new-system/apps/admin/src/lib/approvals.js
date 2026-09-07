@@ -28,6 +28,20 @@ export async function requestContentChanges(type, id, body = {}) {
   })
 }
 
+/** Suspend a provider's whole business from the marketplace. */
+export async function suspendBusiness(ownerUserId) {
+  return apiFetch(`/admin/approvals/businesses/${encodeURIComponent(ownerUserId)}/suspend`, {
+    method: 'POST', body: {},
+  })
+}
+
+/** Put a suspended business back on the marketplace. */
+export async function reinstateBusiness(ownerUserId) {
+  return apiFetch(`/admin/approvals/businesses/${encodeURIComponent(ownerUserId)}/reinstate`, {
+    method: 'POST', body: {},
+  })
+}
+
 export async function bulkApproveContent(items) {
   return apiFetch('/admin/approvals/bulk-approve', {
     method: 'POST',

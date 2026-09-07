@@ -8,7 +8,7 @@
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
+import { loadOverview } from '../lib/overview.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { brandPreviewUrl, brandPreviewById, providerSlug } from '../lib/brand.js'
 import { pushToast } from '../lib/toast.js'
@@ -34,22 +34,12 @@ const hasListing = ref(false)
 const siteLive = computed(() => currentUser.value?.brand_enabled === true)
 
 async function refresh() {
-  const ownerId = currentOwnerUserId.value
-  if (!isProvider.value || !ownerId || mode.value === 'off') return
+  if (!isProvider.value || mode.value === 'off') return
   try {
-    const [loc, pg] = await Promise.all([
-      supabase.from('locations').select('id').eq('owner_user_id', ownerId),
-      supabase.from('class_programs').select('id').eq('owner_user_id', ownerId).limit(1),
-    ])
-    const locIds = (loc.data || []).map(l => l.id)
-    hasLocation.value = locIds.length > 0
-    // listings aren't owner-keyed — match them through the owner's locations
-    let anyListing = !!(pg.data || []).length
-    if (!anyListing && locIds.length) {
-      const { data: li } = await supabase.from('listings').select('id').in('location_id', locIds).limit(1)
-      anyListing = !!(li || []).length
-    }
-    hasListing.value = anyListing
+    // has_listing already folds in programmes, which can exist before any venue.
+    const { setup } = await loadOverview()
+    hasLocation.value = !!setup.has_location
+    hasListing.value = !!setup.has_listing
     loaded.value = true
   } catch { /* keep previous state */ }
 }
