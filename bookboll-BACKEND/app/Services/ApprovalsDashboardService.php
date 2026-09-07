@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Business;
 use App\Models\ClassProgram;
 use App\Models\CustomType;
 use App\Models\Listing;
@@ -460,6 +461,85 @@ class ApprovalsDashboardService
             ]);
     }
 
+    /**
+     * Suspend a provider's whole business: every venue, listing and programme
+     * drops off the Bookboll marketplace. Their own white-label site keeps
+     * working, and it is reversible.
+     *
+     * Written to BOTH markers on purpose — users.business_status is what the
+     * dashboard reads, businesses.status is what the marketplace catalogue
+     * checks when hiding a suspended owner.
+     */
+    public function suspendBusiness($ownerUserId)
+    {
+        return $this->setBusinessSuspension($ownerUserId, true);
+    }
+
+    public function reinstateBusiness($ownerUserId)
+    {
+        return $this->setBusinessSuspension($ownerUserId, false);
+    }
+
+    protected function setBusinessSuspension($ownerUserId, bool $suspend)
+    {
+        if (! ctype_digit((string) $ownerUserId)) {
+            return sendError('Unknown business.', [], 404);
+        }
+
+        $user = User::query()->with('ownedBusiness')->find((int) $ownerUserId);
+        if (! $user) {
+            return sendError('Unknown business.', [], 404);
+        }
+
+        $user->forceFill(['business_status' => $suspend ? 'suspended' : 'approved'])->save();
+
+        $business = $user->ownedBusiness;
+        if ($business) {
+            $business->update([
+                'status' => $suspend ? Business::STATUS_SUSPENDED : Business::STATUS_ACTIVE,
+            ]);
+        }
+
+        $name = $business?->name ?: $user->name;
+
+        AdminAlerts::toUser(
+            (int) $user->id,
+            'approval',
+            $suspend ? 'warn' : 'ok',
+            $suspend
+                ? 'Your business was suspended on the Bookboll marketplace'
+                : 'Your business is back on the Bookboll marketplace',
+            $suspend
+                ? 'Your listings are hidden from the marketplace. Contact Bookboll support for details.'
+                : 'Your approved listings and programs are visible again.',
+            '/listings'
+        );
+
+        return sendSuccess($suspend ? 'Business suspended' : 'Business reinstated', [
+            'owner_user_id'   => (string) $user->id,
+            'business_name'   => $name,
+            'business_status' => self::resolveBusinessStatus($user->fresh(), $business?->fresh()),
+        ]);
+    }
+
+    /**
+     * A business is suspended when EITHER marker says so: users.business_status
+     * (what the dashboard writes) or businesses.status (what the marketplace
+     * honours when hiding a provider's catalogue).
+     */
+    public static function resolveBusinessStatus(?User $user, $business): string
+    {
+        $onUser = strtolower((string) ($user?->business_status ?: ''));
+        if ($onUser === 'suspended') {
+            return 'suspended';
+        }
+        if (strtolower((string) ($business?->status ?: '')) === 'suspended') {
+            return 'suspended';
+        }
+
+        return $onUser ?: 'approved';
+    }
+
     protected function buildProviders(array $listings, array $programs): array
     {
         $ids = [];
@@ -476,16 +556,7 @@ class ApprovalsDashboardService
 
         $out = [];
         foreach (array_keys($ids) as $id) {
-            if (ctype_digit((string) $id)) {
-                $u = User::query()->find((int) $id);
-                $out[] = [
-                    'id'              => (string) $id,
-                    'full_name'       => $u?->name,
-                    'business_name'   => $u?->name,
-                    'role'            => 'provider_admin',
-                    'business_status' => 'approved',
-                ];
-            } else {
+            if (! ctype_digit((string) $id)) {
                 $out[] = [
                     'id'              => (string) $id,
                     'full_name'       => 'Provider',
@@ -493,7 +564,26 @@ class ApprovalsDashboardService
                     'role'            => 'provider_admin',
                     'business_status' => 'approved',
                 ];
+
+                continue;
             }
+
+            $u = User::query()->with('ownedBusiness')->find((int) $id);
+            $b = $u?->ownedBusiness;
+
+            $out[] = [
+                'id'            => (string) $id,
+                'full_name'     => $u?->name,
+                'business_name' => $b?->name ?: $u?->name,
+                'email'         => $u?->email,
+                'phone'         => $u?->phone,
+                'username'      => $b?->username,
+                'country_id'    => $u?->country_id,
+                'role'          => 'provider_admin',
+                // The real state, so a suspended business actually reads as
+                // suspended in the Approvals queue instead of always "approved".
+                'business_status' => self::resolveBusinessStatus($u, $b),
+            ];
         }
 
         return $out;

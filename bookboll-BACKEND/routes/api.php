@@ -7,6 +7,7 @@ use App\Http\Controllers\BookingPayLinkController;
 use App\Http\Controllers\BusinessController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\Admin\GeographyController;
+use App\Http\Controllers\Admin\OverviewController;
 use App\Http\Controllers\Admin\ReferenceDataController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
 use App\Http\Controllers\BusinessNotificationTemplateController;
@@ -110,6 +111,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Shared scope/filter bundle — any admin role, already narrowed per caller.
         Route::get('reference-data', [ReferenceDataController::class, 'index'])->name('reference-data');
 
+        // Landing page: onboarding checklist + the caller's venues (Home, SetupCoach).
+        Route::get('overview', [OverviewController::class, 'index'])->name('overview');
+
         Route::get('locations/countries', [LocationController::class, 'countries'])->name('locations.countries');
         Route::get('locations/states', [LocationController::class, 'states'])->name('locations.states');
         Route::get('locations/cities', [LocationController::class, 'cities'])->name('locations.cities');
@@ -177,6 +181,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('approvals/bulk-approve', [ApprovalsController::class, 'bulkApprove'])->name('approvals.bulk-approve');
             Route::post('approvals/{type}/{id}/approve', [ApprovalsController::class, 'approve'])->name('approvals.approve');
             Route::post('approvals/{type}/{id}/request-changes', [ApprovalsController::class, 'requestChanges'])->name('approvals.request-changes');
+            Route::post('approvals/businesses/{ownerUserId}/suspend', [ApprovalsController::class, 'suspendBusiness'])->name('approvals.businesses.suspend');
+            Route::post('approvals/businesses/{ownerUserId}/reinstate', [ApprovalsController::class, 'reinstateBusiness'])->name('approvals.businesses.reinstate');
         });
 
         // Event & community moderation

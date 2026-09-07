@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Models\Community;
+use App\Models\User;
 use App\Models\CommunityMember;
-use App\Support\SupabaseRestClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -91,38 +91,15 @@ class CommunityModerationService
         $community->fill($patch);
         $community->save();
 
-        $supabaseOk = true;
-        $supabaseError = null;
-        try {
-            $client = SupabaseRestClient::fromConfig();
-            $client->updateById('communities', (string) $community->uuid, [
-                'moderation_status' => $status,
-                'moderation_reason' => $reason,
-                'moderated_at'      => optional($community->moderated_at)?->toIso8601String() ?? now()->toIso8601String(),
-                'moderated_by'      => $moderatedBy,
-            ]);
-        } catch (Throwable $e) {
-            $supabaseOk = false;
-            $supabaseError = $e->getMessage();
-            Log::warning('Community moderation Supabase dual-write failed: ' . $e->getMessage(), [
-                'community_id' => $id,
-                'status'       => $status,
-            ]);
-        }
-
+        // The storefront reads moderation_status from this row
+        // (CustomerCommunityService hides removed communities), so no mirror is needed.
         $message = match ($status) {
             'flagged' => 'Community flagged for review',
             'removed' => 'Community removed from the site',
             default   => 'Community restored',
         };
-        if (! $supabaseOk) {
-            $message .= ' (Laravel saved; Supabase sync failed — storefront may be stale)';
-        }
-
         return sendSuccess($message, [
             'community'       => $this->mapCommunity($community->fresh()),
-            'supabase_synced' => $supabaseOk,
-            'supabase_error'  => $supabaseError,
         ]);
     }
 
@@ -132,6 +109,11 @@ class CommunityModerationService
             'id'                => $c->id,
             'uuid'              => $c->uuid,
             'owner_customer_id' => $c->owner_customer_id ? (string) $c->owner_customer_id : null,
+            // Resolved here so the moderation table doesn't need a second lookup
+            // just to show who runs the community.
+            'owner_name'        => $c->owner_customer_id
+                ? (User::where('uuid', $c->owner_customer_id)->value('name') ?: 'Player')
+                : 'Player',
             'name'              => $c->name ?? '',
             'description'       => $c->description ?? '',
             'sport'             => $c->sport ?? '',

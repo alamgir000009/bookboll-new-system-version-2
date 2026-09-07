@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\GameJoinRequest;
 use App\Models\HostedGame;
-use App\Support\SupabaseRestClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -96,38 +95,17 @@ class EventModerationService
         $game->fill($patch);
         $game->save();
 
-        $supabaseOk = true;
-        $supabaseError = null;
-        try {
-            $client = SupabaseRestClient::fromConfig();
-            $client->updateById('hosted_games', (string) $game->uuid, [
-                'moderation_status' => $status,
-                'moderation_reason' => $reason,
-                'moderated_at'      => optional($game->moderated_at)?->toIso8601String() ?? now()->toIso8601String(),
-                'moderated_by'      => $moderatedBy,
-            ]);
-        } catch (Throwable $e) {
-            $supabaseOk = false;
-            $supabaseError = $e->getMessage();
-            Log::warning('Event moderation Supabase dual-write failed: ' . $e->getMessage(), [
-                'game_id' => $id,
-                'status'  => $status,
-            ]);
-        }
-
+        // The storefront reads moderation_status straight off this row
+        // (CustomerGameService filters removed events), so there is nothing to
+        // mirror — the old Supabase dual-write has been dropped.
         $message = match ($status) {
             'flagged' => 'Event flagged for review',
             'removed' => 'Event removed from the site',
             default   => 'Event restored',
         };
-        if (! $supabaseOk) {
-            $message .= ' (Laravel saved; Supabase sync failed — storefront may be stale)';
-        }
 
         return sendSuccess($message, [
-            'game'            => $this->mapGame($game->fresh()),
-            'supabase_synced' => $supabaseOk,
-            'supabase_error'  => $supabaseError,
+            'game' => $this->mapGame($game->fresh()),
         ]);
     }
 
