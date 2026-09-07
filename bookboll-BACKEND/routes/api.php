@@ -3,6 +3,7 @@
 use App\Http\Controllers\AddOnController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\BookingController;
+use App\Http\Controllers\BookingPayLinkController;
 use App\Http\Controllers\BusinessController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\Admin\GeographyController;
@@ -512,6 +513,10 @@ Route::get('listings', [ListingController::class, 'mobileListingsList'])->name('
 Route::post('promocodes/apply', [PromocodeController::class, 'applyPromocode'])->name('promocodes.applyPromocode');
 
 Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe'])->name('newsletter.subscribe');
+
+// Desk "Pay by QR" — public; the booking uuid in the link is the credential.
+Route::get('pay/{uuid}', [BookingPayLinkController::class, 'show'])->name('pay.show');
+Route::post('pay/{uuid}/checkout', [BookingPayLinkController::class, 'checkout'])->name('pay.checkout');
 
 // One-click unsubscribe from a marketing email — no session, the token is the credential.
 Route::post('marketing/unsubscribe', [MarketingController::class, 'unsubscribe'])->name('marketing.unsubscribe');

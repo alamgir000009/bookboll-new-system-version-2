@@ -1,6 +1,7 @@
 <?php
 namespace App\Models;
 
+use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
 use App\Traits\TracksCreator;
 
@@ -13,9 +14,10 @@ use PaymentType;
 
 class Booking extends Model
 {
-    use LogsModelActivity, TracksCreator;
+    use GeneratesUuid, LogsModelActivity, TracksCreator;
 
     protected $fillable = [
+        'uuid',
         'date',
         'notes',
         'status',

@@ -4343,6 +4343,9 @@ class BookingService
 
         return [
             'id'             => (string) $b->id,
+            // The desk's "Pay by QR" link is public, so it carries the uuid rather
+            // than the sequential id — see BookingPayLinkService.
+            'uuid'           => $b->uuid,
             'booking_id'     => $b->booking_id,
             'customer_id'    => $b->user_id ? (string) $b->user_id : null,
             'listing_id'     => $b->listing_id ? (string) $b->listing_id : null,
