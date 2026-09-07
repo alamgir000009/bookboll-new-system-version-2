@@ -8,6 +8,8 @@ use App\Http\Controllers\BusinessController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\Admin\GeographyController;
 use App\Http\Controllers\Admin\OverviewController;
+use App\Http\Controllers\Admin\PaymentAccountController;
+use App\Http\Controllers\Admin\StorefrontSortController;
 use App\Http\Controllers\Admin\ReferenceDataController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
 use App\Http\Controllers\BusinessNotificationTemplateController;
@@ -113,6 +115,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Landing page: onboarding checklist + the caller's venues (Home, SetupCoach).
         Route::get('overview', [OverviewController::class, 'index'])->name('overview');
+
+        // A provider's connected bank account (Listings → payment account).
+        Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
+            Route::get('payment-accounts', [PaymentAccountController::class, 'show'])->name('payment-accounts.show');
+            Route::post('payment-accounts', [PaymentAccountController::class, 'store'])->name('payment-accounts.store');
+            Route::put('payment-accounts/{id}', [PaymentAccountController::class, 'update'])->name('payment-accounts.update');
+            Route::delete('payment-accounts/{id}', [PaymentAccountController::class, 'destroy'])->name('payment-accounts.destroy');
+
+            // Customer-site fallback ordering: the marketplace for platform admins,
+            // their own white-label site for providers.
+            Route::get('storefront-sort', [StorefrontSortController::class, 'show'])->name('storefront-sort.show');
+            Route::put('storefront-sort', [StorefrontSortController::class, 'update'])->name('storefront-sort.update');
+        });
 
         Route::get('locations/countries', [LocationController::class, 'countries'])->name('locations.countries');
         Route::get('locations/states', [LocationController::class, 'states'])->name('locations.states');

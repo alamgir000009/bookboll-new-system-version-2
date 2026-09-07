@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Business;
+use App\Models\CommissionRate;
 use App\Models\Listing;
 use App\Models\User;
 use App\Models\Venue;
@@ -56,6 +57,15 @@ class AdminReferenceDataService
             'listings'  => $listings,
             'cities'    => $this->cities($user, $venues),
             'countries' => $this->countries($user),
+            // Per-country commission, used by Listings and Memberships to show the
+            // effective rate on a venue or programme.
+            'commission_rates' => CommissionRate::query()
+                ->get(['country_id', 'listing_type', 'rate_percent'])
+                ->map(fn (CommissionRate $r) => [
+                    'country_id'   => $r->country_id,
+                    'listing_type' => $r->listing_type,
+                    'rate_percent' => (float) $r->rate_percent,
+                ])->values(),
             'scope'     => [
                 'owner_user_id'  => $ownerId,
                 'is_global'      => AccessScope::isGlobal($user),
@@ -75,7 +85,7 @@ class AdminReferenceDataService
         $query = User::query()
             ->whereHas('roles', fn ($q) => $q->where('name', 'provider_admin'))
             ->with(['ownedBusiness:id,owner_id,name,username,status,brand_enabled,brand_subdomain'])
-            ->select(['id', 'uuid', 'name', 'email', 'phone', 'country_id', 'status', 'business_status', 'owner_user_id']);
+            ->select(['id', 'uuid', 'name', 'email', 'phone', 'country_id', 'status', 'business_status', 'owner_user_id', 'created_at']);
 
         if (AccessScope::isProviderScoped($user)) {
             $query->where('id', $ownerId ?: 0);
@@ -111,6 +121,8 @@ class AdminReferenceDataService
                 'username'        => $b?->username,
                 'brand_enabled'   => (bool) ($b?->brand_enabled),
                 'brand_subdomain' => $b?->brand_subdomain,
+                // The wallet review shows when the business joined.
+                'created_at'      => optional($u->created_at)?->toIso8601String(),
             ];
         })->values();
     }
