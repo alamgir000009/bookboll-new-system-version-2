@@ -2,9 +2,8 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { customer, isCustomer } from '../../lib/customerSession.js'
-import { supabase } from '../../lib/supabase.js'
-import { loadConversations, loadThread, sendMessage, markThreadRead, refreshUnread } from '../../lib/social.js'
-import { groupKey, loadGroupThread, sendGroupMessage, markCommunityChatRead, communityChatUnread, myCommunities, isMember, canManage, loadCommunity, updateCommunity } from '../../customer/community.js'
+import { loadInbox, loadThreadWithPeer, sendMessage, markThreadRead, refreshUnread } from '../../lib/social.js'
+import { groupKey, loadGroupThread, sendGroupMessage, markCommunityChatRead, isMember, canManage, loadCommunity, updateCommunity } from '../../customer/community.js'
 import { useSeo } from '../../lib/seo.js'
 import { fmt12 } from '../../lib/slots.js'
 import { ArrowLeft, Send, MessageCircle, User, UsersRound, Lock, LockOpen } from 'lucide-vue-next'
@@ -51,40 +50,11 @@ async function toggleGroupLock() {
   if (!res.error) groupInfo.value = { ...groupInfo.value, settings: next }
 }
 
+// Direct conversations AND community group chats come back merged and sorted.
 async function loadList() {
   loadingConvos.value = true
-  const [direct, groups] = await Promise.all([loadConversations(me.value), loadGroupList()])
-  convos.value = [...groups, ...direct].sort((a, b) => new Date(b.lastAt || 0) - new Date(a.lastAt || 0))
+  convos.value = await loadInbox()
   loadingConvos.value = false
-}
-// One inbox row per community the viewer belongs to — like any other conversation.
-async function loadGroupList() {
-  try {
-    const clubs = (await myCommunities(me.value)).filter(c => isMember(c.membership))
-    if (!clubs.length) return []
-    const keys = clubs.map(c => groupKey('community', c.id))
-    const { data } = await supabase.from('customer_messages')
-      .select('conversation_key, sender_id, body, created_at')
-      .in('conversation_key', keys).order('created_at', { ascending: false }).limit(400)
-    const lastByKey = {}
-    for (const m of (data || [])) if (!lastByKey[m.conversation_key]) lastByKey[m.conversation_key] = m
-    return await Promise.all(clubs.map(async c => {
-      const key = groupKey('community', c.id)
-      const last = lastByKey[key] || null
-      return {
-        group: true, peerId: key, communityId: c.id,
-        peer: { full_name: c.name, avatar_url: c.avatar_image || c.cover_image || '' },
-        lastBody: last ? last.body : 'Community group chat',
-        lastAt: last?.created_at || c.created_at || null,
-        lastMine: !!last && last.sender_id === me.value,
-        unread: await communityChatUnread(c.id, c.membership),
-      }
-    }))
-  } catch { return [] }
-}
-async function fetchPeer(id) {
-  const { data } = await supabase.from('customers').select('id, full_name, avatar_url').eq('id', id).maybeSingle()
-  peer.value = data || { id, full_name: 'Player' }
 }
 async function openThread() {
   if (!peerId.value || !me.value) { peer.value = null; thread.value = []; groupInfo.value = null; return }
@@ -100,8 +70,9 @@ async function openThread() {
     if (amGroupMember.value) markCommunityChatRead(groupCid.value, me.value)
   } else {
     groupInfo.value = null
-    await fetchPeer(peerId.value)
-    thread.value = await loadThread(me.value, peerId.value)
+    const t = await loadThreadWithPeer(peerId.value)
+    peer.value = t.peer || { id: peerId.value, full_name: 'Player' }
+    thread.value = t.messages
     loadingThread.value = false
     await markThreadRead(me.value, peerId.value)
     refreshUnread(me.value)
@@ -148,7 +119,7 @@ onMounted(() => {
       if (isGroup.value) {
         if (groupInfo.value) { thread.value = await loadGroupThread(groupKey('community', groupCid.value)); if (amGroupMember.value) markCommunityChatRead(groupCid.value, me.value) }
       } else {
-        thread.value = await loadThread(me.value, peerId.value); await markThreadRead(me.value, peerId.value)
+        thread.value = (await loadThreadWithPeer(peerId.value)).messages; await markThreadRead(me.value, peerId.value)
       }
     }
     loadList(); refreshUnread(me.value)
