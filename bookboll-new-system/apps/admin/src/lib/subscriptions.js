@@ -71,6 +71,24 @@ export async function fetchSubscriptionPayments(id) {
   return apiFetch(`/admin/subscriptions/dashboard/${id}/payments`)
 }
 
+/**
+ * Create a membership programme. The API decides the approval staging (draft /
+ * pending / staged content / live) — the browser cannot declare its own edit
+ * "operational" and skip review.
+ */
+export async function createProgram(body) {
+  return apiFetch('/admin/subscriptions/programs', { method: 'POST', body })
+}
+
+export async function updateProgram(id, body) {
+  return apiFetch(`/admin/subscriptions/programs/${encodeURIComponent(id)}`, { method: 'PUT', body })
+}
+
+/** Activate / archive, or (platform only) pause / resume a programme. */
+export async function setProgramState(id, body) {
+  return apiFetch(`/admin/subscriptions/programs/${encodeURIComponent(id)}/state`, { method: 'PATCH', body })
+}
+
 export async function deleteProgram(id) {
   return apiFetch(`/admin/subscriptions/programs/${id}`, { method: 'DELETE' })
 }

@@ -1,12 +1,13 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { supabase } from '../lib/supabase.js'
+import { loadReferenceData } from '../lib/referenceData.js'
+import { fetchWallets } from '../lib/walletPayouts.js'
 import { askConfirm } from '../lib/confirm.js'
 import { pushToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty, registerDraftSaver } from '../lib/unsavedGuard.js'
 import { saveFormDraft, loadFormDraft, clearFormDraft, draftAgeLabel } from '../lib/formDrafts.js'
-import { rowState, contentChanged, TRIAL_TERMS_VERSION, PLATFORM_COMMISSION, DEFAULT_TRIAL_DAYS } from '../lib/approvalState.js'
+import { rowState, TRIAL_TERMS_VERSION, PLATFORM_COMMISSION, DEFAULT_TRIAL_DAYS } from '../lib/approvalState.js'
 import { MEMBERSHIP_CATEGORIES, MEMBERSHIP_CATEGORY_BY_KEY, normMembershipCategory, AUDIENCES, GYM_AUDIENCES, audienceOptionsFor, categoryNeedsAudience, categoryIsGym, GENDER_POLICIES, normGenderPolicy, effectiveGenderPolicy } from '../lib/membershipCategories.js'
 import { loadApprovedTypes, approvedTypesFor, addPendingType } from '../lib/customTypes.js'
 import { programSpanDays, offerModeFor, trialOptionsForSpan, recommendedTrialForSpan, trialOptionKey, discountOptionsForInterval, recommendedDiscountForInterval, discountedPrice } from '../lib/billingPlans.js'
@@ -31,7 +32,10 @@ import { SLOT_DURATIONS, fmt12 } from '../lib/slots.js'
 import { CAP } from '../lib/permissions.js'
 import { isWalletReady, isCountryWalletReady, hasActivePayoutMethodFor } from '../lib/walletSetup.js'
 import { appBaseUrl } from '../lib/appBase.js'
-import { fetchSubscriptionsDashboard, deleteProgram as deleteProgramApi, firstError } from '../lib/subscriptions.js'
+import {
+  fetchSubscriptionsDashboard, deleteProgram as deleteProgramApi, firstError,
+  createProgram, updateProgram, setProgramState,
+} from '../lib/subscriptions.js'
 import QRCode from 'qrcode'
 
 const { isSuperAdmin, isCountryAdmin, currentOwnerUserId, role: authRole, can, currentUser } = useCurrentUser()
@@ -124,16 +128,11 @@ function countryOfLocation(locationId) {
 }
 
 async function loadAll() {
-  let locQ = supabase.from('locations').select('*').order('name')
-  if (!isSuperAdmin.value && currentOwnerUserId.value) {
-    locQ = locQ.eq('owner_user_id', currentOwnerUserId.value)
-  }
-  const [dash, ls, lo, ci, co] = await Promise.all([
+  // reference-data is already narrowed: a provider gets their own venues, a
+  // platform admin gets their jurisdiction.
+  const [dash, ref] = await Promise.all([
     fetchSubscriptionsDashboard(),
-    supabase.from('listings').select('*'),
-    locQ,
-    supabase.from('cities').select('id, name, country_id').eq('status', 'active').order('name'),
-    supabase.from('countries').select('id, name, currency_code').eq('status', 'active').order('name'),
+    loadReferenceData(),
   ])
   if (!dash.success) {
     pushToast(firstError(dash, 'Could not load memberships.'), 'error')
@@ -158,10 +157,10 @@ async function loadAll() {
   programGenderSupported.value = true
   programJoiningFeeSupported.value = true
   programDraftSupported.value = true
-  listings.value = ls.data || []
-  locations.value = lo.data || []
-  cities.value = ci.data || []
-  countries.value = co.data || []
+  listings.value = ref.listings
+  locations.value = ref.venues
+  cities.value = ref.cities
+  countries.value = ref.countries
   // Platform jurisdiction: country_admin / platform_staff only keep venues in their scope.
   const allowed = allowedLocationIds.value
   if (allowed) locations.value = locations.value.filter(l => allowed.has(l.id))
@@ -169,10 +168,8 @@ async function loadAll() {
   // Wallet gate (per country): load the provider's wallets so we can check whether
   // the program's country has an active wallet before allowing creation.
   if (!isPlatformSide.value && currentOwnerUserId.value) {
-    // select('*') so newer columns (purpose, payout_paused) are seen whenever they exist.
-    const ws = await supabase.from('provider_wallets')
-      .select('*').eq('owner_user_id', currentOwnerUserId.value)
-    providerWallets.value = ws.error ? [] : (ws.data || [])
+    const ws = await fetchWallets({ owner_user_id: currentOwnerUserId.value })
+    providerWallets.value = ws.success ? (ws.data?.wallets || []) : []
   }
 
   // Wind-down runs server-side on the subscriptions dashboard bootstrap.
@@ -188,24 +185,8 @@ async function loadAll() {
 onMounted(loadAll)
 onMounted(() => loadApprovedTypes())
 
-// Wind-down: when a paused/archived program's member passes their next billing date,
-// their plan is cancelled (no renewal) — slots are already freed by then. Runs on load
-// (this app bills manually; there is no server cron).
-async function windDownSweep() {
-  const today = new Date().toISOString().slice(0, 10)
-  const due = subscriptions.value.filter(s => {
-    if (!(s.status === 'active' || s.trial_status === 'in_trial')) return false
-    if (!s.next_billing_at || s.next_billing_at >= today) return false
-    const prog = programs.value.find(p => p.id === s.program_id)
-    return prog && !(prog.status === 'active' && rowState(prog) === 'active')   // program not live
-  })
-  if (!due.length) return
-  const ids = due.map(s => s.id)
-  await supabase.from('class_subscriptions').update({ status: 'cancelled' }).in('id', ids)
-  await supabase.from('class_sessions').update({ status: 'cancelled' }).in('subscription_id', ids).eq('status', 'scheduled')
-  const idSet = new Set(ids)
-  subscriptions.value = subscriptions.value.map(s => idSet.has(s.id) ? { ...s, status: 'cancelled' } : s)
-}
+// Wind-down (cancelling members of an archived programme once their billing date
+// passes) runs server-side on the subscriptions dashboard bootstrap.
 
 const providerName = (id) => { const p = providers.value.find(p => p.id === id); return p ? (p.business_name || p.full_name) : '—' }
 const listingName = (id) => listings.value.find(l => l.id === id)?.name || '—'
@@ -529,7 +510,7 @@ async function providerPayoutGate(locationId = '') {
   if (isPlatformSide.value) return true
   const ownerId = currentOwnerUserId.value
   if (!ownerId) return true
-  const { data: ws } = await supabase.from('provider_wallets').select('*').eq('owner_user_id', ownerId)
+  const wRes = await fetchWallets({ owner_user_id: ownerId }); const ws = wRes.success ? (wRes.data?.wallets || []) : []
   if (hasActivePayoutMethodFor(ws || [], 'subscription')) return true
   payoutModalPending.value = (ws || []).some(w => w.setup_status === 'pending_review')
   payoutModalCountry.value = countryOfLocation(locationId) || ''
@@ -753,17 +734,6 @@ function toggleDay(d) {
   pgForm.value.day_of_week_mask = [...arr].sort()
 }
 
-function snapshotOf(p) {
-  const snap = {}
-  for (const f of PROGRAM_FIELDS) snap[f.key] = p[f.key] ?? null
-  return snap
-}
-
-const hasValidPlan = () => Number(pgForm.value.monthly_price) > 0
-
-// A missing-column error (pre-migration DB) — mirrors lib/auth.js columnMissing so a
-// draft/joining_fee write can retry WITHOUT the new columns instead of failing.
-const columnMissing = (e) => !!e && e.code !== '23505' && /could not find|does not exist|schema cache/i.test(e.message || '')
 
 // ── Save draft ────────────────────────────────────────────────────────────────
 // Persist a work-in-progress program with ONLY a name + location required. Skips the
@@ -839,24 +809,13 @@ async function saveDraft() {
   // The draft flag itself. If the column doesn't exist yet the retry below drops it.
   if (programDraftSupported.value) base.is_draft = true
 
-  // Write with the new columns; on a missing-column error retry WITHOUT them so a draft
-  // still saves pre-migration (status:'inactive' already hides it from the storefront).
-  const stripNewCols = (o) => { const c = { ...o }; delete c.is_draft; delete c.joining_fee; return c }
-  let savedId = null
-  if (pgEditing.value) {
-    const id = pgEditing.value.id
-    const payload = { ...base, approval_status: pgEditing.value.approval_status || 'approved' }
-    let { error } = await supabase.from('class_programs').update(payload).eq('id', id)
-    if (columnMissing(error)) ({ error } = await supabase.from('class_programs').update(stripNewCols(payload)).eq('id', id))
-    if (error) { pushToast('Could not save the draft.', 'error'); return }
-    savedId = id
-  } else {
-    const payload = { ...base, approval_status: 'draft', eligibility_status: 'eligible', admin_note: '', previous_snapshot: null }
-    let res = await supabase.from('class_programs').insert(payload).select().maybeSingle()
-    if (columnMissing(res.error)) res = await supabase.from('class_programs').insert(stripNewCols(payload)).select().maybeSingle()
-    if (res.error) { pushToast('Could not save the draft.', 'error'); return }
-    savedId = res.data?.id || null
-  }
+  // is_draft tells the API this is a draft: never live, never reviewed.
+  const payload = { ...base, is_draft: true }
+  const res = pgEditing.value
+    ? await updateProgram(pgEditing.value.id, payload)
+    : await createProgram(payload)
+  if (!res.success) { pushToast(res.message || 'Could not save the draft.', 'error'); return }
+  const savedId = res.data?.program?.id || null
 
   clearDirty()
   clearFormDraft(programDraftKey())   // persisted to the DB — the local snapshot is superseded
@@ -866,6 +825,9 @@ async function saveDraft() {
   loadAll()
   emit('saved')
 }
+// A plan is only chargeable once it has a price.
+const hasValidPlan = () => Number(pgForm.value.monthly_price) > 0
+
 
 async function requestSaveProgram() {
   // Submitting for real always clears the draft flag and runs full validation.
@@ -903,7 +865,7 @@ async function requestSaveProgram() {
   pgForcedInactive.value = false
   if (ownerId) {
     // select('*') so newer columns (purpose, payout_paused) are seen whenever they exist.
-    const { data: ws } = await supabase.from('provider_wallets').select('*').eq('owner_user_id', ownerId)
+    const wRes = await fetchWallets({ owner_user_id: ownerId }); const ws = wRes.success ? (wRes.data?.wallets || []) : []
     if (!hasActivePayoutMethodFor(ws || [], 'subscription')) {
       payoutModalPending.value = (ws || []).some(w => w.setup_status === 'pending_review')
       payoutModalCountry.value = countryOfLocation(pgForm.value.location_id) || ''
@@ -1066,99 +1028,34 @@ async function saveProgram() {
   // A full Save (not a draft) always clears the draft flag so the row is a real program.
   if (programDraftSupported.value) base.is_draft = false
 
-  let savedId = null
-  // Only CONTENT (title/description/photos) needs approval; operational edits (price,
-  // schedule, capacity, trial…) go live instantly. A content edit on a live program is
-  // STAGED in pending_content while the approved content keeps serving.
-  const contentSnap = { name: base.name, description: base.description, photo_url: base.photo_url, images: base.images }
-  const CONTENT_KEYS = ['name', 'description', 'photo_url', 'images']
-  // stageMode: 'full' = whole program under review · 'content' = live stays, content staged
-  //   · 'operational' = live now, nothing to review · 'admin' = admin edit.
-  let stageMode = 'admin'
-
-  if (pgEditing.value) {
-    const existing = pgEditing.value
-    if (isAdmin) {
-      // admin edits stay approved, no snapshot
-      const payload = {
-        ...base,
-        approval_status: 'approved',
-        eligibility_status: existing.eligibility_status || 'eligible',
-      }
-      await supabase.from('class_programs').update(payload).eq('id', existing.id)
-      stageMode = 'admin'
-    } else {
-      const isPaused = existing.eligibility_status === 'paused'
-      const notLiveYet = (existing.approval_status || 'approved') !== 'approved' || isPaused
-      const liveApproved = {
-        name: existing.name || '', description: existing.description || '',
-        photo_url: existing.photo_url || '', images: Array.isArray(existing.images) ? existing.images : [],
-      }
-      if (notLiveYet) {
-        // First-time review or Bookboll-paused → offline anyway: write content live and
-        // (re)submit the whole program, as before.
-        const payload = {
-          ...base,
-          approval_status: 'pending',
-          previous_snapshot: existing.previous_snapshot || snapshotOf(existing),
-          ...(isPaused ? { admin_note: existing.admin_note } : {}),
-        }
-        await supabase.from('class_programs').update(payload).eq('id', existing.id)
-        stageMode = 'full'
-      } else if (contentChanged(contentSnap, liveApproved, CONTENT_KEYS)) {
-        // Live & approved + content changed → stage content, write only operational fields.
-        const { name, description, photo_url, images, ...opBase } = base
-        await supabase.from('class_programs').update(opBase).eq('id', existing.id)
-        stageMode = 'content'
-      } else {
-        // Operational-only → live now.
-        const { name, description, photo_url, images, ...opBase } = base
-        await supabase.from('class_programs').update(opBase).eq('id', existing.id)
-        stageMode = 'operational'
-      }
-    }
-    savedId = existing.id
-  } else {
-    const payload = {
-      ...base,
-      approval_status: isAdmin ? 'approved' : 'pending',
-      eligibility_status: 'eligible',
-      admin_note: '',
-      previous_snapshot: null,
-    }
-    const { data, error } = await supabase.from('class_programs').insert(payload).select().maybeSingle()
-    savedId = data?.id || null
-    stageMode = isAdmin ? 'admin' : 'full'
+  // The API decides the approval staging and returns which path it took, so the
+  // browser can't declare its own edit "operational" and skip review:
+  //   full        whole program under review      content  live stays, content staged
+  //   operational live now, nothing to review     admin    platform-admin edit
+  const payload = { ...base }
+  if (needsAcceptanceRecord) {
+    payload.accept_trial_terms = true
+    payload.terms_version = TRIAL_TERMS_VERSION
   }
+  const res = pgEditing.value
+    ? await updateProgram(pgEditing.value.id, payload)
+    : await createProgram(payload)
+  if (!res.success) {
+    pushToast(res.message || (pgEditing.value ? 'Could not save the program.' : 'Could not create the program.'), 'error')
+    return
+  }
+  const savedId = res.data?.program?.id || null
+  const stageMode = res.data?.stage_mode || 'admin'
 
-  // Staged content (migration 20260765000000). Guarded so saves work pre-migration.
-  if (savedId) supabase.from('class_programs').update({ pending_content: stageMode === 'content' ? contentSnap : null }).eq('id', savedId).then(() => {}, () => {})
-
-  // Best-effort submission stamp (WHO + WHEN) for the approval queue, plus an audit entry —
-  // ONLY when something went to review (full submission or staged content). A purely
-  // operational edit is live and never enters the queue.
+  // Audit the submission — only when something actually entered the queue. A purely
+  // operational edit is live and never reviewed.
   if (savedId && !isAdmin && (stageMode === 'full' || stageMode === 'content')) {
-    supabase.from('class_programs').update({
-      submitted_at: new Date().toISOString(),
-      submitted_by_name: currentUser.value?.full_name || currentUser.value?.business_name || '',
-    }).eq('id', savedId).then(() => {}, () => {})
     logAudit({
       action: 'submitted', entity_type: 'program', entity_id: savedId,
       details: stageMode === 'content'
         ? `Submitted updated content (title/description/photos) for “${pgForm.value.name}” for review`
         : `${pgEditing.value ? 'Resubmitted' : 'Submitted'} program “${pgForm.value.name}” for review`,
     })
-  }
-
-  if (savedId && needsAcceptanceRecord) {
-    const { error: taErr } = await supabase.from('provider_trial_agreements').insert({
-      program_id: savedId,
-      owner_user_id: pgForm.value.owner_user_id,
-      terms_version: TRIAL_TERMS_VERSION,
-      commission_at_acceptance: commission,
-      trial_days_at_acceptance: Number(pgForm.value.free_trial_days) || DEFAULT_TRIAL_DAYS,
-    })
-    if (taErr) console.error('[saveProgram] trial agreement insert error:', taErr)
   }
 
   clearDirty()
@@ -1190,7 +1087,7 @@ async function toggleProgramStatus(p) {
   if (newStatus === 'active') {
     const ownerId = p.owner_user_id || null
     if (ownerId) {
-      const { data: ws } = await supabase.from('provider_wallets').select('*').eq('owner_user_id', ownerId)
+      const wRes = await fetchWallets({ owner_user_id: ownerId }); const ws = wRes.success ? (wRes.data?.wallets || []) : []
       if (!hasActivePayoutMethodFor(ws || [], 'subscription')) {
         payoutModalPending.value = (ws || []).some(w => w.setup_status === 'pending_review')
         payoutModalCountry.value = countryOfLocation(p.location_id) || ''
@@ -1201,7 +1098,7 @@ async function toggleProgramStatus(p) {
   }
   // Deactivating stops the recurrence, which frees its reserved calendar slots
   // automatically (they're derived, not stored).
-  await supabase.from('class_programs').update({ status: newStatus }).eq('id', p.id)
+  await setProgramState(p.id, { status: newStatus })
   loadAll()
 }
 
@@ -1230,8 +1127,8 @@ function reservationHorizon(p) {
 // subscribers' slots reserved until their next billing date. Each plan is then cancelled
 // (handled by windDownSweep when that date passes); records are always kept.
 async function archiveProgram(p) {
-  const { error } = await supabase.from('class_programs').update({ status: 'inactive' }).eq('id', p.id)
-  if (error) { pushToast('Could not archive the program.', 'error'); return }
+  const res = await setProgramState(p.id, { status: 'inactive' })
+  if (!res.success) { pushToast(res.message || 'Could not archive the program.', 'error'); return }
   pushToast(`“${p.name}” archived — winding down: no new sign-ups or renewals; current members keep their slots until their next billing date`, 'success')
   loadAll()
 }
@@ -1337,21 +1234,11 @@ async function confirmPauseProgram() {
   const id = pauseTarget.value.id
   pauseModal.value = false
   // Pausing makes the program not-live → its reserved slots free up automatically.
-  await supabase.from('class_programs').update({
-    eligibility_status: 'paused',
-    admin_note: pauseNote.value.trim(),
-    approval_status: 'approved',
-    previous_snapshot: null,
-  }).eq('id', id)
+  await setProgramState(id, { eligibility_status: 'paused', admin_note: pauseNote.value.trim() })
   loadAll()
 }
 async function resumeProgram(p) {
-  await supabase.from('class_programs').update({
-    eligibility_status: 'eligible',
-    admin_note: '',
-    previous_snapshot: null,
-    approval_status: 'approved',
-  }).eq('id', p.id)
+  await setProgramState(p.id, { eligibility_status: 'eligible', admin_note: '' })
   loadAll()
 }
 
@@ -1422,7 +1309,7 @@ async function loadFormOwnerWallets() {
   const ownerId = formLocationOwnerId.value
   if (!ownerId) { formOwnerWallets.value = []; return }
   // select('*') so newer columns (purpose, payout_paused) are seen whenever they exist.
-  const { data } = await supabase.from('provider_wallets').select('*').eq('owner_user_id', ownerId)
+  const wRes2 = await fetchWallets({ owner_user_id: ownerId }); const data = wRes2.success ? (wRes2.data?.wallets || []) : []
   formOwnerWallets.value = data || []
 }
 // NEW programs default their commission to the location country's "program" rate set on
@@ -1433,7 +1320,7 @@ async function applyCountryProgramCommission() {
   const cid = countryOfLocation(pgForm.value.location_id)
   if (!cid) return
   try {
-    const { data: cr } = await supabase.from('commission_rates')
+    const cr = (await loadReferenceData()).commissionRates
       .select('rate_percent').eq('country_id', cid).eq('listing_type', 'program').maybeSingle()
     if (cr?.rate_percent != null) pgForm.value.commission_percentage = Number(cr.rate_percent)
   } catch { /* keep the platform default */ }
