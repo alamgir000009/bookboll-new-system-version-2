@@ -7,12 +7,12 @@
 // below. Everywhere else, Bookboll's own wallet is offered (and is always available
 // as the fully-wired option). (PayPal Hyperwallet was removed as a payout option.)
 
-import { supabase } from './supabase.js'
 import {
   fetchWallets,
   createWallet as apiCreateWallet,
   createPaidWithdrawal,
 } from './walletPayouts.js'
+import { loadReferenceData } from './referenceData.js'
 
 // ISO-3166 alpha-2 codes where Stripe Connect can pay out to a local bank.
 export const STRIPE_CONNECT_COUNTRIES = new Set([
@@ -227,7 +227,10 @@ export async function ensureCountryWallet(ownerUserId, countryId, fallbackCurren
   const template = samePurpose.find(w => w.is_current !== false && isWalletUsable(w)) || samePurpose.find(isWalletUsable) || samePurpose[0] || null
   let currency = fallbackCurrency || template?.currency || 'AED'
   if (countryId) {
-    const { data: country } = await supabase.from('countries').select('currency_code').eq('id', countryId).maybeSingle()
+    // reference-data already carries every country with its currency_code, and the
+    // dashboard has it loaded — one shared payload instead of a lookup per wallet.
+    const ref = await loadReferenceData()
+    const country = (ref.countries || []).find(c => String(c.id) === String(countryId))
     if (country?.currency_code) currency = country.currency_code
   }
   const seed = { owner_user_id: ownerUserId, country_id: countryId || null, currency, is_current: true, purpose: want, status: 'current' }

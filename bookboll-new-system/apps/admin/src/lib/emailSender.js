@@ -13,7 +13,7 @@
  * consistent with the rest of the demo (the password would be vault-stored server-side in prod).
  */
 import { ref, computed } from 'vue'
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 import { useCurrentUser } from './currentUser.js'
 
 export const SMTP_ENCRYPTION = [
@@ -72,16 +72,23 @@ export function useSmtpForAutomated(c) {
   return isSmtpConfigured(c) && c.use_for_automated !== false
 }
 
+// `ownerId` is kept for call-site compatibility but ignored: the business is
+// resolved from the session, so nobody can read another provider's mail server.
 export async function loadSmtpConfig(ownerId) {
   if (!ownerId) return blankSmtpConfig()
-  const { data } = await supabase.from('admin_users').select('smtp_config').eq('id', ownerId).maybeSingle()
-  return { ...blankSmtpConfig(), ...(data?.smtp_config || {}) }
+  const res = await apiFetch('/admin/email-sender')
+  if (!res.success) return blankSmtpConfig()
+  return { ...blankSmtpConfig(), ...(res.data?.config || {}) }
 }
 
 export async function saveSmtpConfig(ownerId, config) {
   if (!ownerId) return { error: { message: 'No business selected.' } }
-  const { error } = await supabase.from('admin_users').update({ smtp_config: config }).eq('id', ownerId)
-  return { error }
+  const res = await apiFetch('/admin/email-sender', { method: 'PUT', body: config })
+  if (!res.success) {
+    const first = Object.values(res.errors || {}).flat().find(v => typeof v === 'string')
+    return { error: { message: first || res.message || 'Could not save.' } }
+  }
+  return { config: res.data?.config || null }
 }
 
 /**

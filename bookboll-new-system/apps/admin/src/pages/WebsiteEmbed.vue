@@ -16,7 +16,7 @@ import { fetchSubscriptionsDashboard } from '../lib/subscriptions.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { usePremium, openUpgrade, PREMIUM_PRICE } from '../lib/premium.js'
-import { brandHost, brandPreviewById, ensureProviderSubdomain, DEFAULT_PRIMARY } from '../lib/brand.js'
+import { brandHost, brandPreviewById, DEFAULT_PRIMARY } from '../lib/brand.js'
 import {
   Code2, Copy, Check, Globe2, ExternalLink, Loader, AlertTriangle, Lock,
   LayoutTemplate, Dumbbell, GraduationCap, MousePointerClick, Sparkles, Monitor, Smartphone,

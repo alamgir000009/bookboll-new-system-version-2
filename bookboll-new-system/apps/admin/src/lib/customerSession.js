@@ -7,7 +7,6 @@
  *  • Loyalty tier helpers shared by the home badge + Rewards page.
  */
 import { ref, computed } from 'vue'
-import { supabase } from './supabase.js'
 
 const LOC_KEY  = 'bb_customer_location'
 const CUST_KEY = 'bb_customer_identity'
@@ -27,18 +26,27 @@ export function setLocation(country, city) {
   ensureRegionIso()
 }
 
-// The stored country may predate the iso_code field (used for phone dial-code defaults).
-// Backfill it from the DB so `selectedCountry.iso_code` is always available + persisted.
+/**
+ * The stored country may predate the iso_code field (used for phone dial-code
+ * defaults), so backfill it and re-persist. Reference-data already carries every
+ * country the caller can see, so this costs nothing extra.
+ */
 export async function ensureRegionIso() {
   const c = selectedCountry.value
   if (!c || c.iso_code || !c.id) return
-  const { data } = await supabase.from('countries').select('iso_code').eq('id', c.id).maybeSingle()
-  if (data?.iso_code) {
-    selectedCountry.value = { ...c, iso_code: data.iso_code }
-    try { localStorage.setItem(LOC_KEY, JSON.stringify({ country: selectedCountry.value, city: selectedCity.value })) } catch { /* ignore */ }
-  }
+  try {
+    const { loadReferenceData } = await import('./referenceData.js')
+    const { countries } = await loadReferenceData()
+    const match = (countries || []).find(x => String(x.id) === String(c.id))
+    const iso = match?.iso_code || match?.iso2 || ''
+    if (iso) {
+      selectedCountry.value = { ...c, iso_code: iso }
+      try { localStorage.setItem(LOC_KEY, JSON.stringify({ country: selectedCountry.value, city: selectedCity.value })) } catch { /* ignore */ }
+    }
+  } catch { /* best-effort backfill */ }
 }
 ensureRegionIso()   // backfill on load for already-saved locations
+
 export function clearLocation() {
   selectedCountry.value = null; selectedCity.value = null
   localStorage.removeItem(LOC_KEY)
@@ -89,44 +97,6 @@ export function guessCountryIso() {
   return null
 }
 
-// First-visit default: instead of walling the storefront behind the country modal (bad for users
-// AND crawlers), auto-pick a sensible city so the homepage renders real content immediately.
-// Geo-aware: prefer the busiest city in the VISITOR'S country (timezone/language), else the busiest
-// city overall. Best-effort + non-destructive: only runs when no city is set; the location chip
-// still lets the user change it. Apex marketplace only. SEO note: per-city ranking is carried by
-// the /venues/{city} landing pages — this default only affects a direct visitor's first view.
-export async function ensureDefaultLocation() {
-  if (selectedCity.value) return
-  try {
-    const { data: locs } = await supabase.from('locations').select('city_id').eq('status', 'active')
-    const tally = {}
-    ;(locs || []).forEach(l => { if (l.city_id) tally[l.city_id] = (tally[l.city_id] || 0) + 1 })
-    const cityIds = Object.keys(tally)
-    if (!cityIds.length) return
-    const { data: cities } = await supabase.from('cities').select('id, name, country_id').in('id', cityIds)
-    const byVenues = (a, b) => (tally[b.id] || 0) - (tally[a.id] || 0)
-
-    let chosen = null
-    const iso = guessCountryIso()
-    if (iso) {
-      const { data: countries } = await supabase.from('countries').select('id, iso_code')
-      const ids = new Set((countries || []).filter(c => (c.iso_code || '').toUpperCase() === iso).map(c => c.id))
-      const inCountry = (cities || []).filter(c => ids.has(c.country_id)).sort(byVenues)
-      if (inCountry.length) chosen = inCountry[0]
-    }
-    if (!chosen) chosen = (cities || []).slice().sort(byVenues)[0]   // fallback: busiest overall
-    if (!chosen) return
-
-    const { data: country } = await supabase.from('countries').select('id, name, currency_code, iso_code').eq('id', chosen.country_id).maybeSingle()
-    setLocation(country || null, { id: chosen.id, name: chosen.name, country_id: chosen.country_id })
-  } catch { /* leave unset → the gate will prompt */ }
-}
-
-// White-label location default. A provider's site must always open on a city THEY serve —
-// never on a city carried over from the Bookboll marketplace (same-origin localStorage) that
-// they don't operate in. So: keep the current city only if this provider serves it; otherwise
-// (nothing chosen, or a carried-over city they don't serve) land on their busiest served city.
-// If they serve nowhere, leave it as-is — the storefront's "browse Bookboll" prompt handles it.
 export function ensureBrandLocation(regions) {
   const served = regions?.cities || []
   if (!served.length) return
@@ -170,142 +140,6 @@ function persistCustomer(c) {
   else localStorage.removeItem(CUST_KEY)
 }
 
-// Sign in / register a customer by email (creates the row if new). Demo-grade.
-// `marketing` is an opt-in consent map { email, sms, whatsapp } collected at signup.
-export async function customerSignIn({ email, fullName, phone, countryId, marketing }) {
-  const cleanEmail = (email || '').trim().toLowerCase()
-  if (!cleanEmail) return { error: 'Please enter your email.' }
-
-  const { data: existing } = await supabase.from('customers').select('*').ilike('email', cleanEmail).maybeSingle()
-  if (existing) { persistCustomer(existing); return { customer: existing } }
-
-  // New customer
-  const base = {
-    full_name: (fullName || '').trim() || cleanEmail.split('@')[0],
-    email: cleanEmail,
-    phone: (phone || '').trim(),   // '' (not null) — customers.phone is NOT NULL
-
-    country_id: countryId || selectedCountry.value?.id || null,
-    status: 'active',
-    loyalty_tier: 'Rookie',
-    loyalty_points: 0,
-  }
-  const m = marketing || {}
-  const row = {
-    ...base,
-    marketing_email: !!m.email,
-    marketing_sms: !!m.sms,
-    marketing_whatsapp: !!m.whatsapp,
-  }
-  let { data: created, error } = await supabase.from('customers').insert(row).select().maybeSingle()
-  // Pre-migration: marketing_* columns may not exist yet — retry without them.
-  if (error && /marketing_|column/i.test(error.message || '')) {
-    const r = await supabase.from('customers').insert(base).select().maybeSingle()
-    created = r.data; error = r.error
-  }
-  if (error) return { error: error.message }
-  persistCustomer(created)
-  return { customer: created }
-}
-
-export function customerSignOut() { persistCustomer(null) }
-
-// ── Google (demo) + phone-OTP sign-up ──────────────────────────────────────────
-// DEMO Google: a real Google identity would come back from supabase.auth.signInWithOAuth;
-// here the AuthGate hands us the {email, firstName, lastName} the user "signed in with". If that
-// email already has an account we sign them straight in; a new email goes to the "complete your
-// account" + OTP step (nothing is written until the phone is verified).
-export async function customerGoogleDemo({ email, firstName, lastName }) {
-  const cleanEmail = (email || '').trim().toLowerCase()
-  if (!cleanEmail) return { error: 'A Google email is required.' }
-  const { data: existing } = await supabase.from('customers').select('*').ilike('email', cleanEmail).maybeSingle()
-  if (existing) { persistCustomer(existing); return { customer: existing, existing: true } }
-  return { needsComplete: true, prefill: { email: cleanEmail, firstName: (firstName || '').trim(), lastName: (lastName || '').trim() } }
-}
-
-// Send a verification code to `phone` over WhatsApp (preferred) or SMS. Returns
-// { ok, channel, delivered, demoCode? } — demoCode is present only while the function runs in
-// demo-echo mode (for testing without a live WhatsApp/SMS delivery).
-export async function otpSend({ phone, channel = 'whatsapp', purpose = 'customer_signup' }) {
-  try {
-    const { data, error } = await supabase.functions.invoke('otp', { body: { action: 'send', phone, channel, purpose } })
-    if (error) return { ok: false, error: 'Could not send the code — please try again.' }
-    return data || { ok: false, error: 'No response.' }
-  } catch { return { ok: false, error: 'Could not reach the verification service.' } }
-}
-
-export async function otpVerify({ phone, code }) {
-  try {
-    const { data, error } = await supabase.functions.invoke('otp', { body: { action: 'verify', phone, code } })
-    if (error) return { ok: false, error: 'Verification failed — please try again.' }
-    return data || { ok: false, error: 'No response.' }
-  } catch { return { ok: false, error: 'Could not reach the verification service.' } }
-}
-
-// Create the customer AFTER the phone is verified (Google/complete-account flow). Splits the
-// name and marks the phone verified + the provider. Degrades gracefully pre-migration.
-export async function completeCustomerSignup({ email, firstName, lastName, phone, countryId, provider = 'google', marketing }) {
-  const cleanEmail = (email || '').trim().toLowerCase()
-  if (!cleanEmail) return { error: 'Email is required.' }
-  // Guard: if the account was created in a parallel tab meanwhile, just sign in.
-  const { data: existing } = await supabase.from('customers').select('*').ilike('email', cleanEmail).maybeSingle()
-  if (existing) { persistCustomer(existing); return { customer: existing } }
-
-  const fn = (firstName || '').trim(), ln = (lastName || '').trim()
-  const m = marketing || {}
-  const base = {
-    full_name: `${fn} ${ln}`.trim() || cleanEmail.split('@')[0],
-    email: cleanEmail,
-    phone: (phone || '').trim(),
-    country_id: countryId || selectedCountry.value?.id || null,
-    status: 'active', loyalty_tier: 'Rookie', loyalty_points: 0,
-    marketing_email: !!m.email, marketing_sms: !!m.sms, marketing_whatsapp: !!m.whatsapp,
-  }
-  const full = { ...base, first_name: fn, last_name: ln, phone_verified: true, auth_provider: provider }
-
-  let { data: created, error } = await supabase.from('customers').insert(full).select().maybeSingle()
-  // Pre-migration fallbacks: drop the new auth columns, then the marketing columns, if missing.
-  if (error && /first_name|last_name|phone_verified|auth_provider|column/i.test(error.message || '')) {
-    const r = await supabase.from('customers').insert(base).select().maybeSingle()
-    created = r.data; error = r.error
-  }
-  if (error && /marketing_|column/i.test(error.message || '')) {
-    const { marketing_email, marketing_sms, marketing_whatsapp, ...noMkt } = base
-    const r = await supabase.from('customers').insert(noMkt).select().maybeSingle()
-    created = r.data; error = r.error
-  }
-  if (error) return { error: error.message }
-  persistCustomer(created)
-  return { customer: created }
-}
-
-// Update the signed-in customer's profile (name, avatar_url, photos…) and refresh the
-// locally-stored identity. Best-effort: if a column isn't migrated yet, the change still
-// shows for this session (and persists once the migration is applied).
-export async function updateCustomerProfile(patch) {
-  if (!customer.value?.id) return { error: 'Not signed in' }
-  let { data, error } = await supabase.from('customers').update(patch).eq('id', customer.value.id).select().maybeSingle()
-  // Pre-migration: optional columns may not exist yet — retry without them so the rest of the
-  // profile still saves. Drop the newest columns first (marketing_*), then fall back to dropping
-  // the social columns (bio/is_private) for a very old DB.
-  if (error && /marketing_|column/i.test(error.message || '')) {
-    const { marketing_email, marketing_sms, marketing_whatsapp, marketing_updated_at, ...noMkt } = patch
-    let r = await supabase.from('customers').update(noMkt).eq('id', customer.value.id).select().maybeSingle()
-    if (r.error && /bio|is_private|column/i.test(r.error.message || '')) {
-      const { bio, is_private, ...safe } = noMkt
-      r = await supabase.from('customers').update(safe).eq('id', customer.value.id).select().maybeSingle()
-    }
-    data = r.data; error = r.error
-  } else if (error && /bio|is_private|column/i.test(error.message || '')) {
-    const { bio, is_private, ...safe } = patch
-    const r = await supabase.from('customers').update(safe).eq('id', customer.value.id).select().maybeSingle()
-    data = r.data; error = r.error
-  }
-  persistCustomer(data || { ...customer.value, ...patch })
-  return { ok: true }
-}
-
-// ── Loyalty tiers (mirror of the admin per-country model) ──────────────────────
 export const TIERS = [
   { name: 'Rookie', threshold: 0,     color: '#64748b', bg: '#f1f5f9', emoji: '🥉' },
   { name: 'Star',   threshold: 1000,  color: '#2563eb', bg: '#dbeafe', emoji: '⭐' },
@@ -319,24 +153,4 @@ export function tierForPoints(lifetime) {
 export function nextTier(lifetime) {
   const pts = Number(lifetime || 0)
   return TIERS.find(t => t.threshold > pts) || null
-}
-
-// Load the signed-in customer's loyalty for the selected country (falls back to
-// their highest across countries). Returns { points, lifetime, tier, next, progress }.
-export async function loadCustomerLoyalty() {
-  if (!customer.value?.id) return null
-  const { data } = await supabase.from('customer_loyalty').select('*').eq('customer_id', customer.value.id)
-  const rows = data || []
-  if (!rows.length) {
-    const tier = tierForPoints(0)
-    return { points: 0, lifetime: 0, tier, next: nextTier(0), progress: 0, countryId: selectedCountry.value?.id || null }
-  }
-  // Prefer the selected country; else the row with the most lifetime points.
-  let row = selectedCountry.value?.id ? rows.find(r => r.country_id === selectedCountry.value.id) : null
-  if (!row) row = [...rows].sort((a, b) => Number(b.lifetime_points || 0) - Number(a.lifetime_points || 0))[0]
-  const lifetime = Number(row.lifetime_points || 0)
-  const tier = tierForPoints(lifetime)
-  const next = nextTier(lifetime)
-  const progress = next ? Math.min(100, Math.round(((lifetime - tier.threshold) / (next.threshold - tier.threshold)) * 100)) : 100
-  return { points: Number(row.points || 0), lifetime, tier, next, progress, countryId: row.country_id }
 }

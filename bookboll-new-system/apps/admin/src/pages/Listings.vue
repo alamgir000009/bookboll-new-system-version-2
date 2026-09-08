@@ -396,7 +396,7 @@ function startAddType() { addingType.value = true }
 async function confirmAddType(catKey) {
   const name = newTypeName.value
   if (!name || !catKey) return
-  await addPendingType({ domain: 'venue', name, category: catKey, createdBy: currentOwnerUserId.value })
+  await addPendingType({ domain: 'venue', name, category: catKey })
   sportExtra.value.push({ type: name, cat: catKey, catLabel: categoryLabel(catKey) })
   form.value.sport_category = name
   form.value.category = catKey

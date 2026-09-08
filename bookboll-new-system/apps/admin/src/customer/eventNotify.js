@@ -16,23 +16,26 @@
  * Until that template is approved, out-of-window sends simply no-op — the
  * in-app bell still covers every one of these moments.
  */
-import { supabase } from '../lib/supabase.js'
+import { apiFetch } from '../lib/api.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { fmt12 } from '../lib/slots.js'
 
 const EVENT_TEMPLATE = { name: 'bookboll_event_update', language: 'en_US' }
 
 // Self-contained on purpose: lib/whatsapp.js drags admin-dashboard session libs into
-// the bundle; the customer site only needs the function invoke + a number normalizer.
+// the bundle; this only needs the send call + a number normalizer.
 function normalizeWaNumber(phone) {
   let d = String(phone || '').replace(/\D/g, '')
   if (d.startsWith('00')) d = d.slice(2)
   return d.length >= 8 ? d : ''
 }
+// Event notices are SERVICE messages, so they ride Bookboll's own number — the
+// notifications route, never the caller's marketing sender.
 async function invokeWhatsapp(payload) {
   try {
-    const { data, error } = await supabase.functions.invoke('send-whatsapp', { body: payload })
-    return error ? { ok: false, error: String(error.message || error) } : (data ?? { ok: false })
+    const res = await apiFetch('/admin/notifications/whatsapp', { method: 'POST', body: payload })
+    if (res.data && typeof res.data.ok === 'boolean') return res.data
+    return { ok: Boolean(res.success) }
   } catch { return { ok: false } }
 }
 

@@ -17,11 +17,10 @@
  * default equals today's hardcoded Bookboll look.
  */
 import { ref, computed } from 'vue'
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 import { appBaseUrl } from './appBase.js'
 import { setBrandScope, loadServedRegions } from '../customer/data.js'
 import { normalizeBanners } from './heroBanners.js'
-import { countPublishedPosts } from './blog.js'
 
 // The apex the white-label subdomains live under (display + canonical links).
 export const BRAND_APEX = 'bookboll.com'
@@ -62,7 +61,7 @@ export const activeBrand = ref(null)
 export const isWhiteLabel = computed(() => !!activeBrand.value)
 
 // The PLATFORM brand — the main Bookboll marketplace (apex site, no white-label).
-// Editable by the super admin in My Website; stored as platform_settings keys.
+// Editable by the super admin in My Website; stored as Laravel settings keys.
 export const platformBrand = ref({
   name: 'Bookboll', tagline: '', logo: '', primary: DEFAULT_PRIMARY, accent: DEFAULT_ACCENT,
   metaTitle: '', metaDescription: '',
@@ -71,13 +70,11 @@ export const platformBrand = ref({
   tracking: { metaPixel: '', ga4: '', gtm: '', head: '' },   // marketplace (apex) analytics/pixels
 })
 
-// Load the marketplace branding from platform_settings (best-effort → defaults on any error).
+// Load the marketplace branding from the API (best-effort → defaults on any error).
 export async function loadPlatformBrand() {
   try {
-    const { data } = await supabase.from('platform_settings').select('key, value')
-      .in('key', ['brand_name', 'brand_tagline', 'brand_logo_url', 'brand_primary', 'brand_accent', 'brand_meta_title', 'brand_meta_description', 'storefront_sort_space', 'storefront_sort_venue', 'hero_banners', 'tracking_meta_pixel', 'tracking_ga4', 'tracking_gtm', 'tracking_head'])
-    const m = {}
-    for (const row of (data || [])) m[row.key] = row.value
+    const res = await apiFetch('/marketplace/platform-brand')
+    const m = res.success ? (res.data?.settings || {}) : {}
     platformBrand.value = {
       name:    m.brand_name    || 'Bookboll',
       tagline: m.brand_tagline || '',
@@ -174,100 +171,21 @@ export function detectBrandSlug() {
   return ''
 }
 
-// Find the owner row for a slug. Post-migration: matches an ENABLED brand_subdomain
-// (opt-in). Pre-migration (brand_* columns absent): falls back to a provider_admin
-// whose @username matches, so scoping is testable before the SQL is applied.
-// `allowDisabled` (dashboard "live preview" only) resolves the brand even when it
-// isn't enabled/published yet, so a provider can preview their site while setting it up.
-async function lookupBrand(slug, allowDisabled = false) {
-  const rich = await supabase.from('admin_users')
-    .select('id, username, business_name, role, brand_enabled, brand_subdomain, brand_name, brand_tagline, brand_logo_url, brand_primary, brand_accent, brand_meta_title, brand_meta_description')
-    .or(`brand_subdomain.ilike.${slug},username.ilike.${slug}`)
-  if (!rich.error) {
-    const rows = rich.data || []
-    let r = rows.find(x => (x.brand_subdomain || '').toLowerCase() === slug && x.brand_enabled)
-    if (!r && allowDisabled) {
-      r = rows.find(x => (x.brand_subdomain || '').toLowerCase() === slug)
-        || rows.find(x => (x.username || '').toLowerCase() === slug)
-    }
-    if (r) return r
-    return null   // columns exist but no enabled brand for this slug → opt-in respected
-  }
-  // brand_* columns not migrated yet → username fallback (dev only)
-  const min = await supabase.from('admin_users').select('id, username, role').eq('role', 'provider_admin').ilike('username', slug)
-  const row = (min.data || [])[0]
-  return row ? { ...row, brand_enabled: true } : null
-}
-
-// Resolve a provider directly by owner id — used only by the dashboard live preview
-// (`?bid=`), so it works even for a provider who hasn't picked/saved a web address yet.
-async function lookupBrandById(id) {
-  const r = await supabase.from('admin_users')
-    .select('id, username, business_name, role, brand_enabled, brand_subdomain, brand_name, brand_tagline, brand_logo_url, brand_primary, brand_accent, brand_meta_title, brand_meta_description')
-    .eq('id', id).maybeSingle()
-  return (!r.error && r.data) ? r.data : null
-}
-
-// Which storefront sections a provider's white-label site shows. AUTO-DERIVED from the
-// content they actually have, not manual toggles:
-//   • venues   → they have at least one listing visible on their own site
-//   • programs → they have at least one membership program visible on their own site
-//   • events   → NEVER (events, like loyalty/profiles, are a marketplace-only mechanic)
-// (`show_on_provider_site !== false` mirrors the storefront's own white-label visibility.)
-async function loadBrandModules(ownerId) {
-  let venues = false, programs = false
-  const { data: locs } = await supabase.from('locations').select('id').eq('owner_user_id', ownerId)
-  const locIds = (locs || []).map(l => l.id)
-  if (locIds.length) {
-    const { data: ls } = await supabase.from('listings').select('show_on_provider_site').in('location_id', locIds)
-    venues = (ls || []).some(l => l.show_on_provider_site !== false)
-  }
-  const { data: ps } = await supabase.from('class_programs').select('show_on_provider_site').eq('owner_user_id', ownerId)
-  programs = (ps || []).some(p => p.show_on_provider_site !== false)
-  // Blog module: shown only once the provider has published at least one of their own posts.
-  const blog = (await countPublishedPosts(ownerId)) > 0
-  return { venues, events: false, programs, blog }
-}
-
-// The provider's home hero banners (best-effort — column may not be migrated yet).
-async function loadBrandBanners(ownerId) {
-  const r = await supabase.from('admin_users').select('hero_banners').eq('id', ownerId).maybeSingle()
-  return (!r.error && r.data) ? normalizeBanners(r.data.hero_banners) : []
-}
-
-// The provider's storefront sort choices (best-effort — columns may not be migrated yet).
-async function loadBrandSort(ownerId) {
-  const r = await supabase.from('admin_users').select('sort_space, sort_venue').eq('id', ownerId).maybeSingle()
-  const d = (!r.error && r.data) ? r.data : {}
-  return { space: d.sort_space || 'recommended', venue: d.sort_venue || 'recommended' }
-}
-
-// The provider's simple content pages (About / Contact) — best-effort (the
-// site_pages column may not be migrated yet). A page is live once it has content.
-async function loadBrandPages(ownerId) {
-  const r = await supabase.from('admin_users').select('site_pages').eq('id', ownerId).maybeSingle()
-  const pg = (!r.error && r.data?.site_pages) || {}
-  const hero = (h) => ({ hero_title: String(h?.hero_title || ''), hero_sub: String(h?.hero_sub || ''), hero_image: String(h?.hero_image || '') })
-  return {
-    // Homepage default-hero background (set next to the logo in My Website) —
-    // the default hero itself is built from site settings, not the banners module.
-    home: { hero_image: String(pg.home?.hero_image || '') },
-    about: { text: String(pg.about?.text || ''), ...hero(pg.about) },
-    contact: {
-      phone: String(pg.contact?.phone || ''), whatsapp: String(pg.contact?.whatsapp || ''),
-      email: String(pg.contact?.email || ''), address: String(pg.contact?.address || ''),
-      maps_url: String(pg.contact?.maps_url || ''), hours: String(pg.contact?.hours || ''),
-      ...hero(pg.contact),
-    },
-  }
-}
-// Premium white-label: the badge only hides when the flag is on AND the owner
-// is actually on the premium plan RIGHT NOW (lapsed premium → badge returns).
-async function loadBrandWhitelabel(ownerId) {
-  try {
-    const r = await supabase.from('admin_users').select('brand_whitelabel, plan').eq('id', ownerId).maybeSingle()
-    return !r.error && !!r.data?.brand_whitelabel && r.data?.plan === 'premium'
-  } catch { return false }
+/**
+ * Resolve a brand through Laravel — one request returning identity, theme, modules,
+ * sort defaults, banners, tracking, languages and the About/Contact pages.
+ *
+ * `allowDisabled` (the dashboard's "live preview") resolves a brand that isn't
+ * enabled or published yet, so a provider can preview their site while setting it up.
+ * Without it, only an ENABLED brand resolves — white-labelling stays opt-in.
+ */
+async function fetchBrand({ slug = '', ownerId = '', allowDisabled = false } = {}) {
+  const query = { preview: allowDisabled ? 1 : undefined }
+  if (ownerId) query.owner_id = ownerId
+  else if (slug) query.slug = slug
+  const res = await apiFetch('/marketplace/brand', { query, token: '' })
+  if (!res.success || !res.data?.brand) return null
+  return res.data.brand
 }
 
 /** Is a simple content page live on the active white-label site? */
@@ -278,30 +196,6 @@ export function brandPageEnabled(key) {
   if (key === 'contact') return ['phone', 'whatsapp', 'email', 'address', 'maps_url', 'hours']
     .some(k => String(pg.contact[k] || '').trim())
   return false
-}
-
-// Which languages this provider's storefront offers (best-effort — the brand_languages
-// column may not be migrated yet). [] = no restriction → all supported languages. The
-// switcher + autoTranslate keep English available regardless (it's the source language).
-async function loadBrandLanguages(ownerId) {
-  const r = await supabase.from('admin_users').select('brand_languages').eq('id', ownerId).maybeSingle()
-  const arr = (!r.error && Array.isArray(r.data?.brand_languages)) ? r.data.brand_languages : []
-  return arr.filter(c => typeof c === 'string' && c)
-}
-
-// The provider's analytics/pixels (best-effort — tracking_* columns may not be migrated yet).
-// Loaded separately so a missing column never breaks brand resolution. These fire ONLY on this
-// provider's own storefront (see lib/tracking.js), never on the marketplace or another site.
-async function loadBrandTracking(ownerId) {
-  const empty = { metaPixel: '', ga4: '', gtm: '', head: '' }
-  const r = await supabase.from('admin_users').select('tracking_meta_pixel, tracking_ga4, tracking_gtm, tracking_head').eq('id', ownerId).maybeSingle()
-  if (r.error || !r.data) return empty
-  return {
-    metaPixel: r.data.tracking_meta_pixel || '',
-    ga4:       r.data.tracking_ga4 || '',
-    gtm:       r.data.tracking_gtm || '',
-    head:      r.data.tracking_head || '',
-  }
 }
 
 /** Configured fallback sort key for a storefront view ('space' | 'venue').
@@ -383,29 +277,31 @@ export async function resolveBrand() {
       await applyPlatformBrand()
       return null
     }
-    const row = bid ? await lookupBrandById(bid) : await lookupBrand(slug, preview)
+    const row = await fetchBrand({ slug, ownerId: bid, allowDisabled: preview })
     // Slug/bid present but no provider matched (e.g. a preview/staging host whose
     // first label isn't a real white-label): fall back to the marketplace brand so
     // the super admin's logo/colors still apply, instead of the unthemed default.
     if (!row) { await applyPlatformBrand(); return null }
+    const brandSlug = row.slug || (slug || '').toLowerCase()
     const brand = {
-      ownerUserId: row.id,
-      slug: providerSlug(row) || (slug || '').toLowerCase(),
-      name: row.brand_name || row.business_name || row.username || 'Bookboll',
-      tagline: row.brand_tagline || '',
-      logo: row.brand_logo_url || '',
-      primary: row.brand_primary || DEFAULT_PRIMARY,
-      accent: row.brand_accent || DEFAULT_ACCENT,
-      metaTitle: row.brand_meta_title || '',
-      metaDescription: row.brand_meta_description || '',
-      modules: await loadBrandModules(row.id),   // which sections to show
-      sort: await loadBrandSort(row.id),         // storefront sort fallback (space/venue)
-      banners: await loadBrandBanners(row.id),   // home hero slideshow
-      regions: await loadServedRegions(row.id),  // countries/cities they actually serve
-      tracking: await loadBrandTracking(row.id), // their own analytics/pixels (storefront only)
-      languages: await loadBrandLanguages(row.id), // offered storefront languages ([] = all)
-      pages: await loadBrandPages(row.id),       // About / Contact simple pages
-      whitelabelBranding: await loadBrandWhitelabel(row.id), // premium: hide the big badge
+      ownerUserId: row.ownerUserId,
+      businessId: row.businessId,
+      slug: brandSlug,
+      name: row.name || 'Bookboll',
+      tagline: row.tagline || '',
+      logo: row.logo || '',
+      primary: row.primary || DEFAULT_PRIMARY,
+      accent: row.accent || DEFAULT_ACCENT,
+      metaTitle: row.metaTitle || '',
+      metaDescription: row.metaDescription || '',
+      modules: row.modules || { venues: false, events: false, programs: false, blog: false },
+      sort: row.sort || { space: 'recommended', venue: 'recommended' },
+      banners: normalizeBanners(row.banners),
+      regions: await loadServedRegions(brandSlug),
+      tracking: row.tracking || { metaPixel: '', ga4: '', gtm: '', head: '' },
+      languages: Array.isArray(row.languages) ? row.languages : [],
+      pages: row.pages || { home: { hero_image: '' }, about: { text: '' }, contact: {} },
+      whitelabelBranding: !!row.whitelabelBranding,
     }
     activeBrand.value = brand
     setBrandScope(brand.ownerUserId)
@@ -439,27 +335,4 @@ export function brandPreviewUrl(slug, { preview = false } = {}) {
 /** Dashboard live-preview URL that resolves a provider by OWNER ID on the public web app. */
 export function brandPreviewById(ownerId) {
   return `${appBaseUrl()}/?bid=${encodeURIComponent(ownerId || '')}&preview=1`
-}
-
-/**
- * Make sure a provider has a saved white-label subdomain, auto-deriving one from their
- * username / business name when missing, so every provider automatically gets a working
- * `<slug>.bookboll.com` address without manual setup. Adds a short suffix on collision.
- * Best-effort (a missing brand_subdomain column just leaves the derived slug unsaved —
- * the dashboard live preview still works via owner id). Returns the effective slug.
- */
-export async function ensureProviderSubdomain(user) {
-  const explicit = (user?.brand_subdomain || '').toLowerCase()
-  if (explicit) return explicit
-  let base = providerSlug(user)
-  if (!base || !user?.id) return base || ''
-  try {
-    const { data, error } = await supabase.from('admin_users').select('id').ilike('brand_subdomain', base)
-    if (error) return base   // can't check (column not migrated) → use the derived slug as-is
-    if ((data || []).some(r => r.id !== user.id)) {
-      base = `${base}-${String(user.id).replace(/-/g, '').slice(0, 4)}`
-    }
-    await supabase.from('admin_users').update({ brand_subdomain: base }).eq('id', user.id)
-  } catch { /* best-effort */ }
-  return base
 }

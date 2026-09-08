@@ -30,7 +30,6 @@ import {
   fetchSubscriptionPayments,
 } from '../lib/subscriptions.js'
 import { notifyMembershipStarted, notifyMembershipPayment, notifyMembershipCancelled, notifyMembershipPaymentFailed, notifyMembershipWinback } from '../customer/notificationDispatch.js'
-import { recordOfferRedemption } from '../lib/offerGuard.js'
 import { usePremium } from '../lib/premium.js'
 import { usePagination } from '../lib/usePagination.js'
 import PaginationBar from '../components/PaginationBar.vue'
@@ -257,15 +256,7 @@ async function saveSubscription() {
   }
 
   const inserted = res.data?.subscription
-  const hasTrial = !!res.data?.has_trial
   const charged = !!res.data?.charged
-
-  if (hasTrial && program.owner_user_id && inserted) {
-    recordOfferRedemption({
-      email: subForm.value.customer_email, ownerUserId: program.owner_user_id,
-      programId: program.id, subscriptionId: inserted.id, source: 'admin',
-    })
-  }
 
   try { if (inserted) notifyMembershipStarted({ ownerId: program.owner_user_id, sub: inserted, program }) } catch { /* non-blocking */ }
 

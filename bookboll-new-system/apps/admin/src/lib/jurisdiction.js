@@ -13,7 +13,7 @@
  * platform view mode.
  */
 import { ref, computed } from 'vue'
-import { supabase } from './supabase.js'
+import { loadReferenceData } from './referenceData.js'
 import { role, isSuperAdmin, isCountryAdmin, assignedCountryIds, assignedLocationIds, currentCountryId } from './currentUser.js'
 
 /**
@@ -29,7 +29,9 @@ export function useJurisdiction({ locations, cities, providers } = {}) {
   let cityList = cities
   if (!cityList) {
     const fetched = ref([])
-    supabase.from('cities').select('id, country_id').then(({ data }) => { fetched.value = data || [] })
+    // reference-data is already scoped to the caller and carries every city they
+    // can see, so pages that don't load cities themselves get them from there.
+    loadReferenceData().then(({ cities: rows }) => { fetched.value = rows || [] })
     cityList = fetched
   }
 

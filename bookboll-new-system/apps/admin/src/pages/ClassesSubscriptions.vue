@@ -429,7 +429,7 @@ function startPgAddType() { pgAddingType.value = true }
 async function confirmPgAddType(catKey) {
   const name = pgNewTypeName.value
   if (!name || !catKey) return
-  await addPendingType({ domain: 'program', name, category: catKey, createdBy: currentOwnerUserId.value })
+  await addPendingType({ domain: 'program', name, category: catKey })
   pgExtra.value.push({ type: name, cat: catKey, catLabel: MEMBERSHIP_CATEGORY_BY_KEY[catKey]?.label || catKey })
   pgForm.value.sport_category = name
   pgForm.value.category = catKey

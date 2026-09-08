@@ -12,7 +12,7 @@
  * catalog until the table exists and an item is approved.
  */
 import { ref } from 'vue'
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 // Approved custom types, loaded once and cached: [{ domain, name, category }].
 export const approvedTypes = ref([])
@@ -21,10 +21,8 @@ let loadedOnce = false
 export async function loadApprovedTypes(force = false) {
   if (loadedOnce && !force) return approvedTypes.value
   try {
-    const { data, error } = await supabase.from('custom_types')
-      .select('domain, name, category').eq('status', 'approved')
-    if (error) throw error
-    approvedTypes.value = data || []
+    const res = await apiFetch('/admin/custom-types')
+    approvedTypes.value = res.success ? (res.data?.types || []) : []
     loadedOnce = true
   } catch { approvedTypes.value = [] }
   return approvedTypes.value
@@ -40,31 +38,25 @@ export function approvedTypesFor(domain) {
  * the same domain+category+name). Caller has already confirmed it isn't a built-in/approved
  * type. Returns the cleaned name to store on the listing/program. Best-effort.
  */
-export async function addPendingType({ domain, name, category, createdBy }) {
+export async function addPendingType({ domain, name, category }) {
   const clean = String(name || '').trim()
   if (!clean || !category || !domain) return clean
   try {
-    const { data: existing } = await supabase.from('custom_types').select('id')
-      .eq('domain', domain).eq('category', category).eq('status', 'pending').ilike('name', clean).limit(1)
-    if (!existing || !existing.length) {
-      await supabase.from('custom_types').insert({ domain, name: clean, category, status: 'pending', created_by: createdBy || null })
-    }
+    // Deduping and authorship are the server's job — `createdBy` is taken from the
+    // session there, so a suggestion can't be filed under someone else's name.
+    const res = await apiFetch('/admin/custom-types', { method: 'POST', body: { domain, name: clean, category } })
+    if (res.success && res.data?.name) return res.data.name
   } catch { /* best-effort: the listing still carries the type */ }
   return clean
 }
 
 /**
- * Promote a matching pending type to the shared catalog — call when a listing/program is
- * approved. Keyed by domain + category + name, so the listing's own type value drives it.
- * Best-effort; refreshes the cache on success.
+ * Refresh the cached catalogue after an approval.
+ *
+ * Promotion itself is the SERVER's — approving a listing or programme promotes the
+ * type it carries (ApprovalsDashboardService), so the browser must not be able to
+ * publish a type on its own. All that is left here is picking up the new list.
  */
-export async function promoteTypesFor({ domain, name, category }) {
-  const clean = String(name || '').trim()
-  if (!clean || !category || !domain) return
-  try {
-    const { error } = await supabase.from('custom_types')
-      .update({ status: 'approved', approved_at: new Date().toISOString() })
-      .eq('domain', domain).eq('category', category).eq('status', 'pending').ilike('name', clean)
-    if (!error) await loadApprovedTypes(true)
-  } catch { /* ignore */ }
+export async function promoteTypesFor(_ref) {
+  try { await loadApprovedTypes(true) } catch { /* ignore */ }
 }

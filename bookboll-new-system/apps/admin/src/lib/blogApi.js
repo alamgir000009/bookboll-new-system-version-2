@@ -80,3 +80,23 @@ export function toApiPayload(post, audience = 'marketplace') {
   if (cover) payload.image_url = cover
   return payload
 }
+
+/* ── A provider's own site blog ────────────────────────────────────────────────
+   Same wire shape as the Bookboll blog above, on a separate, owner-scoped route:
+   the server takes the owner from the session, so the two blogs cannot mix.      */
+
+export function listSiteBlogPosts() {
+  return apiFetch('/admin/site-blog')
+}
+
+export function createSiteBlogPost(body) {
+  return apiFetch('/admin/site-blog', { method: 'POST', body })
+}
+
+export function updateSiteBlogPost(id, body) {
+  return apiFetch(`/admin/site-blog/${id}`, { method: 'PUT', body })
+}
+
+export function deleteSiteBlogPost(id) {
+  return apiFetch(`/admin/site-blog/${id}`, { method: 'DELETE' })
+}

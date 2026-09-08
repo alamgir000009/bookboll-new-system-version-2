@@ -16,7 +16,6 @@ import { useCurrentUser } from '../lib/currentUser.js'
 import { CAP } from '../lib/permissions.js'
 import { logAudit, AUDIT } from '../lib/audit.js'
 import { promoteTypesFor } from '../lib/customTypes.js'
-import { notifyBusiness } from '../lib/adminNotify.js'
 import { askConfirm } from '../lib/confirm.js'
 import { askInput } from '../lib/inputPrompt.js'
 import { pushToast } from '../lib/toast.js'
@@ -197,11 +196,6 @@ async function approvePayoutSetup(entry) {
   const res = await approvePayoutKyc(entry.ownerId, { kyc_reviewed_by: currentUser.value?.id || null })
   if (!res.success) { pushToast(moneyErr(res, 'Could not approve payout method.'), 'error'); return }
   logAudit({ action: AUDIT.APPROVED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Approved manual payout method for ${entry.business}` })
-  notifyBusiness({
-    ownerUserId: entry.ownerId, kind: 'wallet', tone: 'ok',
-    title: 'Payout method approved — payouts are live',
-    sub: 'Online money now flows to your wallet', link: '/wallet',
-  })
   load()
 }
 const payoutRejectModal = ref(null)   // the entry being rejected
@@ -217,11 +211,6 @@ async function confirmPayoutReject() {
   payoutRejectModal.value = null
   if (!res.success) { pushToast(moneyErr(res, 'Could not reject payout method.'), 'error'); return }
   logAudit({ action: AUDIT.REJECTED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Rejected payout setup for ${entry.business}: ${reason}` })
-  notifyBusiness({
-    ownerUserId: entry.ownerId, kind: 'wallet', tone: 'warn',
-    title: 'Payout method needs attention',
-    sub: reason, link: '/wallet',
-  })
   load()
 }
 
@@ -309,17 +298,11 @@ async function approveListing(li) {
   }
   const contentOnly = isContentUpdate(li)
   const name = contentOnly ? (li.pending_content?.name || li.name) : li.name
-  // Server promotes custom_types; keep FE call best-effort for Supabase catalog cache.
+  // The server promotes the type on approval; this just refreshes our cached list.
   if (!contentOnly) {
     try { await promoteTypesFor({ domain: 'venue', name: li.sport_category, category: li.category }) } catch { /* ignore */ }
   }
   logAudit({ action: AUDIT.APPROVED, entity_type: 'listing', entity_id: li.id, details: contentOnly ? `Approved content update for “${name}” (${providerName(li.owner_user_id)})` : `Approved listing “${name}” (${providerName(li.owner_user_id)})` })
-  notifyBusiness({
-    ownerUserId: ownerOfItem({ ...li, _type: 'listing' }), kind: 'approval', tone: 'ok',
-    title: contentOnly ? `Content approved — “${name}”` : `“${name}” was approved 🎉`,
-    sub: contentOnly ? 'Your updated title, description and photos are now live' : 'It is now live on the Bookboll marketplace',
-    link: '/listings',
-  })
   await load()
   return true
 }
@@ -337,12 +320,6 @@ async function approveProgram(pg) {
     try { await promoteTypesFor({ domain: 'program', name: pg.sport_category, category: pg.category }) } catch { /* ignore */ }
   }
   logAudit({ action: AUDIT.APPROVED, entity_type: 'program', entity_id: pg.id, details: contentOnly ? `Approved content update for “${name}” (${providerName(pg.owner_user_id)})` : `Approved program “${name}” (${providerName(pg.owner_user_id)})` })
-  notifyBusiness({
-    ownerUserId: ownerOfItem({ ...pg, _type: 'program' }), kind: 'approval', tone: 'ok',
-    title: contentOnly ? `Content approved — “${name}”` : `“${name}” was approved 🎉`,
-    sub: contentOnly ? 'Your updated title, description and photo are now live' : 'It is now live on the Bookboll marketplace',
-    link: '/listings',
-  })
   await load()
   return true
 }
@@ -392,14 +369,6 @@ async function confirmSendBack() {
       ? `Rejected content update on “${item.name}”: ${sendBackNote.value.trim()}`
       : `Requested changes on “${item.name}”: ${sendBackNote.value.trim()}`,
   })
-  notifyBusiness({
-    ownerUserId: ownerOfItem(item), kind: 'approval', tone: 'warn',
-    title: contentOnly ? `Content changes not approved — “${item.name}”` : `Changes requested — “${item.name}”`,
-    sub: contentOnly
-      ? `${sendBackNote.value.trim()} · Your listing stays live on its current content.`
-      : sendBackNote.value.trim(),
-    link: '/listings',
-  })
   sendBackModal.value = false
   if (previewModal.value) previewModal.value = false
   load()
@@ -425,12 +394,6 @@ async function confirmBulkApprove() {
         })
       } catch { /* ignore */ }
     }
-    notifyBusiness({
-      ownerUserId: ownerOfItem(item), kind: 'approval', tone: 'ok',
-      title: contentOnly ? `Content approved — “${item.pending_content?.name || item.name}”` : `“${item.name}” was approved 🎉`,
-      sub: contentOnly ? 'Your updated content is now live' : 'It is now live on the Bookboll marketplace',
-      link: '/listings',
-    })
   }
   logAudit({ action: AUDIT.APPROVED, entity_type: 'content', details: `Bulk-approved ${items.length} pending item${items.length === 1 ? '' : 's'}` })
   bulkModal.value = false
