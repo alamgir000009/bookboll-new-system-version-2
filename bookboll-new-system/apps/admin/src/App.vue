@@ -15,6 +15,7 @@ import LanguageSwitcher from './components/LanguageSwitcher.vue'
 import AdminBell from './components/AdminBell.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import UpgradeModal from './components/UpgradeModal.vue'
+import { ensurePlan, completePlanCheckout } from './lib/premium.js'
 import InputDialog from './components/InputDialog.vue'
 import CustomerDetailModal from './components/CustomerDetailModal.vue'
 import BrandMark from './components/BrandMark.vue'
@@ -29,6 +30,24 @@ const countryFilter = ref('All Countries')
 // Admin-dashboard branding (super-admin-configured logo + accent colour). Loaded
 // once here and shared with the auth screens; applied scoped to the .app shell.
 onMounted(() => { loadAdminBrand() })
+
+// The provider's plan gates half the dashboard, so warm it as soon as there is a
+// session — every requirePremium() check is synchronous and must not have to wait.
+watch(authUser, (u) => { if (u) ensurePlan() }, { immediate: true })
+
+/**
+ * Coming back from Stripe. A Premium checkout can be started from any page, so the
+ * return is handled here rather than in one page: confirm it with the server (the
+ * webhook may not have landed yet), then take the marker out of the URL so a reload
+ * does not re-run it.
+ */
+watch(() => route.query.plan_checkout, async (session) => {
+  if (!session) return
+  await completePlanCheckout(String(session))
+  const query = { ...route.query }
+  delete query.plan_checkout
+  router.replace({ path: route.path, query })
+}, { immediate: true })
 
 // Shell: auth (login) or admin dashboard.
 const area = computed(() => route.meta?.area || 'customer')

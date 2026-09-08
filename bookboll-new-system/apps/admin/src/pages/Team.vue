@@ -488,7 +488,7 @@ const providerGroups = computed(() => {
         business_id: b.id,
         country_id: b.country_id ?? ownerRow?.country_id,
         plan: b.plan || 'free',
-        premium_since: null,
+        premium_since: b.premium_since || null,
         status: ownerRow?.status || 'active',
         last_login: ownerRow?.last_login || ownerRow?.last_login_at,
       }
@@ -611,11 +611,13 @@ function scopeText(u) {
 
 const statusBadge = (s) => ({ approved: 'badge-success', active: 'badge-success', pending: 'badge-warning', rejected: 'badge-error', suspended: 'badge-error' }[s] || 'badge-neutral')
 
-// Premium plan toggle deferred until businesses.plan exists on Laravel.
+// Premium is a paid Stripe subscription, so there is no admin switch that grants it —
+// handing it out here would leave a provider entitled with nothing billed. The
+// buttons stay hidden; the chip below reports what Stripe says.
 const isPremiumPlan = (p) => p?.plan === 'premium'
 const planBusyId = ref('')
 async function setProviderPlan(_provider, _plan) {
-  pushToast('Premium plan management will be available in a later billing step.', 'info')
+  pushToast('Premium is a paid subscription — the provider starts it from their own dashboard.', 'info')
 }
 const timeAgo = (ts) => {
   if (!ts) return 'Never'

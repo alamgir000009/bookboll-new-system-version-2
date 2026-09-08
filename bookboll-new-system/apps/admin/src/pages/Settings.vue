@@ -1,11 +1,16 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { Settings as SettingsIcon, Bell, Shield, DollarSign, Globe as Globe2, Mail, Building2, User, FileText, AlertTriangle, Info, Check } from 'lucide-vue-next'
+import { Settings as SettingsIcon, Bell, Shield, DollarSign, Globe as Globe2, Mail, Building2, User, FileText, AlertTriangle, Info, Check, Crown, Gift } from 'lucide-vue-next'
 import { pushToast } from '../lib/toast.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { changeOwnPassword, authError } from '../lib/auth.js'
 import { fetchSettings, updateSettings, asBool, asNumber } from '../lib/settings.js'
 import { useRouter } from 'vue-router'
+import { askConfirm } from '../lib/confirm.js'
+import {
+  planState, ensurePlan, openUpgrade, endPlan, keepPlan,
+  PREMIUM_PRICE, PREMIUM_YEARLY_TOTAL,
+} from '../lib/premium.js'
 
 const router = useRouter()
 const { isSuperAdmin, isCountryAdmin, currentUser } = useCurrentUser()
@@ -153,6 +158,37 @@ async function saveAllChanges() {
 }
 
 // ── Provider admin state ──────────────────────────────────────
+// Plan & billing — a real Stripe subscription, so this panel shows what is actually
+// billed and lets the provider stop it. Cancelling takes effect at the end of the
+// paid period; nothing is cut off early.
+const planBusy = ref(false)
+const planTrialActive = computed(() => {
+  const t = planState.value.trial_ends_at
+  return !!t && new Date(t) > new Date()
+})
+function fmtPlanDate(v) {
+  if (!v) return '—'
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+async function doEndPlan() {
+  if (planBusy.value) return
+  if (!await askConfirm({
+    title: 'Cancel Premium?',
+    message: 'You keep every Premium feature until the end of your current billing period. After that the account moves back to the free plan.',
+    confirmText: 'Cancel Premium', danger: true,
+  })) return
+  planBusy.value = true
+  await endPlan()
+  planBusy.value = false
+}
+async function doKeepPlan() {
+  if (planBusy.value) return
+  planBusy.value = true
+  await keepPlan()
+  planBusy.value = false
+}
+
 const providerTab = ref('profile')
 const providerForm = ref({ business_name: '', description: '', phone: '', full_name: '', email: '' })
 const providerNotifications = ref({ newBooking: true, cancellation: true, paymentReceived: true, lowWallet: false })
@@ -160,6 +196,7 @@ const saving = ref(false)
 const saved = ref(false)
 
 onMounted(async () => {
+  ensurePlan()
   if (isAdminView.value) await loadAdminSettings()
   if (!isAdminView.value && currentUser.value) {
     providerForm.value = {
@@ -406,6 +443,7 @@ async function saveProviderProfile() {
             <div class="set-item" :class="{active: providerTab==='account'}" @click="providerTab='account'"><User :size="16" />My Account</div>
             <div class="set-item" :class="{active: providerTab==='notifications'}" @click="providerTab='notifications'"><Bell :size="16" />Notifications</div>
             <div class="set-item" :class="{active: providerTab==='security'}" @click="providerTab='security'"><Shield :size="16" />Security</div>
+            <div class="set-item" :class="{active: providerTab==='plan'}" @click="providerTab='plan'"><Crown :size="16" />Plan &amp; billing</div>
           </div>
         </div>
 
@@ -435,6 +473,59 @@ async function saveProviderProfile() {
             <label class="toggle"><input type="checkbox" v-model="providerNotifications.lowWallet" />Low wallet balance warning</label>
           </div>
 
+          <div v-if="providerTab==='plan'">
+            <h3>Plan &amp; billing</h3>
+            <p class="muted">Your Bookboll for Business subscription.</p>
+
+            <div class="plan-box" :class="{ prem: planState.is_premium }">
+              <div class="plan-hd">
+                <span class="plan-chip" :class="{ prem: planState.is_premium }">
+                  <Crown v-if="planState.is_premium" :size="12" />{{ planState.is_premium ? 'Premium' : 'Free' }}
+                </span>
+                <span v-if="planState.is_premium && planState.billing" class="plan-cycle">
+                  {{ planState.billing === 'yearly' ? `$${PREMIUM_YEARLY_TOTAL}/year` : `$${PREMIUM_PRICE}/month` }}
+                </span>
+              </div>
+
+              <p v-if="!planState.is_premium" class="muted" style="margin:0 0 14px;">
+                You're on the free plan. Premium unlocks the blog, marketing emails, exports, promo codes,
+                home banners, widgets, white-label and off-marketplace listings.
+              </p>
+              <template v-else>
+                <div v-if="planTrialActive" class="plan-line">
+                  <Gift :size="14" /> Free trial until <b>{{ fmtPlanDate(planState.trial_ends_at) }}</b> — nothing charged yet.
+                </div>
+                <div v-if="planState.cancel_at_period_end" class="plan-line warn">
+                  <AlertTriangle :size="14" /> Ending on <b>{{ fmtPlanDate(planState.renews_at) }}</b>. You keep everything until then.
+                </div>
+                <div v-else-if="planState.renews_at" class="plan-line">
+                  <Check :size="14" /> Renews on <b>{{ fmtPlanDate(planState.renews_at) }}</b>.
+                </div>
+                <div v-if="planState.status === 'past_due'" class="plan-line warn">
+                  <AlertTriangle :size="14" /> Your last payment didn't go through — update your card to avoid losing Premium.
+                </div>
+              </template>
+
+              <div class="plan-actions">
+                <button v-if="!planState.is_premium" class="btn btn-primary" @click="openUpgrade('')">
+                  <Crown :size="15" /> Upgrade to Premium
+                </button>
+                <button v-else-if="planState.cancel_at_period_end" class="btn btn-primary" :disabled="planBusy" @click="doKeepPlan">
+                  {{ planBusy ? 'Working…' : 'Keep Premium' }}
+                </button>
+                <button v-else-if="planState.has_subscription" class="btn btn-secondary" :disabled="planBusy" @click="doEndPlan">
+                  {{ planBusy ? 'Working…' : 'Cancel Premium' }}
+                </button>
+              </div>
+            </div>
+
+            <div v-if="planState.domain?.domain" class="plan-box" style="margin-top:14px;">
+              <div class="plan-hd"><span class="plan-chip">Custom domain</span></div>
+              <div class="plan-line"><Globe2 :size="14" /> <b>{{ planState.domain.domain }}</b> — {{ planState.domain.status === 'active' ? 'live' : 'waiting on DNS' }}</div>
+              <div class="plan-line muted-line">One-time setup fee of ${{ planState.domain.fee }} paid on {{ fmtPlanDate(planState.domain.paid_at) }}. No monthly cost.</div>
+            </div>
+          </div>
+
           <div v-if="providerTab==='security'">
             <h3>Security</h3>
             <p class="muted">Keep your account safe.</p>
@@ -453,6 +544,16 @@ async function saveProviderProfile() {
 <style scoped>
 h3 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
 .muted { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
+.plan-box { border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+.plan-box.prem { border-color: #fbbf24; background: linear-gradient(180deg, #fffbeb 0%, transparent 70%); }
+.plan-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.plan-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; background: var(--bg); color: var(--text-muted); font-size: 12px; font-weight: 600; }
+.plan-chip.prem { background: #fef3c7; color: #92400e; }
+.plan-cycle { font-size: 13px; color: var(--text-muted); }
+.plan-line { display: flex; align-items: center; gap: 8px; font-size: 13.5px; padding: 5px 0; }
+.plan-line.warn { color: #b45309; }
+.plan-line.muted-line { color: var(--text-muted); font-size: 12.5px; }
+.plan-actions { margin-top: 16px; }
 .set-nav { display: flex; flex-direction: column; gap: 2px; }
 .set-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; font-size: 14px; color: var(--text-muted); cursor: pointer; transition: all 0.15s; }
 .set-item:hover { background: var(--bg); color: var(--text); }

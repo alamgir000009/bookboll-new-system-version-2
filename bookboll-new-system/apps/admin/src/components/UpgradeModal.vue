@@ -5,7 +5,9 @@
  *   1) gate      — "Premium feature" prompt for the feature they just hit
  *   2) plans     — Free vs Premium cards + Monthly/Yearly toggle (yearly default)
  *   3) checkout  — full detail, billing toggle, what's included, trial breakdown
- * Subscribe is SIMULATED (no real charge).
+ * Subscribe opens a REAL Stripe Checkout: the server prices the plan, re-checks any
+ * promo code and returns the URL we redirect to. The plan flips only once Stripe
+ * confirms it — App.vue picks the `?plan_checkout=` return up and finishes it.
  */
 import { computed, ref, watch } from 'vue'
 import {
@@ -64,8 +66,9 @@ async function applyPromo() {
 function clearPromo() { promo.value = null; promoInput.value = ''; promoError.value = '' }
 
 async function doSubscribe() {
-  const ok = await subscribePremium(promo.value, billing.value)
-  if (ok) { clearPromo(); step.value = 'gate' }
+  // On success the browser leaves for Stripe, so there is nothing to reset here —
+  // the modal is closed by completePlanCheckout() when we come back.
+  await subscribePremium(promo.value, billing.value)
 }
 function close() { clearPromo(); step.value = 'gate'; upgradeModal.value = { open: false, feature: '' } }
 </script>
@@ -182,15 +185,15 @@ function close() { clearPromo(); step.value = 'gate'; upgradeModal.value = { ope
               <div class="ug-trial-row"><span>Today</span><b>US$0.00</b></div>
               <div class="ug-trial-free"><Gift :size="13" /> Free for {{ trialDays }} days · Cancel anytime</div>
               <div class="ug-trial-row"><span>After trial</span><b class="teal">US${{ finalBilled.toLocaleString() }}<small>{{ billing === 'yearly' ? '/year' : '/month' }}</small></b></div>
-              <div class="ug-trial-note">{{ afterTrialLine }}. Simulated — no real charge is made.</div>
+              <div class="ug-trial-note">{{ afterTrialLine }}. Cancel any time before it ends and you pay nothing.</div>
               <div class="ug-trial-due"><span>Due now</span><b>US$0.00</b></div>
             </div>
 
             <button class="ug-btn ug-co-cta" :disabled="upgrading || isPremium" @click="doSubscribe">
               <Loader v-if="upgrading" :size="15" class="ug-spin" /><CreditCard v-else :size="15" />
-              {{ isPremium ? 'Already Premium' : upgrading ? 'Starting…' : `Start ${trialDays}-day free trial` }}
+              {{ isPremium ? 'Already Premium' : upgrading ? 'Opening checkout…' : `Start ${trialDays}-day free trial` }}
             </button>
-            <div class="ug-fine"><Lock :size="11" /> Encrypted checkout · Payment simulated in this demo.</div>
+            <div class="ug-fine"><Lock :size="11" /> Secure checkout by Stripe · Cancel anytime</div>
           </aside>
         </div>
       </template>

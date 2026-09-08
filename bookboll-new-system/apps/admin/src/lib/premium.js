@@ -1,9 +1,9 @@
 /**
  * premium.js — Bookboll for Business PREMIUM plan (free vs premium providers).
  *
- * The plan lives on the business OWNER's admin_users row (`plan` = 'free'|'premium'),
- * so every team member of a premium business inherits it. Platform roles (super admin,
- * country admin, platform staff) are NEVER gated.
+ * The plan lives on the provider's BUSINESS row, so every team member of a premium
+ * business inherits it. Platform roles (super admin, country admin, platform staff)
+ * are NEVER gated.
  *
  * Usage in a page:
  *   const { isPremium, requirePremium } = usePremium()
@@ -11,18 +11,19 @@
  * requirePremium() returns true when allowed; otherwise it opens the global Upgrade
  * modal (components/UpgradeModal.vue, mounted once in App.vue) and returns false.
  *
- * The subscription itself is SIMULATED (like the custom-domain fee): subscribing just
- * writes plan='premium' + premium_since. Pre-migration the column is missing → everyone
- * reads as FREE and upgrading shows a run-the-migration toast.
+ * The subscription is REAL: subscribing opens Stripe Checkout ($59/month or $588/year
+ * after a free trial) and the plan only flips when Stripe confirms it. The gates here
+ * explain the paywall; the backend enforces it, so a free provider that skips the UI
+ * and posts straight to the API is refused with 402 all the same.
  */
 import { ref, computed } from 'vue'
-import { supabase } from './supabase.js'
 import { useCurrentUser } from './currentUser.js'
 import { pushToast } from './toast.js'
-import { recordRedemption } from './promocodes.js'
+import { fetchPlan, startPlanCheckout, confirmPlanCheckout, cancelPlan, resumePlan } from './plan.js'
 
-// Pricing (USD, simulated). Monthly is the headline; yearly is billed once a year at
-// ~17% off, shown as a lower per-month rate. Both start with a free trial.
+// Pricing (USD). Monthly is the headline; yearly is billed once a year at ~17% off,
+// shown as a lower per-month rate. Both start with a free trial. These are defaults —
+// the server sends the same numbers with the plan and they win once loaded.
 export const PREMIUM_PRICE = 59              // monthly plan — USD / month
 export const PREMIUM_YEARLY_PER_MONTH = 49   // yearly plan shown as $/month (billed annually)
 export const PREMIUM_YEARLY_TOTAL = 588      // yearly plan billed once (49 × 12 ≈ 17% off 59 × 12)
@@ -49,10 +50,54 @@ export function openUpgrade(featureKey = '') {
   upgradeModal.value = { open: true, feature: featureKey }
 }
 
-export function usePremium() {
-  const { currentUser, allUsers, currentOwnerUserId, isSuperAdmin, isCountryAdmin, role } = useCurrentUser()
+/**
+ * The plan as the SERVER sees it — the only thing the gates trust. Shared across
+ * every page so one fetch serves the whole shell.
+ */
+export const planState = ref({
+  plan: 'free', is_premium: false, is_platform: false,
+  billing: null, status: null, premium_since: null,
+  trial_ends_at: null, renews_at: null, cancel_at_period_end: false, has_subscription: false,
+  domain: { domain: '', status: '', paid_at: null, fee: 119, pending: '' },
+  loaded: false,
+})
 
-  // The business OWNER's row (the plan lives there; staff inherit it).
+let inflight = null
+
+/** Fetch the plan once; later callers share the same request. */
+export async function loadPlan({ force = false } = {}) {
+  if (!force && (planState.value.loaded || inflight)) return inflight || planState.value
+  inflight = (async () => {
+    const res = await fetchPlan()
+    if (res.success && res.data) {
+      planState.value = { ...planState.value, ...res.data, loaded: true }
+    } else {
+      // A failed read must not silently grant Premium — stay on the free side.
+      planState.value = { ...planState.value, loaded: true }
+    }
+    inflight = null
+    return planState.value
+  })()
+  return inflight
+}
+
+/** Called by every gated page's setup(); a no-op once the plan is in hand. */
+export function ensurePlan() {
+  if (!planState.value.loaded && !inflight) loadPlan()
+}
+
+/** Drop the cached plan — used when the acting account changes, and after sign-out. */
+export function resetPlan() {
+  inflight = null
+  planState.value = { ...planState.value, plan: 'free', is_premium: false, is_platform: false, loaded: false }
+}
+
+export function usePremium() {
+  const { currentUser, allUsers, currentOwnerUserId } = useCurrentUser()
+
+  ensurePlan()
+
+  // The business OWNER's row — who the plan and the promo redemption belong to.
   const ownerRow = computed(() => {
     const oid = currentOwnerUserId.value
     if (!oid) return null
@@ -60,11 +105,8 @@ export function usePremium() {
     return (allUsers.value || []).find(u => u.id === oid) || null
   })
 
-  const isPlatform = computed(() =>
-    isSuperAdmin.value || isCountryAdmin.value || role.value === 'platform_staff')
-
-  const isPremium = computed(() =>
-    isPlatform.value || ownerRow.value?.plan === 'premium')
+  const isPlatform = computed(() => !!planState.value.is_platform)
+  const isPremium = computed(() => !!planState.value.is_premium)
 
   /** True when the feature may be used; otherwise opens the Upgrade modal and returns false. */
   function requirePremium(featureKey = '') {
@@ -75,46 +117,83 @@ export function usePremium() {
 
   const upgrading = ref(false)
   /**
-   * SIMULATED subscribe: flips the owner row to premium.
+   * Start a REAL upgrade: the server prices the plan, re-checks the promo code and
+   * hands back a Stripe Checkout URL. We hand the browser over — the plan flips when
+   * Stripe says it did, never here.
+   *
    * `promo` (optional) is a validated provider-plan code — `{ code, discount }` from
-   * validatePromo({ applicableTo: 'provider_plan' }) — which is recorded as a redemption.
+   * validatePromo({ applicableTo: 'provider_plan' }). Only its code string is sent;
+   * the discount is recomputed server-side so it cannot be dictated by the browser.
    */
   async function subscribePremium(promo = null, billing = 'yearly') {
-    const oid = currentOwnerUserId.value
-    if (!oid || upgrading.value) return false
+    if (upgrading.value) return false
     upgrading.value = true
-    const { error } = await supabase.from('admin_users')
-      .update({ plan: 'premium', premium_since: new Date().toISOString() }).eq('id', oid)
-    upgrading.value = false
-    if (error) {
-      pushToast(/could not find|does not exist|schema cache/i.test(error.message || '')
-        ? 'Run the provider_premium migration (20260725000000_provider_premium.sql) first.'
-        : (error.message || 'Could not upgrade.'), 'error')
+    const res = await startPlanCheckout({
+      billing,
+      promoCode: promo?.code?.code || null,
+      returnPath: window.location.pathname + window.location.search,
+    })
+    if (!res.success || !res.data?.url) {
+      upgrading.value = false
+      pushToast(firstPlanError(res, 'Could not start the upgrade.'), 'error')
       return false
     }
-    // Update the in-memory rows so gates lift immediately (no reload needed).
-    const row = (allUsers.value || []).find(u => u.id === oid)
-    if (row) { row.plan = 'premium'; row.premium_since = new Date().toISOString() }
-    if (currentUser.value?.id === oid) { currentUser.value.plan = 'premium' }
-    // Record the promo redemption (best-effort — never blocks the upgrade).
-    const billed = billedAmount(billing)
-    if (promo?.code?.id) {
-      const owner = ownerRow.value
-      await recordRedemption({
-        code: promo.code,
-        customer: { email: owner?.email || '', name: owner?.business_name || owner?.full_name || '' },
-        source: { type: 'provider_plan', id: oid, countryId: owner?.country_id || null },
-        amount: billed,
-        discount: promo.discount || 0,
-        currency: 'USD',
-      })
-    }
-    const trial = PREMIUM_TRIAL_DAYS[billing] || PREMIUM_TRIAL_DAYS.monthly
-    const per = billing === 'yearly' ? `$${PREMIUM_YEARLY_TOTAL}/year` : `$${PREMIUM_PRICE}/month`
-    pushToast(`Premium started — your ${trial}-day free trial is on. ${per} after the trial (simulated).`, 'success')
-    upgradeModal.value = { open: false, feature: '' }
+    // Leaving the app — keep `upgrading` on so the button stays disabled until we go.
+    window.location.assign(res.data.url)
     return true
   }
 
-  return { isPremium, isPlatform, requirePremium, subscribePremium, upgrading, ownerRow }
+  return { isPremium, isPlatform, requirePremium, subscribePremium, upgrading, ownerRow, planState }
+}
+
+/**
+ * Finish a Premium checkout the provider was just redirected back from.
+ * Returns true when the plan is now active.
+ */
+export async function completePlanCheckout(sessionId) {
+  if (!sessionId || sessionId === 'cancelled') {
+    if (sessionId === 'cancelled') pushToast('Upgrade cancelled — nothing was charged.', 'info')
+    return false
+  }
+  const res = await confirmPlanCheckout(sessionId)
+  if (!res.success) {
+    pushToast(firstPlanError(res, 'We could not confirm that payment yet.'), 'error')
+    return false
+  }
+  planState.value = { ...planState.value, ...res.data, loaded: true }
+  upgradeModal.value = { open: false, feature: '' }
+
+  const trial = res.data?.trial_ends_at ? new Date(res.data.trial_ends_at) : null
+  pushToast(
+    trial && trial > new Date()
+      ? `Premium is on — your free trial runs to ${trial.toLocaleDateString()}.`
+      : 'Premium is on — everything is unlocked.',
+    'success',
+  )
+  return true
+}
+
+/** Stop the plan at the end of the paid period (nothing is refunded or cut off early). */
+export async function endPlan() {
+  const res = await cancelPlan()
+  if (!res.success) { pushToast(firstPlanError(res, 'Could not cancel the plan.'), 'error'); return false }
+  planState.value = { ...planState.value, ...res.data, loaded: true }
+  pushToast('Premium will end when your current period closes.', 'success')
+  return true
+}
+
+/** Undo a pending cancellation. */
+export async function keepPlan() {
+  const res = await resumePlan()
+  if (!res.success) { pushToast(firstPlanError(res, 'Could not resume the plan.'), 'error'); return false }
+  planState.value = { ...planState.value, ...res.data, loaded: true }
+  pushToast('Premium resumed — nothing changes.', 'success')
+  return true
+}
+
+/** The clearest message a failed plan call gave us. */
+export function firstPlanError(res, fallback) {
+  const errors = res?.errors || {}
+  const first = Object.values(errors).flat().find(v => typeof v === 'string')
+  return first || res?.message || fallback
 }

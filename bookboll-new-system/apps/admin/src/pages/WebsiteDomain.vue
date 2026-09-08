@@ -4,11 +4,18 @@
  *
  * Moved out of Brand.vue so the main Site page stays calm. A provider connects their
  * own web address (e.g. book.myclub.com) instead of the Bookboll subdomain, for a
- * simulated one-time fee. Flow: enter domain → pay & connect (simulated) → add the
- * CNAME record → verify (simulated) → live.
+ * one-time fee. Flow: enter domain → pay $119 in Stripe → add the CNAME record →
+ * verify → live.
+ *
+ * The fee is a real charge. The domain is NOT written when the button is pressed —
+ * Stripe takes the payment and the backend connects it on the way back (and from the
+ * webhook), so an abandoned checkout leaves nothing behind.
  */
 import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { loadSiteSettings, saveSiteSettings } from '../lib/siteSettings.js'
+import { startDomainCheckout, confirmDomainCheckout, verifyDomain as verifyDomainApi } from '../lib/plan.js'
+import { firstPlanError } from '../lib/premium.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useToast } from '../lib/toast.js'
 import { brandHost } from '../lib/brand.js'
@@ -16,6 +23,8 @@ import { Link2, Globe2, Check, X, Loader, CreditCard, ShieldCheck, ArrowLeft } f
 
 const { currentOwnerUserId } = useCurrentUser()
 const toast = useToast()
+const route = useRoute()
+const router = useRouter()
 const DOMAIN_FEE = 119
 
 const ownerId = computed(() => currentOwnerUserId.value)
@@ -37,7 +46,7 @@ watch(ownerId, load)
 
 const bookbollAddress = computed(() => brandHost(f.brand_subdomain || 'yourbusiness'))
 
-// ── Connect (simulated one-time fee) ────────────────────────────────────────────
+// ── Connect (real one-time fee, taken by Stripe) ────────────────────────────────
 const domainInput = ref('')
 const DOMAIN_RE = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i
 const domainValid = computed(() => DOMAIN_RE.test((domainInput.value || '').trim().toLowerCase()))
@@ -48,20 +57,48 @@ async function payAndConnectDomain() {
   if (!DOMAIN_RE.test(domain)) { toast.error('Enter a valid domain like book.myclub.com'); return }
   if (!ownerId.value) return
   savingDomain.value = true
-  // SIMULATED payment — no real charge is taken; record the one-time fee + start DNS verification.
-  const patch = { brand_custom_domain: domain, brand_domain_status: 'pending', brand_domain_paid_at: new Date().toISOString() }
-  const res = await saveSiteSettings(patch)
-  savingDomain.value = false
-  if (!res.success) { toast.error(res.message || 'Could not connect domain.'); return }
-  Object.assign(f, patch)
-  domainInput.value = ''
-  toast.success(`Domain connected — $${DOMAIN_FEE} one-time fee charged (simulated). Add the DNS record to finish.`)
+  const res = await startDomainCheckout(domain, '/website-domain')
+  if (!res.success || !res.data?.url) {
+    savingDomain.value = false
+    toast.error(firstPlanError(res, 'Could not start the payment.'))
+    return
+  }
+  // Hand the browser to Stripe; the domain is connected on the way back.
+  window.location.assign(res.data.url)
 }
+
+/** Back from Stripe — reconcile the session, since the webhook may not have landed. */
+async function handleReturn(session) {
+  if (!session) return
+  const clean = () => {
+    const query = { ...route.query }
+    delete query.domain_checkout
+    router.replace({ path: route.path, query })
+  }
+  if (session === 'cancelled') {
+    toast.info('Payment cancelled — nothing was charged and no domain was connected.')
+    clean()
+    return
+  }
+  const res = await confirmDomainCheckout(String(session))
+  if (!res.success) { toast.error(firstPlanError(res, 'We could not confirm that payment yet.')); clean(); return }
+  f.brand_custom_domain = res.data?.domain || ''
+  f.brand_domain_status = res.data?.status || 'pending'
+  f.brand_domain_paid_at = res.data?.paid_at || null
+  domainInput.value = ''
+  toast.success(`Domain connected — $${DOMAIN_FEE} one-time fee paid. Add the DNS record to finish.`)
+  clean()
+}
+watch(() => route.query.domain_checkout, handleReturn, { immediate: true })
+
+const verifying = ref(false)
 async function verifyDomain() {
-  if (!ownerId.value) return
-  // Simulated DNS check → active.
-  const res = await saveSiteSettings({ brand_domain_status: 'active' })
-  if (!res.success) { toast.error(res.message || 'Could not verify.'); return }
+  if (!ownerId.value || verifying.value) return
+  verifying.value = true
+  // A real CNAME lookup on the server — "Live" means the address actually resolves.
+  const res = await verifyDomainApi()
+  verifying.value = false
+  if (!res.success) { toast.error(firstPlanError(res, 'Could not verify the domain yet.')); return }
   f.brand_domain_status = 'active'
   toast.success('Domain verified — your site is live on your own address.')
 }
@@ -69,7 +106,7 @@ async function removeDomain() {
   if (!ownerId.value) return
   const res = await saveSiteSettings({ brand_custom_domain: '', brand_domain_status: '' })
   if (!res.success) { toast.error(res.message || 'Could not remove.'); return }
-  f.brand_custom_domain = ''; f.brand_domain_status = ''
+  f.brand_custom_domain = ''; f.brand_domain_status = ''; f.brand_domain_paid_at = null
   toast.success('Custom domain removed.')
 }
 </script>
@@ -115,10 +152,10 @@ async function removeDomain() {
           <input class="wd-input" v-model="domainInput" placeholder="book.myclub.com" spellcheck="false" @keyup.enter="domainValid && payAndConnectDomain()" />
           <button class="btn btn-primary" :disabled="!domainValid || savingDomain" @click="payAndConnectDomain">
             <Loader v-if="savingDomain" :size="15" class="spin" /><CreditCard v-else :size="15" />
-            {{ savingDomain ? 'Connecting…' : `Pay $${DOMAIN_FEE} & connect` }}
+            {{ savingDomain ? 'Opening checkout…' : `Pay $${DOMAIN_FEE} & connect` }}
           </button>
         </div>
-        <div class="wd-hint">The fee is simulated in this demo — no real charge is made.</div>
+        <div class="wd-hint">You'll be taken to Stripe to pay securely. The domain connects as soon as the payment goes through.</div>
       </div>
 
       <!-- Connected → status + DNS instructions -->
@@ -134,7 +171,10 @@ async function removeDomain() {
           <div class="wd-dns-rec"><span>Type</span><b>CNAME</b></div>
           <div class="wd-dns-rec"><span>Name</span><b>{{ (f.brand_custom_domain || '').split('.')[0] }}</b></div>
           <div class="wd-dns-rec"><span>Value</span><b>sites.bookboll.com</b></div>
-          <button class="btn btn-primary" style="margin-top:12px" @click="verifyDomain"><ShieldCheck :size="15" /> I've added it — verify</button>
+          <button class="btn btn-primary" style="margin-top:12px" :disabled="verifying" @click="verifyDomain">
+            <Loader v-if="verifying" :size="15" class="spin" /><ShieldCheck v-else :size="15" />
+            {{ verifying ? 'Checking DNS…' : "I've added it — verify" }}
+          </button>
         </div>
         <div v-else class="wd-hint" style="color:#166534;">Your site is live on your own address. 🎉</div>
         <button class="btn btn-secondary btn-sm" style="margin-top:14px" @click="removeDomain"><X :size="13" /> Remove domain</button>

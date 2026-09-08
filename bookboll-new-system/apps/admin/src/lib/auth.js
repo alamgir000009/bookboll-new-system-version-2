@@ -11,6 +11,7 @@
 import { ref, computed } from 'vue'
 import { apiFetch, getAdminToken, setAdminToken, clearAdminToken } from './api.js'
 import { disconnectEcho } from './echo.js'
+import { resetPlan } from './premium.js'
 import {
   applyLaravelUser,
   clearLaravelUser,
@@ -62,6 +63,9 @@ function clearSession() {
   try { disconnectEcho() } catch { /* ignore */ }
   clearAdminToken()
   clearLaravelUser()
+  // The plan is per-account; the next sign-in must fetch its own, not inherit
+  // whatever the last one was entitled to.
+  resetPlan()
   authUser.value = null
   accountChoices.value = []
   activeUserId.value = ''
