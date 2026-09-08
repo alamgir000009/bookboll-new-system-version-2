@@ -63,13 +63,13 @@ async function refresh({ silent } = {}) {
     tplState.value = 'error'
     tplError.value = res.error || 'Could not load templates.'
   }
-  queue.value = await loadWaQueue(ownerId.value)
+  queue.value = await loadWaQueue()
 }
 
 /** Check statuses AND run the auto-send pump (queued campaigns fire on approval). */
 async function checkNow() {
   checking.value = true
-  const pump = await processWaQueue(ownerId.value)
+  const pump = await processWaQueue()
   for (const s of pump.sent || []) {
     const r = s.result || {}
     pushToast(r.error

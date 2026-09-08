@@ -6,9 +6,13 @@
  * `unsubscribe_token` so each marketing email carries a one-click unsubscribe link.
  *
  * Delivery is "record & preview": we store the campaign + render the exact compliant HTML
- * (sender disclaimer + unsubscribe button). Swap `recordCampaign` for a real ESP/edge function later.
+ * (sender disclaimer + unsubscribe button). Swap `recordCampaign` for a real ESP later.
+ *
+ * The ledger lives on our own backend (marketing_campaigns). The OWNER of a campaign is
+ * decided server-side from the caller, so a provider cannot file a send under Bookboll's
+ * name or another provider's.
  */
-import { supabase } from './supabase.js'
+import { apiFetch } from './api.js'
 
 export const MARKETING_CHANNELS = ['email', 'sms', 'whatsapp']
 export const MARKETING_LABELS = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp' }
@@ -58,26 +62,47 @@ export function marketingEmailHtml({ subject = '', body = '', senderLabel = 'Boo
   </div></body></html>`
 }
 
-/** Record a sent campaign (best-effort; tolerates a pre-migration DB). */
-export async function recordCampaign({ ownerUserId = null, createdBy = null, senderLabel = 'Bookboll', channel = 'email', audience = '', subject = '', body = '', html = '', recipientCount = 0 } = {}) {
-  const row = { owner_user_id: ownerUserId, created_by: createdBy, sender_label: senderLabel, channel, audience, subject, body, html, recipient_count: recipientCount }
+/**
+ * Record a sent campaign. `ownerUserId`/`createdBy` are accepted for call-site
+ * compatibility but ignored — the server takes both from the authenticated caller.
+ * Returns the old { data, error } shape so composers keep reading `camp.data?.id`.
+ */
+export async function recordCampaign({ senderLabel = 'Bookboll', channel = 'email', audience = '', subject = '', body = '', html = '', recipientCount = 0 } = {}) {
   try {
-    const { data, error } = await supabase.from('marketing_campaigns').insert(row).select().maybeSingle()
-    return { data, error }
+    const res = await apiFetch('/admin/marketing/campaigns', {
+      method: 'POST',
+      body: { sender_label: senderLabel, channel, audience, subject, body, html, recipient_count: recipientCount },
+    })
+    if (!res.success) return { error: { message: res.message || 'Could not record the campaign.' } }
+    return { data: res.data?.campaign || null }
   } catch (e) { return { error: e } }
 }
 
-/** Public unsubscribe: flip the requested channel(s) off for the customer holding `token`. */
+/** Remove a ledger row for a send that never happened. */
+export async function deleteCampaign(id) {
+  if (!id) return { ok: false }
+  try {
+    const res = await apiFetch(`/admin/marketing/campaigns/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    return { ok: !!res.success }
+  } catch { return { ok: false } }
+}
+
+/** The caller's own campaign history, newest first. */
+export async function loadCampaigns(limit = 50) {
+  const res = await apiFetch('/admin/marketing/campaigns', { query: { limit } })
+  return res.success ? (res.data?.campaigns || []) : []
+}
+
+/**
+ * Public unsubscribe: flip the requested channel(s) off for the customer holding
+ * `token`. No session — the recipient is reading an email, so the token IS the
+ * credential and the endpoint is deliberately unauthenticated.
+ */
 export async function applyUnsubscribe(token, channel = 'email') {
   if (!token) return { error: 'Missing token.' }
-  const patch = channel === 'all'
-    ? { marketing_email: false, marketing_sms: false, marketing_whatsapp: false }
-    : { [MARKETING_COL[channel] || 'marketing_email']: false }
-  patch.marketing_updated_at = new Date().toISOString()
   try {
-    const { data, error } = await supabase.from('customers').update(patch).eq('unsubscribe_token', token).select('id, full_name, email').maybeSingle()
-    if (error) return { error: error.message }
-    if (!data) return { error: 'This unsubscribe link is invalid or has expired.' }
-    return { ok: true, customer: data }
+    const res = await apiFetch('/marketing/unsubscribe', { method: 'POST', body: { token, channel } })
+    if (!res.success) return { error: res.message || 'This unsubscribe link is invalid or has expired.' }
+    return { ok: true, customer: res.data?.customer || null }
   } catch (e) { return { error: String(e) } }
 }

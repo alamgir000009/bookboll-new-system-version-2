@@ -3,23 +3,22 @@
  * WhatsApp.vue — GUIDED Meta WhatsApp Business setup wizard.
  *
  * PER-PROVIDER, like the Email sender:
- *  - A provider connects THEIR OWN number + access token (stored on admin_users.whatsapp_config)
+ *  - A provider connects THEIR OWN number + access token (stored on businesses.whatsapp_config)
  *    and markets their own customers from it. Booking notifications always ride Bookboll's
  *    number, so providers never see webhook / app-secret plumbing.
- *  - Bookboll (super admin) configures its OWN number here (platform_settings, token included —
- *    the functions use dashboard values first, function secrets as fallback) — used for
- *    marketplace notifications, Bookboll marketing and the menu-driven booking bot.
+ *  - Bookboll (super admin) configures its OWN number here (platform settings, token included —
+ *    the backend uses dashboard values first, the WHATSAPP_ACCESS_TOKEN env value as fallback)
+ *    — used for marketplace notifications, Bookboll marketing and the booking bot.
  *
  * REAL infrastructure: the test send delivers an actual WhatsApp message via Meta's Cloud API.
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import { useCurrentUser } from '../lib/currentUser.js'
-import { supabase } from '../lib/supabase.js'
 import { pushToast } from '../lib/toast.js'
 import { markDirty, clearDirty } from '../lib/unsavedGuard.js'
 import {
   blankWhatsappConfig, loadWhatsappConfig, saveWhatsappConfig, isWhatsappConfigured, invokeWhatsapp,
-  webhookCallbackUrl, generateVerifyToken,
+  webhookCallbackUrl, generateVerifyToken, loadWaOutbound,
 } from '../lib/whatsapp.js'
 import WhatsappIcon from '../components/WhatsappIcon.vue'
 import WaTemplateManager from '../components/WaTemplateManager.vue'
@@ -108,18 +107,17 @@ async function refreshStatus() {
 }
 
 async function loadOutbound() {
-  let q = supabase.from('whatsapp_outbound')
-    .select('to_number, kind, template_name, body, status, error, created_at')
-    .order('created_at', { ascending: false }).limit(15)
-  q = ownerId.value ? q.eq('owner_user_id', ownerId.value) : q.is('owner_user_id', null)
-  const { data, error } = await q
-  if (error) { outboundMissing.value = /does not exist|schema cache/i.test(error.message || ''); return }
-  outbound.value = data || []
+  // Scoped server-side to this caller's own sender — a provider sees their own
+  // messages, Bookboll sees the platform number's.
+  const res = await loadWaOutbound(15)
+  if (!res.ok) { outboundMissing.value = true; return }
+  outboundMissing.value = false
+  outbound.value = res.outbound
 }
 
 async function load() {
   loading.value = true
-  cfg.value = await loadWhatsappConfig(ownerId.value)
+  cfg.value = await loadWhatsappConfig()
   if (!testTo.value) testTo.value = (allUsers.value.find(u => u.id === ownerId.value) || currentUser.value)?.phone?.replace(/\D/g, '') || ''
   loading.value = false
   clearDirty()
@@ -135,14 +133,10 @@ async function save() {
   saving.value = true
   // Provider: mark connected when the required fields are present.
   if (ownerId.value) cfg.value.enabled = !!(String(cfg.value.phone_number_id || '').trim() && String(cfg.value.access_token || '').trim())
-  const { error } = await saveWhatsappConfig(ownerId.value, cfg.value)
+  const { error, config } = await saveWhatsappConfig(null, cfg.value)
   saving.value = false
-  if (error) {
-    pushToast(/could not find|does not exist|schema cache/i.test(error.message || '')
-      ? 'Run the provider_whatsapp migration (20260731000000) first, then save.'
-      : (error.message || 'Could not save.'), 'error')
-    return
-  }
+  if (error) { pushToast(error.message || 'Could not save.', 'error'); return }
+  if (config) cfg.value = { ...blankWhatsappConfig(), ...config }
   clearDirty()
   pushToast('WhatsApp settings saved.', 'success')
   refreshStatus()
@@ -165,8 +159,6 @@ async function copyCmd(text, key) {
   copied.value = key
   setTimeout(() => { if (copied.value === key) copied.value = '' }, 1200)
 }
-const DEPLOY_CMDS = `npx supabase@latest functions deploy send-whatsapp
-npx supabase@latest functions deploy whatsapp-webhook --no-verify-jwt`
 
 const statusLabel = (s) => ({ sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed' }[s] || s)
 const fmtWhen = (iso) => new Date(iso).toLocaleString()
@@ -210,7 +202,7 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
       <div class="wa-check-sub">
         <div class="wa-status-main">
           <template v-if="checking">Checking the connection…</template>
-          <template v-else-if="fnStatus?.notDeployed"><b>Function not deployed.</b>&nbsp;{{ isPlatform ? 'See the deployment note for your developer below.' : 'Ask Bookboll to deploy the send-whatsapp function.' }}</template>
+          <template v-else-if="fnStatus && fnStatus.ok === false"><b>WhatsApp service unavailable.</b>&nbsp;{{ fnStatus.error || 'Try again in a moment.' }}</template>
           <template v-else-if="connectedOk"><b>{{ fnStatus.phone.name }}</b>&nbsp;({{ fnStatus.phone.number }})<span v-if="fnStatus.phone.quality" class="wa-quality">quality: {{ String(fnStatus.phone.quality).toLowerCase() }}</span></template>
           <template v-else-if="fnStatus && !fnStatus.hasToken"><b>Token missing.</b>&nbsp;Add a permanent access token in step {{ stepMap.token.num }}, then Save.</template>
           <template v-else-if="fnStatus && !fnStatus.configured"><b>Almost there.</b>&nbsp;Enter your Phone number ID in step {{ stepMap.product.num }}, then Save.</template>
@@ -456,15 +448,13 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
       </div>
     </div>
 
-    <!-- D) Deployment note (platform only) -->
+    <!-- D) Where the keys take effect (platform only) -->
     <div v-if="isPlatform" class="wa-amber">
       <AlertTriangle :size="16" />
       <div class="wa-amber-body">
-        <b>Deployment note for your developer:</b> after changing these functions, redeploy <code>send-whatsapp</code> and <code>whatsapp-webhook</code>. Keys entered on this page take effect immediately after that — no more secret changes needed.
-        <div class="wa-cmd">
-          <pre>{{ DEPLOY_CMDS }}</pre>
-          <button class="btn-icon" :title="copied === 'deploy' ? 'Copied!' : 'Copy'" @click="copyCmd(DEPLOY_CMDS, 'deploy')"><Check v-if="copied === 'deploy'" :size="14" /><Copy v-else :size="14" /></button>
-        </div>
+        <b>Note:</b> keys entered on this page take effect immediately — they are read by the Bookboll
+        backend on every send. Leave the access token blank to fall back to the server's
+        <code>WHATSAPP_ACCESS_TOKEN</code> setting instead.
       </div>
     </div>
 

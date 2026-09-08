@@ -1,6 +1,5 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
-import { supabase } from '../lib/supabase.js'
 import {
   fetchCustomersDashboard, createCustomer, updateCustomer, deleteCustomer, firstError,
 } from '../lib/customers.js'
@@ -13,7 +12,7 @@ import WhatsappIcon from '../components/WhatsappIcon.vue'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { CAP } from '../lib/permissions.js'
-import { marketingEmailHtml, recordCampaign, unsubscribeUrl } from '../lib/marketing.js'
+import { marketingEmailHtml, recordCampaign, deleteCampaign, unsubscribeUrl } from '../lib/marketing.js'
 import { useProviderSmtp } from '../lib/emailSender.js'
 import { loadWhatsappConfig, isWhatsappConfigured, invokeWhatsapp, normalizeWaNumber, renderTemplateBody, personalizeVariable, queueWaCampaign, processWaQueue, createWaTemplate, slugifyTemplateName } from '../lib/whatsapp.js'
 import { fmt12 } from '../lib/slots.js'
@@ -691,7 +690,7 @@ async function openWaDialog() {
   waMode.value = 'pick'
   waNew.value = { name: '', category: 'MARKETING', language: 'en_US', body: '' }
   showWaDialog.value = true
-  waConfig.value = await loadWhatsappConfig(waOwnerId.value)   // this business's own config
+  waConfig.value = await loadWhatsappConfig()   // this business's own config, resolved server-side
   if (!isWhatsappConfigured(waConfig.value, waOwnerId.value)) return
   // Load the approved-template list; fall back to manual entry when the WABA id is
   // missing or the function isn't deployed.
@@ -699,7 +698,7 @@ async function openWaDialog() {
   // Auto-send pump first: any campaign queued on a template Meta has since APPROVED
   // fires now; a REJECTED template surfaces its reason. This is the "get notified"
   // touchpoint inside the composer itself.
-  processWaQueue(waOwnerId.value).then(pump => {
+  processWaQueue().then(pump => {
     for (const s of pump.sent || []) {
       const r = s.result || {}
       pushToast(r.error
@@ -863,7 +862,7 @@ async function sendWaCampaign() {
   waSending.value = false
   if (!res.ok) {
     // Nothing was dispatched — remove the orphaned ledger row so history stays honest.
-    if (camp.data?.id) await supabase.from('marketing_campaigns').delete().eq('id', camp.data.id)
+    if (camp.data?.id) await deleteCampaign(camp.data.id)
     pushToast(res.error || 'Campaign failed.', 'error')
     return
   }
