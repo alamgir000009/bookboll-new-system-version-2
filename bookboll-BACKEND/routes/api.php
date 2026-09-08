@@ -12,6 +12,7 @@ use App\Http\Controllers\Admin\OverviewController;
 use App\Http\Controllers\Admin\PaymentAccountController;
 use App\Http\Controllers\Admin\StorefrontSortController;
 use App\Http\Controllers\Admin\ReferenceDataController;
+use App\Http\Controllers\Admin\SiteSettingsController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
 use App\Http\Controllers\BusinessNotificationTemplateController;
 use App\Http\Controllers\CheckInController;
@@ -131,6 +132,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
             // their own white-label site for providers.
             Route::get('storefront-sort', [StorefrontSortController::class, 'show'])->name('storefront-sort.show');
             Route::put('storefront-sort', [StorefrontSortController::class, 'update'])->name('storefront-sort.update');
+        });
+
+        // "My Website": branding, pages, banners, domain, embed and tracking.
+        Route::middleware('capability:manage_website,manage_platform_website')->group(function () {
+            Route::get('site-settings', [SiteSettingsController::class, 'show'])->name('site-settings.show');
+            Route::put('site-settings', [SiteSettingsController::class, 'update'])->name('site-settings.update');
         });
 
         Route::get('locations/countries', [LocationController::class, 'countries'])->name('locations.countries');

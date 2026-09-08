@@ -46,7 +46,6 @@ class Business extends Model
         'brand_meta_title',
         'brand_meta_description',
         'notification_templates',
-        // White-label storefront settings (see the 2026_09_07 migration)
         'hero_banners',
         'sort_space',
         'sort_venue',
@@ -59,6 +58,12 @@ class Business extends Model
         'brand_whitelabel',
         'plan',
         'premium_since',
+        'brand_show_venues',
+        'brand_show_events',
+        'brand_show_programs',
+        'brand_custom_domain',
+        'brand_domain_status',
+        'brand_domain_paid_at',
     ];
 
     protected function casts(): array
@@ -72,6 +77,10 @@ class Business extends Model
             'brand_languages'         => 'array',
             'brand_whitelabel'        => 'boolean',
             'premium_since'           => 'datetime',
+            'brand_show_venues'       => 'boolean',
+            'brand_show_events'       => 'boolean',
+            'brand_show_programs'     => 'boolean',
+            'brand_domain_paid_at'    => 'datetime',
         ];
     }
 
