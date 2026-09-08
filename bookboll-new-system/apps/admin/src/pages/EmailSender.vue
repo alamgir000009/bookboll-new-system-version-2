@@ -66,7 +66,7 @@ async function runTest() {
   testing.value = false
   if (!res.ok) { pushToast(res.error, 'error'); return }
   cfg.value.verified_at = new Date().toISOString()
-  pushToast(`Test email sent to ${testTo.value} (simulated).`, 'success')
+  pushToast(`Test email sent to ${testTo.value} — check the inbox.`, 'success')
 }
 
 async function save() {
@@ -222,7 +222,7 @@ async function save() {
         </div>
       </div>
 
-      <div class="es-foot"><Info :size="13" /> Sending is simulated in this demo — your settings and test are saved, and drive real delivery in production.</div>
+      <div class="es-foot"><Info :size="13" /> The test opens a real connection to your mail server and delivers a message — if it arrives, your customers' mail will too.</div>
     </template>
   </div>
 </template>

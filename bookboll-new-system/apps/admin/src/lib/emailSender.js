@@ -44,7 +44,7 @@ export function blankSmtpConfig() {
     username: '',
     password: '',
     use_for_automated: true,   // once connected, also send automated notifications from here
-    verified_at: null,         // set when a test send succeeds (simulated)
+    verified_at: null,         // stamped when a real test send succeeds
   }
 }
 
@@ -92,14 +92,35 @@ export async function saveSmtpConfig(ownerId, config) {
 }
 
 /**
- * SIMULATED test send: validate the config, then pretend to deliver. In production this
- * hits a server endpoint that actually opens the SMTP connection and sends.
+ * REAL test send: the backend opens this SMTP connection and delivers a message. The
+ * config travels with the request rather than being read from storage, so a sender can
+ * be tested before it is saved — which is the point of a test button.
+ *
+ * Failures come back as the mail server's own complaint (bad credentials vs unreachable
+ * host vs wrong encryption), because those need different fixes.
  */
 export async function sendTestEmail(config, toEmail) {
   const v = validateSmtpConfig(config)
   if (!v.ok) return { ok: false, error: 'Complete the required fields first.' }
   if (!EMAIL_RE.test(toEmail || '')) return { ok: false, error: 'Enter a valid address to send the test to.' }
-  await new Promise(r => setTimeout(r, 700))   // feel of a real round-trip
+
+  const res = await apiFetch('/admin/email-sender/test', {
+    method: 'POST',
+    body: {
+      to: toEmail,
+      host: config.host,
+      port: Number(config.port) || 587,
+      encryption: config.encryption || 'tls',
+      username: config.username || '',
+      password: config.password || '',
+      from_email: config.from_email,
+      from_name: config.from_name || '',
+    },
+  })
+  if (!res.success) {
+    const first = Object.values(res.errors || {}).flat().find(v2 => typeof v2 === 'string' && !/^\w+ .*:/.test(v2))
+    return { ok: false, error: res.message || first || 'The test email could not be sent.' }
+  }
   return { ok: true }
 }
 
