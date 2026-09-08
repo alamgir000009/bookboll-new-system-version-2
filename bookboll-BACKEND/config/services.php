@@ -56,4 +56,15 @@ return [
         'client_id' => env('APPLE_CLIENT_ID', 'com.bookboll.app'),
     ],
 
+
+    'whatsapp' => [
+        // Meta Graph API version and Bookboll's own access token. A token typed into
+        // the WhatsApp settings page wins; this is the fallback (and the only place a
+        // platform token needs to live in production).
+        'graph_url'    => env('WHATSAPP_GRAPH_URL', 'https://graph.facebook.com/v25.0'),
+        'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
+        'verify_token' => env('WHATSAPP_VERIFY_TOKEN'),
+        'app_secret'   => env('META_APP_SECRET'),
+    ],
+
 ];

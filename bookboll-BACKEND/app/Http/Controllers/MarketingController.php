@@ -18,4 +18,21 @@ class MarketingController extends Controller
     {
         return $this->marketing->unsubscribe($request);
     }
+
+    /* ── Campaign ledger (admin) ─────────────────────────────────────────── */
+
+    public function campaigns(Request $request)
+    {
+        return $this->marketing->campaigns($request);
+    }
+
+    public function recordCampaign(Request $request)
+    {
+        return $this->marketing->recordCampaign($request);
+    }
+
+    public function deleteCampaign(Request $request, $id)
+    {
+        return $this->marketing->deleteCampaign($request, $id);
+    }
 }

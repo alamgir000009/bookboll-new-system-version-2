@@ -14,6 +14,7 @@ use App\Http\Controllers\Admin\StorefrontSortController;
 use App\Http\Controllers\Admin\ReferenceDataController;
 use App\Http\Controllers\Admin\ProviderPlanController;
 use App\Http\Controllers\Admin\SiteSettingsController;
+use App\Http\Controllers\Admin\WhatsappChannelController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
 use App\Http\Controllers\BusinessNotificationTemplateController;
 use App\Http\Controllers\CheckInController;
@@ -55,6 +56,7 @@ use App\Http\Controllers\MarketingController;
 use App\Http\Controllers\MarketplaceCatalogController;
 use App\Http\Controllers\VenueController;
 use App\Http\Controllers\WhatsappController;
+use App\Http\Controllers\WhatsappWebhookController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('login', [UserController::class, 'login'])->name('api.login');
@@ -145,6 +147,43 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('site-settings/domain/checkout', [ProviderPlanController::class, 'domainCheckout'])->name('site-settings.domain.checkout');
             Route::get('site-settings/domain/checkout/{session}', [ProviderPlanController::class, 'confirmDomain'])->name('site-settings.domain.confirm');
             Route::post('site-settings/domain/verify', [ProviderPlanController::class, 'verifyDomain'])->name('site-settings.domain.verify');
+        });
+
+        /*
+        | WhatsApp channel + marketing campaigns.
+        |
+        | The sender (a provider's own number, or Bookboll's) is resolved server-side
+        | from the caller — the browser never names it, so a provider cannot send from
+        | the platform number. Automated booking notifications are separate and always
+        | use Bookboll's number: see notifications/whatsapp below.
+        */
+        // The sender's own settings — the /whatsapp page, gated exactly as PAGE_CAP
+        // gates it in the dashboard (manage_website / manage_platform_website).
+        Route::middleware('capability:manage_website,manage_platform_website')->group(function () {
+            Route::get('whatsapp/config', [WhatsappChannelController::class, 'showConfig'])->name('whatsapp.config.show');
+            Route::put('whatsapp/config', [WhatsappChannelController::class, 'saveConfig'])->name('whatsapp.config.save');
+            Route::get('whatsapp/outbound', [WhatsappChannelController::class, 'outbound'])->name('whatsapp.outbound');
+        });
+
+        // Sending and the approval queue are driven from BOTH screens — the WhatsApp
+        // page (templates, queue) and the Customers composer (campaigns) — so either
+        // page's capability admits them. Which sender they use is never the caller's
+        // choice; it is resolved from their own scope.
+        Route::middleware('capability:manage_website,manage_platform_website,manage_customers')->group(function () {
+            Route::post('whatsapp/action', [WhatsappChannelController::class, 'action'])->name('whatsapp.action');
+
+            Route::get('whatsapp/queue', [WhatsappChannelController::class, 'queueIndex'])->name('whatsapp.queue.index');
+            Route::post('whatsapp/queue', [WhatsappChannelController::class, 'queueStore'])->name('whatsapp.queue.store');
+            Route::post('whatsapp/queue/process', [WhatsappChannelController::class, 'queueProcess'])->name('whatsapp.queue.process');
+            Route::post('whatsapp/queue/{id}/dismiss', [WhatsappChannelController::class, 'queueDismiss'])->name('whatsapp.queue.dismiss');
+            Route::post('whatsapp/queue/{id}/cancel', [WhatsappChannelController::class, 'queueCancel'])->name('whatsapp.queue.cancel');
+        });
+
+        // The campaign ledger lives with the composer on the Customers page.
+        Route::middleware('capability:manage_customers')->group(function () {
+            Route::get('marketing/campaigns', [MarketingController::class, 'campaigns'])->name('marketing.campaigns.index');
+            Route::post('marketing/campaigns', [MarketingController::class, 'recordCampaign'])->name('marketing.campaigns.store');
+            Route::delete('marketing/campaigns/{id}', [MarketingController::class, 'deleteCampaign'])->name('marketing.campaigns.destroy');
         });
 
         // Bookboll for Business PREMIUM — the provider's own subscription. Readable by
@@ -628,6 +667,15 @@ Route::post('newsletter/subscribe', [NewsletterController::class, 'subscribe'])-
 // Desk "Pay by QR" — public; the booking uuid in the link is the credential.
 Route::get('pay/{uuid}', [BookingPayLinkController::class, 'show'])->name('pay.show');
 Route::post('pay/{uuid}/checkout', [BookingPayLinkController::class, 'checkout'])->name('pay.checkout');
+
+/*
+| WhatsApp inbound webhook — Meta calls this, so it is public by necessity. The
+| GET is Meta's verification handshake; the POST carries inbound messages and
+| delivery receipts, and is authenticated by its X-Hub-Signature-256 header
+| rather than by a session.
+*/
+Route::get('whatsapp/webhook', [WhatsappWebhookController::class, 'verify'])->name('whatsapp.webhook.verify');
+Route::post('whatsapp/webhook', [WhatsappWebhookController::class, 'handle'])->name('whatsapp.webhook.handle');
 
 // One-click unsubscribe from a marketing email — no session, the token is the credential.
 Route::post('marketing/unsubscribe', [MarketingController::class, 'unsubscribe'])->name('marketing.unsubscribe');
