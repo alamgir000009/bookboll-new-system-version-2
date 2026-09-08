@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Http\Request;
 use App\Services\NotificationFeedService;
+use App\Services\NotificationSweepService;
 
 class NotificationFeedController extends Controller
 {
@@ -16,5 +18,17 @@ class NotificationFeedController extends Controller
     public function markAllRead()
     {
         return $this->feed->markAllRead();
+    }
+
+    /* ── Scheduled reminder sweep ────────────────────────────────────────── */
+
+    public function sweepDue(Request $request, NotificationSweepService $sweep)
+    {
+        return $sweep->due($request);
+    }
+
+    public function sweepSent(Request $request, NotificationSweepService $sweep)
+    {
+        return $sweep->markSent($request);
     }
 }

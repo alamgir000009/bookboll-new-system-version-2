@@ -6,6 +6,7 @@ use App\Models\Booking;
 use App\Models\ClassProgram;
 use App\Models\ClassSession;
 use App\Models\ClassSubscription;
+use App\Models\OfferRedemption;
 use App\Models\Payment;
 use App\Models\User;
 use App\Models\Venue;
@@ -154,6 +155,23 @@ class ClassMembershipDashboardService
             ]);
 
             $this->generateFirstMonthSessions($sub, $program, $startedAt);
+
+            // An intro trial is once per customer per provider, so it has to be
+            // recorded wherever one starts. The customer storefront already does this
+            // (CustomerProgramService); a member added from the dashboard counts the
+            // same, or the same person could take the trial twice by asking staff.
+            $ownerKey = $program->owner_user_id ?: ($program->mapped_owner_user_id ? (string) $program->mapped_owner_user_id : null);
+            if ($billing['trial_status'] === 'in_trial' && $ownerKey) {
+                OfferRedemption::create([
+                    'customer_email'   => $data['customer_email'] ?: null,
+                    'card_fingerprint' => null,
+                    'owner_user_id'    => $ownerKey,
+                    'program_id'       => $program->uuid,
+                    'subscription_id'  => $sub->uuid,
+                    'offer_type'       => 'trial',
+                    'source'           => 'admin',
+                ]);
+            }
 
             if ($billing['trial_status'] === 'active' && ! $isComped) {
                 $this->recordSubscriptionPayment($sub, $program, true);

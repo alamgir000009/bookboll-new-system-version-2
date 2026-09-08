@@ -13,6 +13,7 @@ use App\Http\Controllers\Admin\PaymentAccountController;
 use App\Http\Controllers\Admin\StorefrontSortController;
 use App\Http\Controllers\Admin\ReferenceDataController;
 use App\Http\Controllers\Admin\ProviderPlanController;
+use App\Http\Controllers\Admin\ProviderSenderController;
 use App\Http\Controllers\Admin\SiteSettingsController;
 use App\Http\Controllers\Admin\WhatsappChannelController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
@@ -178,6 +179,31 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('whatsapp/queue/{id}/dismiss', [WhatsappChannelController::class, 'queueDismiss'])->name('whatsapp.queue.dismiss');
             Route::post('whatsapp/queue/{id}/cancel', [WhatsappChannelController::class, 'queueCancel'])->name('whatsapp.queue.cancel');
         });
+
+        // A provider's own email sending identity (Marketing → Email sender), gated
+        // exactly as PAGE_CAP gates that page in the dashboard.
+        Route::middleware('capability:manage_website,manage_platform_website')->group(function () {
+            Route::get('email-sender', [ProviderSenderController::class, 'showEmail'])->name('email-sender.show');
+            Route::put('email-sender', [ProviderSenderController::class, 'saveEmail'])->name('email-sender.save');
+            Route::post('email-sender/test', [ProviderSenderController::class, 'testEmail'])->name('email-sender.test');
+        });
+
+        // A provider's own site blog. Same table as the Bookboll blog above, split by
+        // owner_user_id — which is taken from the session, so the two can never mix.
+        Route::middleware('capability:manage_website_blog,manage_website,manage_platform_website')->group(function () {
+            Route::get('site-blog', [ProviderSenderController::class, 'blogIndex'])->name('site-blog.index');
+            Route::get('site-blog/count', [ProviderSenderController::class, 'blogCount'])->name('site-blog.count');
+            Route::post('site-blog', [ProviderSenderController::class, 'blogStore'])->name('site-blog.store');
+            Route::put('site-blog/{id}', [ProviderSenderController::class, 'blogUpdate'])->name('site-blog.update');
+            Route::delete('site-blog/{id}', [ProviderSenderController::class, 'blogDestroy'])->name('site-blog.destroy');
+        });
+
+        // The shared custom-type catalogue. Reading is open to any admin role (Listings
+        // and Memberships both offer the list); suggesting one needs edit rights. A
+        // suggestion only ever lands as `pending` — approval promotes it.
+        Route::get('custom-types', [ProviderSenderController::class, 'customTypes'])->name('custom-types.index');
+        Route::post('custom-types', [ProviderSenderController::class, 'suggestCustomType'])
+            ->middleware('capability:manage_listings,manage_platform_catalog')->name('custom-types.store');
 
         // The campaign ledger lives with the composer on the Customers page.
         Route::middleware('capability:manage_customers')->group(function () {
@@ -355,6 +381,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // Notification bell feed (derived from recent domain activity)
         Route::get('notifications/feed', [NotificationFeedController::class, 'index'])->name('notifications.feed');
         Route::post('notifications/read-all', [NotificationFeedController::class, 'markAllRead'])->name('notifications.read-all');
+
+        // The scheduled-reminder sweep the dashboard runs on open. The server decides
+        // what is due (scoped to the caller) and owns the once-only log; the dashboard
+        // still sends through the existing dispatcher.
+        Route::get('notifications/sweep', [NotificationFeedController::class, 'sweepDue'])->name('notifications.sweep');
+        Route::post('notifications/sweep/sent', [NotificationFeedController::class, 'sweepSent'])->name('notifications.sweep.sent');
 
         // Door check-in (admin app QR scanner)
         // Door check-in

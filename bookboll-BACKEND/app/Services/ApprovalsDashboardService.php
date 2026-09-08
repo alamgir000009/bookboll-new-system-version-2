@@ -112,6 +112,11 @@ class ApprovalsDashboardService
             return sendError('Listing not found', [], 404);
         }
 
+        // Decided BEFORE the update, which clears pending_content and moves the new
+        // title onto the row — after it, the two cases are indistinguishable.
+        $contentOnly = $this->isContentUpdate($li->approval_status, $li->pending_content);
+        $name        = $contentOnly ? ($li->pending_content['name'] ?? $li->name) : $li->name;
+
         try {
             $this->applyListingApprove($li);
         } catch (\Throwable $e) {
@@ -121,8 +126,11 @@ class ApprovalsDashboardService
         }
 
         AdminAlerts::toVenueOwner($li->venue_id, 'approval', 'ok',
-            '“'.$li->name.'” is approved',
-            'It is now live on the marketplace', '/listings');
+            $contentOnly ? 'Content approved — “'.$name.'”' : '“'.$name.'” was approved 🎉',
+            $contentOnly
+                ? 'Your updated title, description and photos are now live'
+                : 'It is now live on the Bookboll marketplace',
+            '/listings');
 
         $mapped = $this->mapListing($li->fresh(['venue', 'sportsCategory']));
 
@@ -160,7 +168,12 @@ class ApprovalsDashboardService
             return sendError('Listing not found', [], 404);
         }
 
-        if ($this->isContentUpdate($li->approval_status, $li->pending_content)) {
+        // The provider is told about the CURRENT listing by name in both cases — a
+        // rejected content edit never becomes the listing's name.
+        $contentOnly = $this->isContentUpdate($li->approval_status, $li->pending_content);
+        $name        = $li->name;
+
+        if ($contentOnly) {
             $li->update(['pending_content' => null]);
         } else {
             if ($note === '') {
@@ -175,8 +188,11 @@ class ApprovalsDashboardService
         }
 
         AdminAlerts::toVenueOwner($li->venue_id, 'approval', 'warn',
-            'Changes requested — “'.$li->name.'”',
-            $note ?: 'Update the listing and resubmit it for review', '/listings');
+            $contentOnly ? 'Content changes not approved — “'.$name.'”' : 'Changes requested — “'.$name.'”',
+            $contentOnly
+                ? trim($note).' · Your listing stays live on its current content.'
+                : ($note ?: 'Update the listing and resubmit it for review'),
+            '/listings');
 
         return sendSuccess('Changes requested', [
             'item' => array_merge($this->mapListing($li->fresh(['venue', 'sportsCategory'])), ['_type' => 'listing']),
@@ -192,6 +208,9 @@ class ApprovalsDashboardService
             return sendError('Program not found', [], 404);
         }
 
+        $contentOnly = $this->isContentUpdate($pg->approval_status, $pg->pending_content);
+        $name        = $contentOnly ? ($pg->pending_content['name'] ?? $pg->name) : $pg->name;
+
         try {
             $this->applyProgramApprove($pg);
         } catch (\Throwable $e) {
@@ -201,8 +220,11 @@ class ApprovalsDashboardService
         }
 
         AdminAlerts::toUser($this->programOwnerId($pg), 'approval', 'ok',
-            '“'.$pg->name.'” is approved',
-            'It is now live on the marketplace', '/listings');
+            $contentOnly ? 'Content approved — “'.$name.'”' : '“'.$name.'” was approved 🎉',
+            $contentOnly
+                ? 'Your updated title, description and photo are now live'
+                : 'It is now live on the Bookboll marketplace',
+            '/listings');
 
         $mapped = $this->mapProgram($pg->fresh());
 
@@ -240,7 +262,10 @@ class ApprovalsDashboardService
             return sendError('Program not found', [], 404);
         }
 
-        if ($this->isContentUpdate($pg->approval_status, $pg->pending_content)) {
+        $contentOnly = $this->isContentUpdate($pg->approval_status, $pg->pending_content);
+        $name        = $pg->name;
+
+        if ($contentOnly) {
             $pg->update(['pending_content' => null]);
         } else {
             if ($note === '') {
@@ -255,8 +280,11 @@ class ApprovalsDashboardService
         }
 
         AdminAlerts::toUser($this->programOwnerId($pg), 'approval', 'warn',
-            'Changes requested — “'.$pg->name.'”',
-            $note ?: 'Update the program and resubmit it for review', '/listings');
+            $contentOnly ? 'Content changes not approved — “'.$name.'”' : 'Changes requested — “'.$name.'”',
+            $contentOnly
+                ? trim($note).' · Your program stays live on its current content.'
+                : ($note ?: 'Update the program and resubmit it for review'),
+            '/listings');
 
         return sendSuccess('Changes requested', [
             'item' => array_merge($this->mapProgram($pg->fresh()), ['_type' => 'program']),
