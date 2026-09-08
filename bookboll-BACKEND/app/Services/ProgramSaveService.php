@@ -6,6 +6,7 @@ use App\Models\ClassProgram;
 use App\Models\ProviderTrialAgreement;
 use App\Models\Venue;
 use App\Support\AccessScope;
+use App\Support\PremiumPlan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -115,6 +116,16 @@ class ProgramSaveService
         $ownerId = $this->resolveOwner($request, $data);
         if (! $ownerId && ! $isAdmin) {
             return sendError('No business found for this account.', [], 404);
+        }
+
+        // Selling a programme only on your own site, off the Bookboll Marketplace, is
+        // the `own_site_only` Premium feature (ClassesSubscriptions.vue gates the
+        // toggle). Putting it back on the marketplace is always free.
+        if (array_key_exists('show_on_marketplace', $data)
+            && filter_var($data['show_on_marketplace'], FILTER_VALIDATE_BOOLEAN) === false
+            && $existing?->show_on_marketplace !== false
+            && ! PremiumPlan::entitled($user)) {
+            return PremiumPlan::denied('own_site_only');
         }
 
         $base = $this->buildAttributes($data, $ownerId);

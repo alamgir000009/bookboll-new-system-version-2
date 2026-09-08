@@ -12,6 +12,7 @@ use App\Http\Controllers\Admin\OverviewController;
 use App\Http\Controllers\Admin\PaymentAccountController;
 use App\Http\Controllers\Admin\StorefrontSortController;
 use App\Http\Controllers\Admin\ReferenceDataController;
+use App\Http\Controllers\Admin\ProviderPlanController;
 use App\Http\Controllers\Admin\SiteSettingsController;
 use App\Http\Controllers\Admin\NotificationTemplateController;
 use App\Http\Controllers\BusinessNotificationTemplateController;
@@ -138,7 +139,22 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::middleware('capability:manage_website,manage_platform_website')->group(function () {
             Route::get('site-settings', [SiteSettingsController::class, 'show'])->name('site-settings.show');
             Route::put('site-settings', [SiteSettingsController::class, 'update'])->name('site-settings.update');
+
+            // The custom domain is a paid add-on: Stripe takes the one-time fee and
+            // the webhook connects the domain. Nothing here writes it directly.
+            Route::post('site-settings/domain/checkout', [ProviderPlanController::class, 'domainCheckout'])->name('site-settings.domain.checkout');
+            Route::get('site-settings/domain/checkout/{session}', [ProviderPlanController::class, 'confirmDomain'])->name('site-settings.domain.confirm');
+            Route::post('site-settings/domain/verify', [ProviderPlanController::class, 'verifyDomain'])->name('site-settings.domain.verify');
         });
+
+        // Bookboll for Business PREMIUM — the provider's own subscription. Readable by
+        // any admin role (the shell asks on every load to know what to unlock); only
+        // the provider side may start, cancel or resume one, enforced in the service.
+        Route::get('plan', [ProviderPlanController::class, 'show'])->name('plan.show');
+        Route::post('plan/checkout', [ProviderPlanController::class, 'checkout'])->name('plan.checkout');
+        Route::get('plan/checkout/{session}', [ProviderPlanController::class, 'confirm'])->name('plan.confirm');
+        Route::post('plan/cancel', [ProviderPlanController::class, 'cancel'])->name('plan.cancel');
+        Route::post('plan/resume', [ProviderPlanController::class, 'resume'])->name('plan.resume');
 
         Route::get('locations/countries', [LocationController::class, 'countries'])->name('locations.countries');
         Route::get('locations/states', [LocationController::class, 'states'])->name('locations.states');

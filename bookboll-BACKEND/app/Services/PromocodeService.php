@@ -9,6 +9,7 @@ use App\Models\Promocode;
 use App\Models\PromocodeRedemption;
 use App\Models\User;
 use App\Models\Venue;
+use App\Support\PremiumPlan;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
 use Carbon\Carbon;
@@ -268,6 +269,12 @@ class PromocodeService
 
     public function create($request)
     {
+        // Promo codes are a Premium feature for providers (Promocodes.vue gates the
+        // "New Promocode" button); platform roles are never gated.
+        if (! PremiumPlan::entitled($request->user())) {
+            return PremiumPlan::denied('promocodes');
+        }
+
         $this->normalizeDashboardInput($request);
         $validated = $this->validateRequest($request);
 

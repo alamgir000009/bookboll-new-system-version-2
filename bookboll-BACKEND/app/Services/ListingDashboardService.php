@@ -7,6 +7,7 @@ use App\Models\PricingCell;
 use App\Models\PricingGroup;
 use App\Models\Schedule;
 use App\Models\Venue;
+use App\Support\PremiumPlan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -109,6 +110,9 @@ class ListingDashboardService
         if ($err = $this->assertAccess($venueId)) {
             return $err;
         }
+        if ($err = $this->guardOffMarketplace($request, $validated, null)) {
+            return $err;
+        }
 
         DB::beginTransaction();
         try {
@@ -165,6 +169,9 @@ class ListingDashboardService
             if ($err = $this->assertAccess($venueId)) {
                 return $err;
             }
+        }
+        if ($err = $this->guardOffMarketplace($request, $validated, $listing)) {
+            return $err;
         }
 
         DB::beginTransaction();
@@ -235,6 +242,10 @@ class ListingDashboardService
             'approval_status'        => 'sometimes|in:pending,approved,rejected',
             'pending_content'        => 'nullable|array',
         ]);
+
+        if ($err = $this->guardOffMarketplace($request, $data, $listing)) {
+            return $err;
+        }
 
         $listing->update($data);
 
@@ -586,6 +597,31 @@ class ListingDashboardService
                 'site_cash_enabled'       => (bool) ($pay['site_cash_enabled'] ?? false),
             ],
         ];
+    }
+
+
+    /**
+     * Hiding a listing from the Bookboll Marketplace and selling it only on your own
+     * site is the `own_site_only` Premium feature (Listings.vue gates the toggle).
+     * Turning it back ON — going public again — is always free.
+     */
+    protected function guardOffMarketplace($request, array $data, ?Listing $listing)
+    {
+        // `boolean` validation accepts false, 0 and "0" without casting, so read the
+        // intent rather than the literal.
+        if (! array_key_exists('show_on_marketplace', $data)
+            || filter_var($data['show_on_marketplace'], FILTER_VALIDATE_BOOLEAN) !== false) {
+            return null;
+        }
+        if ($listing && $listing->show_on_marketplace === false) {
+            return null;   // already off the marketplace — not a new use of the feature
+        }
+        // auth() to match assertAccess() above — same user, one source of truth.
+        if (PremiumPlan::entitled($request->user() ?? auth()->user())) {
+            return null;
+        }
+
+        return PremiumPlan::denied('own_site_only');
     }
 
     protected function normalizeListingAttrs(array $v): array

@@ -56,6 +56,9 @@ return [
     'frontend_url' => env('FRONTEND_URL', 'https://bookboll.com'),
     'admin_url' => env('ADMIN_URL', 'https://admin.bookboll.com'),
 
+    // Where a provider's custom domain must CNAME to before it goes live.
+    'domain_cname_target' => env('DOMAIN_CNAME_TARGET', 'sites.bookboll.com'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

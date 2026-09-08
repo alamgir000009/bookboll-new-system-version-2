@@ -9,6 +9,7 @@ use App\Models\Post;
 use App\Models\Venue;
 use App\Models\Setting;
 use App\Support\AccessScope;
+use App\Support\PremiumPlan;
 use Illuminate\Http\Request;
 
 /**
@@ -32,7 +33,10 @@ class SiteSettingsService
         'brand_meta_title', 'brand_meta_description',
         'brand_show_venues', 'brand_show_events', 'brand_show_programs',
         'brand_languages', 'brand_whitelabel',
-        'brand_custom_domain', 'brand_domain_status', 'brand_domain_paid_at',
+        // The domain fields are writable only in the narrow ways guardDomain()
+        // allows — connecting one is a paid flow (ProviderPlanService), and
+        // brand_domain_paid_at is never taken from the browser at all.
+        'brand_custom_domain', 'brand_domain_status',
         'site_pages', 'hero_banners',
         'tracking_meta_pixel', 'tracking_ga4', 'tracking_gtm', 'tracking_head',
     ];
@@ -109,6 +113,16 @@ class SiteSettingsService
             return sendError('Nothing to save.');
         }
 
+        // Premium is a paywall, not a hint. The dashboard opens an upgrade modal, but
+        // the entitlement is decided here — otherwise a free provider could simply
+        // POST the field the modal was covering.
+        if ($denied = $this->guardPremium($request, $patch, $business)) {
+            return $denied;
+        }
+        if ($denied = $this->guardDomain($patch, $business)) {
+            return $denied;
+        }
+
         // A web address is the site's identity, so it must stay unique and may
         // not take one of the reserved subdomains.
         if (array_key_exists('brand_subdomain', $patch)) {
@@ -134,6 +148,17 @@ class SiteSettingsService
             }
         }
 
+        // Removing the domain retires the whole record — a later reconnect is a new
+        // domain and a new fee, so no stale paid_at is left to imply otherwise. The
+        // paid purchase stays in business_domain_purchases as the receipt.
+        if (array_key_exists('brand_custom_domain', $patch) && ! $patch['brand_custom_domain']) {
+            $patch['brand_custom_domain']  = null;
+            $patch['brand_domain_status']  = null;
+            $patch['brand_domain_paid_at'] = null;
+            $business->domainPurchases()->pending()
+                ->update(['status' => \App\Models\BusinessDomainPurchase::STATUS_EXPIRED]);
+        }
+
         $business->update($patch);
 
         return sendSuccess('Site settings saved', [
@@ -142,6 +167,92 @@ class SiteSettingsService
             'username' => $business->username,
             'plan'     => $business->plan ?: 'free',
         ]);
+    }
+
+    /**
+     * The two site fields that cost money: custom home banners and the white-label
+     * badge removal. Mirrors the `requirePremium('banners')` / `requirePremium(
+     * 'whitelabel')` gates in Banners.vue and Brand.vue.
+     *
+     * A provider whose plan lapsed keeps the slides they already published and may
+     * delete them; they may not add or rewrite one. Comparing counts alone is not
+     * enough — replacing one slide with different content keeps the count identical
+     * and would hand back the whole feature.
+     */
+    protected function guardPremium(Request $request, array $patch, Business $business)
+    {
+        if (PremiumPlan::entitled($request->user())) {
+            return null;
+        }
+
+        if (array_key_exists('hero_banners', $patch)) {
+            $current = is_array($business->hero_banners) ? $business->hero_banners : [];
+            if (! $this->isRemovalOnly($patch['hero_banners'], $current)) {
+                return PremiumPlan::denied('banners');
+            }
+        }
+
+        if (! empty($patch['brand_whitelabel']) && ! $business->brand_whitelabel) {
+            return PremiumPlan::denied('whitelabel');
+        }
+
+        return null;
+    }
+
+    /**
+     * True when the new slide list only drops slides that are already there — no new
+     * slide, no rewritten one, and no reordering. Counting alone would not do it:
+     * swapping two slides, or replacing two with one different slide, both keep the
+     * count at or below where it was while still handing over the paid feature.
+     */
+    protected function isRemovalOnly(array $next, array $current): bool
+    {
+        $remaining = $current;
+        $at = 0;
+        foreach ($next as $slide) {
+            // Slides must still appear in their original order, so scan forward only.
+            while ($at < count($remaining) && $remaining[$at] != $slide) {
+                $at++;
+            }
+            if ($at >= count($remaining)) {
+                return false;
+            }
+            $at++;
+        }
+
+        return true;
+    }
+
+    /**
+     * Connecting a custom domain costs a one-time fee, so it may only be written by
+     * the Stripe fulfilment path. What is still allowed here is removing it (free)
+     * and nothing else — "verify" has its own endpoint that checks real DNS.
+     */
+    protected function guardDomain(array $patch, Business $business)
+    {
+        $clearing = array_key_exists('brand_custom_domain', $patch)
+            && ($patch['brand_custom_domain'] === null || $patch['brand_custom_domain'] === '');
+
+        if (array_key_exists('brand_custom_domain', $patch) && ! $clearing) {
+            return sendError(
+                'Connecting a custom domain needs the one-time setup fee. Start the payment from My Website → Custom domain.',
+                ['brand_custom_domain' => ['Pay the one-time setup fee to connect this domain.']],
+                402
+            );
+        }
+
+        if (array_key_exists('brand_domain_status', $patch)) {
+            $status = (string) ($patch['brand_domain_status'] ?? '');
+            if ($status !== '' && ! $clearing) {
+                return sendError(
+                    'A domain goes live once its DNS record is verified.',
+                    ['brand_domain_status' => ['Use “verify” to take this domain live.']],
+                    422
+                );
+            }
+        }
+
+        return null;
     }
 
     protected function updatePlatform(Request $request)

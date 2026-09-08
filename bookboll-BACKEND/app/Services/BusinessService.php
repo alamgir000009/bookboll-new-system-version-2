@@ -304,8 +304,10 @@ class BusinessService
                 'full_name'       => $owner?->name,
                 'phone'           => $owner?->phone,
                 'staff_count'     => $staffCount,
-                'plan'            => 'free',
-                'premium_since'   => null,
+                // The real plan now — Stripe decides it, so the Team page's Free /
+                // Premium chip reflects what the provider is actually paying for.
+                'plan'            => $b->plan ?: 'free',
+                'premium_since'   => $b->premium_since?->toIso8601String(),
                 'created_at'      => $b->created_at?->toIso8601String(),
             ];
         });

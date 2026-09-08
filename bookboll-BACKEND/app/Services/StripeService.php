@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Booking;
 use App\Models\Payment;
 use App\Models\StripeSession;
+use App\Support\PremiumPlan;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
 use BookingStatus;
@@ -168,6 +169,22 @@ class StripeService
 
         // Membership subscriptions are billed by Stripe; bookings are one-off payments.
         $membership = app(MembershipBillingService::class);
+        // Providers also pay US: Premium plans and the one-time custom-domain fee.
+        $providerPlan = app(ProviderPlanService::class);
+
+        // A provider's OWN subscription is a different animal from a customer's
+        // membership, so it is claimed by metadata before the membership handlers see
+        // it — matching on the subscription id alone would be a silent no-op today and
+        // a real mix-up the day the two id spaces overlap.
+        if (str_starts_with($type, 'customer.subscription.')
+            && ($event->data->object->metadata['source'] ?? null) === PremiumPlan::SOURCE_PLAN) {
+            match ($type) {
+                'customer.subscription.deleted' => $providerPlan->endSubscription($event->data->object),
+                default                         => $providerPlan->syncSubscription($event->data->object),
+            };
+
+            return;
+        }
 
         if (str_starts_with($type, 'invoice.')
             || str_starts_with($type, 'invoice_payment.')
@@ -189,6 +206,21 @@ class StripeService
         if ($type === 'checkout.session.completed') {
             /** @var StripeCheckoutSession $session */
             $session = $event->data->object;
+            $source  = $session->metadata['source'] ?? null;
+
+            if ($source === PremiumPlan::SOURCE_PLAN) {
+                $providerPlan->fulfillPlanSession($session);
+
+                return;
+            }
+
+            if ($source === PremiumPlan::SOURCE_DOMAIN) {
+                if (($session->payment_status ?? null) === 'paid') {
+                    $providerPlan->fulfillDomainSession($session);
+                }
+
+                return;
+            }
 
             if (($session->mode ?? '') === 'subscription') {
                 $membership->checkoutCompleted($session);
@@ -206,6 +238,13 @@ class StripeService
         if ($type === 'checkout.session.async_payment_succeeded') {
             /** @var StripeCheckoutSession $session */
             $session = $event->data->object;
+
+            if (($session->metadata['source'] ?? null) === PremiumPlan::SOURCE_DOMAIN) {
+                $providerPlan->fulfillDomainSession($session);
+
+                return;
+            }
+
             $this->fulfillPaidCheckoutSession($session->id, $session);
 
             return;
@@ -214,6 +253,19 @@ class StripeService
         if ($type === 'checkout.session.expired') {
             /** @var StripeCheckoutSession $session */
             $session = $event->data->object;
+            $source  = $session->metadata['source'] ?? null;
+
+            if ($source === PremiumPlan::SOURCE_DOMAIN) {
+                $providerPlan->abandonDomainSession($session);
+
+                return;
+            }
+
+            // An expired Premium checkout granted nothing, so there is nothing to
+            // undo — the business row is only written on fulfilment.
+            if ($source === PremiumPlan::SOURCE_PLAN) {
+                return;
+            }
 
             if (($session->mode ?? '') === 'subscription') {
                 $membership->checkoutExpired($session);

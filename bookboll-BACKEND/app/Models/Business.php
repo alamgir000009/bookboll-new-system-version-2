@@ -5,6 +5,8 @@ namespace App\Models;
 use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Nnjeim\World\Models\Country;
 
 class Business extends Model
@@ -87,6 +89,35 @@ class Business extends Model
     public function owner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'owner_id');
+    }
+
+    /** Every Premium subscription this business has ever had, newest first. */
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(BusinessSubscription::class)->latest('id');
+    }
+
+    /**
+     * The subscription that governs the plan right now — the newest one that still
+     * entitles the business, or simply the newest if none does (so a cancelled or
+     * abandoned one can still be shown on the billing page).
+     */
+    public function currentSubscription(): HasOne
+    {
+        return $this->hasOne(BusinessSubscription::class)->latestOfMany();
+    }
+
+    public function activeSubscription(): HasOne
+    {
+        return $this->hasOne(BusinessSubscription::class)
+            ->whereIn('status', BusinessSubscription::ENTITLING)
+            ->latestOfMany();
+    }
+
+    /** Custom-domain fee payments, newest first. */
+    public function domainPurchases(): HasMany
+    {
+        return $this->hasMany(BusinessDomainPurchase::class)->latest('id');
     }
 
     public function country(): BelongsTo
