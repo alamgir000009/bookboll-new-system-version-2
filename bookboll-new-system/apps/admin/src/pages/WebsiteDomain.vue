@@ -8,7 +8,7 @@
  * CNAME record → verify (simulated) → live.
  */
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadSiteSettings, saveSiteSettings } from '../lib/siteSettings.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useToast } from '../lib/toast.js'
 import { brandHost } from '../lib/brand.js'
@@ -25,15 +25,11 @@ const f = reactive({ brand_subdomain: '', brand_custom_domain: '', brand_domain_
 async function load() {
   loading.value = true
   if (!ownerId.value) { loading.value = false; return }
-  const { data } = await supabase.from('admin_users')
-    .select('brand_subdomain, username, brand_custom_domain, brand_domain_status, brand_domain_paid_at')
-    .eq('id', ownerId.value).maybeSingle()
-  if (data) {
-    f.brand_subdomain = (data.brand_subdomain || data.username || '').toLowerCase()
-    f.brand_custom_domain = data.brand_custom_domain || ''
-    f.brand_domain_status = data.brand_domain_status || ''
-    f.brand_domain_paid_at = data.brand_domain_paid_at || null
-  }
+  const { settings, username } = await loadSiteSettings()
+  f.brand_subdomain = String(settings.brand_subdomain || username || '').toLowerCase()
+  f.brand_custom_domain = settings.brand_custom_domain || ''
+  f.brand_domain_status = settings.brand_domain_status || ''
+  f.brand_domain_paid_at = settings.brand_domain_paid_at || null
   loading.value = false
 }
 onMounted(load)
@@ -54,9 +50,9 @@ async function payAndConnectDomain() {
   savingDomain.value = true
   // SIMULATED payment — no real charge is taken; record the one-time fee + start DNS verification.
   const patch = { brand_custom_domain: domain, brand_domain_status: 'pending', brand_domain_paid_at: new Date().toISOString() }
-  const { error } = await supabase.from('admin_users').update(patch).eq('id', ownerId.value)
+  const res = await saveSiteSettings(patch)
   savingDomain.value = false
-  if (error) { toast.error(/column|schema/i.test(error.message || '') ? 'Run the brand_seo_domain migration (SQL) first.' : (error.message || 'Could not connect domain.')); return }
+  if (!res.success) { toast.error(res.message || 'Could not connect domain.'); return }
   Object.assign(f, patch)
   domainInput.value = ''
   toast.success(`Domain connected — $${DOMAIN_FEE} one-time fee charged (simulated). Add the DNS record to finish.`)
@@ -64,15 +60,15 @@ async function payAndConnectDomain() {
 async function verifyDomain() {
   if (!ownerId.value) return
   // Simulated DNS check → active.
-  const { error } = await supabase.from('admin_users').update({ brand_domain_status: 'active' }).eq('id', ownerId.value)
-  if (error) { toast.error('Could not verify.'); return }
+  const res = await saveSiteSettings({ brand_domain_status: 'active' })
+  if (!res.success) { toast.error(res.message || 'Could not verify.'); return }
   f.brand_domain_status = 'active'
   toast.success('Domain verified — your site is live on your own address.')
 }
 async function removeDomain() {
   if (!ownerId.value) return
-  const { error } = await supabase.from('admin_users').update({ brand_custom_domain: null, brand_domain_status: null }).eq('id', ownerId.value)
-  if (error) { toast.error('Could not remove.'); return }
+  const res = await saveSiteSettings({ brand_custom_domain: '', brand_domain_status: '' })
+  if (!res.success) { toast.error(res.message || 'Could not remove.'); return }
   f.brand_custom_domain = ''; f.brand_domain_status = ''
   toast.success('Custom domain removed.')
 }

@@ -7,13 +7,12 @@
  * platform_settings for storefront preview). Provider mode still uses admin_users.
  */
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadSiteSettings, saveSiteSettings } from '../lib/siteSettings.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useToast } from '../lib/toast.js'
 import { uploadImage, imageUploadConfigured } from '../lib/imageUpload.js'
-import { brandHost, brandPreviewById, ensureProviderSubdomain, loadPlatformBrand, applyBrandTheme, platformBrand, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
-import { countPublishedPosts } from '../lib/blog.js'
+import { brandHost, brandPreviewById, loadPlatformBrand, applyBrandTheme, platformBrand, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
 import { usePremium } from '../lib/premium.js'
 import { SUPPORTED_LOCALES } from '../lib/i18n.js'
 import { fetchSettings, updateSettings } from '../lib/settings.js'
@@ -50,19 +49,6 @@ function settingsError(res, fallback = 'Could not save.') {
   return res.message || fallback
 }
 
-/** Best-effort mirror to Supabase so storefront preview still works. */
-async function dualWritePlatformSettings(rows) {
-  try {
-    const now = new Date().toISOString()
-    await supabase.from('platform_settings').upsert(
-      rows.map(r => ({ key: r.key, value: r.value ?? '', updated_at: now })),
-      { onConflict: 'key' },
-    )
-  } catch {
-    /* ignore */
-  }
-}
-
 const f = reactive({
   brand_enabled: false,
   brand_subdomain: '',
@@ -96,13 +82,9 @@ const publishing = ref(false)
 async function setPublished(on) {
   if (!ownerId.value || publishing.value) return
   publishing.value = true
-  const { error } = await supabase.from('admin_users').update({ brand_enabled: on }).eq('id', ownerId.value)
+  const res = await saveSiteSettings({ brand_enabled: on })
   publishing.value = false
-  if (error) {
-    toast.error(/column|schema cache|brand_/i.test(error.message || '')
-      ? 'Run the provider_branding migration (SQL) first.' : (error.message || 'Could not update.'))
-    return
-  }
+  if (!res.success) { toast.error(res.message || 'Could not update.'); return }
   f.brand_enabled = on
   // Keep the in-memory user cache in sync so the dashboard-wide publish
   // banner reacts immediately (it reads allUsers, not this form).
@@ -119,13 +101,9 @@ async function toggleWhitelabel() {
   if (!f.brand_whitelabel && !isPremium.value) { requirePremium('whitelabel'); return }
   const next = !f.brand_whitelabel
   wlbSaving.value = true
-  const { error } = await supabase.from('admin_users').update({ brand_whitelabel: next }).eq('id', ownerId.value)
+  const res = await saveSiteSettings({ brand_whitelabel: next })
   wlbSaving.value = false
-  if (error) {
-    toast.error(/brand_whitelabel|column|schema/i.test(error.message || '')
-      ? 'Run the brand_whitelabel migration (SQL) first.' : (error.message || 'Could not update.'))
-    return
-  }
+  if (!res.success) { toast.error(res.message || 'Could not update.'); return }
   f.brand_whitelabel = next
   toast.success(next ? 'Bookboll badge hidden — only the small footer credit remains.' : 'Bookboll badge is showing again.')
 }
@@ -142,17 +120,10 @@ const postsCount = ref(0)
 async function loadModuleCounts() {
   if (!ownerId.value) { venuesCount.value = programsCount.value = postsCount.value = 0; return }
   try {
-    const { data: locs } = await supabase.from('locations').select('id').eq('owner_user_id', ownerId.value)
-    const locIds = (locs || []).map(l => l.id)
-    let v = 0
-    if (locIds.length) {
-      const { data: ls } = await supabase.from('listings').select('show_on_provider_site').in('location_id', locIds)
-      v = (ls || []).filter(l => l.show_on_provider_site !== false).length
-    }
-    venuesCount.value = v
-    const { data: ps } = await supabase.from('class_programs').select('show_on_provider_site').eq('owner_user_id', ownerId.value)
-    programsCount.value = (ps || []).filter(p => p.show_on_provider_site !== false).length
-    postsCount.value = await countPublishedPosts(ownerId.value)
+    const { counts } = await loadSiteSettings()
+    venuesCount.value = counts.venues
+    programsCount.value = counts.programs
+    postsCount.value = counts.posts
   } catch { /* leave at 0 */ }
 }
 
@@ -209,13 +180,9 @@ async function removeHeroBg() {
 }
 async function saveHomeHero(okMsg) {
   if (!ownerId.value) return
-  const { error } = await supabase.from('admin_users')
-    .update({ site_pages: pages.value }).eq('id', ownerId.value)
-  if (error) {
-    toast.error(/site_pages|column|schema/i.test(error.message || '')
-      ? 'Run the site_pages migration (SQL) first, then try again.'
-      : (error.message || 'Could not save.'))
-  } else toast.success(okMsg)
+  const res = await saveSiteSettings({ site_pages: pages.value })
+  if (!res.success) toast.error(res.message || 'Could not save.')
+  else toast.success(okMsg)
 }
 
 const aboutLive = computed(() => !!pages.value.about.text.trim())
@@ -224,15 +191,9 @@ const contactLive = computed(() => ['phone', 'whatsapp', 'email', 'address', 'ma
 async function savePages() {
   if (!ownerId.value) return
   pagesSaving.value = true
-  const { error } = await supabase.from('admin_users')
-    .update({ site_pages: pages.value }).eq('id', ownerId.value)
+  const res = await saveSiteSettings({ site_pages: pages.value })
   pagesSaving.value = false
-  if (error) {
-    toast.error(/site_pages|column|schema/i.test(error.message || '')
-      ? 'Run the site_pages migration (SQL) first, then save.'
-      : (error.message || 'Could not save.'))
-    return
-  }
+  if (!res.success) { toast.error(res.message || 'Could not save.'); return }
   toast.success('Page saved — it\'s live on your site.')
   pageModal.value = ''
 }
@@ -264,15 +225,16 @@ async function load() {
     return
   }
   if (!ownerId.value) { loading.value = false; return }
-  const { data } = await supabase.from('admin_users').select('*').eq('id', ownerId.value).maybeSingle()
+  const { settings: data, username: uname } = await loadSiteSettings()
   if (data) {
-    username.value = data.username || ''
+    username.value = uname || ''
     f.brand_enabled   = !!data.brand_enabled
     f.brand_subdomain = (data.brand_subdomain || '').toLowerCase()
     // No web address chosen yet → auto-assign one derived from their username /
     // business name (and persist it), so every provider has a working address.
-    if (!f.brand_subdomain) f.brand_subdomain = await ensureProviderSubdomain(data)
-    f.brand_name      = data.brand_name || data.business_name || data.username || ''
+    // The API already falls back to the username, so an address always exists.
+    if (!f.brand_subdomain) f.brand_subdomain = (uname || '').toLowerCase()
+    f.brand_name      = data.brand_name || uname || ''
     f.brand_tagline   = data.brand_tagline || ''
     f.brand_logo_url  = data.brand_logo_url || ''
     f.brand_primary   = data.brand_primary || DEFAULT_PRIMARY
@@ -388,7 +350,6 @@ async function save() {
       toast.error(settingsError(res, 'Could not save.'))
       return
     }
-    await dualWritePlatformSettings(rows)
     // Re-apply live so the change reflects immediately (logo/name/colors in the
     // header + the marketplace theme) without needing a full page reload.
     await loadPlatformBrand()
@@ -416,24 +377,11 @@ async function save() {
     brand_meta_description: f.brand_meta_description?.trim() || null,
     brand_whitelabel: !!f.brand_whitelabel,
   }
-  const { error } = await supabase.from('admin_users').update(patch).eq('id', ownerId.value)
+  // Languages go in the same save — there is no pre-migration column to dodge.
+  patch.brand_languages = f.brand_languages?.length ? f.brand_languages : []
+  const res = await saveSiteSettings(patch)
   saving.value = false
-  if (error) {
-    if (/column|schema cache|brand_/i.test(error.message || '')) {
-      toast.error('Run the provider_branding migration (SQL) first, then save.')
-    } else {
-      toast.error(error.message || 'Could not save.')
-    }
-    return
-  }
-  // Languages save separately (best-effort) so a pre-migration DB never blocks the main save.
-  const langRes = await supabase.from('admin_users')
-    .update({ brand_languages: f.brand_languages?.length ? f.brand_languages : null })
-    .eq('id', ownerId.value)
-  if (langRes.error && f.brand_languages?.length) {
-    toast.error('Site saved, but languages need the brand_languages migration (20260721000000) — run it, then save again.')
-    return
-  }
+  if (!res.success) { toast.error(res.message || 'Could not save.'); return }
   toast.success('White-label site saved.')
 }
 

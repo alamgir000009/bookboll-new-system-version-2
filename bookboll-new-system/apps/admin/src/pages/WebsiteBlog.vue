@@ -6,7 +6,7 @@
  * owner_user_id and the storefront only reveals the Blog module once they publish one.
  */
 import { ref, computed, onMounted, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadSiteSettings } from '../lib/siteSettings.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { usePremium } from '../lib/premium.js'
@@ -38,10 +38,10 @@ const slugTouched = ref(false)
 
 async function loadBrand() {
   if (!ownerId.value) { brand.value = { name: '', subdomain: '' }; return }
-  const { data } = await supabase.from('admin_users').select('brand_name, business_name, username, brand_subdomain').eq('id', ownerId.value).maybeSingle()
+  const { settings, username } = await loadSiteSettings()
   brand.value = {
-    name: data?.brand_name || data?.business_name || data?.username || '',
-    subdomain: (data?.brand_subdomain || data?.username || '').toLowerCase(),
+    name: settings.brand_name || username || '',
+    subdomain: String(settings.brand_subdomain || username || '').toLowerCase(),
   }
 }
 

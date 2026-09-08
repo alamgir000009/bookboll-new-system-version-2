@@ -12,11 +12,11 @@
  * (provider's on their site, platform's on the apex) — so a provider only ever receives data
  * from their own site, never the marketplace or another business's site.
  *
- * All writes are best-effort: if the tracking columns aren't migrated yet, we tell the user
- * to run the SQL rather than failing silently.
+ * Tracking is stored per scope: the marketplace's tags for a platform admin, the
+ * provider's own for a provider — the API decides which from the session.
  */
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadSiteSettings, saveSiteSettings } from '../lib/siteSettings.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useToast } from '../lib/toast.js'
 import { markDirty, clearDirty } from '../lib/unsavedGuard.js'
@@ -38,7 +38,6 @@ const isPlatformMode = computed(() => (isSuperAdmin.value || actorRole.value ===
 
 const loading = ref(true)
 const saving = ref(false)
-const needsMigration = ref(false)
 const ownerSlug = ref('')
 
 const f = reactive({ meta_pixel: '', ga4: '', gtm: '', head: '' })
@@ -70,30 +69,14 @@ const fireLabel = computed(() => isPlatformMode.value
 
 async function load() {
   loading.value = true
-  needsMigration.value = false
-  if (isPlatformMode.value) {
-    const { data } = await supabase.from('platform_settings').select('key, value').in('key', KEYS)
-    const m = {}
-    for (const r of (data || [])) m[r.key] = r.value
-    f.meta_pixel = m.tracking_meta_pixel || ''
-    f.ga4 = m.tracking_ga4 || ''
-    f.gtm = m.tracking_gtm || ''
-    f.head = m.tracking_head || ''
-  } else if (ownerId.value) {
-    // Owner slug (columns that always exist) — for the "where it fires" link.
-    const base = await supabase.from('admin_users').select('id, brand_subdomain, username, business_name, brand_name').eq('id', ownerId.value).maybeSingle()
-    if (base.data) ownerSlug.value = providerSlug(base.data)
-    // Tracking values (best-effort — columns may not be migrated yet).
-    const trk = await supabase.from('admin_users').select('tracking_meta_pixel, tracking_ga4, tracking_gtm, tracking_head').eq('id', ownerId.value).maybeSingle()
-    if (!trk.error && trk.data) {
-      f.meta_pixel = trk.data.tracking_meta_pixel || ''
-      f.ga4 = trk.data.tracking_ga4 || ''
-      f.gtm = trk.data.tracking_gtm || ''
-      f.head = trk.data.tracking_head || ''
-    } else if (trk.error && /column|schema|tracking_/i.test(trk.error.message || '')) {
-      needsMigration.value = true   // surface the missing migration immediately, not only on save
-    }
-  }
+  // The API returns the marketplace's tracking for a platform admin, or the
+  // provider's own — the caller doesn't choose.
+  const { mode, settings, username } = await loadSiteSettings()
+  f.meta_pixel = settings.tracking_meta_pixel || ''
+  f.ga4  = settings.tracking_ga4 || ''
+  f.gtm  = settings.tracking_gtm || ''
+  f.head = settings.tracking_head || ''
+  if (mode === 'provider') ownerSlug.value = settings.brand_subdomain || username || ''
   loading.value = false
   clearDirty()
 }
@@ -105,44 +88,24 @@ watch([isPlatformMode, ownerId], load)
 async function save() {
   if (!canSave.value) return
   saving.value = true
-  needsMigration.value = false
   try {
+    const res = await saveSiteSettings({
+      tracking_meta_pixel: f.meta_pixel.trim(),
+      tracking_ga4: f.ga4.trim(),
+      tracking_gtm: f.gtm.trim(),
+      tracking_head: f.head,
+    })
+    if (!res.success) throw new Error(res.message || 'Tracking was not saved.')
     if (isPlatformMode.value) {
-      const now = new Date().toISOString()
-      const rows = [
-        { key: 'tracking_meta_pixel', value: f.meta_pixel.trim() },
-        { key: 'tracking_ga4', value: f.ga4.trim() },
-        { key: 'tracking_gtm', value: f.gtm.trim() },
-        { key: 'tracking_head', value: f.head },
-      ].map(r => ({ ...r, updated_at: now }))
-      const { error } = await supabase.from('platform_settings').upsert(rows, { onConflict: 'key' })
-      if (error) throw error
       logAudit({ action: AUDIT.UPDATED, entity_type: 'platform_tracking', entity_id: 'marketplace', details: `Updated marketplace tracking — ${active.value.join(', ') || 'cleared'}` })
       toast.success('Marketplace tracking saved.')
     } else {
-      const patch = {
-        tracking_meta_pixel: f.meta_pixel.trim(),
-        tracking_ga4: f.ga4.trim(),
-        tracking_gtm: f.gtm.trim(),
-        tracking_head: f.head,
-      }
-      // .select() so we can confirm a row actually matched — an .update().eq() with no match
-      // returns no error, which would otherwise show a false "saved" and silently lose the config.
-      const { data, error } = await supabase.from('admin_users').update(patch).eq('id', ownerId.value).select('id')
-      if (error) throw error
-      if (!data || !data.length) throw new Error('Your account could not be found — tracking was not saved.')
       logAudit({ action: AUDIT.UPDATED, entity_type: 'tracking', entity_id: ownerId.value, details: `Updated storefront tracking — ${active.value.join(', ') || 'cleared'}` })
       toast.success('Tracking saved. It will fire on your storefront.')
     }
     clearDirty()
   } catch (e) {
-    const msg = e?.message || String(e)
-    if (/column|schema|tracking_/i.test(msg)) {
-      needsMigration.value = true
-      toast.error('Run the tracking migration first (20260716000000_tracking_analytics.sql).')
-    } else {
-      toast.error(msg || 'Could not save.')
-    }
+    toast.error(e?.message || 'Could not save.')
   } finally {
     saving.value = false
   }
@@ -224,11 +187,6 @@ async function save() {
         </div>
         <div v-else class="trk-none">Nothing connected yet — add an ID above to start measuring traffic.</div>
         <p class="trk-summary-note"><Info :size="13" /> Page views are tracked automatically on every screen, including in-app navigation.</p>
-      </div>
-
-      <div v-if="needsMigration" class="trk-migrate">
-        <AlertTriangle :size="15" /> The tracking columns aren't in your database yet. Run
-        <code>supabase/migrations/20260716000000_tracking_analytics.sql</code>, then save again.
       </div>
 
       <div class="trk-actions">

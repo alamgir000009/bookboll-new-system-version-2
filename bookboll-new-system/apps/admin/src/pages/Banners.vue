@@ -8,7 +8,10 @@
  * their admin_users.hero_banners. Read live by the storefront (lib/brand.js → HeroSlideshow).
  */
 import { ref, computed, onMounted, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadSiteSettings, saveSiteSettings } from '../lib/siteSettings.js'
+import { loadReferenceData } from '../lib/referenceData.js'
+import { fetchSubscriptionsDashboard } from '../lib/subscriptions.js'
+import { fetchEventModerationDashboard } from '../lib/moderationEvents.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { usePremium } from '../lib/premium.js'
 import { useToast } from '../lib/toast.js'
@@ -95,22 +98,17 @@ async function load() {
   loading.value = true
   // Countries + cities for the geo-targeting dropdowns (load once alongside the banners).
   if (!countries.value.length) {
-    const [{ data: co }, { data: ci }] = await Promise.all([
-      supabase.from('countries').select('id, name').eq('status', 'active').order('name'),
-      supabase.from('cities').select('id, name, country_id').eq('status', 'active').order('name'),
-    ])
-    countries.value = co || []
-    cities.value = ci || []
+    const ref = await loadReferenceData()
+    countries.value = ref.countries
+    cities.value = ref.cities
   }
-  let saved = []
+  // The API returns the marketplace's banners for a platform admin, or the
+  // provider's own — same endpoint either way.
+  const { settings, username } = await loadSiteSettings()
+  const saved = normalizeBanners(settings.hero_banners)
   let brandName = ''
-  if (isPlatformMode.value) {
-    const { data } = await supabase.from('platform_settings').select('value').eq('key', 'hero_banners').maybeSingle()
-    saved = normalizeBanners(data?.value)
-  } else if (ownerId.value) {
-    const { data } = await supabase.from('admin_users').select('hero_banners, brand_name, business_name, username').eq('id', ownerId.value).maybeSingle()
-    saved = normalizeBanners(data?.hero_banners)
-    brandName = data?.brand_name || data?.business_name || data?.username || ''
+  if (!isPlatformMode.value) {
+    brandName = settings.brand_name || username || ''
     brandNameRef.value = brandName
   }
   // Marketplace with nothing saved → start from the editable default. Provider
@@ -130,24 +128,17 @@ watch(ownerId, load)
 async function loadTargets() {
   venueOpts.value = []; programOpts.value = []; eventOpts.value = []
   try {
+    // Both sources are already scoped by the API: a platform admin gets
+    // everything, a provider only what their own business owns.
+    const [ref, dash] = await Promise.all([loadReferenceData(), fetchSubscriptionsDashboard()])
+    venueOpts.value = ref.listings.map(l => ({ value: String(l.id), label: l.name }))
+    programOpts.value = (dash.success ? (dash.data?.programs || []) : [])
+      .map(p => ({ value: String(p.id), label: p.name }))
     if (isPlatformMode.value) {
-      const [{ data: ls }, { data: ps }, { data: gs }] = await Promise.all([
-        supabase.from('listings').select('id, name').order('name').limit(500),
-        supabase.from('class_programs').select('id, name').order('name').limit(500),
-        supabase.from('games').select('id, title').order('start_time', { ascending: false }).limit(200),
-      ])
-      venueOpts.value = (ls || []).map(l => ({ value: l.id, label: l.name }))
-      programOpts.value = (ps || []).map(p => ({ value: p.id, label: p.name }))
-      eventOpts.value = (gs || []).map(g => ({ value: g.id, label: g.title }))
-    } else if (ownerId.value) {
-      const { data: locs } = await supabase.from('locations').select('id').eq('owner_user_id', ownerId.value)
-      const locIds = (locs || []).map(l => l.id)
-      let ls = []
-      if (locIds.length) { const r = await supabase.from('listings').select('id, name').in('location_id', locIds).order('name'); ls = r.data || [] }
-      const { data: ps } = await supabase.from('class_programs').select('id, name').eq('owner_user_id', ownerId.value).order('name')
-      venueOpts.value = ls.map(l => ({ value: l.id, label: l.name }))
-      programOpts.value = (ps || []).map(p => ({ value: p.id, label: p.name }))
-      // events stay empty for providers
+      // Events are a marketplace-only mechanic, so providers get none.
+      const ev = await fetchEventModerationDashboard()
+      eventOpts.value = (ev.success ? (ev.data?.games || []) : [])
+        .map(g => ({ value: String(g.id), label: g.title || g.name || 'Event' }))
     }
   } catch { /* best-effort — actions just won't list specific targets */ }
 }
@@ -221,20 +212,10 @@ const AUD_LABEL = { all: 'Everyone', in: 'Signed-in', out: 'Signed-out' }
 async function save() {
   saving.value = true
   const clean = normalizeBanners(banners.value)
-  if (isPlatformMode.value) {
-    const { error } = await supabase.from('platform_settings').upsert({ key: 'hero_banners', value: JSON.stringify(clean), updated_at: new Date().toISOString() }, { onConflict: 'key' })
-    saving.value = false
-    if (error) { toast.error(error.message || 'Could not save.'); return }
-    toast.success('Marketplace banners saved.')
-    return
-  }
-  if (!ownerId.value) { saving.value = false; return }
-  const { error } = await supabase.from('admin_users').update({ hero_banners: clean }).eq('id', ownerId.value)
+  const res = await saveSiteSettings({ hero_banners: clean })
   saving.value = false
-  if (error) {
-    toast.error(/column|schema cache/i.test(error.message || '') ? 'Run the hero_banners migration (SQL) first, then save.' : (error.message || 'Could not save.'))
-    return
-  }
+  if (!res.success) { toast.error(res.message || 'Could not save.'); return }
+  if (isPlatformMode.value) { toast.success('Marketplace banners saved.'); return }
   toast.success('Home banners saved.')
 }
 </script>

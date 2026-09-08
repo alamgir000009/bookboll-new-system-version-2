@@ -10,7 +10,9 @@
  * no DNS. Read-only page apart from auto-assigning a web address if the provider has none.
  */
 import { ref, computed, onMounted, watch } from 'vue'
-import { supabase } from '../lib/supabase.js'
+import { loadSiteSettings } from '../lib/siteSettings.js'
+import { loadReferenceData } from '../lib/referenceData.js'
+import { fetchSubscriptionsDashboard } from '../lib/subscriptions.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { usePremium, openUpgrade, PREMIUM_PRICE } from '../lib/premium.js'
@@ -38,14 +40,13 @@ const selectedProgramId = ref('')
 async function loadPrograms() {
   programs.value = []
   if (!ownerId.value) return
-  const { data: locs } = await supabase.from('locations')
-    .select('id').eq('owner_user_id', ownerId.value)
-  const ownedLocIds = new Set((locs || []).map(l => l.id))
+  // reference-data is already scoped to this business's venues, and the
+  // subscriptions dashboard returns the programmes that sit in them.
+  const [ref, dash] = await Promise.all([loadReferenceData(), fetchSubscriptionsDashboard()])
+  const ownedLocIds = new Set(ref.venues.map(l => String(l.id)))
   if (!ownedLocIds.size) return
-  const { data: pg } = await supabase.from('class_programs')
-    .select('id, name, status, location_id')
-    .order('created_at', { ascending: false })
-  const mine = (pg || []).filter(p => ownedLocIds.has(p.location_id) && p.status === 'active')
+  const all = dash.success ? (dash.data?.programs || []) : []
+  const mine = all.filter(p => ownedLocIds.has(String(p.location_id)) && p.status === 'active')
   programs.value = mine
   // Keep a valid selection: default to the first program, clear if none.
   if (!mine.some(p => p.id === selectedProgramId.value)) {
@@ -56,18 +57,14 @@ async function loadPrograms() {
 async function load() {
   loading.value = true
   if (!ownerId.value) { loading.value = false; return }
-  const { data } = await supabase.from('admin_users')
-    .select('id, username, business_name, brand_name, brand_subdomain, brand_primary, brand_enabled, brand_custom_domain, brand_domain_status')
-    .eq('id', ownerId.value).maybeSingle()
-  let subdomain = (data?.brand_subdomain || '').toLowerCase()
-  if (!subdomain && data) subdomain = await ensureProviderSubdomain(data)
+  const { settings, username } = await loadSiteSettings()
   brand.value = {
-    name: data?.brand_name || data?.business_name || data?.username || 'Your business',
-    subdomain,
-    primary: data?.brand_primary || DEFAULT_PRIMARY,
-    enabled: !!data?.brand_enabled,
-    customDomain: data?.brand_custom_domain || '',
-    domainActive: data?.brand_domain_status === 'active' && !!data?.brand_custom_domain,
+    name: settings.brand_name || username || 'Your business',
+    subdomain: String(settings.brand_subdomain || username || '').toLowerCase(),
+    primary: settings.brand_primary || DEFAULT_PRIMARY,
+    enabled: !!settings.brand_enabled,
+    customDomain: settings.brand_custom_domain || '',
+    domainActive: settings.brand_domain_status === 'active' && !!settings.brand_custom_domain,
   }
   await loadPrograms()
   loading.value = false
