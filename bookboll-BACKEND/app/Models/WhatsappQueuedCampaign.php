@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -9,6 +10,8 @@ use Illuminate\Database\Eloquent\Model;
  */
 class WhatsappQueuedCampaign extends Model
 {
+    use LogsModelActivity;
+
     public const STATUS_AWAITING  = 'awaiting_approval';
     public const STATUS_SENT      = 'sent';
     public const STATUS_REJECTED  = 'rejected';
@@ -32,5 +35,23 @@ class WhatsappQueuedCampaign extends Model
     public function scopeAwaiting($query)
     {
         return $query->where('status', self::STATUS_AWAITING);
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'whatsapp_queued_campaign';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'owner_user_id',
+            'template_name',
+            'template_language',
+            'status',
+            'reject_reason',
+            'sent_at',
+            'dismissed_at',
+        ];
     }
 }

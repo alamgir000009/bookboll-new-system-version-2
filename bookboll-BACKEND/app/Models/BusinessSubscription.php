@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -15,6 +16,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class BusinessSubscription extends Model
 {
+    use LogsModelActivity;
+
     /** Statuses that still entitle the provider to the Premium features. */
     public const ENTITLING = ['trialing', 'active', 'past_due'];
 
@@ -79,5 +82,30 @@ class BusinessSubscription extends Model
         return $this->status === 'trialing'
             && $this->trial_ends_at
             && $this->trial_ends_at->isFuture();
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'business_subscription';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'business_id',
+            'plan',
+            'billing',
+            'status',
+            'amount',
+            'currency',
+            'trial_ends_at',
+            'current_period_end',
+            'cancel_at_period_end',
+            'started_at',
+            'ended_at',
+            'stripe_subscription_id',
+            'promocode_id',
+            'discount_amount',
+        ];
     }
 }

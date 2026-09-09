@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
 use App\Traits\GeneratesUuid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -12,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class ProviderTrialAgreement extends Model
 {
+    use LogsModelActivity;
     use GeneratesUuid;
 
     protected $fillable = [
@@ -27,5 +29,22 @@ class ProviderTrialAgreement extends Model
     public function program(): BelongsTo
     {
         return $this->belongsTo(ClassProgram::class, 'program_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'provider_trial_agreement';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'uuid',
+            'program_id',
+            'owner_user_id',
+            'terms_version',
+            'commission_at_acceptance',
+            'trial_days_at_acceptance',
+        ];
     }
 }

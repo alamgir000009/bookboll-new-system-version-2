@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -15,6 +16,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class BusinessDomainPurchase extends Model
 {
+    use LogsModelActivity;
+
     public const STATUS_PENDING = 'pending';
     public const STATUS_PAID    = 'paid';
     public const STATUS_EXPIRED = 'expired';
@@ -46,5 +49,23 @@ class BusinessDomainPurchase extends Model
     public function scopePending($query)
     {
         return $query->where('status', self::STATUS_PENDING);
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'business_domain_purchase';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'business_id',
+            'domain',
+            'amount',
+            'currency',
+            'status',
+            'stripe_payment_intent_id',
+            'paid_at',
+        ];
     }
 }

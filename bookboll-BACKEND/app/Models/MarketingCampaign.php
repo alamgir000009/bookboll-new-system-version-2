@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -10,6 +11,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class MarketingCampaign extends Model
 {
+    use LogsModelActivity;
+
     protected $fillable = [
         'owner_user_id', 'created_by', 'sender_label', 'channel',
         'audience', 'subject', 'body', 'html', 'recipient_count',
@@ -39,5 +42,27 @@ class MarketingCampaign extends Model
     public function emails()
     {
         return $this->hasMany(EmailOutbound::class, 'campaign_id');
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'marketing_campaign';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'owner_user_id',
+            'created_by',
+            'sender_label',
+            'channel',
+            'audience',
+            'subject',
+            'recipient_count',
+            'delivery_status',
+            'sent_count',
+            'failed_count',
+            'completed_at',
+        ];
     }
 }

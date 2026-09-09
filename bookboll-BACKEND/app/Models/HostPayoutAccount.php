@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\LogsModelActivity;
 use App\Traits\GeneratesUuid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -12,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class HostPayoutAccount extends Model
 {
+    use LogsModelActivity;
     use GeneratesUuid;
 
     protected $fillable = [
@@ -55,5 +57,28 @@ class HostPayoutAccount extends Model
     public function isReady(): bool
     {
         return $this->status === 'active' && $this->charges_enabled;
+    }
+
+    protected function activityLogName(): string
+    {
+        return 'host_payout_account';
+    }
+
+    protected function activityLogAttributes(): array
+    {
+        return [
+            'uuid',
+            'user_id',
+            'mode',
+            'status',
+            'stripe_account_id',
+            'account_name',
+            'country',
+            'livemode',
+            'charges_enabled',
+            'payouts_enabled',
+            'details_submitted',
+            'connected_at',
+        ];
     }
 }
