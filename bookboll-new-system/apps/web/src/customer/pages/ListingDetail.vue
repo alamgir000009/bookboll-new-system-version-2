@@ -638,7 +638,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             <template v-else-if="success.method === 'online'">Paid online <strong>{{ success.currency }} {{ Number(success.total).toLocaleString() }}</strong></template>
             <template v-else>Pay <strong>{{ success.currency }} {{ Number(success.total).toLocaleString() }}</strong> at the venue</template>
           </div>
-          <div class="ld-sim-note">Payment is simulated for testing — no real charge.</div>
+          <div class="ld-sim-note">A receipt has been emailed to you.</div>
           <div class="ld-done-actions">
             <router-link to="/my-bookings" class="ld-book-btn">My bookings</router-link>
             <button type="button" class="ld-map-btn" @click="bookAnother">Book more</button>
@@ -947,7 +947,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
 
             <div v-if="err" class="ld-err">{{ err }}</div>
             <button type="button" class="ld-book-btn" :disabled="saving" @click="confirm">{{ confirmLabel }}</button>
-            <div class="ld-pay-note"><ShieldCheck :size="14" /> Payment is simulated for testing — no real charge.</div>
+            <div class="ld-pay-note"><ShieldCheck :size="14" /> Secure payment by Stripe. Cards are never seen by Bookboll.</div>
             <button type="button" class="ld-map-btn" @click="step = 1"><ArrowLeft :size="16" /> Back to selection</button>
           </aside>
         </div>

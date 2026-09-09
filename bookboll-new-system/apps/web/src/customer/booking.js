@@ -119,10 +119,9 @@ export function paymentSplit(method, total, depositPct = 0, depositAmount = 0) {
   deposit = Math.max(0, Math.min(deposit, total))
   return { method: 'deposit', online: deposit, arrival: total - deposit, deposit, total }
 }
-// booking_payments rows, routing deposit/online → Bookboll, balance/cash → provider.
-// NOTE: no real gateway yet — the online/deposit portion is SIMULATED as 'paid' so the
-// end-to-end workflow can be tested. The on-arrival balance stays 'pending'.
-// (When a real gateway is added, only this function + the simulated status need changing.)
+// Pure pricing only — this file computes quotes and payment splits and takes no money.
+// The actual charge happens server-side: customer/apiBooking.js posts to
+// /customer/payments/create-checkout-session and the customer is redirected to Stripe.
 export function quoteBooking(listing, selectedSlots, addonsSelected = [], players = 1) {
   const slots = [...(selectedSlots || [])].sort((a, b) => (a.start_time < b.start_time ? -1 : 1))
   const perPerson = isPerPerson(listing)

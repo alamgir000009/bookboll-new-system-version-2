@@ -1938,7 +1938,7 @@ function avatarColor(id) {
               Every email automatically includes a <strong>one-click unsubscribe</strong> button and a disclaimer naming the sender — required to stay out of spam folders.
             </div>
             <div v-if="campaignSent" class="mkt-sent">
-              <CheckCircle :size="14" /> Campaign recorded for {{ selectedEmails.length }} opted-in customer{{ selectedEmails.length !== 1 ? 's' : '' }}. This is a preview build — no live emails were sent.
+              <CheckCircle :size="14" /> Campaign queued for {{ selectedEmails.length }} opted-in customer{{ selectedEmails.length !== 1 ? 's' : '' }} — delivery is under way from your own email sender.
             </div>
           </div>
 

@@ -357,7 +357,7 @@ async function save() {
       </div>
     </div>
 
-    <div class="nt-foot-note"><Info :size="13" /> Message sending is simulated in this demo — templates &amp; channel choices are saved and will drive real delivery in production.</div>
+    <div class="nt-foot-note"><Info :size="13" /> Email and WhatsApp are delivered for real. SMS has no gateway yet, so those messages are saved but not sent.</div>
   </div>
 </template>
 

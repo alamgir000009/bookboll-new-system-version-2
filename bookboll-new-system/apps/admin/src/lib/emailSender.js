@@ -8,9 +8,9 @@
  *  - MARKETING emails (Customers page bulk composer): MANDATORY for providers. A business
  *    can only email its own customer list from its own verified sender.
  *
- * Stored on admin_users.smtp_config (jsonb) — migration 20260728000000_provider_smtp.sql.
- * Actual delivery is a production concern; here the connection + test send are SIMULATED,
- * consistent with the rest of the demo (the password would be vault-stored server-side in prod).
+ * Stored on businesses.smtp_config and edited through /admin/email-sender.
+ * Delivery is REAL: the test send opens an actual SMTP connection from the server, and
+ * marketing campaigns and automated notifications go out through this same sender.
  */
 import { ref, computed } from 'vue'
 import { apiFetch } from './api.js'
