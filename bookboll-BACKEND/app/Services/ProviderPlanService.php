@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Http\Middleware\RestrictApiOrigin;
 use App\Models\Business;
 use App\Models\BusinessDomainPurchase;
 use App\Models\BusinessSubscription;
@@ -691,6 +692,10 @@ class ProviderPlanService
                 'brand_domain_status'  => 'pending',   // waiting on the CNAME
                 'brand_domain_paid_at' => $paidAt,
             ]);
+
+            // The API origin allow-list caches connected domains; drop it so the new
+            // one can call the API straight away rather than after the TTL.
+            RestrictApiOrigin::forgetCustomDomains();
         });
     }
 

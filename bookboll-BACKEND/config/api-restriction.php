@@ -4,19 +4,73 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Allowed API Origins (Web)
+    | Allowed API Origins (exact hosts)
     |--------------------------------------------------------------------------
     |
-    | Only requests from these origins (hosts) are allowed. Used for
-    | Origin/Referer validation. Add hosts without scheme (e.g. admin.bookboll.com).
+    | Hosts without scheme. These are Bookboll's own front-ends.
     |
     */
 
     'allowed_origins' => [
-        'admin.bookboll.com',
-        'www.admin.bookboll.com',
         'bookboll.com',
         'www.bookboll.com',
+        'admin.bookboll.com',
+        'www.admin.bookboll.com',
+        'business.bookboll.com',
+        'www.business.bookboll.com',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Allowed Origin Patterns (wildcard subdomains)
+    |--------------------------------------------------------------------------
+    |
+    | Every provider gets a white-label storefront at <slug>.bookboll.com, created
+    | whenever a provider picks a web address. Those hosts cannot be enumerated in a
+    | static list, so they are matched by pattern instead. `*` matches ONE label, so
+    | `*.bookboll.com` allows `padelrepublic.bookboll.com` but not a deeper host.
+    |
+    */
+
+    'allowed_origin_patterns' => [
+        '*.bookboll.com',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Provider Custom Domains
+    |--------------------------------------------------------------------------
+    |
+    | Providers who paid the one-time fee serve their storefront from their OWN
+    | domain (book.myclub.com). Those are created at runtime, so they are read from
+    | the database and cached — this check runs on every API request.
+    |
+    */
+
+    'allow_custom_domains' => env('API_ALLOW_CUSTOM_DOMAINS', true),
+    'custom_domain_cache_ttl' => (int) env('API_CUSTOM_DOMAIN_TTL', 300),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Paths (no browser origin by nature)
+    |--------------------------------------------------------------------------
+    |
+    | These are called by machines or by an email client, not by our own front-end,
+    | so they carry no usable Origin/Referer and must never be origin-checked:
+    |
+    |   whatsapp/webhook      Meta posts delivery receipts and inbound messages here;
+    |                         it is authenticated by its X-Hub-Signature-256 header.
+    |   marketing/unsubscribe the one-click opt-out in a marketing email. Blocking it
+    |                         would break a legal requirement, and the token is the
+    |                         credential.
+    |
+    | Matched with Request::is(), so wildcards work.
+    |
+    */
+
+    'public_paths' => [
+        'api/whatsapp/webhook',
+        'api/marketing/unsubscribe',
     ],
 
     /*
@@ -37,7 +91,8 @@ return [
     | Disable in Local
     |--------------------------------------------------------------------------
     |
-    | When true, origin/mobile check is skipped (e.g. for local development).
+    | When true, the origin/mobile check is skipped (e.g. for local development,
+    | where the front-ends run on localhost ports).
     |
     */
 

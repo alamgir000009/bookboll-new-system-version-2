@@ -157,6 +157,7 @@ class SiteSettingsService
             $patch['brand_domain_paid_at'] = null;
             $business->domainPurchases()->pending()
                 ->update(['status' => \App\Models\BusinessDomainPurchase::STATUS_EXPIRED]);
+            \App\Http\Middleware\RestrictApiOrigin::forgetCustomDomains();
         }
 
         $business->update($patch);
