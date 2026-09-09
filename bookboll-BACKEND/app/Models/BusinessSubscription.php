@@ -33,6 +33,7 @@ class BusinessSubscription extends Model
         'stripe_subscription_id',
         'stripe_customer_id',
         'stripe_checkout_session_id',
+        'last_event_at',
         'promocode_id',
         'discount_amount',
     ];
@@ -47,6 +48,7 @@ class BusinessSubscription extends Model
             'started_at'           => 'datetime',
             'ended_at'             => 'datetime',
             'cancel_at_period_end' => 'boolean',
+            'last_event_at'        => 'datetime',
         ];
     }
 

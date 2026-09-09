@@ -35,4 +35,14 @@ class MarketingController extends Controller
     {
         return $this->marketing->deleteCampaign($request, $id);
     }
+
+    public function sendCampaign(Request $request)
+    {
+        return $this->marketing->sendCampaign($request);
+    }
+
+    public function campaignStatus(Request $request, $id)
+    {
+        return $this->marketing->campaignStatus($request, $id);
+    }
 }

@@ -28,6 +28,10 @@ class WhatsappController extends Controller
     {
         $id = $request->query('owner_id');
 
-        return sendSuccess('OK', ['phone' => $this->whatsappService->ownerPhone($id)]);
+        // Phone AND email: the notification dispatcher needs both to reach the owner,
+        // and `phone` is kept at the top level so existing callers are unaffected.
+        $contact = $this->whatsappService->ownerContact($id);
+
+        return sendSuccess('OK', $contact);
     }
 }

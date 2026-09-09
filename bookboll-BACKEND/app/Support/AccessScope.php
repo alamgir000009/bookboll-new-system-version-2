@@ -2,6 +2,9 @@
 
 namespace App\Support;
 
+use App\Models\Booking;
+use App\Models\ClassProgram;
+use App\Models\ClassSubscription;
 use App\Models\User;
 use App\Models\Venue;
 use Illuminate\Support\Facades\DB;
@@ -111,6 +114,99 @@ class AccessScope
      *
      * @return int[]|null null = unrestricted; [] = nothing
      */
+    /**
+     * The customers this user may see — a direct port of the dashboard's
+     * `relevantCustomerIds`, and the single definition shared by the Customers list
+     * and the marketing composer. If those two ever disagreed, a provider would see
+     * people they cannot email, or email people they cannot see.
+     *
+     * A customer is in scope when they have BOOKED at a venue in scope, or SUBSCRIBED
+     * to a programme in scope. Subscriptions match on email because that is the only
+     * link class_subscriptions carries.
+     *
+     * @return array<int, int>|null  null = unrestricted (global admin); [] = nobody
+     */
+    public static function customerIdsInScope(?User $user): ?array
+    {
+        if (! $user) {
+            return [];
+        }
+
+        $venueIds = self::allowedVenueIds($user);
+        if ($venueIds === null) {
+            return null;   // super admin / platform owner — the whole marketplace
+        }
+
+        $ownerId = self::ownerUserId($user);
+
+        // ── Booked at a venue in scope ──
+        $ids = $venueIds
+            ? Booking::whereIn('venue_id', $venueIds)->whereNotNull('user_id')->distinct()->pluck('user_id')
+            : collect();
+
+        // ── Subscribed to a programme in scope ──
+        // A programme whose venue was removed still belongs to its owner, so the owner
+        // fallback keeps it in scope; venue alone would silently drop those members.
+        $programs = ClassProgram::query()
+            ->where(function ($q) use ($venueIds, $ownerId, $user) {
+                if ($venueIds) {
+                    $q->whereIn('venue_id', $venueIds);
+                }
+                if ($ownerId !== null) {
+                    $q->orWhere('mapped_owner_user_id', $ownerId)
+                        ->orWhere('owner_user_id', (string) $ownerId);
+                } else {
+                    foreach (self::jurisdictionOwnerIds($user) as $oid) {
+                        $q->orWhere('mapped_owner_user_id', $oid)->orWhere('owner_user_id', (string) $oid);
+                    }
+                }
+            })
+            ->pluck('id');
+
+        if ($programs->isNotEmpty()) {
+            $emails = ClassSubscription::whereIn('program_id', $programs)
+                ->whereNotNull('customer_email')->where('customer_email', '!=', '')
+                ->distinct()->pluck('customer_email')
+                ->map(fn ($e) => mb_strtolower(trim($e)))->filter()->unique();
+
+            if ($emails->isNotEmpty()) {
+                $ids = $ids->merge(
+                    User::whereIn(DB::raw('LOWER(email)'), $emails->all())->pluck('id')
+                );
+            }
+        }
+
+        return $ids->map(fn ($i) => (int) $i)->unique()->values()->all();
+    }
+
+    /**
+     * Providers a PLATFORM user administers — those with a venue in their jurisdiction,
+     * plus (the dashboard's fallback) those whose own country is in it, so a provider
+     * who has not added a venue yet is still administered by the right country admin.
+     *
+     * @return array<int, int>
+     */
+    public static function jurisdictionOwnerIds(?User $user): array
+    {
+        $venueIds = self::allowedVenueIds($user);
+        if ($venueIds === null) {
+            return [];   // unrestricted — the caller does not need an owner filter
+        }
+
+        $byVenue = $venueIds
+            ? Venue::whereIn('id', $venueIds)->whereNotNull('owner_user_id')->distinct()->pluck('owner_user_id')
+            : collect();
+
+        $countryIds = self::jurisdictionCountryIds($user);
+        $byCountry = ($countryIds === null || ! $countryIds)
+            ? collect()
+            : User::whereIn('country_id', $countryIds)
+                ->whereHas('roles', fn ($q) => $q->where('name', 'provider_admin'))
+                ->pluck('id');
+
+        return $byVenue->merge($byCountry)->map(fn ($i) => (int) $i)->unique()->values()->all();
+    }
+
     public static function allowedVenueIds(?User $user): ?array
     {
         if (! $user) {

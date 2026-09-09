@@ -494,6 +494,19 @@ class WhatsappService
         return User::find($ownerId)?->phone ?: '';
     }
 
+    /**
+     * The business owner's own contact details — where a "tell the provider" notification
+     * goes. Returned together so the dispatcher makes one call for both channels.
+     *
+     * @return array{phone: string, email: string}
+     */
+    public function ownerContact($ownerId): array
+    {
+        $user = $ownerId ? User::find($ownerId) : null;
+
+        return ['phone' => $user?->phone ?: '', 'email' => $user?->email ?: ''];
+    }
+
     /* ───────────────────────────── Outbound log ───────────────────────────── */
 
     /** @param array<int, array<string, mixed>> $rows */

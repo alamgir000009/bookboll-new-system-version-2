@@ -12,6 +12,7 @@ use App\Http\Controllers\Admin\OverviewController;
 use App\Http\Controllers\Admin\PaymentAccountController;
 use App\Http\Controllers\Admin\StorefrontSortController;
 use App\Http\Controllers\Admin\ReferenceDataController;
+use App\Http\Controllers\Admin\NotificationEmailController;
 use App\Http\Controllers\Admin\ProviderPlanController;
 use App\Http\Controllers\Admin\ProviderSenderController;
 use App\Http\Controllers\Admin\SiteSettingsController;
@@ -209,6 +210,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::middleware('capability:manage_customers')->group(function () {
             Route::get('marketing/campaigns', [MarketingController::class, 'campaigns'])->name('marketing.campaigns.index');
             Route::post('marketing/campaigns', [MarketingController::class, 'recordCampaign'])->name('marketing.campaigns.store');
+            // The real send: recipients are re-scoped and re-consent-checked server-side,
+            // then delivered on the queue.
+            Route::post('marketing/campaigns/send', [MarketingController::class, 'sendCampaign'])->name('marketing.campaigns.send');
+            Route::get('marketing/campaigns/{id}', [MarketingController::class, 'campaignStatus'])->name('marketing.campaigns.show');
             Route::delete('marketing/campaigns/{id}', [MarketingController::class, 'deleteCampaign'])->name('marketing.campaigns.destroy');
         });
 
@@ -408,6 +413,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::get('audit-logs/export', [AuditLogController::class, 'export']);
         });
         Route::post('notifications/whatsapp', [WhatsappController::class, 'send']);
+        Route::post('notifications/email', [NotificationEmailController::class, 'send'])->name('notifications.email');
         Route::get('notifications/owner-phone', [WhatsappController::class, 'ownerPhone']);
 
         Route::post('add-ons/sort', [AddOnController::class, 'sort'])->name('add-ons.sort');

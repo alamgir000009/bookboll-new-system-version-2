@@ -8,6 +8,7 @@ use App\Models\Listing;
 use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
+use App\Support\AccessScope;
 use App\Models\Venue;
 use BookingPaymentStatus;
 use BookingStatus;
@@ -539,7 +540,7 @@ class CustomerService
     {
         $perPage = min(max((int) ($request->input('records_per_page') ?? $request->input('per_page') ?? 25), 1), 250);
 
-        $query = $this->customerQuery()
+        $query = $this->scopedCustomerQuery($request)
             ->with(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier']);
 
         $search = trim((string) ($request->input('search') ?? ''));
@@ -610,9 +611,10 @@ class CustomerService
         $lookups['subscriptions'] = $lookups['subscriptions'] ?? [];
         $lookups['loyalty_programs'] = $lookups['loyalty_programs'] ?? [];
         $lookups['loyalty_tiers'] = $lookups['loyalty_tiers'] ?? [];
+        // The headline counts must agree with the rows below them.
         $lookups['kpis'] = [
-            'total'      => $this->customerQuery()->count(),
-            'active'     => $this->customerQuery()->where('status', User::ACTIVE)->count(),
+            'total'      => $this->scopedCustomerQuery($request)->count(),
+            'active'     => $this->scopedCustomerQuery($request)->where('status', User::ACTIVE)->count(),
             'activeSubs' => 0,
             'avgSpend'   => 0,
             'vip'        => 0,
@@ -623,7 +625,7 @@ class CustomerService
 
     public function crm($id)
     {
-        $customer = $this->customerQuery()
+        $customer = $this->scopedCustomerQuery()
             ->with(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier'])
             ->find($id);
 
@@ -717,7 +719,7 @@ class CustomerService
 
     public function updateDashboard(Request $request, $id)
     {
-        $user = $this->customerQuery()->findOrFail($id);
+        $user = $this->scopedCustomerQuery($request)->findOrFail($id);
         $data = $this->validateDashboard($request, $user->id, true);
 
         try {
@@ -776,7 +778,7 @@ class CustomerService
 
     public function replaceLoyalty(Request $request, $id)
     {
-        $user = $this->customerQuery()->findOrFail($id);
+        $user = $this->scopedCustomerQuery($request)->findOrFail($id);
         $data = $request->validate([
             'loyalty'                   => 'nullable|array',
             'loyalty.*.country_id'      => 'required',
@@ -796,7 +798,7 @@ class CustomerService
 
     public function upsertLoyalty(Request $request, $id)
     {
-        $user = $this->customerQuery()->findOrFail($id);
+        $user = $this->scopedCustomerQuery($request)->findOrFail($id);
         $data = $request->validate([
             'country_id'      => 'required',
             'points'          => 'nullable|numeric|min:0',
@@ -824,7 +826,7 @@ class CustomerService
 
     public function deleteLoyalty($id, $countryId)
     {
-        $user = $this->customerQuery()->findOrFail($id);
+        $user = $this->scopedCustomerQuery()->findOrFail($id);
 
         CustomerLoyalty::where(CustomerLoyalty::ownerColumn(), $user->id)
             ->where('country_id', $countryId)
@@ -838,6 +840,31 @@ class CustomerService
         return $this->customerModel::whereHas('roles', function ($query) {
             $query->where('name', 'customer');
         });
+    }
+
+    /**
+     * Customers the CALLER may see.
+     *
+     * A provider sees the people who have actually booked at their venues or joined
+     * their programmes — never the whole marketplace. Platform roles see their
+     * jurisdiction; a global admin sees everything. The rule itself lives in
+     * AccessScope::customerIdsInScope() so this list and the marketing composer can
+     * never drift apart.
+     */
+    protected function scopedCustomerQuery(?Request $request = null)
+    {
+        $user  = $request?->user() ?? auth()->user();
+        $query = $this->customerQuery();
+
+        $ids = AccessScope::customerIdsInScope($user);
+        if ($ids === null) {
+            return $query;   // unrestricted
+        }
+        if (! $ids) {
+            return $query->whereRaw('1 = 0');   // in scope: nobody
+        }
+
+        return $query->whereIn('users.id', $ids);
     }
 
     protected function validateDashboard(Request $request, $ignoreId = null, bool $partial = false)

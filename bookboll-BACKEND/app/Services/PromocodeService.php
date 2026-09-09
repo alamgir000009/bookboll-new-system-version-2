@@ -275,7 +275,10 @@ class PromocodeService
             return PremiumPlan::denied('promocodes');
         }
 
-        $this->normalizeDashboardInput($request);
+        // (There was a call to a normalizeDashboardInput() that does not exist, which
+        // made every promo-code creation fatal. validateRequest() already maps the
+        // dashboard's field names and stamps recipient / creator_role / owner_user_id —
+        // which is why update() has always worked without it.)
         $validated = $this->validateRequest($request);
 
         try {

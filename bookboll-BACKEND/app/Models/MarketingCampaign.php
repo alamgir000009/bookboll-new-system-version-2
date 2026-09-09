@@ -13,11 +13,17 @@ class MarketingCampaign extends Model
     protected $fillable = [
         'owner_user_id', 'created_by', 'sender_label', 'channel',
         'audience', 'subject', 'body', 'html', 'recipient_count',
+        'delivery_status', 'sent_count', 'failed_count', 'completed_at',
     ];
 
     protected function casts(): array
     {
-        return ['recipient_count' => 'integer'];
+        return [
+            'recipient_count' => 'integer',
+            'sent_count'      => 'integer',
+            'failed_count'    => 'integer',
+            'completed_at'    => 'datetime',
+        ];
     }
 
     public function owner(): BelongsTo
@@ -28,5 +34,10 @@ class MarketingCampaign extends Model
     public function messages()
     {
         return $this->hasMany(WhatsappOutbound::class, 'campaign_id');
+    }
+
+    public function emails()
+    {
+        return $this->hasMany(EmailOutbound::class, 'campaign_id');
     }
 }

@@ -178,9 +178,12 @@ class StripeService
         // a real mix-up the day the two id spaces overlap.
         if (str_starts_with($type, 'customer.subscription.')
             && ($event->data->object->metadata['source'] ?? null) === PremiumPlan::SOURCE_PLAN) {
+            // The event's own generation time goes with it: Stripe does not guarantee
+            // delivery order, so arrival order cannot decide which state wins.
+            $at = (int) ($event->created ?? 0) ?: null;
             match ($type) {
-                'customer.subscription.deleted' => $providerPlan->endSubscription($event->data->object),
-                default                         => $providerPlan->syncSubscription($event->data->object),
+                'customer.subscription.deleted' => $providerPlan->endSubscription($event->data->object, $at),
+                default                         => $providerPlan->syncSubscription($event->data->object, $at),
             };
 
             return;
@@ -209,7 +212,7 @@ class StripeService
             $source  = $session->metadata['source'] ?? null;
 
             if ($source === PremiumPlan::SOURCE_PLAN) {
-                $providerPlan->fulfillPlanSession($session);
+                $providerPlan->fulfillPlanSession($session, (int) ($event->created ?? 0) ?: null);
 
                 return;
             }

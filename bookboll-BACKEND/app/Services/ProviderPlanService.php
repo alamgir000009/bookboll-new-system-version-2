@@ -278,7 +278,7 @@ class ProviderPlanService
      * found by its checkout session or by the Stripe subscription id, so a webhook and
      * a browser return that both arrive grant the plan once and record one redemption.
      */
-    public function fulfillPlanSession(object $session): void
+    public function fulfillPlanSession(object $session, ?int $eventAt = null): void
     {
         $businessId = (int) ($session->metadata['business_id'] ?? 0);
         if (! $businessId) {
@@ -290,7 +290,7 @@ class ProviderPlanService
             return;   // nothing to grant until Stripe has actually made the subscription
         }
 
-        DB::transaction(function () use ($businessId, $session, $stripeSub) {
+        DB::transaction(function () use ($businessId, $session, $stripeSub, $eventAt) {
             $business = Business::whereKey($businessId)->lockForUpdate()->first();
             if (! $business) {
                 return;
@@ -298,6 +298,10 @@ class ProviderPlanService
 
             $sub = BusinessSubscription::where('stripe_subscription_id', $stripeSub->id)->first()
                 ?: BusinessSubscription::where('stripe_checkout_session_id', $session->id)->first();
+
+            if (! $this->isFresh($sub, $eventAt)) {
+                return;   // a cancellation already landed; do not re-grant
+            }
 
             // A checkout completed outside our own flow (a Stripe dashboard action,
             // say) still has to land somewhere.
@@ -316,7 +320,7 @@ class ProviderPlanService
                 'stripe_customer_id'         => (string) ($session->customer ?? $sub->stripe_customer_id),
                 'stripe_checkout_session_id' => $session->id,
                 'started_at'                 => $sub->started_at ?: now(),
-            ]))->save();
+            ], $this->stampEvent($eventAt)))->save();
 
             $this->applyEntitlement($business, $sub);
 
@@ -327,34 +331,34 @@ class ProviderPlanService
     }
 
     /** Keep our subscription row in step with whatever Stripe says. */
-    public function syncSubscription(object $stripeSub): void
+    public function syncSubscription(object $stripeSub, ?int $eventAt = null): void
     {
         if ((string) ($stripeSub->metadata['source'] ?? '') !== PremiumPlan::SOURCE_PLAN) {
             return;
         }
 
         $sub = $this->subscriptionFor($stripeSub);
-        if (! $sub) {
-            return;
+        if (! $sub || ! $this->isFresh($sub, $eventAt)) {
+            return;   // a newer event already decided this row
         }
 
-        $sub->fill($this->subscriptionFields($stripeSub))->save();
+        $sub->fill($this->subscriptionFields($stripeSub) + $this->stampEvent($eventAt))->save();
         $this->applyEntitlement($sub->business, $sub);
     }
 
     /** Stripe ended the subscription — the features go away with it. */
-    public function endSubscription(object $stripeSub): void
+    public function endSubscription(object $stripeSub, ?int $eventAt = null): void
     {
         if ((string) ($stripeSub->metadata['source'] ?? '') !== PremiumPlan::SOURCE_PLAN) {
             return;
         }
 
         $sub = $this->subscriptionFor($stripeSub);
-        if (! $sub) {
+        if (! $sub || ! $this->isFresh($sub, $eventAt)) {
             return;
         }
 
-        $sub->fill([
+        $sub->fill($this->stampEvent($eventAt) + [
             'status'               => 'canceled',
             'cancel_at_period_end' => false,
             'current_period_end'   => null,
@@ -408,6 +412,38 @@ class ProviderPlanService
             'cancel_at_period_end'   => (bool) ($stripeSub->cancel_at_period_end ?? false),
             'ended_at'               => in_array($status, ['canceled', 'incomplete_expired'], true) ? now() : null,
         ];
+    }
+
+    /**
+     * Should this event be applied, or has something newer already been?
+     *
+     * Stripe does not guarantee delivery order — an event GENERATED before a
+     * cancellation can be DELIVERED after it, and retries make that more likely. We
+     * therefore compare generation time, not arrival time. `$eventAt` is null for a
+     * live API re-read (the browser returning from checkout), which reflects the state
+     * as of now and so is never stale.
+     */
+    protected function isFresh(?BusinessSubscription $sub, ?int $eventAt): bool
+    {
+        if (! $sub || ! $sub->last_event_at || $eventAt === null) {
+            return true;
+        }
+
+        // Equal timestamps still apply: two events in the same second are ordered by
+        // arrival, which is the best information available.
+        return $eventAt >= $sub->last_event_at->getTimestamp();
+    }
+
+    /**
+     * Record which event decided this row, so an older one cannot undo it.
+     *
+     * A live API re-read (no event) deliberately stamps NOTHING. Stamping our own
+     * clock there would let clock skew against Stripe's silently discard a genuine
+     * later cancellation — the cure being worse than the disease.
+     */
+    protected function stampEvent(?int $eventAt): array
+    {
+        return $eventAt !== null ? ['last_event_at' => now()->setTimestamp($eventAt)] : [];
     }
 
     /** Our row for a Stripe subscription — by its id, else the business it names. */

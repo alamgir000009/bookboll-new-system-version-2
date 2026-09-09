@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\SendMarketingCampaign;
 use App\Models\MarketingCampaign;
 use App\Models\User;
 use App\Support\AccessScope;
@@ -20,6 +21,9 @@ use Illuminate\Http\Request;
  */
 class MarketingService
 {
+    public function __construct(protected MarketingMailService $mail)
+    {}
+
     public const CHANNELS = ['email', 'sms', 'whatsapp'];
 
     protected const COLUMN = [
@@ -99,6 +103,86 @@ class MarketingService
     }
 
     /**
+     * Send a marketing campaign for real.
+     *
+     * The browser passes the customers it SELECTED; this decides who may actually be
+     * mailed — narrowed to the provider's own customers and to those who opted in.
+     * The count that comes back is the real one, which is often smaller than what was
+     * selected, and the dashboard says so rather than pretending otherwise.
+     */
+    public function sendCampaign(Request $request)
+    {
+        $data = $request->validate([
+            'subject'       => 'required|string|max:191',
+            'body'          => 'required|string',
+            'customer_ids'  => 'required|array|min:1',
+            'customer_ids.*' => 'integer',
+            'sender_label'  => 'nullable|string|max:191',
+            'audience'      => 'nullable|string|max:191',
+        ]);
+
+        $user    = $request->user();
+        $ownerId = $this->mail->ownerFor($user);
+
+        // A provider must own the address the mail comes from; Bookboll uses its own.
+        $sender = $this->mail->senderFor($ownerId);
+        if (isset($sender['error'])) {
+            return sendError($sender['error'], [], 422);
+        }
+
+        $recipients = $this->mail->eligibleRecipients($user, $data['customer_ids']);
+        if ($recipients->isEmpty()) {
+            return sendError(
+                $ownerId === null
+                    ? 'None of the selected customers have opted in to marketing email.'
+                    : 'None of the selected customers are yours AND opted in to marketing email.',
+                [], 422
+            );
+        }
+
+        $campaign = MarketingCampaign::create([
+            'owner_user_id'   => $ownerId,
+            'created_by'      => $user?->id,
+            'sender_label'    => $data['sender_label'] ?? $sender['from_name'],
+            'channel'         => 'email',
+            'audience'        => $data['audience'] ?? ('Opted-in email · '.$recipients->count().' recipient'.($recipients->count() === 1 ? '' : 's')),
+            'subject'         => $data['subject'],
+            'body'            => $data['body'],
+            // Stored for the record as the preview a representative recipient sees;
+            // the delivered copy is re-rendered per person for their own unsubscribe link.
+            'html'            => $this->mail->renderHtml([
+                'subject'      => $data['subject'],
+                'body'         => $data['body'],
+                'sender_label' => $data['sender_label'] ?? $sender['from_name'],
+                'is_provider'  => $ownerId !== null,
+                'brand_color'  => $this->mail->brandColor($ownerId),
+                'unsub_url'    => $this->mail->unsubscribeUrl($recipients->first()->unsubscribe_token, 'email'),
+            ]),
+            'recipient_count' => $recipients->count(),
+            'delivery_status' => 'queued',
+        ]);
+
+        SendMarketingCampaign::dispatch($campaign->id, $recipients->pluck('id')->all());
+
+        return sendSuccess('Campaign queued', [
+            'campaign'  => $this->map($campaign->fresh()),
+            'queued'    => $recipients->count(),
+            'requested' => count($data['customer_ids']),
+        ], 201);
+    }
+
+    /** Delivery progress for the campaign the composer just sent. */
+    public function campaignStatus(Request $request, $id)
+    {
+        $campaign = MarketingCampaign::find($id);
+        if (! $campaign || ! $this->mayTouch($request->user(), $campaign)) {
+            return sendError('Campaign not found.', [], 404);
+        }
+
+        return sendSuccess('Campaign', ['campaign' => $this->map($campaign)]);
+    }
+
+    /**
      * Remove a ledger row for a send that never happened — the composer calls this
      * when dispatch fails, so history does not claim messages nobody received.
      */
@@ -156,6 +240,10 @@ class MarketingService
             'subject'         => $c->subject,
             'body'            => $c->body,
             'recipient_count' => (int) $c->recipient_count,
+            'delivery_status' => $c->delivery_status,
+            'sent_count'      => (int) $c->sent_count,
+            'failed_count'    => (int) $c->failed_count,
+            'completed_at'    => optional($c->completed_at)?->toIso8601String(),
             'created_at'      => optional($c->created_at)?->toIso8601String(),
         ];
     }
