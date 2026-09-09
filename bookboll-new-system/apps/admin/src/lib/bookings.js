@@ -4,8 +4,35 @@
  */
 import { apiFetch } from './api.js'
 
-export async function fetchBookingsDashboard() {
-  return apiFetch('/admin/bookings/dashboard')
+/**
+ * The bookings table. Filtering, sorting and paging all happen on the SERVER —
+ * the browser used to pull every booking plus every lookup list (~2 MB, most of it
+ * the 15k customer list) and do the work itself, which stops scaling the moment
+ * bookings run to thousands.
+ *
+ * `params` mirrors the page's filter state one-for-one; empty values are dropped so
+ * the query string stays readable.
+ */
+export async function fetchBookingsDashboard(params = {}) {
+  const query = {}
+  for (const [k, v] of Object.entries(params)) {
+    if (v === '' || v === null || v === undefined) continue
+    if (Array.isArray(v)) { if (v.length) query[k] = v.join(',') ; continue }
+    query[k] = v
+  }
+  return apiFetch('/admin/bookings/dashboard', { query })
+}
+
+/** Picker lists only (new-booking drawer, detail modal) — no bookings page. */
+export async function fetchBookingLookups({ withCustomers = false } = {}) {
+  return apiFetch('/admin/bookings/dashboard', {
+    query: { lookups_only: 1, ...(withCustomers ? { with_customers: 1 } : {}) },
+  })
+}
+
+/** Every row matching the current filters, for CSV export (not just this page). */
+export async function fetchBookingsForExport(params = {}) {
+  return fetchBookingsDashboard({ ...params, export: 1, page: undefined, per_page: undefined })
 }
 
 export async function fetchBookingCrm(id) {

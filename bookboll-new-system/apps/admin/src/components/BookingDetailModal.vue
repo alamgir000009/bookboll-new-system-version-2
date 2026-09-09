@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { fetchBookingCrm, fetchBookingOccupancy, fetchBookingsDashboard, updateDashboardBooking, registerCustomer, collectDashboardPayment, generateDashboardPaymentLink, firstError } from '../lib/bookings.js'
+import { fetchBookingCrm, fetchBookingOccupancy, fetchBookingLookups, updateDashboardBooking, registerCustomer, collectDashboardPayment, generateDashboardPaymentLink, firstError } from '../lib/bookings.js'
 import { X, MapPin, Calendar, Clock, User, Mail, Phone, Star, CreditCard, FileText, PhoneCall, Receipt, Send, Tag, Check, CircleAlert as AlertCircle, Loader, Pencil, StickyNote, ChevronRight, ChevronDown, Plus } from 'lucide-vue-next'
 import WhatsappIcon from './WhatsappIcon.vue'
 import CustomerHistoryModal from './CustomerHistoryModal.vue'
@@ -205,7 +205,7 @@ async function openEdit() {
   editing.value = true
 
   // Load master data
-  const dash = await fetchBookingsDashboard()
+  const dash = await fetchBookingLookups({ withCustomers: true })
   const d = dash.success ? (dash.data || {}) : {}
   editLocations.value = (d.locations || []).filter(l => l.status === 'active')
   editListings.value  = (d.listings || []).filter(l => l.status === 'active')

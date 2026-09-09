@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
 import {
-  fetchBookingsDashboard, fetchBookingOccupancy, createDashboardBooking, registerCustomer, firstError,
+  fetchBookingLookups, fetchBookingOccupancy, createDashboardBooking, registerCustomer, firstError,
 } from '../lib/bookings.js'
 import { validatePromo } from '../lib/promocodes.js'
 import {
@@ -49,7 +49,7 @@ const venueOptions = computed(() =>
 
 async function loadMaster() {
   loadingMaster.value = true
-  const res = await fetchBookingsDashboard()
+  const res = await fetchBookingLookups({ withCustomers: true })
   const d = res.success ? (res.data || {}) : {}
   locations.value = (d.locations || []).filter(l => l.status === 'active')
   listings.value  = (d.listings || []).filter(l => l.status === 'active')

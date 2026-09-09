@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import {
-  fetchBookingsDashboard, cancelDashboardBooking, firstError,
+  fetchBookingsDashboard, fetchBookingsForExport, cancelDashboardBooking, firstError,
 } from '../lib/bookings.js'
 import { pushToast } from '../lib/toast.js'
 import { Search, Plus, Download, Eye, Pencil, X, TriangleAlert as AlertTriangle, SlidersHorizontal, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, FileDown, ListFilter as Filter, RotateCcw, BookOpen, Loader } from 'lucide-vue-next'
@@ -19,7 +19,6 @@ import MultiSelect from '../components/MultiSelect.vue'
 import FilterBar from '../components/FilterBar.vue'
 import { idIn } from '../lib/geoFilter.js'
 import PaginationBar from '../components/PaginationBar.vue'
-import { usePagination } from '../lib/usePagination.js'
 import { fmt12, fmtRange12 } from '../lib/slots.js'
 import { notifyBookingCancelled } from '../customer/notificationDispatch.js'
 
@@ -51,11 +50,25 @@ const scopedListingIdSet = computed(() => new Set(scopedListings.value.map(l => 
 // ── Master data ───────────────────────────────────────────────────────────────
 const bookings  = ref([])
 const listings  = ref([])
-const customers = ref([])
 const locations = ref([])
 const countries = ref([])
 const cities    = ref([])
 const loading   = ref(true)
+// Server-driven pagination: the page holds one page of rows plus the totals the
+// server reports, instead of every row and a client-side slice.
+const page      = ref(1)
+const perPage   = ref(25)
+const total     = ref(0)
+const lastPage  = ref(1)
+// Everything in scope ignoring filters — the export dialog offers both counts.
+const scopeTotal = ref(0)
+// Currencies present across the caller's WHOLE scope, not just this page — a
+// per-page list would change as you page through.
+const currencyOpts = ref([])
+// Country / city ids present across the caller's whole scope (server-provided), so
+// the geo dropdowns stay stable while paging instead of shrinking to one page.
+const countryOpts  = ref([])
+const cityOpts     = ref([])
 
 // Platform jurisdiction (country_admin / platform_staff only see their countries' venues)
 const { allowedLocationIds, scopeCountries, scopeCities } = useJurisdiction({ locations, cities })
@@ -67,13 +80,13 @@ const jCities = computed(() => scopeCities(cities.value))
 // see — a single-country provider gets just their country, not the whole platform
 // list. Falls back to the jurisdiction lists while data loads.
 const fbCountries = computed(() => {
-  const used = new Set(scopedBookings.value.map(countryOfBooking).filter(Boolean))
-  const rows = jCountries.value.filter(c => used.has(c.id))
+  const used = new Set(countryOpts.value)
+  const rows = jCountries.value.filter(c => used.has(String(c.id)))
   return rows.length ? rows : jCountries.value
 })
 const fbCities = computed(() => {
-  const used = new Set(scopedBookings.value.map(cityOfBooking).filter(Boolean))
-  const rows = jCities.value.filter(c => used.has(c.id))
+  const used = new Set(cityOpts.value)
+  const rows = jCities.value.filter(c => used.has(String(c.id)))
   return rows.length ? rows : jCities.value
 })
 
@@ -107,20 +120,23 @@ watch(filterVenue, () => {
 // Currency + payment-method filters (currency only shown to multi-currency viewers)
 const filterMethod   = ref([])
 const filterCurrency = ref([])
-// bookings carry no currency column — derive it from the venue like the
-// Dashboard does: location override → city → country currency.
-const currencyOf = (b) => {
-  const loc = locations.value.find(l => l.id === b.location_id)
-  if (loc?.currency_override) return loc.currency_override
-  const city = cities.value.find(c => c.id === loc?.city_id)
-  return countries.value.find(c => c.id === city?.country_id)?.currency_code || 'AED'
-}
-const currencyOptions = computed(() =>
-  [...new Set(scopedBookings.value.map(currencyOf))].sort().map(c => ({ value: c, label: c })))
+// The server resolves currency from the venue (override → city → country) and puts
+// it on the row, so the page no longer needs the venue/city/country lists to show it.
+const currencyOf = (b) => b?.currency || 'AED'
+const currencyOptions = computed(() => currencyOpts.value)
+// These are the values bookings.payment_method actually stores. The list inherited
+// from the Supabase build used a different vocabulary ('online', 'cash', 'card'…),
+// so every option in this filter matched zero rows — it looked like a working filter
+// that simply never found anything.
 const METHOD_OPTIONS = [
-  { value: 'online', label: 'Online' }, { value: 'cash', label: 'Cash' },
-  { value: 'card', label: 'Card' }, { value: 'cheque', label: 'Cheque' },
-  { value: 'wire_transfer', label: 'Wire transfer' }, { value: 'payment_skipped', label: 'Skipped' },
+  { value: 'online_payment',               label: 'Online' },
+  { value: 'deposit_remaining_on_arrival', label: 'Deposit, rest on arrival' },
+  { value: 'cash_on_arrival',              label: 'Cash on arrival' },
+  { value: 'paid_cash',                    label: 'Paid — cash' },
+  { value: 'paid_credit_card',             label: 'Paid — card' },
+  { value: 'paid_cheque',                  label: 'Paid — cheque' },
+  { value: 'paid_wire_transfer',           label: 'Paid — wire transfer' },
+  { value: 'payment_skipped',              label: 'Skipped' },
 ]
 
 // ── Sorting ───────────────────────────────────────────────────────────────────
@@ -156,41 +172,79 @@ const cancellingAll     = ref(false)
 const cancelling        = ref(false)
 
 // ── Load ──────────────────────────────────────────────────────────────────────
+// Filtering, sorting and paging happen on the SERVER. The page sends its filter
+// state and receives one page of rows, already carrying the customer/listing/venue
+// names, currency and geography it displays — so no lookup list is needed to render
+// a row, which is what used to make the 15k customer payload necessary.
+function queryParams() {
+  return {
+    page: page.value,
+    per_page: perPage.value,
+    search: search.value.trim(),
+    status: filterStatus.value,
+    payment_status: filterPayment.value,
+    payment_method: filterMethod.value,
+    currency: filterCurrency.value,
+    kind: filterKind.value,
+    channel: filterChannel.value,
+    listing_id: filterListing.value,
+    venue_id: filterVenue.value,
+    country_id: filterCountry.value,
+    city_id: filterCity.value,
+    date_from: filterDateFrom.value,
+    date_to: filterDateTo.value,
+    created_from: filterCreatedFrom.value,
+    created_to: filterCreatedTo.value,
+    sort: sortCol.value,
+    sort_dir: sortDir.value,
+  }
+}
+
+let loadSeq = 0
 async function load() {
   loading.value = true
-  const res = await fetchBookingsDashboard()
+  // Filters change fast (typing, clicking chips); only the newest response may win,
+  // or a slow earlier request can overwrite a newer one.
+  const seq = ++loadSeq
+  const res = await fetchBookingsDashboard(queryParams())
+  if (seq !== loadSeq) return
   if (!res.success) {
     pushToast(res.message || 'Could not load bookings.', 'error')
     loading.value = false
     return
   }
   const d = res.data || {}
-  bookings.value  = (d.bookings || []).filter(x => x.origin !== 'class_program')
+  bookings.value  = d.bookings || []
+  total.value     = d.pagination?.total ?? bookings.value.length
+  lastPage.value  = d.pagination?.last_page ?? 1
+  scopeTotal.value = d.scope_total ?? total.value
   listings.value  = d.listings || []
-  customers.value = d.customers || []
   locations.value = d.locations || []
   countries.value = d.countries || []
   cities.value    = d.cities || []
+  currencyOpts.value = d.currency_options || []
+  countryOpts.value  = d.country_options || []
+  cityOpts.value     = d.city_options || []
   loading.value   = false
 }
 
 // Country/city lookup for a booking via its location
-function countryOfBooking(bk) {
-  const loc  = locations.value.find(l => l.id === bk.location_id)
-  const city = cities.value.find(c => c.id === loc?.city_id)
-  return city?.country_id || null
-}
-function cityOfBooking(bk) {
-  const loc = locations.value.find(l => l.id === bk.location_id)
-  return loc?.city_id || null
-}
+// The server resolves these from the booking's venue and puts them on the row.
+function countryOfBooking(bk) { return bk?.country_id || null }
+function cityOfBooking(bk)    { return bk?.city_id || null }
 
 onMounted(load)
 
 // ── Lookups ───────────────────────────────────────────────────────────────────
-const customerName = (id) => customers.value.find(c => c.id === id)?.full_name || '—'
-const listingName  = (id) => listings.value.find(l => l.id === id)?.name       || '—'
-const locationName = (id) => locations.value.find(l => l.id === id)?.name      || '—'
+// Names ride on the row itself now (the server joins them), so these take the
+// booking rather than an id — no lookup list required to render a cell.
+const customerName = (b) => b?.customer_name || '—'
+const listingName  = (b) => b?.listing_name  || '—'
+const locationName = (b) => b?.location_name || '—'
+
+// With server-side filtering an empty table can mean "nothing matched" or "nothing
+// exists"; only the filter state can tell them apart.
+const isFiltering = computed(() => activeFilterCount.value > 0 || search.value.trim() !== '')
 
 // ── Active filter count badge ─────────────────────────────────────────────────
 const activeFilterCount = computed(() => {
@@ -225,62 +279,43 @@ function resetFilters() {
 // ── Jurisdiction-scoped base (no user filters) ────────────────────────────────
 // The set of bookings this user is allowed to see AT ALL. `filtered` narrows this
 // further with the UI filters; "Export All" must export THIS, never raw bookings.
-const scopedBookings = computed(() => {
-  const owned = ownedLocationIds.value
-  return bookings.value.filter(b => {
-    // Provider scope: only bookings at the provider's own locations
-    if (owned && !owned.has(b.location_id)) return false
-    // Finer per-user scope: if pinned to specific listings, hide others
-    if (assignedListingIds.value.length && !scopedListingIdSet.value.has(b.listing_id)) return false
-    return true
-  })
+// Row scoping (provider ownership, jurisdiction, venue and listing pins) is applied
+// by the server, so the page no longer re-filters what it was given.
+
+const filtered = computed(() => bookings.value)
+const paginated = filtered
+
+// ── Pagination (server-driven) ────────────────────────────────────────────────
+const totalPages = computed(() => Math.max(1, lastPage.value))
+const visiblePages = computed(() => {
+  const t = totalPages.value
+  const c = page.value
+  const out = []
+  const from = Math.max(1, Math.min(c - 2, t - 4))
+  const to = Math.min(t, from + 4)
+  for (let i = from; i <= to; i++) out.push(i)
+  return out
 })
+function goPage(p) {
+  const next = Math.min(Math.max(1, p), totalPages.value)
+  if (next === page.value) return
+  page.value = next
+  load()
+}
 
-// ── Filtered + sorted rows ────────────────────────────────────────────────────
-const filtered = computed(() => {
-  const q = search.value.toLowerCase()
-  let rows = scopedBookings.value.filter(b => {
-    if (q && !customerName(b.customer_id).toLowerCase().includes(q) && !listingName(b.listing_id).toLowerCase().includes(q) && !locationName(b.location_id).toLowerCase().includes(q) && !String(b.id).toLowerCase().includes(q)) return false
-    if (filterStatus.value.length  && !filterStatus.value.includes(b.booking_status))  return false
-    if (filterPayment.value.length && !filterPayment.value.includes(b.payment_status)) return false
-    if (!matchKind(b, filterKind.value))        return false
-    if (!matchChannel(b, filterChannel.value))  return false
-    if (filterListing.value.length && !filterListing.value.includes(b.listing_id))     return false
-    if (filterVenue.value.length   && !filterVenue.value.includes(b.location_id))      return false
-    if (filterMethod.value.length   && !filterMethod.value.includes(b.payment_method)) return false
-    if (filterCurrency.value.length && !filterCurrency.value.includes(currencyOf(b)))  return false
-    if (!idIn(countryOfBooking(b), filterCountry.value)) return false
-    if (!idIn(cityOfBooking(b), filterCity.value))       return false
-    if (filterDateFrom.value && b.booking_date  <  filterDateFrom.value) return false
-    if (filterDateTo.value   && b.booking_date  >  filterDateTo.value)   return false
-    if (filterCreatedFrom.value && b.created_at.slice(0,10) < filterCreatedFrom.value) return false
-    if (filterCreatedTo.value   && b.created_at.slice(0,10) > filterCreatedTo.value)   return false
-    return true
-  })
-
-  // Sort
-  rows = [...rows].sort((a, b) => {
-    let av, bv
-    switch (sortCol.value) {
-      case 'booking_date': av = a.booking_date; bv = b.booking_date; break
-      case 'customer':     av = customerName(a.customer_id); bv = customerName(b.customer_id); break
-      case 'listing':      av = listingName(a.listing_id);   bv = listingName(b.listing_id);   break
-      case 'total':        av = Number(a.total||0);          bv = Number(b.total||0);           break
-      case 'booking_status': av = a.booking_status; bv = b.booking_status; break
-      case 'payment_status': av = a.payment_status; bv = b.payment_status; break
-      case 'created_at':     av = a.created_at;     bv = b.created_at;     break
-      default:               av = a.created_at;     bv = b.created_at;     break
-    }
-    if (av < bv) return sortDir.value === 'asc' ? -1 :  1
-    if (av > bv) return sortDir.value === 'asc' ?  1 : -1
-    return 0
-  })
-
-  return rows
+// Any filter or sort change restarts at page 1 and refetches. Search is debounced
+// so typing does not fire a request per keystroke.
+let searchTimer = null
+watch(search, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { page.value = 1; load() }, 300)
 })
-
-// ── Pagination derived ────────────────────────────────────────────────────────
-const { page, perPage, totalPages, paginated, visiblePages, goTo: goPage } = usePagination(filtered)
+watch([
+  filterStatus, filterPayment, filterKind, filterChannel, filterMethod, filterCurrency,
+  filterListing, filterVenue, filterCountry, filterCity,
+  filterDateFrom, filterDateTo, filterCreatedFrom, filterCreatedTo,
+  sortCol, sortDir, perPage,
+], () => { page.value = 1; load() })
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmtDateTime(iso) {
@@ -339,9 +374,9 @@ async function doCancel() {
       const loc = locations.value.find(l => l.id === b.location_id)
       notifyBookingCancelled({
         ownerId: loc?.owner_user_id || null,
-        customer: { id: b.customer_id, name: customerName(b.customer_id), email: customers.value.find(c => c.id === b.customer_id)?.email || '' },
+        customer: { id: b.customer_id, name: customerName(b), email: b.customer_email || '' },
         booking: {
-          listing: listingName(b.listing_id), venue: locationName(b.location_id), business_name: locationName(b.location_id),
+          listing: listingName(b), venue: locationName(b), business_name: locationName(b),
           date: b.booking_date, start_time: fmt12(b.start_time), end_time: fmt12(b.end_time),
           code: (b.id || '').toString().slice(0, 8).toUpperCase(), currency: currencyOf(b),
         },
@@ -354,15 +389,28 @@ async function doCancel() {
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
-function exportCSV(useFilters) {
-  const rows = useFilters ? filtered.value : scopedBookings.value
+// Export covers EVERY matching row, not just the page on screen — so it fetches
+// them first rather than exporting the 25 rows the table happens to hold.
+const exporting = ref(false)
+async function exportCSV(useFilters) {
+  if (exporting.value) return
+  exporting.value = true
+  // "All bookings" = the caller's whole scope, so send no filters.
+  const params = useFilters ? queryParams() : {}
+  const res = await fetchBookingsForExport(params)
+  exporting.value = false
+  if (!res.success) { pushToast(res.message || 'Could not prepare the export.', 'error'); return }
+  const rows = res.data?.bookings || []
+  if (res.data?.truncated) {
+    pushToast(`Export capped at ${rows.length.toLocaleString()} rows — narrow the filters for the rest.`, 'error')
+  }
   downloadCSV(rows, [
     { label: 'ID',             key: 'id' },
     { label: 'Record Date',    fn: r => r.created_at?.slice(0,10) },
     { label: 'Booking Date',   key: 'booking_date' },
-    { label: 'Customer',       fn: r => customerName(r.customer_id) },
-    { label: 'Listing',        fn: r => listingName(r.listing_id) },
-    { label: 'Venue',          fn: r => locationName(r.location_id) },
+    { label: 'Customer',       fn: r => customerName(r) },
+    { label: 'Listing',        fn: r => listingName(r) },
+    { label: 'Venue',          fn: r => locationName(r) },
     { label: 'Start Time',     key: 'start_time' },
     { label: 'End Time',       key: 'end_time' },
     { label: 'Players',        key: 'players' },
@@ -531,8 +579,8 @@ function exportCSV(useFilters) {
             <tr v-if="loading"><td colspan="10" class="empty"><Loader :size="18" class="spin" /> Loading bookings…</td></tr>
             <tr v-else-if="!paginated.length"><td colspan="10" style="padding:0">
               <EmptyState :icon="BookOpen"
-                :title="bookings.length ? 'No matching bookings' : 'No bookings yet'"
-                :message="bookings.length ? 'No bookings match your search or filters. Try adjusting them.' : 'Bookings will appear here once they are created.'"
+                :title="isFiltering ? 'No matching bookings' : 'No bookings yet'"
+                :message="isFiltering ? 'No bookings match your search or filters. Try adjusting them.' : 'Bookings will appear here once they are created.'"
                 :action-label="can(CAP.MANAGE_BOOKINGS) ? 'New Booking' : ''" @action="showNewBooking = true" />
             </td></tr>
             <tr v-for="b in paginated" :key="b.id" class="row-clickable" @click="viewingId=b.id">
@@ -542,12 +590,12 @@ function exportCSV(useFilters) {
               </td>
               <td>
                 <span v-if="b.origin === 'class_program'" class="program-block-label">{{ b.notes || 'Program Block' }}</span>
-                <button v-else-if="b.customer_id" class="bk-cust-link" @click.stop="openCustomer(b.customer_id)" title="View customer">{{ customerName(b.customer_id) }}</button>
-                <span v-else>{{ customerName(b.customer_id) }}</span>
+                <button v-else-if="b.customer_id" class="bk-cust-link" @click.stop="openCustomer(b.customer_id)" title="View customer">{{ customerName(b) }}</button>
+                <span v-else>{{ customerName(b) }}</span>
               </td>
               <td>
-                <div>{{ listingName(b.listing_id) }}</div>
-                <div class="cell-sub">{{ locationName(b.location_id) }}</div>
+                <div>{{ listingName(b) }}</div>
+                <div class="cell-sub">{{ locationName(b) }}</div>
               </td>
               <td>
                 <div>{{ b.booking_date }}</div>
@@ -586,7 +634,7 @@ function exportCSV(useFilters) {
       <!-- ── Pagination bar ─────────────────────────────────────────────────── -->
       <PaginationBar
         :page="page" :perPage="perPage" :totalPages="totalPages"
-        :total="filtered.length" :visiblePages="visiblePages"
+        :total="total" :visiblePages="visiblePages"
         @update:perPage="perPage = $event"
         @goTo="goPage"
       />
@@ -623,11 +671,11 @@ function exportCSV(useFilters) {
           <div class="export-options">
             <button class="export-option-btn" @click="exportCSV(false)">
               <div class="export-opt-title">Export All</div>
-              <div class="export-opt-sub">{{ bookings.length }} total bookings</div>
+              <div class="export-opt-sub">{{ scopeTotal }} total bookings</div>
             </button>
             <button class="export-option-btn" @click="exportCSV(true)">
               <div class="export-opt-title">Export with Current Filters</div>
-              <div class="export-opt-sub">{{ filtered.length }} matching bookings</div>
+              <div class="export-opt-sub">{{ total }} matching bookings</div>
             </button>
           </div>
           <button class="bk-btn-ghost" style="width:100%; margin-top:4px;" @click="showExportModal = false">Cancel</button>
@@ -665,7 +713,7 @@ function exportCSV(useFilters) {
             You can re-block slots for future dates from the <strong>Membership Programs</strong> page.
           </div>
           <div v-else class="bk-modal-body">
-            This booking for <strong>{{ listingName(cancelTarget?.listing_id) }}</strong> on <strong>{{ cancelTarget?.booking_date }}</strong> will be marked as <strong>cancelled</strong>.
+            This booking for <strong>{{ listingName(cancelTarget) }}</strong> on <strong>{{ cancelTarget?.booking_date }}</strong> will be marked as <strong>cancelled</strong>.
           </div>
           <div class="bk-modal-actions">
             <button class="bk-btn-ghost" @click="abortCancel">Go back</button>
