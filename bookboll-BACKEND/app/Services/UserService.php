@@ -1471,6 +1471,17 @@ class UserService
                 ];
             })
             ->values();
+        // Report consent from the users table, so the toggles show what campaigns will
+        // actually honour rather than a stale copy in the preferences blob.
+        $user = auth()->user();
+        if ($preferences) {
+            $preferences->notifications = array_merge($preferences->notifications ?? [], [
+                'marketing_emails'   => (bool) $user?->marketing_email,
+                'marketing_sms'      => (bool) $user?->marketing_sms,
+                'marketing_whatsapp' => (bool) $user?->marketing_whatsapp,
+            ]);
+        }
+
         return sendSuccess('Preferences fetched successfully', compact('preferences', 'sports_types'));
     }
 
@@ -1479,13 +1490,15 @@ class UserService
         $user = auth()->user();
 
         $formData = $request->validate([
-            'notifications.booking_emails'   => 'nullable|boolean',
-            'notifications.sms_reminders'    => 'nullable|boolean',
-            'notifications.marketing_emails' => 'nullable|boolean',
-            'favorite_sports'                => 'nullable|array',
-            'favorite_sports.*'              => 'required|string',
-            'language'                       => 'nullable|string',
-            'currency'                       => 'nullable|string',
+            'notifications.booking_emails'     => 'nullable|boolean',
+            'notifications.sms_reminders'      => 'nullable|boolean',
+            'notifications.marketing_emails'   => 'nullable|boolean',
+            'notifications.marketing_sms'      => 'nullable|boolean',
+            'notifications.marketing_whatsapp' => 'nullable|boolean',
+            'favorite_sports'                  => 'nullable|array',
+            'favorite_sports.*'                => 'required|string',
+            'language'                         => 'nullable|string',
+            'currency'                         => 'nullable|string',
         ]);
 
         $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
@@ -1508,6 +1521,26 @@ class UserService
         }
 
         $preferences->save();
+
+        // MARKETING CONSENT lives on the users table, because that is what campaign
+        // eligibility reads. Writing it only into the preferences JSON — as this
+        // endpoint used to — meant a customer could switch "email me offers" on and
+        // never actually become reachable, and could never switch it off either.
+        $consent = [];
+        foreach ([
+            'marketing_emails'   => 'marketing_email',
+            'marketing_sms'      => 'marketing_sms',
+            'marketing_whatsapp' => 'marketing_whatsapp',
+        ] as $key => $column) {
+            if (array_key_exists($key, $formData['notifications'] ?? [])) {
+                $consent[$column] = (bool) $formData['notifications'][$key];
+            }
+        }
+        if ($consent) {
+            // Timestamped: when consent was given or withdrawn is the part that has to
+            // be answerable later.
+            $user->forceFill($consent + ['marketing_updated_at' => now()])->save();
+        }
 
         $user->load('preferences');
 

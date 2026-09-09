@@ -57,6 +57,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\MarketingController;
 use App\Http\Controllers\MarketplaceCatalogController;
 use App\Http\Controllers\VenueController;
+use App\Http\Controllers\UploadController;
 use App\Http\Controllers\WhatsappController;
 use App\Http\Controllers\WhatsappWebhookController;
 use Illuminate\Support\Facades\Route;
@@ -714,6 +715,14 @@ Route::post('pay/{uuid}/checkout', [BookingPayLinkController::class, 'checkout']
 */
 Route::get('whatsapp/webhook', [WhatsappWebhookController::class, 'verify'])->name('whatsapp.webhook.verify');
 Route::post('whatsapp/webhook', [WhatsappWebhookController::class, 'handle'])->name('whatsapp.webhook.handle');
+
+/*
+| Image uploads. Any signed-in user (dashboard or storefront) may upload; the file
+| lands on our own public disk rather than a third-party host, so the key never
+| ships in the bundle and the files stay ours to serve, back up and delete.
+*/
+Route::post('uploads/image', [UploadController::class, 'image'])
+    ->middleware('auth:sanctum')->name('uploads.image');
 
 // One-click unsubscribe from a marketing email — no session, the token is the credential.
 Route::post('marketing/unsubscribe', [MarketingController::class, 'unsubscribe'])->name('marketing.unsubscribe');
