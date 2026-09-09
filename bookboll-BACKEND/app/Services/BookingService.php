@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\AccessScope;
 use App\Models\AddOn;
 use App\Models\AuditLog;
 use App\Models\Booking;
@@ -3677,30 +3678,377 @@ class BookingService
     /**
      * Full roster payload for the apps/admin Bookings page.
      */
+    /**
+     * The Bookings table — filtered, sorted and paginated ON THE SERVER.
+     *
+     * It used to return every booking plus every lookup list (including all 15k+
+     * customers) and let the browser filter, sort and paginate. That is ~2 MB for a
+     * table showing 25 rows, and it stops working entirely once bookings run to
+     * thousands. Everything the table can do is now expressed as SQL.
+     *
+     * Rows are ENRICHED with the names, currency and geography the table displays and
+     * filters on, so the page no longer needs the lookup arrays to render a row —
+     * which is what made the customer list necessary in the first place.
+     */
     public function dashboard(Request $request)
     {
-        $lookups = $this->dashboardLookups();
+        $filters = $this->dashboardFilters($request);
 
+        // The drawer and the detail modal want the pickers, not the table.
+        if ($request->boolean('lookups_only')) {
+            return sendSuccess('Bookings lookups', $this->dashboardLookups($request->boolean('with_customers')));
+        }
+
+        $query = $this->dashboardBookingQuery($filters);
+
+        // Export asks for every matching row; the table asks for one page.
+        if ($request->boolean('export')) {
+            $rows = $query->limit(self::EXPORT_MAX)->get();
+
+            return sendSuccess('Bookings fetched', [
+                'bookings'  => $this->mapDashboardBookings($rows),
+                'truncated' => $rows->count() >= self::EXPORT_MAX,
+            ]);
+        }
+
+        $perPage = min(max((int) $request->input('per_page', 25), 1), 200);
+        $page    = $query->paginate($perPage, ['*'], 'page', max(1, (int) $request->input('page', 1)));
+
+        return sendSuccess('Bookings fetched', array_merge(
+            $this->dashboardLookups($request->boolean('with_customers')),
+            [
+                'bookings'   => $this->mapDashboardBookings(collect($page->items())),
+                'pagination' => [
+                    'current_page' => $page->currentPage(),
+                    'last_page'    => $page->lastPage(),
+                    'per_page'     => $page->perPage(),
+                    'total'        => $page->total(),
+                    'from'         => $page->firstItem(),
+                    'to'           => $page->lastItem(),
+                ],
+                // Filter options must reflect the caller's WHOLE scope, not what
+                // happens to be on this page — otherwise the dropdowns change as you
+                // page through. A single-country provider still sees just their own.
+                'currency_options' => $this->scopedCurrencyOptions(),
+                'country_options'  => $this->scopedGeoIds('country'),
+                'city_options'     => $this->scopedGeoIds('city'),
+                // Everything in scope ignoring filters — the export dialog offers
+                // "all bookings" alongside "matching bookings" and must count both.
+                'scope_total'      => $this->dashboardBookingQuery($this->dashboardFilters(new Request()))->count(),
+            ]
+        ));
+    }
+
+    /** Normalised filter input — arrays stay arrays whether sent as a[]= or a=1,2. */
+    protected function dashboardFilters(Request $request): array
+    {
+        $arr = function ($v) {
+            if (is_array($v)) return array_values(array_filter($v, fn ($x) => $x !== '' && $x !== null));
+            if (is_string($v) && $v !== '') return array_values(array_filter(explode(',', $v)));
+            return [];
+        };
+
+        return [
+            'search'         => trim((string) $request->input('search', '')),
+            'status'         => $arr($request->input('status')),
+            'payment_status' => $arr($request->input('payment_status')),
+            'payment_method' => $arr($request->input('payment_method')),
+            'currency'       => $arr($request->input('currency')),
+            'kind'           => $arr($request->input('kind')),
+            'channel'        => $arr($request->input('channel')),
+            'listing_id'     => $arr($request->input('listing_id')),
+            'venue_id'       => $arr($request->input('venue_id')),
+            'country_id'     => $arr($request->input('country_id')),
+            'city_id'        => $arr($request->input('city_id')),
+            'date_from'      => (string) $request->input('date_from', ''),
+            'date_to'        => (string) $request->input('date_to', ''),
+            'created_from'   => (string) $request->input('created_from', ''),
+            'created_to'     => (string) $request->input('created_to', ''),
+            'sort'           => (string) $request->input('sort', 'created_at'),
+            'sort_dir'       => strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc',
+        ];
+    }
+
+    /** How many rows one export may pull, so a runaway export cannot exhaust memory. */
+    private const EXPORT_MAX = 20000;
+
+    /** The scoped, filtered, sorted query behind the bookings table. */
+    protected function dashboardBookingQuery(array $f)
+    {
         $query = $this->bookingModel::query()
-            ->with(['user:id,name,email,phone', 'listing:id,name,venue_id', 'venue:id,name', 'payments', 'promocode'])
-            ->latest('id');
+            ->with(['user:id,name,email,phone', 'listing:id,name,venue_id', 'venue:id,name,city_id,currency_override', 'payments', 'promocode']);
 
+        // Membership calendar blocks are reservations, not customer bookings.
         if (Schema::hasColumn('bookings', 'origin')) {
-            $query->where(function ($q) {
-                $q->whereNull('origin')->orWhere('origin', '!=', 'class_program');
+            $query->where(fn ($q) => $q->whereNull('origin')->orWhere('origin', '!=', 'class_program'));
+        }
+
+        $this->applyDashboardScope($query);
+        $this->applyDashboardFilters($query, $f);
+        $this->applyDashboardSort($query, $f['sort'], $f['sort_dir']);
+
+        return $query;
+    }
+
+    /**
+     * Who may see which rows. Venue scope covers provider ownership, jurisdiction and
+     * venue pins; listing pins narrow it further, mirroring the dashboard's own
+     * `assignedListingIds` check so the page and the API agree on the row count.
+     */
+    protected function applyDashboardScope($query): void
+    {
+        $user = auth()->user();
+        if (! $user) {
+            $query->whereRaw('1 = 0');
+
+            return;
+        }
+
+        AccessScope::applyVenue($query, 'venue_id', $user);
+
+        $listingIds = AccessScope::pinnedListingIds($user);
+        if ($listingIds) {
+            $query->whereIn('listing_id', $listingIds);
+        }
+    }
+
+    protected function applyDashboardFilters($query, array $f): void
+    {
+        if ($f['search'] !== '') {
+            $term = '%'.$f['search'].'%';
+            $query->where(function ($q) use ($term, $f) {
+                $q->whereHas('user', fn ($u) => $u->where('name', 'LIKE', $term))
+                    ->orWhereHas('listing', fn ($l) => $l->where('name', 'LIKE', $term))
+                    ->orWhereHas('venue', fn ($v) => $v->where('name', 'LIKE', $term))
+                    ->orWhere('booking_id', 'LIKE', $term);
+                // The table shows the numeric id, so an all-digits search matches it.
+                if (ctype_digit($f['search'])) {
+                    $q->orWhere('id', (int) $f['search']);
+                }
             });
         }
 
-        $user = auth()->user();
-        if ($user && ! $user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
-            $query = applyVenueFilter($query, 'venue_id');
+        if ($f['status'])         { $query->whereIn('status', $f['status']); }
+        if ($f['payment_method']) { $query->whereIn('payment_method', $f['payment_method']); }
+        if ($f['listing_id'])     { $query->whereIn('listing_id', $f['listing_id']); }
+        if ($f['venue_id'])       { $query->whereIn('venue_id', $f['venue_id']); }
+
+        // The table shows fully_paid as "paid", payment_skipped as "skipped", and a
+        // refunded booking as "refunded" whatever its stored status — so the filter
+        // has to speak the same language the column does.
+        if ($f['payment_status']) {
+            $query->where(function ($q) use ($f) {
+                foreach ($f['payment_status'] as $s) {
+                    match ($s) {
+                        'paid'     => $q->orWhere(fn ($w) => $w->where('payment_status', BookingPaymentStatus::FULLY_PAID)->whereNull('refunded_at')),
+                        'skipped'  => $q->orWhere(fn ($w) => $w->where('payment_status', BookingPaymentStatus::PAYMENT_SKIPPED)->whereNull('refunded_at')),
+                        'refunded' => $q->orWhereNotNull('refunded_at'),
+                        default    => $q->orWhere(fn ($w) => $w->where('payment_status', $s)->whereNull('refunded_at')),
+                    };
+                }
+            });
         }
 
-        $bookings = $query->get()->map(fn(Booking $b) => $this->mapDashboardBooking($b))->values();
+        // kind and channel are derived from `origin` (see the dashboard's
+        // bookingMeta.js); both translate to a set of raw origin values.
+        if ($f['kind'])    { $this->whereOrigin($query, $f['kind'], self::KIND_ORIGINS, ['customer_game', 'class_program']); }
+        if ($f['channel']) { $this->whereOrigin($query, $f['channel'], self::CHANNEL_ORIGINS, ['provider_site', 'manual_admin', 'manual', 'class_program']); }
 
-        return sendSuccess('Bookings fetched', array_merge($lookups, [
-            'bookings' => $bookings,
-        ]));
+        // Geography and currency are properties of the VENUE, so they resolve to a
+        // venue-id set once rather than joining on every row.
+        foreach ([['country_id', 'country'], ['city_id', 'city'], ['currency', 'currency']] as [$key, $kind]) {
+            if ($f[$key]) {
+                $query->whereIn('venue_id', $this->venueIdsBy($kind, $f[$key]));
+            }
+        }
+
+        if ($f['date_from'] !== '')    { $query->whereDate('date', '>=', $f['date_from']); }
+        if ($f['date_to'] !== '')      { $query->whereDate('date', '<=', $f['date_to']); }
+        if ($f['created_from'] !== '') { $query->whereDate('created_at', '>=', $f['created_from']); }
+        if ($f['created_to'] !== '')   { $query->whereDate('created_at', '<=', $f['created_to']); }
+    }
+
+    /** venue/event/membership and marketplace/provider_site/manual/auto → raw origins. */
+    private const KIND_ORIGINS = [
+        'event'      => ['customer_game'],
+        'membership' => ['class_program'],
+    ];
+
+    private const CHANNEL_ORIGINS = [
+        'provider_site' => ['provider_site'],
+        'manual'        => ['manual_admin', 'manual'],
+        'auto'          => ['class_program'],
+    ];
+
+    /**
+     * Some values are "everything except the named origins" — `venue` is anything that
+     * is not an event or a membership block, and `marketplace` is anything not from a
+     * provider site, staff or a schedule. NULL origin counts as those defaults, which
+     * a plain NOT IN would silently drop.
+     */
+    protected function whereOrigin($query, array $selected, array $map, array $namedOrigins): void
+    {
+        $query->where(function ($q) use ($selected, $map, $namedOrigins) {
+            foreach ($selected as $value) {
+                if (isset($map[$value])) {
+                    $q->orWhereIn('origin', $map[$value]);
+                } else {
+                    // the catch-all member of this dimension
+                    $q->orWhere(fn ($w) => $w->whereNull('origin')->orWhereNotIn('origin', $namedOrigins));
+                }
+            }
+        });
+    }
+
+    protected function applyDashboardSort($query, string $sort, string $dir): void
+    {
+        match ($sort) {
+            'booking_date'   => $query->orderBy('date', $dir)->orderBy('start_time', $dir),
+            'total'          => $query->orderBy('total_price', $dir),
+            'booking_status' => $query->orderBy('status', $dir),
+            'payment_status' => $query->orderBy('payment_status', $dir),
+            // Sorting by a related name needs the join the table's column implies.
+            'customer'       => $query->leftJoin('users', 'users.id', '=', 'bookings.user_id')
+                                    ->orderBy('users.name', $dir)->select('bookings.*'),
+            'listing'        => $query->leftJoin('listings', 'listings.id', '=', 'bookings.listing_id')
+                                    ->orderBy('listings.name', $dir)->select('bookings.*'),
+            default          => $query->orderBy('created_at', $dir),
+        };
+        // A stable tiebreak, so paging never repeats or skips a row.
+        $query->orderBy('bookings.id', $dir);
+    }
+
+    /**
+     * Venue ids matching a geography or currency filter.
+     *
+     * A booking's country, city and currency all come from its venue, so resolving
+     * them to a venue-id set once keeps the bookings query a plain whereIn instead of
+     * a three-table join per row. Venue counts are small; booking counts are not.
+     *
+     * @return array<int, int>
+     */
+    protected function venueIdsBy(string $kind, array $values): array
+    {
+        $venues = $this->scopedVenues();
+
+        return $venues->filter(function ($v) use ($kind, $values) {
+            $actual = match ($kind) {
+                'country'  => $this->venueCountryId($v),
+                'city'     => $v->city_id,
+                'currency' => $this->venueCurrency($v),
+                default    => null,
+            };
+
+            return $actual !== null && in_array((string) $actual, array_map('strval', $values), true);
+        })->pluck('id')->map(fn ($i) => (int) $i)->values()->all()
+            // No match must return "nothing", not "everything".
+            ?: [0];
+    }
+
+    /** Venues in the caller's scope, loaded once per request. */
+    protected function scopedVenues()
+    {
+        if ($this->scopedVenuesCache !== null) {
+            return $this->scopedVenuesCache;
+        }
+
+        $cols = ['id', 'name', 'status'];
+        foreach (['city_id', 'currency_override', 'owner_user_id'] as $c) {
+            if (Schema::hasColumn('venues', $c)) {
+                $cols[] = $c;
+            }
+        }
+
+        $q = Venue::query();
+        AccessScope::applyVenue($q, 'id', auth()->user());
+
+        return $this->scopedVenuesCache = $q->get($cols);
+    }
+
+    protected ?\Illuminate\Support\Collection $scopedVenuesCache = null;
+    protected ?array $cityCountryCache = null;
+    protected ?array $countryCurrencyCache = null;
+
+    protected function venueCountryId($venue): ?int
+    {
+        if ($this->cityCountryCache === null) {
+            $ids = $this->scopedVenues()->pluck('city_id')->filter()->unique();
+            $this->cityCountryCache = $ids->isEmpty() || ! class_exists(City::class)
+                ? []
+                : City::whereIn('id', $ids)->pluck('country_id', 'id')->map(fn ($c) => (int) $c)->all();
+        }
+
+        return $venue->city_id ? ($this->cityCountryCache[$venue->city_id] ?? null) : null;
+    }
+
+    /** venue override → the country's currency → AED, matching the dashboard exactly. */
+    protected function venueCurrency($venue): string
+    {
+        if (! empty($venue->currency_override)) {
+            return $venue->currency_override;
+        }
+
+        if ($this->countryCurrencyCache === null) {
+            $this->countryCurrencyCache = class_exists(Country::class)
+                ? Country::with('currency')->get()->mapWithKeys(fn ($c) => [(int) $c->id => ($c->currency?->code ?: 'AED')])->all()
+                : [];
+        }
+
+        $countryId = $this->venueCountryId($venue);
+
+        return $countryId ? ($this->countryCurrencyCache[$countryId] ?? 'AED') : 'AED';
+    }
+
+    /**
+     * Country / city ids present across the caller's scope, so the geo dropdowns list
+     * exactly what they could match and nothing more.
+     *
+     * @return array<int, string>
+     */
+    protected function scopedGeoIds(string $kind): array
+    {
+        return $this->scopedVenues()
+            ->map(fn ($v) => $kind === 'country' ? $this->venueCountryId($v) : $v->city_id)
+            ->filter()->unique()->values()
+            ->map(fn ($id) => (string) $id)
+            ->all();
+    }
+
+    /** Currencies present across the caller's whole scope — stable while paging. */
+    protected function scopedCurrencyOptions(): array
+    {
+        return $this->scopedVenues()
+            ->map(fn ($v) => $this->venueCurrency($v))
+            ->unique()->sort()->values()
+            ->map(fn ($c) => ['value' => $c, 'label' => $c])
+            ->all();
+    }
+
+    /**
+     * Map a page of bookings, adding the names, currency and geography the table shows
+     * and filters on. Without these the page would still need the full customer,
+     * listing and venue lists just to render a row.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function mapDashboardBookings($rows): array
+    {
+        $venues = $this->scopedVenues()->keyBy('id');
+
+        return collect($rows)->map(function (Booking $b) use ($venues) {
+            $venue = $b->relationLoaded('venue') ? $b->venue : ($venues[$b->venue_id] ?? null);
+
+            return array_merge($this->mapDashboardBooking($b), [
+                'customer_name'  => $b->user?->name,
+                'customer_email' => $b->user?->email,
+                'customer_phone' => $b->user?->phone,
+                'listing_name'   => $b->listing?->name,
+                'location_name'  => $venue?->name,
+                'currency'       => $venue ? $this->venueCurrency($venue) : 'AED',
+                'city_id'        => $venue?->city_id ? (string) $venue->city_id : null,
+                'country_id'     => $venue && $this->venueCountryId($venue) ? (string) $this->venueCountryId($venue) : null,
+            ]);
+        })->values()->all();
     }
 
     public function crm($id)
@@ -4253,7 +4601,15 @@ class BookingService
             ->values();
     }
 
-    protected function dashboardLookups(): array
+    /**
+     * Picker data for the bookings screens.
+     *
+     * `$withCustomers` is OFF by default and deliberately so: the customer list is
+     * 15k+ rows and made up 99% of this endpoint's payload, while the table only ever
+     * needed it to print a name — which the booking row now carries itself. The
+     * new-booking drawer and the detail modal still ask for it explicitly.
+     */
+    protected function dashboardLookups(bool $withCustomers = false): array
     {
         $venueCols = ['id', 'name', 'status'];
         foreach (['city_id', 'country_id', 'created_by', 'currency_override'] as $col) {
@@ -4272,7 +4628,7 @@ class BookingService
             ->map(fn(Listing $l) => $this->mapDashboardListing($l))
             ->values();
 
-        $customers = User::role('customer')
+        $customers = ! $withCustomers ? collect() : User::role('customer')
             ->orderBy('name')
             ->get(['id', 'name', 'email', 'phone', 'status'])
             ->map(fn(User $u) => [
