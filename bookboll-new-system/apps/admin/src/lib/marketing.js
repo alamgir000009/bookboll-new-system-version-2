@@ -5,8 +5,11 @@
  * customers are emailable from the admin Customers page. Every customer has a stable
  * `unsubscribe_token` so each marketing email carries a one-click unsubscribe link.
  *
- * Delivery is "record & preview": we store the campaign + render the exact compliant HTML
- * (sender disclaimer + unsubscribe button). Swap `recordCampaign` for a real ESP later.
+ * Campaigns are REALLY delivered: sendCampaignEmails() hands the backend the customers
+ * you selected, and the server decides who may actually be mailed — narrowed to your own
+ * customers and to those who opted in — then sends through your own SMTP sender on a
+ * queue. Each recipient's copy is rendered with THEIR unsubscribe token, so one person's
+ * opt-out never affects anyone else.
  *
  * The ledger lives on our own backend (marketing_campaigns). The OWNER of a campaign is
  * decided server-side from the caller, so a provider cannot file a send under Bookboll's
@@ -85,6 +88,33 @@ export async function deleteCampaign(id) {
     const res = await apiFetch(`/admin/marketing/campaigns/${encodeURIComponent(id)}`, { method: 'DELETE' })
     return { ok: !!res.success }
   } catch { return { ok: false } }
+}
+
+/**
+ * Send a campaign for real. `customerIds` is what the admin SELECTED; the server may
+ * queue fewer (strangers to this business, or customers who never opted in) and reports
+ * the true number back, so the toast can tell the truth rather than the intention.
+ */
+export async function sendCampaignEmails({ subject, body, customerIds = [], senderLabel = '', audience = '' } = {}) {
+  const res = await apiFetch('/admin/marketing/campaigns/send', {
+    method: 'POST',
+    body: { subject, body, customer_ids: customerIds, sender_label: senderLabel || undefined, audience: audience || undefined },
+  })
+  if (!res.success) {
+    const first = Object.values(res.errors || {}).flat().find(v => typeof v === 'string')
+    return { error: res.message || first || 'Could not send the campaign.' }
+  }
+  return {
+    campaign: res.data?.campaign || null,
+    queued: res.data?.queued || 0,
+    requested: res.data?.requested || 0,
+  }
+}
+
+/** Delivery progress for a campaign (queued → sending → sent). */
+export async function loadCampaignStatus(id) {
+  const res = await apiFetch(`/admin/marketing/campaigns/${encodeURIComponent(id)}`)
+  return res.success ? (res.data?.campaign || null) : null
 }
 
 /** The caller's own campaign history, newest first. */

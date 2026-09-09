@@ -4,10 +4,11 @@
  * Before this, those templates were preview-only (nothing dispatched them), so toggling
  * a channel produced no real message.
  *
- * TRANSPORTS: WhatsApp is the only REAL transport in this build (the send-whatsapp edge
- * function — Bookboll's number, same one events + the marketing composer use). Email + SMS
- * have no live gateway here (SMTP send is simulated), so they are no-ops — wire them into
- * deliverEmail/deliverSms when a real gateway exists.
+ * TRANSPORTS: WhatsApp and EMAIL are real. WhatsApp rides Bookboll's own number (service
+ * messages are the platform's, not a provider's marketing sender). Email goes out through
+ * the provider's own SMTP when they connected one and asked for it to carry automated
+ * mail, otherwise Bookboll's — either way it is delivered, never dropped. SMS still has no
+ * gateway; wire deliverSms when one exists.
  *
  * RULES:
  *  - FIRE-AND-FORGET: a messaging hiccup must never break the user's action. Every send is
@@ -47,13 +48,13 @@ async function resolvePhone({ phone } = {}) {
   if (normalizeWaNumber(phone)) return phone
   return ''
 }
-/** The provider/owner's own phone — recipient for the "provider" audience. */
-async function resolveOwnerPhone(ownerId) {
-  if (!ownerId) return ''
+/** The provider/owner's own contact details — recipient for the "provider" audience. */
+async function resolveOwnerContact(ownerId) {
+  if (!ownerId) return { phone: '', email: '' }
   try {
     const res = await apiFetch('/admin/notifications/owner-phone', { query: { owner_id: ownerId } })
-    return res.data?.phone || ''
-  } catch { return '' }
+    return { phone: res.data?.phone || '', email: res.data?.email || '' }
+  } catch { return { phone: '', email: '' } }
 }
 
 /** Replace [token] placeholders with real values; unknown/empty tokens collapse to ''. */
@@ -71,8 +72,17 @@ async function deliverWhatsapp(to, body) {
   if (res?.ok) return
   await invokeWhatsapp({ action: 'send_template', ownerId: null, to: num, template: FALLBACK_TEMPLATE, variables: [body, ''], bodyText: body })
 }
-// eslint-disable-next-line no-unused-vars
-function deliverEmail(_to, _subject, _body) { /* no live SMTP gateway in this build */ }
+/**
+ * A service message — booking confirmations, reminders, receipts. Transactional, so it
+ * carries no unsubscribe link and is not gated on marketing consent. The sender is
+ * resolved server-side from the caller's business.
+ */
+async function deliverEmail(to, subject, body) {
+  if (!to || !subject || !body) return
+  try {
+    await apiFetch('/admin/notifications/email', { method: 'POST', body: { to, subject, body } })
+  } catch { /* fire-and-forget: a messaging hiccup never breaks the user's action */ }
+}
 // eslint-disable-next-line no-unused-vars
 function deliverSms(_to, _body) { /* no live SMS gateway in this build */ }
 
@@ -96,14 +106,16 @@ export async function sendCustomerNotification(eventKey, { ownerId, phone, email
       if (tpl.email?.on && email) deliverEmail(email, render(tpl.email.subject, data), render(tpl.email.body, data))
       if (tpl.sms?.on && phone) deliverSms(phone, render(tpl.sms.body, data))
     }
-    // Provider audience → the business owner (admin_users.phone), on Bookboll's number.
+    // Provider audience → the business owner. WhatsApp rides Bookboll's number; email
+    // uses the same sender resolution as every other automated message.
     const prov = ev.provider
-    if (prov && ownerId) {
-      if (prov.whatsapp?.on) {
-        const to = await resolveOwnerPhone(ownerId)
-        if (to) deliverWhatsapp(to, render(prov.whatsapp.body, data))
+    if (prov && ownerId && (prov.whatsapp?.on || prov.email?.on || prov.sms?.on)) {
+      const owner = await resolveOwnerContact(ownerId)
+      if (prov.whatsapp?.on && owner.phone) deliverWhatsapp(owner.phone, render(prov.whatsapp.body, data))
+      if (prov.email?.on && owner.email) {
+        deliverEmail(owner.email, render(prov.email.subject, data), render(prov.email.body, data))
       }
-      // provider email/sms are no-ops (no live gateway) — resolved by email lookup when wired.
+      if (prov.sms?.on && owner.phone) deliverSms(owner.phone, render(prov.sms.body, data))
     }
   } catch { /* never let a notification break the user's action */ }
 }

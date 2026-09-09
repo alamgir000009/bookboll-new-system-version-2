@@ -12,7 +12,7 @@ import WhatsappIcon from '../components/WhatsappIcon.vue'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { CAP } from '../lib/permissions.js'
-import { marketingEmailHtml, recordCampaign, deleteCampaign, unsubscribeUrl } from '../lib/marketing.js'
+import { marketingEmailHtml, recordCampaign, deleteCampaign, sendCampaignEmails, unsubscribeUrl } from '../lib/marketing.js'
 import { useProviderSmtp } from '../lib/emailSender.js'
 import { loadWhatsappConfig, isWhatsappConfigured, invokeWhatsapp, normalizeWaNumber, renderTemplateBody, personalizeVariable, queueWaCampaign, processWaQueue, createWaTemplate, slugifyTemplateName } from '../lib/whatsapp.js'
 import { fmt12 } from '../lib/slots.js'
@@ -624,24 +624,26 @@ async function sendCampaign() {
     return
   }
   sendingCampaign.value = true
-  const res = await recordCampaign({
-    ownerUserId: emailSender.value.ownerUserId,
-    createdBy: currentUser.value?.id || null,
-    senderLabel: emailSender.value.label,
-    channel: 'email',
-    audience: `Opted-in email · ${recipients.length} recipient${recipients.length !== 1 ? 's' : ''}`,
+  // The server re-checks both consent and whether each customer is actually yours, so
+  // it may queue fewer than were selected — report what it really queued.
+  const res = await sendCampaignEmails({
     subject: emailForm.value.subject.trim(),
     body: emailForm.value.body,
-    html: previewHtml.value,
-    recipientCount: recipients.length,
+    customerIds: recipients.map(c => c.id),
+    senderLabel: emailSender.value.label,
+    audience: `Opted-in email · ${recipients.length} selected`,
   })
   sendingCampaign.value = false
-  if (res.error) {
-    pushToast('Could not record campaign: ' + (res.error.message || res.error) + ' (has the marketing migration been run?)', 'error')
-    return
-  }
+  if (res.error) { pushToast(res.error, 'error'); return }
+
   campaignSent.value = true
-  pushToast(`Campaign recorded for ${recipients.length} opted-in customer${recipients.length !== 1 ? 's' : ''}.`, 'success')
+  const dropped = res.requested - res.queued
+  pushToast(
+    dropped > 0
+      ? `Sending to ${res.queued} customer${res.queued === 1 ? '' : 's'} — ${dropped} skipped (not your customer, or not opted in).`
+      : `Sending to ${res.queued} opted-in customer${res.queued === 1 ? '' : 's'} — delivery is under way.`,
+    'success',
+  )
 }
 
 // ── Bulk WhatsApp campaign (consent-gated, template-based, REAL sends) ─────────
