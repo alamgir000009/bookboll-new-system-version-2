@@ -11,7 +11,7 @@
  *   - Google Maps share-link field that can auto-drop the pin from the link.
  *   - Address is optional.
  *   - Multiple images via drag-and-drop / file picker with client-side
- *     compression (imgbb), replacing the single photo-URL text field.
+ *     compression, stored on our own backend, replacing the single photo-URL field.
  *
  * Props : open (Boolean), editing (location row | null)
  * Emits : close, saved(savedRow)
@@ -33,6 +33,7 @@ import {
   X, MapPin, LocateFixed, Check, Clock, DollarSign, Building2,
   Upload, Trash2, Star, TriangleAlert, Loader, Image as ImageIcon, Map as MapIcon, ChevronDown,
 } from 'lucide-vue-next'
+import { uploadImage } from '../lib/imageUpload.js'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -434,71 +435,17 @@ function applyMapsLink() {
   }
 }
 
-// ΓöÇΓöÇ Multi-image upload (compress ΓåÆ imgbb) ΓöÇΓöÇ
-const uploading = ref(false)
-const imgError = ref('')
-const fileInput = ref(null)
-const dropActive = ref(false)
-
-async function compressImage(file, maxBytes = 3 * 1024 * 1024) {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-      let { width, height } = img
-      const canvas = document.createElement('canvas')
-      let quality = 0.92
-      const tryCompress = () => {
-        canvas.width = width
-        canvas.height = height
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height)
-        canvas.toBlob(blob => {
-          if (!blob) { reject(new Error('Canvas compression failed')); return }
-          if (blob.size <= maxBytes || (width <= 400 && quality <= 0.5)) resolve(blob)
-          else if (quality > 0.5) { quality = Math.max(quality - 0.12, 0.5); tryCompress() }
-          else { width = Math.round(width * 0.75); height = Math.round(height * 0.75); quality = 0.82; tryCompress() }
-        }, 'image/jpeg', quality)
-      }
-      tryCompress()
-    }
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not load image')) }
-    img.src = url
-  })
-}
-
-async function uploadOne(file, apiKey) {
-  const compressed = await compressImage(file)
-  const base64 = await new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result.split(',')[1])
-    reader.onerror = reject
-    reader.readAsDataURL(compressed)
-  })
-  const body = new FormData()
-  body.append('key', apiKey)
-  body.append('image', base64)
-  body.append('name', file.name.replace(/\.[^.]+$/, ''))
-  const res = await fetch('https://api.imgbb.com/1/upload', { method: 'POST', body })
-  const json = await res.json()
-  if (!json.success) throw new Error(json.error?.message || 'Upload failed')
-  return json.data.url
-}
-
 async function handleFiles(files) {
   imgError.value = ''
   const list = Array.from(files).filter(f => f.type.startsWith('image/'))
   if (!list.length) { imgError.value = 'Please choose image files.'; return }
-  const apiKey = import.meta.env.VITE_IMGBB_KEY
-  if (!apiKey) { imgError.value = 'Image upload is not configured ΓÇö add VITE_IMGBB_KEY to your .env file.'; return }
   uploading.value = true
   try {
     for (const f of list) {
-      const u = await uploadOne(f, apiKey)
-      if (u) form.value.photos.push(u)
+      const { url, error } = await uploadImage(f, 'venues')
+      if (error) { imgError.value = error; break }
+      if (url) form.value.photos.push(url)
     }
-  } catch (e) {
-    imgError.value = e.message || 'Upload failed. Try again.'
   } finally {
     uploading.value = false
   }

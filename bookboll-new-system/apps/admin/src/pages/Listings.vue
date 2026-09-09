@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { loadReferenceData } from '../lib/referenceData.js'
+import { uploadImage } from '../lib/imageUpload.js'
 import {
   fetchPaymentAccount, createPaymentAccount, updatePaymentAccount, deletePaymentAccount,
   fetchStorefrontSort, saveStorefrontSortValue,
@@ -1488,44 +1489,7 @@ const imgFileInput = ref(null)
 
 /** Compress an image File to under maxBytes using the Canvas API.
  *  Returns a Blob (image/jpeg). */
-async function compressImage(file, maxBytes = 3 * 1024 * 1024) {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-      let { width, height } = img
-      const canvas = document.createElement('canvas')
-      let quality = 0.92
-      const tryCompress = () => {
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(img, 0, 0, width, height)
-        canvas.toBlob(blob => {
-          if (!blob) { reject(new Error('Canvas compression failed')); return }
-          if (blob.size <= maxBytes || (width <= 400 && quality <= 0.5)) {
-            resolve(blob)
-          } else if (quality > 0.5) {
-            quality = Math.max(quality - 0.12, 0.5)
-            tryCompress()
-          } else {
-            // Scale down dimensions
-            width = Math.round(width * 0.75)
-            height = Math.round(height * 0.75)
-            quality = 0.82
-            tryCompress()
-          }
-        }, 'image/jpeg', quality)
-      }
-      tryCompress()
-    }
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not load image')) }
-    img.src = url
-  })
-}
-
-// Upload one or more images (compress → imgbb) and append them to the gallery.
+// Upload one or more images (compress → our own storage) and append to the gallery.
 // The first image in photos[] is the cover; photo_url mirrors it for back-compat.
 async function addListingImages(files) {
   const list = [...(files || [])].filter(f => f && f.type.startsWith('image/'))
@@ -1533,16 +1497,13 @@ async function addListingImages(files) {
     imageUploadError.value = 'Please select valid image files.'
     return
   }
-  if (!import.meta.env.VITE_IMGBB_KEY) {
-    imageUploadError.value = 'Image upload not configured — add VITE_IMGBB_KEY to your .env file.'
-    return
-  }
   imageUploading.value = true
   imageUploadError.value = ''
   try {
     for (const f of list) {
       try {
-        const url = await uploadToImgbb(f)
+        const { url, error } = await uploadImage(f, 'listings')
+        if (error) throw new Error(error)
         form.value.photos = [...(form.value.photos || []), url]
       } catch (err) {
         imageUploadError.value = err.message || 'One image failed to upload.'
@@ -1574,21 +1535,6 @@ function onImgDrop(e) {
   if (files && files.length) addListingImages(files)
 }
 
-// Shared imgbb uploader (used by the add-on image field; compress → base64 → POST).
-async function uploadToImgbb(file) {
-  const apiKey = import.meta.env.VITE_IMGBB_KEY
-  if (!apiKey) throw new Error('Image upload not configured — add VITE_IMGBB_KEY to your .env file.')
-  const compressed = await compressImage(file)
-  const base64 = await new Promise((resolve, reject) => {
-    const r = new FileReader(); r.onload = () => resolve(r.result.split(',')[1]); r.onerror = reject; r.readAsDataURL(compressed)
-  })
-  const body = new FormData()
-  body.append('key', apiKey); body.append('image', base64); body.append('name', file.name.replace(/\.[^.]+$/, ''))
-  const res = await fetch('https://api.imgbb.com/1/upload', { method: 'POST', body })
-  const json = await res.json()
-  if (!json.success) throw new Error(json.error?.message || 'Upload failed')
-  return json.data.url
-}
 // Add-on image upload → writes to newAddonForm.image_url
 const addonImgUploading = ref(false)
 const addonImgError = ref('')
@@ -1597,7 +1543,11 @@ const addonFileInput = ref(null)
 async function handleAddonImageUpload(file) {
   if (!file || !file.type.startsWith('image/')) { addonImgError.value = 'Please select a valid image file.'; return }
   addonImgUploading.value = true; addonImgError.value = ''
-  try { newAddonForm.value.image_url = await uploadToImgbb(file) }
+  try {
+    const { url, error } = await uploadImage(file, 'listings')
+    if (error) throw new Error(error)
+    newAddonForm.value.image_url = url
+  }
   catch (err) { addonImgError.value = err.message || 'Upload failed. Try again.' }
   finally { addonImgUploading.value = false }
 }

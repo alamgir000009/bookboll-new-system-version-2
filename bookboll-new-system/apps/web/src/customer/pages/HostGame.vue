@@ -74,7 +74,7 @@ const f = ref({
 })
 const hostWaiver = ref(false)   // must agree to the liability waiver before publishing
 
-// ── Event photos (optional): drop/pick → compress → imgbb. First photo = cover. ──
+// ── Event photos (optional): drop/pick → compress → our own storage. First = cover. ──
 const imgUploading = ref(false)
 const imgError = ref('')
 const dropActive = ref(false)
@@ -85,7 +85,7 @@ async function addGameImages(files) {
   if (!list.length) return
   imgError.value = ''; imgUploading.value = true
   for (const file of list) {
-    const res = await uploadImage(file)
+    const res = await uploadImage(file, 'games')
     if (res.error) { imgError.value = res.error; break }
     f.value.images.push(res.url)
   }

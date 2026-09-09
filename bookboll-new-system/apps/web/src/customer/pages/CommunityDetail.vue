@@ -97,7 +97,7 @@ async function onPostFiles(e) {
   if (!files.length) return
   postUploading.value = true
   for (const f of files) {
-    const r = await uploadImage(f)
+    const r = await uploadImage(f, 'communities')
     if (r.url) postPhotos.value.push(r.url)
     else if (r.error) pushToast(r.error, 'error')
   }
@@ -163,7 +163,7 @@ async function onCoverPick(e) {
   const f = (e.target.files || [])[0]
   if (!f) return
   coverUploading.value = true
-  const r = await uploadImage(f)
+  const r = await uploadImage(f, 'communities')
   coverUploading.value = false
   if (r.error) { pushToast(r.error, 'error'); return }
   await updateCommunity(c.value.id, { cover_image: r.url })
@@ -177,7 +177,7 @@ async function onAvatarPick(e) {
   const f = (e.target.files || [])[0]
   if (!f) return
   avatarUploading.value = true
-  const r = await uploadImage(f)
+  const r = await uploadImage(f, 'communities')
   avatarUploading.value = false
   if (r.error) { pushToast(r.error, 'error'); return }
   const res = await updateCommunity(c.value.id, { avatar_image: r.url })

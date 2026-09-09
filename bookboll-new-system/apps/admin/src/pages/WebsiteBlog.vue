@@ -78,7 +78,7 @@ const preview = computed(() => sanitizeHtml(form.value.body))
 async function onCover(e) {
   const file = e.target.files?.[0]; if (!file) return
   imgBusy.value = true; formErr.value = ''
-  const res = await uploadImage(file)
+  const res = await uploadImage(file, 'blog')
   imgBusy.value = false
   if (res.error) { formErr.value = res.error; return }
   form.value.cover_image = res.url

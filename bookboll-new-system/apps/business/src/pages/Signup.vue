@@ -141,7 +141,7 @@ async function onLogo(e) {
   if (!file) return
   err2.value = ''
   logoBusy.value = true
-  const r = await uploadImage(file)
+  const r = await uploadImage(file, 'business')
   logoBusy.value = false
   if (r.error) { err2.value = r.error; return }
   logoUrl.value = r.url

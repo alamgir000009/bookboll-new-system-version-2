@@ -33,7 +33,7 @@ async function onCoverPick(e) {
   const file = (e.target.files || [])[0]
   if (!file) return
   coverUploading.value = true
-  const r = await uploadImage(file)
+  const r = await uploadImage(file, 'communities')
   coverUploading.value = false
   if (r.error) { pushToast(r.error, 'error'); return }
   f.value.cover_image = r.url
@@ -46,7 +46,7 @@ async function onAvatarPick(e) {
   const file = (e.target.files || [])[0]
   if (!file) return
   avatarUploading.value = true
-  const r = await uploadImage(file)
+  const r = await uploadImage(file, 'communities')
   avatarUploading.value = false
   if (r.error) { pushToast(r.error, 'error'); return }
   f.value.avatar_image = r.url

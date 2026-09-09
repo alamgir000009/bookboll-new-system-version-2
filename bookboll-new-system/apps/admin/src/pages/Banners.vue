@@ -165,7 +165,7 @@ function moveBanner(i, dir) {
 async function onBannerImage(e, b) {
   const file = e.target.files?.[0]; if (!file) return
   bannerUploading.value = b.id
-  const r = await uploadImage(file)
+  const r = await uploadImage(file, 'banners')
   bannerUploading.value = ''
   if (r.error) { toast.error(r.error); return }
   b.image = r.url
@@ -173,7 +173,7 @@ async function onBannerImage(e, b) {
 async function onBannerIcon(e, b) {
   const file = e.target.files?.[0]; if (!file) return
   bannerIconUploading.value = b.id
-  const r = await uploadImage(file)
+  const r = await uploadImage(file, 'banners')
   bannerIconUploading.value = ''
   if (r.error) { toast.error(r.error); return }
   b.icon = r.url
@@ -366,7 +366,7 @@ async function save() {
               <button v-if="b.bg" class="wl-btn wl-btn-ghost" @click="b.bg = ''">Clear</button>
             </div>
           </div>
-          <div v-if="!imageUploadConfigured()" class="bn-warn">Image upload isn’t configured (VITE_IMGBB_KEY) — use a colour, or add the key.</div>
+          <div v-if="!imageUploadConfigured()" class="bn-warn">Image upload isn’t available right now — use a colour, or try again.</div>
         </div>
 
         <div class="wl-field">

@@ -46,17 +46,26 @@ function fillFromCustomer() {
   avatarUrl.value = c.avatar_url || ''
 }
 
+let loadInFlight = false
 async function load() {
   if (!signedIn.value) { loading.value = false; loadError.value = ''; return }
+  if (loadInFlight) return          // never let two loads overlap
+  loadInFlight = true
   loading.value = true
   loadError.value = ''
   const res = await loadCustomerAccount()
   if (res.error) loadError.value = res.error
   fillFromCustomer()
   loading.value = false
+  loadInFlight = false
 }
 onMounted(load)
-watch(() => [customer.value?.id, signedIn.value], load)
+// Watch the two values SEPARATELY. A getter returning a fresh array is a new
+// object every evaluation, so Vue always sees it as changed — and because load()
+// replaces customer.value, that re-triggered itself in an endless loop of
+// /customer/profile requests. Element-wise sources compare by value, so a reload
+// that yields the same id fires nothing.
+watch([() => customer.value?.id, signedIn], load)
 
 function pickAvatar() { avatarInput.value?.click() }
 async function onAvatarFile(e) {
@@ -73,7 +82,7 @@ async function onGalleryFiles(e) {
   const files = Array.from(e.target.files || []); if (!files.length) return
   imgErr.value = ''; galBusy.value = true
   for (const file of files) {
-    const res = await uploadImage(file)
+    const res = await uploadImage(file, 'avatars')
     if (res.error) { imgErr.value = res.error; break }
     edit.value.photos.push(res.url)
   }

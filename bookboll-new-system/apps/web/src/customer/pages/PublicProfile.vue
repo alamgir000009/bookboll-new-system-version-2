@@ -150,7 +150,7 @@ async function onPostFiles(e) {
   const files = Array.from(e.target.files || []); if (!files.length) return
   postErr.value = ''; postBusy.value = true
   for (const file of files) {
-    const res = await uploadImage(file)
+    const res = await uploadImage(file, 'avatars')
     if (res.error) { postErr.value = res.error; break }
     postPhotos.value.push(res.url)
   }
@@ -183,7 +183,7 @@ function pickAvatar() { avatarInput.value?.click() }
 async function onAvatarFile(e) {
   const file = e.target.files?.[0]; if (!file) return
   editErr.value = ''; avatarBusy.value = true
-  const res = await uploadImage(file); avatarBusy.value = false
+  const res = await uploadImage(file, 'avatars'); avatarBusy.value = false
   if (avatarInput.value) avatarInput.value.value = ''
   if (res.error) { editErr.value = res.error; return }
   profile.value.avatar = res.url; await persist()
@@ -192,7 +192,7 @@ function pickPhotos() { galInput.value?.click() }
 async function onPhotoFiles(e) {
   const files = Array.from(e.target.files || []); if (!files.length) return
   editErr.value = ''; galBusy.value = true
-  for (const file of files) { const res = await uploadImage(file); if (res.error) { editErr.value = res.error; break } profile.value.photos.push(res.url) }
+  for (const file of files) { const res = await uploadImage(file, 'avatars'); if (res.error) { editErr.value = res.error; break } profile.value.photos.push(res.url) }
   galBusy.value = false
   if (galInput.value) galInput.value.value = ''
   await persist()

@@ -696,7 +696,7 @@ async function openDuplicateProgram(p) {
   registerDraftSaver(() => saveFormDraft(programDraftKey(), programDraftSnapshot()))
 }
 
-/* images management — upload (auto-compress → imgbb), with a URL paste fallback */
+/* images management — upload (auto-compress → our own storage), URL paste fallback */
 const newImageUrl = ref('')
 const imgUploading = ref(false)
 const imgError = ref('')
@@ -709,7 +709,7 @@ async function addProgramImages(files) {
   if (!Array.isArray(pgForm.value.images)) pgForm.value.images = []
   imgUploading.value = true
   for (const f of list) {
-    const r = await uploadImage(f)
+    const r = await uploadImage(f, 'programs')
     if (r.error) { imgError.value = r.error; break }
     pgForm.value.images.push(r.url)
   }

@@ -184,7 +184,7 @@ function formatApiError(res, fallback) {
 }
 
 function mapLaravelUserToCustomer(user, preferences = {}) {
-  const marketingEmail = !!(preferences?.notifications?.marketing_emails)
+  const notif = preferences?.notifications || {}
   return {
     id: user?.uuid || user?.id || '',
     full_name: user?.name || '',
@@ -194,7 +194,9 @@ function mapLaravelUserToCustomer(user, preferences = {}) {
     bio: user?.bio || '',
     photos: Array.isArray(user?.photos) ? user.photos.filter(Boolean) : [],
     is_private: user?.is_private === true,
-    marketing_email: marketingEmail,
+    marketing_email: !!notif.marketing_emails,
+    marketing_sms: !!notif.marketing_sms,
+    marketing_whatsapp: !!notif.marketing_whatsapp,
     laravel_user_id: user?.id || null,
   }
 }
@@ -208,13 +210,10 @@ export async function applyLaravelAuth(user, token, { marketing } = {}) {
   const merged = mapLaravelUserToCustomer(user, {
     notifications: {
       marketing_emails: marketing?.email,
+      marketing_sms: marketing?.sms,
+      marketing_whatsapp: marketing?.whatsapp,
     },
   })
-  if (marketing) {
-    merged.marketing_email = !!marketing.email
-    merged.marketing_sms = !!marketing.sms
-    merged.marketing_whatsapp = !!marketing.whatsapp
-  }
   persistCustomer(merged)
   clearCustomerLoyaltyCache()
   return { customer: customer.value, user }
@@ -313,7 +312,15 @@ export async function updateCustomerProfile(patch) {
     const user = res.data?.user || {}
     persistCustomer({
       ...(customer.value || {}),
-      ...mapLaravelUserToCustomer(user, { notifications: { marketing_emails: customer.value?.marketing_email } }),
+      // This endpoint does not touch consent, so carry what we already hold —
+      // mapping with only `marketing_emails` would silently clear the other two.
+      ...mapLaravelUserToCustomer(user, {
+        notifications: {
+          marketing_emails: customer.value?.marketing_email,
+          marketing_sms: customer.value?.marketing_sms,
+          marketing_whatsapp: customer.value?.marketing_whatsapp,
+        },
+      }),
       ...(patch.avatar_url ? { avatar_url: patch.avatar_url } : {}),
     })
     return { ok: true }
@@ -362,9 +369,18 @@ export async function saveCustomerAccount(patch) {
   })
   if (!profileRes.success) return { error: formatApiError(profileRes, 'Could not save your profile.') }
 
+  // All three consent channels go to the server. SMS and WhatsApp used to be written
+  // to local state only, so those toggles looked saved, survived until the next reload,
+  // and never made the customer reachable on either channel.
   const prefsRes = await apiFetch('/customer/preferences', {
     method: 'POST',
-    body: { notifications: { marketing_emails: !!patch.marketing_email } },
+    body: {
+      notifications: {
+        marketing_emails: !!patch.marketing_email,
+        marketing_sms: !!patch.marketing_sms,
+        marketing_whatsapp: !!patch.marketing_whatsapp,
+      },
+    },
   })
   if (!prefsRes.success) return { error: formatApiError(prefsRes, 'Profile saved, but marketing preferences could not be updated.') }
 

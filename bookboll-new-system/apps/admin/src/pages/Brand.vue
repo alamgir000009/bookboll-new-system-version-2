@@ -152,7 +152,7 @@ async function onHeroPick(e) {
   const file = e.target?.files?.[0]
   if (!file || !pageModal.value) return
   heroUploading.value = true
-  const { url, error } = await uploadImage(file)
+  const { url, error } = await uploadImage(file, 'brand')
   heroUploading.value = false
   if (error) { toast.error(error); return }
   pages.value[pageModal.value].hero_image = url
@@ -167,7 +167,7 @@ async function onHeroBgPick(e) {
   const file = e.target?.files?.[0]
   if (!file) return
   heroBgUploading.value = true
-  const { url, error } = await uploadImage(file)
+  const { url, error } = await uploadImage(file, 'brand')
   heroBgUploading.value = false
   if (error) { toast.error(error); return }
   pages.value.home.hero_image = url
@@ -292,7 +292,7 @@ async function onLogoPick(e) {
   const file = e.target?.files?.[0]
   if (!file) return
   uploading.value = true
-  const { url, error } = await uploadImage(file)
+  const { url, error } = await uploadImage(file, 'brand')
   uploading.value = false
   if (error) { toast.error(error); return }
   f.brand_logo_url = url
@@ -317,7 +317,7 @@ async function onAdminLogoPick(e) {
   const file = e.target?.files?.[0]
   if (!file) return
   adminUploading.value = true
-  const { url, error } = await uploadImage(file)
+  const { url, error } = await uploadImage(file, 'brand')
   adminUploading.value = false
   if (error) { toast.error(error); return }
   f.admin_logo_url = url
@@ -520,7 +520,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
               </button>
               <button v-if="f.brand_logo_url" class="wl-btn wl-btn-ghost" @click="f.brand_logo_url = ''">Remove</button>
               <input ref="logoInput" type="file" accept="image/*" hidden @change="onLogoPick" />
-              <div v-if="!imageUploadConfigured()" class="wl-warn">Image upload isn’t configured (VITE_IMGBB_KEY).</div>
+              <div v-if="!imageUploadConfigured()" class="wl-warn">Image upload isn’t available right now.</div>
             </div>
           </div>
 

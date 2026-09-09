@@ -3,12 +3,17 @@
  *
  *  • compressImage(file)  — canvas resize + JPEG re-encode, shrinking quality until the
  *    blob is under a target size. Keeps uploads small + fast.
- *  • uploadImage(file)    — compress, then upload to imgbb (VITE_IMGBB_KEY) and return a
- *    hosted URL. Returns { url } or { error } (never throws).
+ *  • uploadImage(file)    — compress, then upload to OUR OWN backend (POST /uploads/image)
+ *    and return the hosted URL. Returns { url } or { error } (never throws).
+ *
+ * Uploads used to go straight to imgbb from the browser, which put the API key in the
+ * bundle and the files on a third party we cannot back up or delete from. They now land
+ * on Laravel's public disk and are served from our own domain.
  *
  * Used by Listings, LocationModal, and ClassesSubscriptions so every image field is a
  * proper "pick/drop a file → auto-compress → upload" flow instead of pasting a URL.
  */
+import { apiFetch } from './api.js'
 
 export async function compressImage(file, { maxDim = 1600, maxBytes = 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
@@ -43,30 +48,28 @@ export async function compressImage(file, { maxDim = 1600, maxBytes = 1024 * 102
   })
 }
 
-// Is image upload available? (false when no imgbb key — callers can keep a URL fallback.)
-export const imageUploadConfigured = () => !!import.meta.env.VITE_IMGBB_KEY
+// Upload is part of the app now — it needs no third-party key, only a signed-in user.
+// Kept so callers that offer a "paste a URL instead" fallback keep their shape.
+export const imageUploadConfigured = () => true
 
-// Compress + upload one file. Returns { url } on success or { error } on failure.
-export async function uploadImage(file) {
+// Compress + upload one file to OUR backend. Returns { url } on success or { error }.
+// `folder` groups the file server-side (banners, blog, avatars…); unknown values fall
+// back to a misc bucket rather than being trusted as a path.
+export async function uploadImage(file, folder = '') {
   if (!file || !file.type?.startsWith('image/')) return { error: 'Please choose a valid image file.' }
-  const apiKey = import.meta.env.VITE_IMGBB_KEY
-  if (!apiKey) return { error: 'Image upload isn’t configured — add VITE_IMGBB_KEY to your .env (or paste a URL).' }
   try {
     const compressed = await compressImage(file)
-    const base64 = await new Promise((resolve, reject) => {
-      const r = new FileReader()
-      r.onload = () => resolve(String(r.result).split(',')[1])
-      r.onerror = reject
-      r.readAsDataURL(compressed)
-    })
     const body = new FormData()
-    body.append('key', apiKey)
-    body.append('image', base64)
-    body.append('name', (file.name || 'image').replace(/\.[^.]+$/, ''))
-    const res = await fetch('https://api.imgbb.com/1/upload', { method: 'POST', body })
-    const json = await res.json()
-    if (!json.success) throw new Error(json.error?.message || 'Upload failed')
-    return { url: json.data.url }
+    // Re-wrap the compressed blob as a file so the server sees a real filename/extension.
+    body.append('image', compressed, (file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg')
+    if (folder) body.append('folder', folder)
+    const res = await apiFetch('/uploads/image', { method: 'POST', body })
+    if (!res.success) {
+      const first = Object.values(res.errors || {}).flat().find(v => typeof v === 'string')
+      return { error: first || res.message || 'Upload failed. Try again.' }
+    }
+    const url = res.data?.url
+    return url ? { url } : { error: 'Upload failed. Try again.' }
   } catch (e) {
     return { error: e.message || 'Upload failed. Try again.' }
   }

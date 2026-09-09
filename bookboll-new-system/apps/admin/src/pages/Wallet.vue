@@ -989,7 +989,7 @@ function validateKyc() {
 async function onKycDocChange(ev) {
   const file = ev.target.files?.[0]; if (!file) return
   kycDocError.value = ''; kycDocUploading.value = true
-  const res = await uploadImage(file)
+  const res = await uploadImage(file, 'wallet')
   kycDocUploading.value = false
   if (res?.url) kycForm.value.doc_url = res.url
   else kycDocError.value = res?.error || 'Upload failed — try a smaller image.'

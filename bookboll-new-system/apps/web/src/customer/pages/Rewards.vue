@@ -53,7 +53,9 @@ async function load() {
   loading.value = false
 }
 onMounted(load)
-watch(() => [customer.value?.id, signedIn.value], load)
+// Separate sources so the callback compares by value: replacing customer.value
+// with an equivalent object must not trigger a refetch.
+watch([() => customer.value?.id, signedIn], load)
 </script>
 
 <template>
