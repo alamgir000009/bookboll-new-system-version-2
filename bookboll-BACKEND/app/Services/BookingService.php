@@ -549,8 +549,8 @@ class BookingService
 
     public function formData($request)
     {
-        $venues      = Venue::with(['schedules', 'listings' => fn($q) => $q->active()])->active()->get();
-        $listings    = Listing::with(['schedules', 'addOns' => fn($q) => $q->active()])->active()->get();
+        $venues      = Venue::with(['schedules', 'listings' => fn($q) => $q->visibleToAdmins()])->active()->get();
+        $listings    = Listing::with(['schedules', 'addOns' => fn($q) => $q->active()])->visibleToAdmins()->get();
         $customers   = User::whereHas('roles', fn($q) => $q->where('name', 'customer'))->active()->get(['id', 'name', 'email']);
         $resources   = Resource::active()->get();
         $addOns      = AddOn::active()->get();
@@ -1037,6 +1037,10 @@ class BookingService
 
         if (! $listing) {
             $errors['listing_id'] = 'Listing not found';
+            return $errors;
+        }
+        if ($editingId === null && ! $listing->isVisibleToRequestSurface()) {
+            $errors['listing_id'] = 'This listing is not available for booking';
             return $errors;
         }
         if (! $venue) {
@@ -1806,6 +1810,14 @@ class BookingService
             if (isset($formData['listing_id'])) {
                 $updateData['listing_id'] = $formData['listing_id'];
                 $listingChanged           = (int) $formData['listing_id'] !== (int) $oldListingId;
+
+                if ($listingChanged) {
+                    $newListing = Listing::find($formData['listing_id']);
+                    if ($newListing && ! $newListing->isVisibleToRequestSurface()) {
+                        DB::rollBack();
+                        return sendError('The selected listing is not available for booking.');
+                    }
+                }
             }
 
             if (isset($formData['notes'])) {
@@ -2555,7 +2567,7 @@ class BookingService
         if (! empty($data['listings'])) {
             $query = Listing::select('id', 'name', 'venue_id')
                 ->with(['venue:id,name'])
-                ->active()
+                ->visibleToAdmins()
                 ->orderBy('sort_order', 'ASC')
                 ->orderBy('name');
 

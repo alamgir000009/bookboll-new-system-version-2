@@ -238,7 +238,8 @@ class ListingService
             'name'                               => 'required|string|max:255',
             'venue_id'                           => 'required|exists:venues,id',
             'sports_category_id'                 => 'required|exists:sports_categories,id',
-            'status'                             => 'required|in:active,inactive',
+            'show_on_admin'                      => 'required|boolean',
+            'show_on_customer'                   => 'required|boolean',
             'description'                        => 'nullable|string',
             'base_price'                         => 'required|numeric|min:0',
             'max_bookings_per_slot'              => 'required|integer|min:1',
@@ -554,9 +555,8 @@ class ListingService
             }
         }
 
-        return [
+        $listingData = [
             'name'                    => $data['name'],
-            'status'                  => $data['status'],
             'venue_id'                => $data['venue_id'],
             'capacity'                => $data['capacity'],
             'base_price'              => $data['base_price'],
@@ -574,6 +574,16 @@ class ListingService
             'max_multiple_bookings'   => $data['max_multiple_bookings'] ?? null,
             'allow_multiple_bookings' => $data['allow_multiple_bookings'] ? 1 : 0,
         ];
+
+        // Only touch visibility when the caller actually sent it, so a partial
+        // update can never silently re-expose a hidden listing.
+        foreach (['show_on_admin', 'show_on_customer'] as $flag) {
+            if (array_key_exists($flag, $data)) {
+                $listingData[$flag] = filter_var($data[$flag], FILTER_VALIDATE_BOOLEAN);
+            }
+        }
+
+        return $listingData;
     }
 
     protected function createSchedules(Listing $listing, array $scheduleData): void
@@ -832,7 +842,7 @@ class ListingService
         $records_per_page = $request->records_per_page ?? null;
 
         $query = $this->listingModel::with(['venue', 'schedules', 'sportsCategory.sportsType', 'addOns', 'assets'])
-            ->active()
+            ->visibleToRequestSurface()
             ->whereRelation('venue', 'status', 'active')
             ->whereHas('schedules', function ($q) {
                 $q->where('is_open', 1);
@@ -928,7 +938,7 @@ class ListingService
             ->when($categoryIds, function ($query, $categoryIds) {
                 $query->whereNotIn('sports_category_id', $categoryIds);
             })
-            ->active()
+            ->visibleToRequestSurface()
             ->whereRelation('venue', 'status', 'active')
             ->take($limit)
             ->get()
@@ -1004,7 +1014,7 @@ class ListingService
             'sportsCategory:id,name',
             'assets',
         ])
-            ->active()
+            ->visibleToAdmins()
             ->whereRelation('venue', 'status', 'active')
             ->whereHas('schedules', function ($q) {
                 $q->where('is_open', 1);
@@ -1111,7 +1121,7 @@ class ListingService
             'sportsCategory:id,name',
             'assets',
         ])
-            ->active()
+            ->visibleToRequestSurface()
             ->findOrFail($id);
 
         $specialDay = SpecialDay::with('timeBlocks')
@@ -1188,7 +1198,7 @@ class ListingService
             'assets',
         ])->findOrFail($listingId);
 
-        if (! $listing->venue || $listing->venue->status !== 'active') {
+        if (! $listing->isVisibleToRequestSurface() || ! $listing->venue || $listing->venue->status !== 'active') {
             return sendSuccess('No available schedule for this day');
         }
 
@@ -1771,7 +1781,7 @@ class ListingService
                 'venue.schedules',
             ])->findOrFail($listingId);
 
-            if (! $listing->venue || $listing->venue->status !== 'active') {
+            if (! $listing->isVisibleToRequestSurface() || ! $listing->venue || $listing->venue->status !== 'active') {
                 return sendSuccess('Recurring booked slots fetched successfully', [
                     'listing_id'            => $listingId,
                     'start_time'            => $startTime,
@@ -2063,7 +2073,7 @@ class ListingService
 
             $listing = $this->listingModel->with('venue')->findOrFail($listingId);
 
-            if ($listing->status !== 'active' || ! $listing->venue || $listing->venue->status !== 'active') {
+            if (! $listing->isVisibleToRequestSurface() || ! $listing->venue || $listing->venue->status !== 'active') {
                 return sendError('Listing is not available for booking');
             }
 
@@ -2316,7 +2326,7 @@ class ListingService
 
             $listing = $this->listingModel->with('venue')->findOrFail($listingId);
 
-            if ($listing->status !== 'active' || ! $listing->venue || $listing->venue->status !== 'active') {
+            if (! $listing->isVisibleToRequestSurface() || ! $listing->venue || $listing->venue->status !== 'active') {
                 return sendSuccess('Slot availability checked', [
                     'available' => false,
                     'reason'    => 'Listing is not available',
