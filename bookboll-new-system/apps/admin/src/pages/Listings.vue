@@ -20,7 +20,7 @@ import {
   firstError as listingFirstError,
 } from '../lib/listings.js'
 import { appBaseUrl } from '../lib/appBase.js'
-import { Search, Plus, Minus, Trash2, Pencil as Edit2, ChevronDown, ChevronUp, ChevronRight, Eye, EyeOff, ArrowLeft, Check, Info, Wallet, Clock, DollarSign, PackagePlus, Boxes, Image as ImgIcon, X, GripVertical, LayoutList, Layers, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, LocateFixed, MapPin as MapPinIcon, Landmark, Building2 as BldIcon, Upload, Download, SlidersHorizontal, Store, Globe, TrendingDown, ExternalLink, CircleCheck, ShieldCheck, Lock, Bell } from 'lucide-vue-next'
+import { Search, Plus, Minus, Trash2, Pencil as Edit2, ChevronDown, ChevronUp, ChevronRight, Eye, EyeOff, ArrowLeft, Check, Info, Wallet, Clock, DollarSign, PackagePlus, Boxes, Image as ImgIcon, X, GripVertical, LayoutList, Layers, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, LocateFixed, MapPin as MapPinIcon, Landmark, Building2 as BldIcon, Upload, Download, SlidersHorizontal, Store, Globe, TrendingDown, ExternalLink, CircleCheck, ShieldCheck, Lock, Bell, Users } from 'lucide-vue-next'
 import { useRouter, useRoute } from 'vue-router'
 import { VENUE_CATEGORIES, subcategoriesFor, normCategory, categoryLabel } from '../lib/venueCategories.js'
 import { loadApprovedTypes, approvedTypesFor, addPendingType } from '../lib/customTypes.js'
@@ -305,7 +305,7 @@ const activeFilterCount = computed(() =>
   (filterCountry.value.length ? 1 : 0) + (filterCity.value.length ? 1 : 0) +
   (filterLocation.value ? 1 : 0) +
   (filterCategory.value !== 'all' ? 1 : 0) + (filterType.value !== 'all' ? 1 : 0) +
-  (flatFilterStatus.value ? 1 : 0)
+  (flatFilterStatus.value ? 1 : 0) + (filterVisibility.value ? 1 : 0)
 )
 // Locations to offer in the Location filter, scoped by the chosen country/city.
 const locationsForFilter = computed(() => locations.value.filter(l => {
@@ -335,6 +335,7 @@ function clearListingFilters() {
   filterLocation.value = ''
   filterCategory.value = 'all'; filterType.value = 'all'
   flatFilterStatus.value = ''
+  filterVisibility.value = ''
 }
 // Changing the category resets the type (the available types are category-scoped).
 function setFilterCategory(k) { filterCategory.value = k; filterType.value = 'all' }
@@ -418,6 +419,7 @@ function catalogParams() {
   if (filterCategory.value !== 'all') p.category = filterCategory.value
   if (filterType.value !== 'all') p.sport = filterType.value
   if (flatFilterStatus.value) p.placement = flatFilterStatus.value
+  if (filterVisibility.value) p.visibility = filterVisibility.value
   return p
 }
 
@@ -795,6 +797,10 @@ function defaultForm() {
     // panels start COLLAPSED so the section stays calm — summaries show the facts,
     // and the save guard still prompts if the provider turns both places off.
     show_on_marketplace: true, show_on_provider_site: true,
+    // Who may BOOK it. Separate axis from the two above (which decide WHICH
+    // storefront it appears on): a listing can be bookable by staff at the desk
+    // while hidden from customers, or the reverse. Both off = inactive.
+    show_on_admin: true, show_on_customer: true,
     loyalty_points: 0, booking_color: '#10b981', listing_type: 'per_space',
     max_bookings_per_slot: 1, commission_rate: null,
     extension_pricing: 'none', extension_value: 0, extension_max_slots: 1,
@@ -947,6 +953,8 @@ async function openEditListing(l) {
     extension_max_slots: Math.max(1, Number(l.extension_max_slots) || 1),
     show_on_marketplace: l.show_on_marketplace !== false,
     show_on_provider_site: l.show_on_provider_site !== false,
+    show_on_admin: l.show_on_admin !== false,
+    show_on_customer: l.show_on_customer !== false,
     // Normalise images into the photos[] gallery (migrate a legacy single photo_url).
     photos: Array.isArray(l.photos) && l.photos.length ? [...l.photos] : (l.photo_url ? [l.photo_url] : []),
   }
@@ -980,6 +988,8 @@ async function openEditListing(l) {
         extension_max_slots: Math.max(1, Number(det.extension_max_slots ?? form.value.extension_max_slots) || 1),
         show_on_marketplace: det.show_on_marketplace !== false,
         show_on_provider_site: det.show_on_provider_site !== false,
+        show_on_admin: det.show_on_admin !== false,
+        show_on_customer: det.show_on_customer !== false,
         photos: Array.isArray(det.photos) && det.photos.length ? [...det.photos] : (det.photo_url ? [det.photo_url] : (form.value.photos || [])),
       }
       const pc2 = det.pending_content
@@ -1784,7 +1794,11 @@ async function save() {
     start_time_mode: customStartTimes.value.length ? 'fixed' : 'auto',
     fixed_start_times: fixedStartTimes.value,
     capacity: Number(form.value.capacity),
+    // `status` is derived server-side from the two flags below; it is still sent
+    // so anything reading it keeps working.
     status: form.value.status,
+    show_on_admin: form.value.show_on_admin !== false,
+    show_on_customer: form.value.show_on_customer !== false,
     loyalty_points: Number(form.value.loyalty_points) || 0,
     booking_color: form.value.booking_color,
     listing_type: 'per_space',   // all listings are per-space; per-person is handled via Events now
@@ -2129,6 +2143,25 @@ async function saveStorefrontSort(view, value) {
 
 // ── Extra flat-view filters ───────────────────────────────────────────────────
 const flatFilterStatus = ref('')   // '' | 'live' | 'review' | 'off_market' (Bookboll placement)
+// Who may book: '' | 'both' | 'admin_only' | 'customer_only' | 'inactive'.
+// A separate axis from placement — placement is WHERE it is shown, this is WHO
+// may book it. The server filters on it (ListingDashboardService::visibility).
+const filterVisibility = ref('')
+
+const VISIBILITY_BADGE = {
+  both:          { label: 'Everyone',      cls: 'vis-both',     tip: 'Bookable by customers and by staff.' },
+  customer_only: { label: 'Customers',     cls: 'vis-customer', tip: 'Bookable by customers only — hidden from the admin booking screen.' },
+  admin_only:    { label: 'Staff only',    cls: 'vis-admin',    tip: 'Bookable by staff only — customers cannot see or book it.' },
+  inactive:      { label: 'Nobody',        cls: 'vis-none',     tip: 'Hidden from both customers and staff — the listing is inactive.' },
+}
+/** The row's visibility, derived when the API predates the flags. */
+function visibilityOf(l) {
+  if (l.visibility) return l.visibility
+  const a = l.show_on_admin !== false
+  const c = l.show_on_customer !== false
+  return a && c ? 'both' : (a ? 'admin_only' : (c ? 'customer_only' : 'inactive'))
+}
+const visibilityBadge = (l) => VISIBILITY_BADGE[visibilityOf(l)] || VISIBILITY_BADGE.both
 const flatSortKey      = ref('sort_order') // 'sort_order' | 'name' | 'sport_category' | 'base_price'
 const flatSortDir      = ref('asc')
 function toggleFlatSort(key) {
@@ -2180,7 +2213,7 @@ watch(search, () => {
   listSearchTimer = setTimeout(() => { flatPage.value = 1; venuePage.value = 1; loadList() }, 300)
 })
 watch([filterCountry, filterCity, filterLocation, filterCategory, filterType, flatFilterStatus,
-       flatSortKey, flatSortDir, flatPerPage, venuePerPage, layout], () => {
+       filterVisibility, flatSortKey, flatSortDir, flatPerPage, venuePerPage, layout], () => {
   flatPage.value = 1; venuePage.value = 1; loadList()
 })
 
@@ -2370,6 +2403,16 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                   <option value="off_market">Off marketplace</option>
                 </select>
               </div>
+              <div class="lf-field">
+                <label>Bookable by</label>
+                <select class="filter-select" v-model="filterVisibility">
+                  <option value="">Anyone</option>
+                  <option value="both">Customers &amp; staff</option>
+                  <option value="customer_only">Customers only</option>
+                  <option value="admin_only">Staff only</option>
+                  <option value="inactive">Nobody (inactive)</option>
+                </select>
+              </div>
             </div>
             <div class="lf-row">
               <span class="lf-label">Category</span>
@@ -2445,6 +2488,9 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               <div class="flat-sport muted">{{ l.sport_category }}</div>
               <div class="flat-price muted">{{ currencyForLocation(l.location_id) }} {{ l.base_price }}</div>
               <div class="flat-status">
+                <span class="vis-badge" :class="visibilityBadge(l).cls" :title="visibilityBadge(l).tip">
+                  {{ visibilityBadge(l).label }}
+                </span>
                 <div class="placement-chips">
                   <span v-for="ch in placementChannels(l)" :key="ch.key" class="chan-wrap">
                     <button type="button" class="chan" :class="['chan-'+ch.cls, { 'chan-btn': canManageListings }]" :title="ch.tip" @click.stop="canManageListings && togglePlacementMenu(l.id, ch.key)">
@@ -2594,6 +2640,9 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                 <div class="muted">{{ l.sport_category }} &middot; {{ currencyForLocation(l.location_id) }} {{ l.base_price }}/slot</div>
               </div>
               <div class="listing-pause-block">
+                <span class="vis-badge" :class="visibilityBadge(l).cls" :title="visibilityBadge(l).tip">
+                  {{ visibilityBadge(l).label }}
+                </span>
                 <div class="placement-chips">
                   <span v-for="ch in placementChannels(l)" :key="ch.key" class="chan-wrap">
                     <button type="button" class="chan" :class="['chan-'+ch.cls, { 'chan-btn': canManageListings }]" :title="ch.tip" @click.stop="canManageListings && togglePlacementMenu(l.id, ch.key)">
@@ -2783,6 +2832,33 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                 <label class="pg-swatch pg-swatch-custom" :class="{ active: form.booking_color && !BOOKING_COLORS.includes(form.booking_color) }" title="Custom color">
                   <input type="color" v-model="form.booking_color" />
                 </label>
+              </div>
+            </div>
+
+            <!-- Who may book this listing. Separate from Placement (which decides
+                 WHERE it is shown): this decides WHO may make a booking. -->
+            <div class="form-group">
+              <label class="form-label">Availability<InfoTip text="Who can book this listing. Tick both for a normal listing. Untick Customers to keep a court for the front desk only; untick Staff to hide it from the admin booking screen. With both unticked the listing is inactive." /></label>
+              <div class="vis-picker">
+                <label class="vis-check" :class="{ on: form.show_on_customer }">
+                  <input type="checkbox" v-model="form.show_on_customer" />
+                  <Users :size="15" />
+                  <span class="vis-check-body">
+                    <span class="vis-check-name">Customers</span>
+                    <span class="vis-check-desc">Website &amp; customer app</span>
+                  </span>
+                </label>
+                <label class="vis-check" :class="{ on: form.show_on_admin }">
+                  <input type="checkbox" v-model="form.show_on_admin" />
+                  <ShieldCheck :size="15" />
+                  <span class="vis-check-body">
+                    <span class="vis-check-name">Staff</span>
+                    <span class="vis-check-desc">Admin booking screen &amp; staff app</span>
+                  </span>
+                </label>
+              </div>
+              <div v-if="!form.show_on_admin && !form.show_on_customer" class="vis-warn">
+                <AlertTriangle :size="13" /> Nobody can book this listing — it will be saved as <strong>inactive</strong>.
               </div>
             </div>
 
@@ -3007,6 +3083,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             <div v-if="!form.show_on_marketplace && !form.show_on_provider_site" class="placement-warn">
               <AlertTriangle :size="14" /> This listing won't appear anywhere until you turn on a place above.
             </div>
+
 
             <!-- ── STEP 2 · Getting paid on the Marketplace (collapsible) ── -->
             <div v-if="form.show_on_marketplace" class="pp-pay">
@@ -3864,6 +3941,39 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .sd-btn small { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
 
 /* ── Placement status chips (listings page, both views) ───────── */
+/* Availability picker in the Basic section — who may book this listing. */
+.vis-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.vis-check {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px;
+  cursor: pointer; background: var(--card, #fff); transition: border-color .15s, background .15s;
+}
+.vis-check:hover { border-color: #cbd5e1; }
+.vis-check.on { border-color: var(--primary, #10b981); background: #f0fdf4; }
+.vis-check input { width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; accent-color: var(--primary, #10b981); }
+.vis-check > svg { color: var(--text-muted); flex-shrink: 0; }
+.vis-check.on > svg { color: var(--primary, #10b981); }
+.vis-check-body { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
+.vis-check-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.vis-check-desc { font-size: 11px; color: var(--text-muted); }
+.vis-warn {
+  display: flex; align-items: center; gap: 6px; margin-top: 8px;
+  font-size: 12px; color: #92400e; background: #fffbeb;
+  border: 1px solid #fde68a; border-radius: 8px; padding: 7px 10px;
+}
+@media (max-width: 600px) { .vis-picker { grid-template-columns: 1fr; } }
+
+/* Who may book a listing — a separate axis from placement. */
+.vis-badge {
+  display: inline-flex; align-items: center; align-self: flex-start;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+  padding: 2px 7px; border-radius: 999px; margin-bottom: 4px; white-space: nowrap;
+}
+.vis-badge.vis-both     { background: #dcfce7; color: #15803d; }
+.vis-badge.vis-customer { background: #dbeafe; color: #1d4ed8; }
+.vis-badge.vis-admin    { background: #fef3c7; color: #92400e; }
+.vis-badge.vis-none     { background: #fee2e2; color: #991b1b; }
+
 .placement-chips { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
 .placement-chips-row { flex-direction: row; flex-wrap: wrap; }
 .chan-wrap { position: relative; display: inline-flex; align-items: center; gap: 2px; }
