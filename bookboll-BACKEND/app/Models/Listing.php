@@ -17,6 +17,8 @@ class Listing extends Model
         'name',
         'status',
         'venue_id',
+        'show_on_admin',
+        'show_on_customer',
         'capacity',
         'amenities',
         'tags',
@@ -75,13 +77,15 @@ class Listing extends Model
         'online_payment'          => 'boolean',
         'show_on_marketplace'     => 'boolean',
         'show_on_provider_site'   => 'boolean',
+        'show_on_admin'           => 'boolean',
+        'show_on_customer'        => 'boolean',
         'buffer_time'             => 'integer',
         'booking_hold_minutes'    => 'integer',
         'extension_max_slots'     => 'integer',
         'submitted_at'            => 'datetime',
     ];
 
-    protected $appends = ['location_id', 'booking_color'];
+    protected $appends = ['location_id', 'booking_color', 'visibility'];
 
     public const APPROVAL_PENDING  = 'pending';
     public const APPROVAL_APPROVED = 'approved';
@@ -90,6 +94,62 @@ class Listing extends Model
     public const ELIGIBILITY_ELIGIBLE   = 'eligible';
     public const ELIGIBILITY_PAUSED     = 'paused';
     public const ELIGIBILITY_INELIGIBLE = 'ineligible';
+
+    /**
+     * Where a listing may be seen. `show_on_marketplace` / `show_on_provider_site`
+     * decide WHICH storefront; these two decide whether it is bookable by staff in
+     * the admin, by customers, or both.
+     */
+    public const VISIBILITY_BOTH          = 'both';
+    public const VISIBILITY_ADMIN_ONLY    = 'admin_only';
+    public const VISIBILITY_CUSTOMER_ONLY = 'customer_only';
+    public const VISIBILITY_INACTIVE      = 'inactive';
+
+    /**
+     * `status` is derived from the two visibility flags so that everything still
+     * reading `status` keeps working: a listing hidden on both sides is inactive.
+     *
+     * A caller that only knows the old `status` field (seeders, imports) has its
+     * flags seeded from that status, so it keeps behaving as before.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $listing) {
+            $fallback = ($listing->attributes['status'] ?? 'active') === 'active';
+
+            foreach (['show_on_admin', 'show_on_customer'] as $flag) {
+                if (! array_key_exists($flag, $listing->attributes)) {
+                    $listing->{$flag} = $fallback;
+                }
+            }
+
+            $listing->status = ($listing->show_on_admin || $listing->show_on_customer)
+                ? 'active'
+                : 'inactive';
+        });
+    }
+
+    /**
+     * One of: both, admin_only, customer_only, inactive. Null when the query
+     * did not select the visibility columns.
+     */
+    public function getVisibilityAttribute(): ?string
+    {
+        if (! array_key_exists('show_on_admin', $this->attributes)
+            && ! array_key_exists('show_on_customer', $this->attributes)) {
+            return null;
+        }
+
+        $admin    = (bool) ($this->attributes['show_on_admin'] ?? false);
+        $customer = (bool) ($this->attributes['show_on_customer'] ?? false);
+
+        return match (true) {
+            $admin && $customer => self::VISIBILITY_BOTH,
+            $admin              => self::VISIBILITY_ADMIN_ONLY,
+            $customer           => self::VISIBILITY_CUSTOMER_ONLY,
+            default             => self::VISIBILITY_INACTIVE,
+        };
+    }
 
     public function sportsCategory()
     {
@@ -233,6 +293,42 @@ class Listing extends Model
         return $query->where('status', 'active');
     }
 
+    /**
+     * Bookable from the admin console and the admin mobile app.
+     */
+    public function scopeVisibleToAdmins($query)
+    {
+        return $query->where('show_on_admin', true);
+    }
+
+    /**
+     * Bookable from the customer website and the customer mobile app.
+     */
+    public function scopeVisibleToCustomers($query)
+    {
+        return $query->where('show_on_customer', true);
+    }
+
+    /**
+     * Visibility for whichever surface the current request came from.
+     */
+    public function scopeVisibleToRequestSurface($query)
+    {
+        return isRequestFromAdminSurface()
+            ? $query->visibleToAdmins()
+            : $query->visibleToCustomers();
+    }
+
+    /**
+     * Whether this listing may be booked from the current request's surface.
+     */
+    public function isVisibleToRequestSurface(): bool
+    {
+        return isRequestFromAdminSurface()
+            ? (bool) $this->show_on_admin
+            : (bool) $this->show_on_customer;
+    }
+
     public function getOpenDaysAttribute()
     {
         return $this->schedules->where('is_open', true)->pluck('day');
@@ -357,6 +453,8 @@ class Listing extends Model
             'venue_id',
             'capacity',
             'amenities',
+            'show_on_admin',
+            'show_on_customer',
             'tags',
             'sort_order',
             'base_price',

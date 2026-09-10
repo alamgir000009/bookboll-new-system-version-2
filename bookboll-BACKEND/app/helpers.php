@@ -731,6 +731,20 @@ if (! function_exists('getSessionId')) {
     }
 }
 
+if (! function_exists('isRequestFromAdminSurface')) {
+    /**
+     * Staff surfaces are the admin console and the admin mobile app. Everything
+     * else (customer website, customer mobile app, unknown callers) is treated
+     * as a customer surface.
+     */
+    function isRequestFromAdminSurface($request = null): bool
+    {
+        $from = ($request ?: request())->header('from');
+
+        return in_array($from, ['admin-web', MobileApps::ADMIN], true);
+    }
+}
+
 if (! function_exists('unlockListingSlot')) {
     function unlockListingSlot($listing, $user, $booking)
     {
