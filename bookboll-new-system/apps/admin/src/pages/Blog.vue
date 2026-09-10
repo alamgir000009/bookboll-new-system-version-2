@@ -3,7 +3,8 @@
  * Blog.vue — super-admin blog manager for BOTH Bookboll blogs, switched by tab:
  *   • Marketplace  → Laravel posts type=main (customer /blog)
  *   • For Business → Laravel posts type=business (/for-business/blog)
- * Body is rich HTML (sanitized, see lib/blog.js). Provider WebsiteBlog stays on Supabase.
+ * Body is rich HTML (sanitized, see lib/blog.js). The provider WebsiteBlog uses
+ * the same helpers against Laravel /admin/site-blog.
  */
 import { ref, computed, onMounted } from 'vue'
 import { loadAllPosts, savePost, deletePost, slugify, fmtPostDate, renderMarkdown, sanitizeHtml } from '../lib/blog.js'

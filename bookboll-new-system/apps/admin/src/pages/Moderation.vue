@@ -273,7 +273,7 @@ function onLbKey(e) {
 function openDetail(g) { detail.value = g }
 function closeDetail() { detail.value = null }
 
-// ── moderation actions (events → Laravel; dual-writes Supabase on the server) ─
+// ── moderation actions (events → Laravel) ────────────────────────────────────
 async function applyModeration(g, status, reason) {
   let res
   if (status === 'flagged') res = await apiFlagEvent(g.id, reason)
@@ -327,7 +327,7 @@ async function restoreEvent(g) {
   if (await applyModeration(g, 'active', null)) toast.success('Event restored — it’s live again.')
 }
 
-// ── community moderation (Laravel; dual-writes Supabase on the server) ───────
+// ── community moderation (Laravel) ──────────────────────────────────────────
 async function applyCommunityMod(c, status, reason) {
   let res
   if (status === 'flagged') res = await apiFlagCommunity(c.id, reason)

@@ -3,8 +3,8 @@
  * Brand.vue — "My Website": a provider configures their white-label customer site,
  * or (platform mode) Bookboll marketplace + admin chrome branding.
  *
- * Platform mode persists via Laravel /api/admin/settings (dual-writes Supabase
- * platform_settings for storefront preview). Provider mode still uses admin_users.
+ * Platform mode persists via Laravel /api/admin/settings; provider mode via
+ * /api/admin/site-settings, scoped to the caller's own business.
  */
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { loadSiteSettings, saveSiteSettings } from '../lib/siteSettings.js'

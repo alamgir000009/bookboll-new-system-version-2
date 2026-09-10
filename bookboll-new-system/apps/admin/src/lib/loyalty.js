@@ -68,11 +68,12 @@ export async function loadLoyaltyPrograms() {
   for (const row of res.data?.loyalty_programs || []) {
     byCountry[row.country_id] = normalizeLoyalty(row)
   }
-  return { ok: true, byCountry }
+  // Tier ladders come back alongside, keyed by program_id.
+  return { ok: true, byCountry, tiers: res.data?.loyalty_tiers || [] }
 }
 
 /** Create or update the program for one country. Returns { ok, program } | { error }. */
-export async function saveLoyaltyProgram(countryId, form) {
+export async function saveLoyaltyProgram(countryId, form, tiers = null) {
   const res = await apiFetch('/admin/geography/loyalty-programs', {
     method: 'PUT',
     body: {
@@ -84,13 +85,27 @@ export async function saveLoyaltyProgram(countryId, form) {
       max_redeem_pct: Math.min(100, Math.max(0, Math.floor(Number(form.max_redeem_pct) || 0))),
       expiry_months: Math.max(0, Math.floor(Number(form.expiry_months) || 0)),
       is_active: form.is_active !== false,
+      // Omitted entirely when the caller passes no ladder, so a save that isn't
+      // about tiers leaves them untouched.
+      ...(Array.isArray(tiers) ? { tiers: tiers.filter(t => (t.name || '').trim()).map((t, i) => ({
+        name: (t.name || '').trim(),
+        threshold: Math.max(0, Number(t.threshold) || 0),
+        multiplier: Math.max(0, Number(t.multiplier) || 1),
+        color: t.color || '#92400e',
+        bg_color: t.bg_color || '#fef3c7',
+        sort_order: i,
+      })) } : {}),
     },
   })
   if (!res.success) {
     const first = res.errors && Object.values(res.errors)[0]
     return { error: (Array.isArray(first) ? first[0] : first) || res.message || 'Could not save the loyalty program.' }
   }
-  return { ok: true, program: normalizeLoyalty(res.data?.loyalty_program) }
+  return {
+    ok: true,
+    program: normalizeLoyalty(res.data?.loyalty_program),
+    tiers: res.data?.loyalty_tiers || null,
+  }
 }
 
 /** Whole points earned for spending `amount`. */

@@ -51,3 +51,15 @@ export async function saveCommissionRate(countryId, listingType, ratePercent) {
     },
   })
 }
+
+/**
+ * Turn one service module on or off for a city.
+ * Disabling stops NEW listings/programs/events being created there; anything
+ * already published keeps working.
+ */
+export async function updateCityModule(id, module, enabled) {
+  return apiFetch(`/admin/geography/cities/${id}/module`, {
+    method: 'PATCH',
+    body: { module, enabled },
+  })
+}

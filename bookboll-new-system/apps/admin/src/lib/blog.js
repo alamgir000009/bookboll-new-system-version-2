@@ -1,9 +1,9 @@
 /**
  * blog.js — data + helpers for the marketplace blog.
  *
- * Platform admin CRUD (/blog-posts) uses Laravel /admin/posts.
- * Provider white-label blog (WebsiteBlog) still uses Supabase blog_posts until
- * owner scoping exists on Laravel. Public storefront helpers remain Supabase.
+ * Platform admin CRUD (/blog-posts) uses Laravel /admin/posts; the provider
+ * white-label blog (WebsiteBlog) uses Laravel /admin/site-blog, which scopes to
+ * the caller's own business. Nothing here talks to Supabase.
  */
 import { apiFetch } from './api.js'
 import {
@@ -85,7 +85,7 @@ export async function savePost(post, ownerId = null, audience = 'marketplace') {
 
 export async function deletePost(id, ownerId = null) {
   if (ownerId == null) {
-    // Platform blog — Laravel. WebsiteBlog passes ownerId so stays on Supabase.
+    // Platform blog. WebsiteBlog passes an ownerId and takes the site-blog path.
     const res = await deleteAdminPost(id)
     if (!res.success) return { error: blogApiError(res, 'Could not delete post.') }
     return { ok: true }

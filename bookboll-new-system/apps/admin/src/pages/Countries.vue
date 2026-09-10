@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { MapPin, ChevronDown, Search, Check, Percent, Award, X, ToggleLeft, ToggleRight } from 'lucide-vue-next'
+import { MapPin, ChevronDown, Search, Check, Percent, Award, X, ToggleLeft, ToggleRight,
+  CalendarDays, GraduationCap, Users, Plus, Trash2 } from 'lucide-vue-next'
 import PaginationBar from '../components/PaginationBar.vue'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { pushToast } from '../lib/toast.js'
@@ -12,11 +13,50 @@ import {
   updateCityStatus,
   bulkUpdateCityStatus,
   saveCommissionRate,
+  updateCityModule,
 } from '../lib/geography.js'
 import { DEFAULT_LOYALTY, loadLoyaltyPrograms, saveLoyaltyProgram } from '../lib/loyalty.js'
 
 const { isSuperAdmin, isCountryAdmin } = useCurrentUser()
 const canManageGeo = computed(() => isSuperAdmin.value || isCountryAdmin.value)
+
+// ── Per-city service modules ─────────────────────────────────────────────────
+// A city can have any of Bookboll's three services switched off; the matching
+// creation flow is then refused there (the API enforces it too). A missing or
+// null flag reads as ON, so a city added before the switch existed is unchanged.
+const CITY_MODULES = [
+  { key: 'module_listings',    short: 'Listings',    label: 'booking listings',    icon: CalendarDays  },
+  { key: 'module_classes',     short: 'Memberships', label: 'membership programs', icon: GraduationCap },
+  { key: 'module_matchmaking', short: 'Matchmaking', label: 'player matchmaking',  icon: Users         },
+]
+const moduleSaving = ref(new Set())
+
+async function toggleModule(city, key) {
+  if (!canManageGeo.value) return
+  const saveKey = city.id + '_' + key
+  if (moduleSaving.value.has(saveKey)) return
+  moduleSaving.value = new Set(moduleSaving.value).add(saveKey)
+
+  const next = city[key] === false
+  const res = await updateCityModule(city.id, key, next)
+
+  moduleSaving.value.delete(saveKey)
+  moduleSaving.value = new Set(moduleSaving.value)
+
+  // Only reflect a write that actually landed — a stale pill misleads admins
+  // about what providers can create in this city.
+  if (!res.success) {
+    pushToast(res.message || `Could not update ${key.replace('module_', '')} for ${city.name}.`, 'error')
+    return
+  }
+  city[key] = next
+  logAudit({
+    action: AUDIT.UPDATED,
+    entity_type: 'city',
+    entity_id: city.id,
+    details: `${next ? 'Enabled' : 'Disabled'} ${key.replace('module_', '')} for ${city.name}`,
+  })
+}
 
 const countries = ref([])
 /** @type {import('vue').Ref<Record<number|string, Array>>} */
@@ -154,6 +194,7 @@ async function loadLoyalty() {
   const res = await loadLoyaltyPrograms()
   if (res.error) { pushToast(res.error, 'error'); return }
   loyaltyPrograms.value = res.byCountry
+  loyaltyTiers.value = res.tiers || []
   loyaltyLoaded.value = true
 }
 
@@ -168,6 +209,37 @@ function loyaltySummary(country) {
   return `${p.earn_rate} pt per ${cur} · ${p.redeem_rate} pts = ${cur} 1 off`
 }
 
+// ── Loyalty tiers ────────────────────────────────────────────────────────────
+// Each country's own ladder. A customer's tier is the highest one whose
+// threshold their lifetime points reach, so the ladder is per country: what
+// counts as "Legend" in one market is not the same spend in another.
+const PRESET_TIERS = [
+  { name: 'Rookie', color: '#92400e', bg_color: '#fef3c7', threshold: 0,     multiplier: 1   },
+  { name: 'Star',   color: '#475569', bg_color: '#f1f5f9', threshold: 1000,  multiplier: 1.2 },
+  { name: 'Legend', color: '#b45309', bg_color: '#fef9c3', threshold: 5000,  multiplier: 1.5 },
+  { name: 'GOAT',   color: '#0f766e', bg_color: '#ccfbf1', threshold: 15000, multiplier: 2   },
+]
+function defaultLTier(sortOrder = 0) {
+  return { name: '', color: '#92400e', bg_color: '#fef3c7', threshold: 0, multiplier: 1, sort_order: sortOrder }
+}
+const loyaltyTiers = ref([])       // every tier row the server holds, all countries
+const lTiers = ref([])             // the ladder being edited in the modal
+function addLTier() { lTiers.value.push({ ...defaultLTier(lTiers.value.length), name: '' }) }
+function removeLTier(i) { lTiers.value.splice(i, 1) }
+
+/** This country's ladder, falling back to the presets when it has none yet. */
+function tiersForProgram(programId) {
+  const mine = loyaltyTiers.value.filter(t => t.program_id === programId)
+  const base = mine.length ? mine : PRESET_TIERS
+  return base
+    .slice()
+    .sort((a, b) => Number(a.threshold || 0) - Number(b.threshold || 0))
+    .map((t, i) => ({
+      name: t.name, color: t.color || '#92400e', bg_color: t.bg_color || '#fef3c7',
+      threshold: Number(t.threshold || 0), multiplier: Number(t.multiplier || 1), sort_order: i,
+    }))
+}
+
 const loyaltyCountry = ref(null)   // the country whose program is open in the editor
 const lForm = ref({ ...DEFAULT_LOYALTY })
 const lSaving = ref(false)
@@ -176,6 +248,7 @@ const lTriedSave = ref(false)
 function openLoyalty(country) {
   loyaltyCountry.value = country
   lForm.value = { ...effectiveProgram(country.id) }
+  lTiers.value = tiersForProgram(programFor(country.id)?.id ?? null)
   lTriedSave.value = false
 }
 function closeLoyalty() { loyaltyCountry.value = null }
@@ -187,11 +260,16 @@ async function saveLoyalty() {
   if (!lForm.value.name?.trim()) { pushToast('Program name is required.', 'error'); return }
 
   lSaving.value = true
-  const res = await saveLoyaltyProgram(country.id, lForm.value)
+  const res = await saveLoyaltyProgram(country.id, lForm.value, lTiers.value)
   lSaving.value = false
   if (res.error) { pushToast(res.error, 'error'); return }
 
   loyaltyPrograms.value = { ...loyaltyPrograms.value, [country.id]: res.program }
+  // Replace this program's tiers with what the server actually stored.
+  if (res.tiers) {
+    const pid = res.program?.id ?? null
+    loyaltyTiers.value = [...loyaltyTiers.value.filter(t => t.program_id !== pid), ...res.tiers]
+  }
   logAudit({
     action: AUDIT.UPDATED,
     entity_type: 'loyalty_program',
@@ -497,6 +575,22 @@ function cityCountLabel(country) {
                 <span class="city-name">{{ city.name }}</span>
                 <Check v-if="savedRecently.has(city.id)" :size="11" class="saved-flash" />
               </div>
+              <!-- Service module toggles — only for an active city, and only for
+                   someone who may manage geography. -->
+              <div v-if="city.status === 'active' && canManageGeo" class="city-modules">
+                <button
+                  v-for="mod in CITY_MODULES"
+                  :key="mod.key"
+                  class="mod-pill"
+                  :class="{ 'mod-off': city[mod.key] === false }"
+                  :title="(city[mod.key] !== false ? 'Click to disable ' : 'Click to enable ') + mod.label"
+                  :disabled="moduleSaving.has(city.id + '_' + mod.key)"
+                  @click.stop="toggleModule(city, mod.key)"
+                >
+                  <component :is="mod.icon" :size="9" />
+                  {{ mod.short }}
+                </button>
+              </div>
             </div>
             <div v-if="!citiesOf(country.id).length" class="no-cities">No cities configured for this country.</div>
           </div>
@@ -567,9 +661,33 @@ function cityCountLabel(country) {
                     <input type="number" v-model="lForm.expiry_months" min="0" />
                   </div>
                 </div>
-                <div class="ly-hint">
-                  Membership tiers (Bronze → Platinum) are platform-wide, not per country, and are managed outside this page.
+              </div>
+            </div>
+
+            <!-- Tiers — this country's own ladder -->
+            <div class="ly-card">
+              <div class="ly-card-head">
+                <Award :size="15" />Membership Tiers
+                <button class="btn btn-secondary btn-sm" style="margin-left:auto" @click="addLTier"><Plus :size="13" />Add Tier</button>
+              </div>
+              <div class="ly-card-body">
+                <div v-if="!lTiers.length" class="ly-empty-tiers">No tiers yet. Add at least one.</div>
+                <div v-for="(t, i) in lTiers" :key="i" class="ly-tier-row">
+                  <div class="ly-tier-preview" :style="`background:${t.bg_color}; color:${t.color}`">
+                    <Award :size="13" /><span>{{ t.name || '…' }}</span>
+                  </div>
+                  <div class="ly-tier-fields">
+                    <div class="form-group sm"><label class="form-label">Name</label><input v-model="t.name" placeholder="e.g. Legend" /></div>
+                    <div class="form-group sm"><label class="form-label">Threshold</label><input type="number" v-model="t.threshold" min="0" /></div>
+                    <div class="form-group sm"><label class="form-label">Multiplier</label><input type="number" v-model="t.multiplier" min="1" step="0.1" /></div>
+                    <div class="ly-color-pair">
+                      <div class="form-group sm"><label class="form-label">Text</label><input type="color" v-model="t.color" class="ly-color-input" /></div>
+                      <div class="form-group sm"><label class="form-label">Bg</label><input type="color" v-model="t.bg_color" class="ly-color-input" /></div>
+                    </div>
+                  </div>
+                  <button class="ly-x danger" @click="removeLTier(i)"><Trash2 :size="15" /></button>
                 </div>
+                <div class="ly-hint">A customer sits in the highest tier their lifetime points reach.</div>
               </div>
             </div>
           </div>
@@ -698,6 +816,22 @@ function cityCountLabel(country) {
 .city-modules {
   display: flex; gap: 4px; padding: 0 10px 7px; flex-wrap: wrap;
 }
+.mod-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 600; padding: 2px 6px;
+  border-radius: 4px; border: none; cursor: pointer;
+  background: #dcfce7; color: #15803d;
+  transition: opacity 0.1s, background 0.15s;
+  letter-spacing: 0.01em; line-height: 1.4;
+}
+.mod-pill.mod-off {
+  background: #fee2e2; color: #991b1b;
+  text-decoration: line-through; text-decoration-color: #ef4444;
+}
+.mod-pill:hover:not(:disabled) { opacity: 0.75; }
+.mod-pill:disabled { opacity: 0.4; cursor: wait; }
+
+.city-modules { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 7px 26px; }
 .mod-pill {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 10px; font-weight: 600; padding: 2px 6px;
