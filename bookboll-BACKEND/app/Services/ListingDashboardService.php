@@ -167,6 +167,7 @@ class ListingDashboardService
             'category'   => (string) $request->input('category', ''),
             'sport'      => (string) $request->input('sport', ''),
             'placement'  => (string) $request->input('placement', ''),
+            'visibility' => (string) $request->input('visibility', ''),
             'sort'       => (string) $request->input('sort', ''),
             'sort_dir'   => strtolower((string) $request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc',
         ];
@@ -277,6 +278,16 @@ class ListingDashboardService
         $onMarket = fn ($q) => $q->where(fn ($w) => $w->whereNull('show_on_marketplace')->orWhere('show_on_marketplace', true));
         $notPaused = fn ($q) => $q->where(fn ($w) => $w->whereNull('eligibility_status')->orWhere('eligibility_status', '!=', Listing::ELIGIBILITY_PAUSED));
         $notPending = fn ($q) => $q->where(fn ($w) => $w->whereNull('approval_status')->orWhere('approval_status', '!=', Listing::APPROVAL_PENDING));
+
+        // Who may book it: staff, customers, both, or nobody. Mirrors the
+        // Listing::VISIBILITY_* pairs exactly.
+        match ($f['visibility']) {
+            Listing::VISIBILITY_BOTH          => $query->where('show_on_admin', true)->where('show_on_customer', true),
+            Listing::VISIBILITY_ADMIN_ONLY    => $query->where('show_on_admin', true)->where('show_on_customer', false),
+            Listing::VISIBILITY_CUSTOMER_ONLY => $query->where('show_on_admin', false)->where('show_on_customer', true),
+            Listing::VISIBILITY_INACTIVE      => $query->where('show_on_admin', false)->where('show_on_customer', false),
+            default                           => null,
+        };
 
         match ($f['placement']) {
             'live'       => $query->tap($onMarket)->tap($notPaused)->tap($notPending),
@@ -517,6 +528,8 @@ class ListingDashboardService
 
         $data = $request->validate([
             'status'                 => 'sometimes|in:active,inactive',
+            'show_on_admin'          => 'sometimes|boolean',
+            'show_on_customer'       => 'sometimes|boolean',
             'eligibility_status'     => 'sometimes|in:eligible,paused,ineligible',
             'admin_note'             => 'nullable|string',
             'previous_snapshot'      => 'nullable|array',
@@ -780,6 +793,11 @@ class ListingDashboardService
             'fixed_start_times'       => $l->fixed_start_times ?? [],
             'capacity'                => (int) ($l->capacity ?? 0),
             'status'                  => $l->status ?? 'active',
+            // Per-surface visibility. `status` stays in the payload and is still
+            // derived from these two, so older readers are unaffected.
+            'show_on_admin'           => (bool) ($l->show_on_admin ?? true),
+            'show_on_customer'        => (bool) ($l->show_on_customer ?? true),
+            'visibility'              => $l->visibility ?? Listing::VISIBILITY_BOTH,
             'loyalty_points'          => (int) ($l->loyalty_points ?? 0),
             'booking_color'           => $l->calendar_color ?? '#10b981',
             'listing_type'            => $l->listing_type ?? 'per_space',
@@ -942,6 +960,10 @@ class ListingDashboardService
             'pending_content'       => array_key_exists('pending_content', $v) ? $v['pending_content'] : null,
             'show_on_marketplace'   => array_key_exists('show_on_marketplace', $v) ? (bool) $v['show_on_marketplace'] : true,
             'show_on_provider_site' => array_key_exists('show_on_provider_site', $v) ? (bool) $v['show_on_provider_site'] : true,
+            // Per-surface visibility. Dropped below when the client sent neither,
+            // so a partial update never silently changes who can book a listing.
+            'show_on_admin'         => array_key_exists('show_on_admin', $v) ? (bool) $v['show_on_admin'] : true,
+            'show_on_customer'      => array_key_exists('show_on_customer', $v) ? (bool) $v['show_on_customer'] : true,
             'extension_pricing'     => $v['extension_pricing'] ?? 'none',
             'extension_value'       => $v['extension_value'] ?? 0,
             'extension_max_slots'   => $v['extension_max_slots'] ?? 1,
@@ -950,12 +972,20 @@ class ListingDashboardService
             'submitted_by_name'     => array_key_exists('submitted_by_name', $v) ? $v['submitted_by_name'] : null,
         ];
 
+        // `status` is derived from the two flags by Listing::booted(). When the
+        // client sends visibility, its own `status` is stale by definition, so it
+        // is dropped rather than written and immediately overwritten.
+        if (array_key_exists('show_on_admin', $v) || array_key_exists('show_on_customer', $v)) {
+            unset($attrs['status']);
+        }
+
         // On partial updates, omit nullable fields the client did not send so we
         // do not wipe previous_snapshot / submitted_* / etc.
         foreach ([
             'previous_snapshot', 'pending_content', 'submitted_at', 'submitted_by_name',
             'admin_note', 'approval_status', 'eligibility_status', 'commission_rate',
             'booking_hold_minutes', 'sport_category',
+            'show_on_admin', 'show_on_customer',
         ] as $optionalKey) {
             if (! array_key_exists($optionalKey, $v)) {
                 unset($attrs[$optionalKey]);
@@ -991,6 +1021,11 @@ class ListingDashboardService
             'fixed_start_times'       => 'nullable|array',
             'capacity'                => 'nullable|integer|min:0',
             'status'                  => 'nullable|in:active,inactive',
+            // A listing is bookable per SURFACE now, not simply active/inactive.
+            // Omitting both leaves the existing flags alone (the model seeds them
+            // from `status` for callers that predate them).
+            'show_on_admin'           => 'sometimes|boolean',
+            'show_on_customer'        => 'sometimes|boolean',
             'loyalty_points'          => 'nullable|integer|min:0',
             'booking_color'           => 'nullable|string|max:32',
             'listing_type'            => 'nullable|string|max:64',
