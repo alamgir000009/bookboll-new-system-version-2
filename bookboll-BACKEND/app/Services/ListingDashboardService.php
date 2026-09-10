@@ -3,9 +3,12 @@
 namespace App\Services;
 
 use App\Models\Listing;
+use App\Support\AccessScope;
+use Nnjeim\World\Models\City;
 use App\Models\PricingCell;
 use App\Models\PricingGroup;
 use App\Models\Schedule;
+use App\Models\SportsCategory;
 use App\Models\Venue;
 use App\Support\PremiumPlan;
 use Illuminate\Support\Facades\DB;
@@ -30,17 +33,154 @@ class ListingDashboardService
     public function __construct(protected Listing $listingModel)
     {}
 
+    /**
+     * The Listings table — filtered, sorted and paginated ON THE SERVER.
+     *
+     * The page used to pull every listing and every venue and do all of this in the
+     * browser. That is fine at 36 listings and impossible at thousands, so each of
+     * the page's filters is expressed as SQL here.
+     *
+     * Rows carry their venue's name, city and country so the table can render and
+     * group without a second lookup list.
+     */
     public function index($request)
     {
-        $user = auth()->user();
-        $query = $this->listingModel::query()
-            ->with(['venue'])
-            ->orderBy('sort_order')
-            ->orderBy('created_at');
+        $f = $this->listingFilters($request);
+        $query = $this->scopedListingQuery($request, $f);
 
-        if ($user && ! $user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
-            $allowed = DB::table('user_venue')->where('user_id', $user->id)->pluck('venue_id');
-            $query->whereIn('venue_id', $allowed);
+        // Export wants every matching row; the table wants one page.
+        if ($request->boolean('export')) {
+            $rows = $query->limit(self::EXPORT_MAX)->get();
+
+            return sendSuccess('Listings dashboard fetched', [
+                'listings'  => $this->mapListingRows($rows),
+                'truncated' => $rows->count() >= self::EXPORT_MAX,
+            ]);
+        }
+
+        // No pagination asked for → the old whole-list shape, so callers that still
+        // want everything (the editor's venue picker, the grouped view's counts)
+        // keep working unchanged.
+        if (! $request->filled('page') && ! $request->filled('per_page')) {
+            return sendSuccess('Listings dashboard fetched', [
+                'listings' => $this->mapListingRows($query->get()),
+                // The grouped view lands here (it pages over venues, not listings)
+                // and still needs the scope-wide numbers for its Sport dropdown
+                // and its "export everything" count.
+                'scope_total'   => $this->scopeBaseQuery($request)->count(),
+                'sport_options' => $this->sportOptions($request),
+            ]);
+        }
+
+        $perPage = min(max((int) $request->input('per_page', 25), 1), 200);
+        $page = $query->paginate($perPage, ['*'], 'page', max(1, (int) $request->input('page', 1)));
+
+        return sendSuccess('Listings dashboard fetched', [
+            'listings'   => $this->mapListingRows(collect($page->items())),
+            'pagination' => [
+                'current_page' => $page->currentPage(),
+                'last_page'    => $page->lastPage(),
+                'per_page'     => $page->perPage(),
+                'total'        => $page->total(),
+                'from'         => $page->firstItem(),
+                'to'           => $page->lastItem(),
+            ],
+            // Unfiltered count in scope — the export dialog offers both numbers.
+            // Built from the bare scope: `scopedListingQuery` also reads venue_id /
+            // venue_ids straight off the request, so reusing it here would have
+            // counted only the venues on the current grouped page.
+            'scope_total'   => $this->scopeBaseQuery($request)->count(),
+            // The sport filter's options. The page used to derive these from the
+            // full listing array it held; now that it holds one page, the server
+            // has to supply them or the dropdown shrinks as you page.
+            'sport_options' => $this->sportOptions($request),
+        ]);
+    }
+
+    private const EXPORT_MAX = 20000;
+
+    /**
+     * Listings this user may see, with NO filters applied — the denominator for
+     * "export everything" and for the filter dropdowns' options.
+     */
+    protected function scopeBaseQuery($request)
+    {
+        $query = $this->listingModel::query();
+
+        AccessScope::applyVenue($query, 'venue_id', auth()->user());
+        $pinned = AccessScope::pinnedListingIds(auth()->user());
+        if ($pinned) {
+            $query->whereIn('id', $pinned);
+        }
+        if ($request->filled('owner_user_id')) {
+            $ownerId = $request->owner_user_id;
+            $query->whereHas('venue', fn ($q) => $q->where('owner_user_id', $ownerId));
+        }
+
+        return $query;
+    }
+
+    /**
+     * Distinct sport values per category across the whole scope, so the Sport
+     * dropdown offers the same options it did when the page held every listing.
+     *
+     * @return array<int, array{category: string, sport: string}>
+     */
+    protected function sportOptions($request): array
+    {
+        // DISTINCT over three columns, so this stays bounded by the number of
+        // sports (a few dozen) however many listings exist.
+        $rows = $this->scopeBaseQuery($request)
+            ->select('category', 'sport_category', 'sports_category_id')
+            ->distinct()
+            ->get();
+
+        $names = SportsCategory::whereIn('id', $rows->pluck('sports_category_id')->filter()->unique())
+            ->pluck('name', 'id');
+
+        return $rows
+            ->map(fn ($r) => [
+                'category' => (string) ($r->category ?? 'sports'),
+                // Same fallback the table displays, so every option is selectable.
+                'sport'    => trim((string) ($r->sport_category ?: ($names[$r->sports_category_id] ?? ''))),
+            ])
+            ->filter(fn ($r) => $r['sport'] !== '')
+            ->unique(fn ($r) => mb_strtolower($r['category'].'|'.$r['sport']))
+            ->values()
+            ->all();
+    }
+
+    /** @return array<string, mixed> */
+    protected function listingFilters($request): array
+    {
+        $arr = function ($v) {
+            if (is_array($v)) return array_values(array_filter($v, fn ($x) => $x !== '' && $x !== null));
+            if (is_string($v) && $v !== '') return array_values(array_filter(explode(',', $v)));
+            return [];
+        };
+
+        return [
+            'search'     => trim((string) $request->input('search', '')),
+            'country_id' => $arr($request->input('country_id')),
+            'city_id'    => $arr($request->input('city_id')),
+            'category'   => (string) $request->input('category', ''),
+            'sport'      => (string) $request->input('sport', ''),
+            'placement'  => (string) $request->input('placement', ''),
+            'sort'       => (string) $request->input('sort', ''),
+            'sort_dir'   => strtolower((string) $request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc',
+        ];
+    }
+
+    protected function scopedListingQuery($request, array $f)
+    {
+        $query = $this->listingModel::query()->with(['venue:id,name,city_id,owner_user_id', 'sportsCategory:id,name']);
+
+        // Row scope: provider ownership, jurisdiction, venue pins and listing pins —
+        // the same rule every other admin surface uses.
+        AccessScope::applyVenue($query, 'venue_id', auth()->user());
+        $pinned = AccessScope::pinnedListingIds(auth()->user());
+        if ($pinned) {
+            $query->whereIn('id', $pinned);
         }
 
         if ($request->filled('owner_user_id')) {
@@ -50,13 +190,152 @@ class ListingDashboardService
         if ($request->filled('venue_id') || $request->filled('location_id')) {
             $query->where('venue_id', $request->venue_id ?? $request->location_id);
         }
+        // The grouped view asks for exactly the venues on the current card page.
+        if ($request->filled('venue_ids')) {
+            $ids = array_filter(explode(',', (string) $request->input('venue_ids')));
+            $query->whereIn('venue_id', $ids ?: [0]);
+        }
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
-        $listings = $query->get()->map(fn (Listing $l) => $this->mapDashboardListing($l))->values();
+        $this->applyListingFilters($query, $f);
+        $this->applyListingSort($query, $f);
 
-        return sendSuccess('Listings dashboard fetched', compact('listings'));
+        return $query;
+    }
+
+    /**
+     * Venue ids that still have at least one listing matching the content filters
+     * (search, category, sport, placement).
+     *
+     * The grouped Listings view pages over VENUE cards but hides a card whose
+     * listings all filtered out, so the venue query has to know this BEFORE it
+     * paginates — otherwise "10 per page" renders as two cards and the pager
+     * counts venues the user can never see.
+     *
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public function matchingVenueIds($request)
+    {
+        $f = $this->listingFilters($request);
+
+        // Same row scope as scopedListingQuery — a venue must not surface because
+        // of a listing this admin cannot see.
+        $query = $this->scopeBaseQuery($request);
+
+        $this->applyListingFilters($query, $f);
+
+        return $query->distinct()->pluck('venue_id')->filter()->values();
+    }
+
+    protected function applyListingFilters($query, array $f): void
+    {
+        if ($f['search'] !== '') {
+            $term = '%'.$f['search'].'%';
+            $query->where(function ($q) use ($term) {
+                $q->where('listings.name', 'LIKE', $term)
+                    ->orWhere('sport_category', 'LIKE', $term)
+                    // Most listings leave the column empty and show the related
+                    // category's name instead; the page searches what it displays.
+                    ->orWhere(fn ($w) => $w
+                        ->tap($this->sportFromRelation())
+                        ->whereHas('sportsCategory', fn ($s) => $s->where('name', 'LIKE', $term)))
+                    ->orWhere('description', 'LIKE', $term)
+                    ->orWhereHas('venue', fn ($v) => $v->where('name', 'LIKE', $term));
+            });
+        }
+
+        if ($f['category'] !== '' && $f['category'] !== 'all') {
+            $query->where('category', $f['category']);
+        }
+        if ($f['sport'] !== '' && $f['sport'] !== 'all') {
+            $sport = mb_strtolower($f['sport']);
+            $query->where(function ($q) use ($sport) {
+                $q->whereRaw('LOWER(listings.sport_category) = ?', [$sport])
+                    ->orWhere(fn ($w) => $w
+                        ->tap($this->sportFromRelation())
+                        ->whereHas('sportsCategory', fn ($s) => $s->whereRaw('LOWER(name) = ?', [$sport])));
+            });
+        }
+
+        // Geography lives on the venue, so both filters resolve to a venue-id set.
+        if ($f['city_id']) {
+            $query->whereHas('venue', fn ($v) => $v->whereIn('city_id', $f['city_id']));
+        }
+        if ($f['country_id']) {
+            $cityIds = City::whereIn('country_id', $f['country_id'])->pluck('id');
+            $query->whereHas('venue', fn ($v) => $v->whereIn('city_id', $cityIds ?: [0]));
+        }
+
+        // Placement mirrors the page's own three states EXACTLY (lib/approvalState.js):
+        //   rowState is 'active' unless eligibility is 'paused' or approval is
+        //   'pending' — `status` plays no part, and a NULL column reads as the
+        //   permissive default ('eligible' / 'approved'), which a plain `!=` in SQL
+        //   would wrongly exclude.
+        $onMarket = fn ($q) => $q->where(fn ($w) => $w->whereNull('show_on_marketplace')->orWhere('show_on_marketplace', true));
+        $notPaused = fn ($q) => $q->where(fn ($w) => $w->whereNull('eligibility_status')->orWhere('eligibility_status', '!=', Listing::ELIGIBILITY_PAUSED));
+        $notPending = fn ($q) => $q->where(fn ($w) => $w->whereNull('approval_status')->orWhere('approval_status', '!=', Listing::APPROVAL_PENDING));
+
+        match ($f['placement']) {
+            'live'       => $query->tap($onMarket)->tap($notPaused)->tap($notPending),
+            'review'     => $query->tap($onMarket)->where(fn ($q) => $q
+                                ->where('eligibility_status', Listing::ELIGIBILITY_PAUSED)
+                                ->orWhere('approval_status', Listing::APPROVAL_PENDING)),
+            'off_market' => $query->where('show_on_marketplace', false),
+            default      => null,
+        };
+    }
+
+    /** Rows whose sport is shown from the relation because the column is empty. */
+    protected function sportFromRelation(): callable
+    {
+        return fn ($q) => $q->where(fn ($e) => $e
+            ->whereNull('listings.sport_category')
+            ->orWhere('listings.sport_category', ''));
+    }
+
+    protected function applyListingSort($query, array $f): void
+    {
+        match ($f['sort']) {
+            'name'           => $query->orderBy('listings.name', $f['sort_dir']),
+            'base_price'     => $query->orderBy('base_price', $f['sort_dir']),
+            // Order by the sport the table actually shows, not the mostly-empty
+            // column. A correlated subquery rather than a join: a join would make
+            // `id`, `name` and `category` ambiguous for every other clause here.
+            'sport_category' => $query->orderByRaw(
+                "COALESCE(NULLIF(listings.sport_category, ''), "
+                ."(SELECT name FROM sports_categories WHERE sports_categories.id = listings.sports_category_id)) "
+                .$f['sort_dir']
+            ),
+            // The page's default is the provider's own drag-ordering.
+            default          => $query->orderBy('sort_order')->orderBy('created_at'),
+        };
+        $query->orderBy('listings.id');   // stable paging
+    }
+
+    /**
+     * Map rows and attach the venue name, city and country the table shows and
+     * groups by — without these the page still needs the whole venue list.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function mapListingRows($rows): array
+    {
+        $cityIds = collect($rows)->map(fn ($l) => $l->venue?->city_id)->filter()->unique();
+        $cityCountry = $cityIds->isEmpty()
+            ? collect()
+            : City::whereIn('id', $cityIds)->pluck('country_id', 'id');
+
+        return collect($rows)->map(function (Listing $l) use ($cityCountry) {
+            $cityId = $l->venue?->city_id;
+
+            return array_merge($this->mapDashboardListing($l), [
+                'location_name' => $l->venue?->name,
+                'city_id'       => $cityId ? (string) $cityId : null,
+                'country_id'    => $cityId && isset($cityCountry[$cityId]) ? (string) $cityCountry[$cityId] : null,
+            ]);
+        })->values()->all();
     }
 
     public function show($id)

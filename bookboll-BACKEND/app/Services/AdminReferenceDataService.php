@@ -144,6 +144,14 @@ class AdminReferenceDataService
                     $q->orWhereIn('id', $venueCityIds);
                 }
             });
+        } else {
+            // A GLOBAL admin has no jurisdiction, so neither branch above applied and
+            // every city in the world was returned — 150,716 rows, ~7.8 MB, on every
+            // page that loads reference data. Consumers only ever resolve a venue's
+            // city or offer the cities Bookboll actually operates in, so the cities
+            // referenced by venues are the whole useful set. A true city picker uses
+            // /admin/locations/cities, which takes a country and a search term.
+            $query->whereIn('id', $venueCityIds ?: [0]);
         }
 
         return $query->orderBy('name')->get();

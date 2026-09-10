@@ -2,6 +2,8 @@
 namespace App\Services;
 
 use App\Models\Venue;
+use App\Support\AccessScope;
+use Nnjeim\World\Models\City;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -385,26 +387,50 @@ class VenueService
         6 => 'saturday',
     ];
 
+    /**
+     * Venue cards for the Listings page, paginated ON THE SERVER.
+     *
+     * This is the page's DEFAULT view, and it previously loaded every venue at once
+     * with no paging at all. Each card also reports how many listings it holds, so
+     * the page need not hold every listing just to print a count.
+     *
+     * Callers that pass no page/per_page still get the whole list, so the venue
+     * pickers elsewhere are unaffected.
+     */
     public function dashboardIndex($request)
     {
-        $user = auth()->user();
         $query = $this->venueModel::query()
             ->orderBy('sort_order')
             ->orderBy('created_at');
 
-        if ($user && ! $user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
-            $allowed = DB::table('user_venue')->where('user_id', $user->id)->pluck('venue_id');
-            $query->whereIn('id', $allowed);
-        }
+        // Same row scope as every other admin surface: ownership, jurisdiction, pins.
+        AccessScope::applyVenue($query, 'id', auth()->user());
 
         if ($request->filled('owner_user_id')) {
             $query->where('owner_user_id', $request->owner_user_id);
         }
-        if ($request->filled('country_id')) {
-            $query->where('country_id', $request->country_id);
+        // The dashboard sends multi-selects as one comma-joined value, so
+        // "2,5" has to become [2, 5] — `where('country_id', '2,5')` matched
+        // nothing and `(array) '2,5'` was ['2,5'], which matched nothing either.
+        $arr = function ($v) {
+            if (is_array($v)) return array_values(array_filter($v, fn ($x) => $x !== '' && $x !== null));
+            if (is_string($v) && $v !== '') return array_values(array_filter(explode(',', $v)));
+            return [];
+        };
+
+        $cityIds = $arr($request->input('city_id'));
+        if ($cityIds) {
+            $query->whereIn('city_id', $cityIds);
         }
-        if ($request->filled('city_id')) {
-            $query->where('city_id', $request->city_id);
+        // The page derives a venue's country from its CITY (see countryOfLocation
+        // in Listings.vue), not from venues.country_id, which can be stale. Resolve
+        // it the same way so both surfaces agree.
+        if ($countryIds = $arr($request->input('country_id'))) {
+            $countryCityIds = City::whereIn('country_id', $countryIds)->pluck('id');
+            $query->whereIn('city_id', $countryCityIds->all() ?: [0]);
+        }
+        if ($request->filled('venue_id')) {
+            $query->where('id', $request->venue_id);
         }
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -412,18 +438,84 @@ class VenueService
         if ($request->filled('approval_status')) {
             $query->where('approval_status', $request->approval_status);
         }
-        if ($request->filled('search')) {
-            $s = $request->search;
-            $query->where(function ($q) use ($s) {
-                $q->where('name', 'LIKE', "%{$s}%")
-                    ->orWhere('address', 'LIKE', "%{$s}%")
-                    ->orWhere('phone', 'LIKE', "%{$s}%");
+
+        // `match_listings` is the grouped Listings view: a venue card is shown only
+        // when it still holds a listing matching the content filters, and a bare
+        // search may also match the venue's own name. Every other caller keeps the
+        // plain name/address/phone search below.
+        $matchListings = $request->boolean('match_listings');
+        $search = trim((string) $request->input('search', ''));
+
+        if ($matchListings) {
+            $hasContentFilter = ($request->filled('category') && $request->category !== 'all')
+                || ($request->filled('sport') && $request->sport !== 'all')
+                || $request->filled('placement');
+
+            if ($hasContentFilter || $search !== '') {
+                $venueIds = app(ListingDashboardService::class)->matchingVenueIds($request)->all();
+
+                if ($hasContentFilter) {
+                    $query->whereIn('id', $venueIds ?: [0]);
+                } else {
+                    // Search only: a venue with no listings at all still shows when
+                    // its own name matches, exactly as filteredLocations does.
+                    $query->where(fn ($q) => $q
+                        ->whereIn('id', $venueIds ?: [0])
+                        ->orWhere('name', 'LIKE', "%{$search}%"));
+                }
+            }
+        } elseif ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'LIKE', "%{$search}%")
+                    ->orWhere('address', 'LIKE', "%{$search}%")
+                    ->orWhere('phone', 'LIKE', "%{$search}%");
             });
         }
 
-        $locations = $query->get()->map(fn (Venue $v) => $this->mapDashboardVenue($v))->values();
+        // Callers that ask for no page get everything, as before — venue pickers
+        // elsewhere depend on that shape.
+        if (! $request->filled('page') && ! $request->filled('per_page')) {
+            return sendSuccess('Venues dashboard fetched', [
+                'locations' => $this->mapVenueRows($query->get()),
+            ]);
+        }
 
-        return sendSuccess('Venues dashboard fetched', compact('locations'));
+        $perPage = min(max((int) $request->input('per_page', 10), 1), 100);
+        $page = $query->paginate($perPage, ['*'], 'page', max(1, (int) $request->input('page', 1)));
+
+        return sendSuccess('Venues dashboard fetched', [
+            'locations'  => $this->mapVenueRows(collect($page->items())),
+            'pagination' => [
+                'current_page' => $page->currentPage(),
+                'last_page'    => $page->lastPage(),
+                'per_page'     => $page->perPage(),
+                'total'        => $page->total(),
+                'from'         => $page->firstItem(),
+                'to'           => $page->lastItem(),
+            ],
+        ]);
+    }
+
+    /**
+     * Map venue rows and attach the listing count each card shows, in one grouped
+     * query rather than one per card.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function mapVenueRows($rows): array
+    {
+        $ids = collect($rows)->pluck('id');
+        $counts = $ids->isEmpty()
+            ? collect()
+            : \App\Models\Listing::whereIn('venue_id', $ids)
+                ->selectRaw('venue_id, count(*) as c')
+                ->groupBy('venue_id')
+                ->pluck('c', 'venue_id');
+
+        return collect($rows)->map(fn (Venue $v) => array_merge(
+            $this->mapDashboardVenue($v),
+            ['listing_count' => (int) ($counts[$v->id] ?? 0)]
+        ))->values()->all();
     }
 
     public function dashboardShow($id)
