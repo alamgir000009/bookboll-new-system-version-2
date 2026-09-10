@@ -6,6 +6,7 @@ use App\Models\ClassProgram;
 use App\Models\ProviderTrialAgreement;
 use App\Models\Venue;
 use App\Support\AccessScope;
+use App\Support\CityModules;
 use App\Support\PremiumPlan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -116,6 +117,16 @@ class ProgramSaveService
         $ownerId = $this->resolveOwner($request, $data);
         if (! $ownerId && ! $isAdmin) {
             return sendError('No business found for this account.', [], 404);
+        }
+
+        // The venue's city may have the Memberships module switched off. Only a NEW
+        // programme (or one being moved to another venue) is refused — an existing
+        // programme keeps working, matching how the switch stops new supply only.
+        $venueId = $data['location_id'] ?? null;
+        if ($venueId && (! $existing || (int) $existing->venue_id !== (int) $venueId)) {
+            if ($err = CityModules::guard($venueId, CityModules::CLASSES, 'Membership programs')) {
+                return $err;
+            }
         }
 
         // Selling a programme only on your own site, off the Bookboll Marketplace, is

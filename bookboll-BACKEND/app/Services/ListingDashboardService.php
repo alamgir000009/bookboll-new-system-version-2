@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Listing;
 use App\Support\AccessScope;
+use App\Support\CityModules;
 use Nnjeim\World\Models\City;
 use App\Models\PricingCell;
 use App\Models\PricingGroup;
@@ -387,6 +388,10 @@ class ListingDashboardService
 
         $venueId = (int) ($validated['location_id'] ?? $validated['venue_id'] ?? 0);
         if ($err = $this->assertAccess($venueId)) {
+            return $err;
+        }
+        // The city may have the Listings module switched off (Countries & Cities).
+        if ($err = CityModules::guard($venueId, CityModules::LISTINGS, 'Booking listings')) {
             return $err;
         }
         if ($err = $this->guardOffMarketplace($request, $validated, null)) {

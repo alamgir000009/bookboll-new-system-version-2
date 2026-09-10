@@ -609,8 +609,8 @@ class CustomerService
             ->values();
         $lookups['programs'] = $lookups['programs'] ?? [];
         $lookups['subscriptions'] = $lookups['subscriptions'] ?? [];
-        $lookups['loyalty_programs'] = $lookups['loyalty_programs'] ?? [];
-        $lookups['loyalty_tiers'] = $lookups['loyalty_tiers'] ?? [];
+        $lookups['loyalty_programs'] = $lookups['loyalty_programs'] ?? $this->loyaltyProgramRows();
+        $lookups['loyalty_tiers'] = $lookups['loyalty_tiers'] ?? $this->loyaltyTierRows();
         // The headline counts must agree with the rows below them.
         $lookups['kpis'] = [
             'total'      => $this->scopedCustomerQuery($request)->count(),
@@ -652,9 +652,28 @@ class CustomerService
             'bookings'          => $bookings,
             'customer_loyalty'  => $loyalty,
             'programs'          => [],
-            'loyalty_programs'  => [],
-            'loyalty_tiers'     => [],
+            // The detail modal grades a customer against their COUNTRY's ladder;
+            // these were hardcoded empty, so it always fell back to a preset set
+            // and no configured tier ever showed.
+            'loyalty_programs'  => $this->loyaltyProgramRows(),
+            'loyalty_tiers'     => $this->loyaltyTierRows(),
         ]));
+    }
+
+    /** Loyalty programs, one per country. */
+    protected function loyaltyProgramRows()
+    {
+        return \App\Models\LoyaltyProgram::query()->orderBy('country_id')->get();
+    }
+
+    /** Tier ladders in the shape the dashboard grades against. */
+    protected function loyaltyTierRows()
+    {
+        return \App\Models\LoyaltyTier::query()
+            ->orderBy('order')
+            ->get()
+            ->map(fn ($t) => $t->toDashboardRow())
+            ->values();
     }
 
     public function storeDashboard(Request $request)

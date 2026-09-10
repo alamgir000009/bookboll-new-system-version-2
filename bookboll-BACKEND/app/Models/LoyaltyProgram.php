@@ -75,4 +75,10 @@ class LoyaltyProgram extends Model
             'is_active',
         ];
     }
+
+    /** This country's tier ladder, in display order. */
+    public function tiers()
+    {
+        return $this->hasMany(LoyaltyTier::class, 'program_id');
+    }
 }

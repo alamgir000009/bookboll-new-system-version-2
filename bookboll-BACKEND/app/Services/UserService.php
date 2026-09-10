@@ -2,6 +2,7 @@
 namespace App\Services;
 
 use App\Mail\CustomerForgotPasswordOtpEmail;
+use App\Support\RoleGrantGuard;
 use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserRejectionEmail;
 use App\Mail\UserWelcomeEmail;
@@ -823,6 +824,12 @@ class UserService
 
     public function createUser($request)
     {
+        // manage_team says you may run a team; it does not say which roles you may
+        // hand out. Without this a provider's own manager could mint a super admin.
+        if (! RoleGrantGuard::mayGrant(auth()->user(), (string) $request->input('role'))) {
+            return RoleGrantGuard::denied('create a user with that role');
+        }
+
         $providerTeamRoles = config('roles.provider_team_roles', []);
         $platformRoles     = array_merge(
             config('roles.platform_team_roles', []),
@@ -1082,6 +1089,14 @@ class UserService
             return sendError('User not found');
         }
 
+        // Never edit an account that outranks you, and never promote past yourself.
+        if (! RoleGrantGuard::mayTouch(auth()->user(), $user)) {
+            return RoleGrantGuard::denied('edit that user');
+        }
+        if ($request->filled('role') && ! RoleGrantGuard::mayGrant(auth()->user(), (string) $request->input('role'))) {
+            return RoleGrantGuard::denied('assign that role');
+        }
+
         $providerTeamRoles = config('roles.provider_team_roles', []);
 
         $formData = $request->validate([
@@ -1179,11 +1194,18 @@ class UserService
     public function deleteUser($id)
     {
         $user = $this->findById($id);
+        if (! $user) {
+            return sendError('User not found');
+        }
         if ($user->id == auth()->id() || $user->id == 1) {
             return sendError('This user cannot be deleted');
-        } elseif ($user) {
-            $user->delete();
         }
+        // A junior could delete an administrator here — rank now decides.
+        if (! RoleGrantGuard::mayTouch(auth()->user(), $user)) {
+            return RoleGrantGuard::denied('delete that user');
+        }
+
+        $user->delete();
 
         return sendSuccess('User deleted successfully');
     }
@@ -1972,6 +1994,13 @@ class UserService
             'venues'   => 'nullable|array',
             'venues.*' => 'numeric|exists:venues,id',
         ]);
+
+        // Approving a pending signup CREATES an account with the role you name.
+        // `role` is validated only as "a role that exists", so without this an
+        // approver could approve someone (or themselves) straight to super admin.
+        if (! RoleGrantGuard::mayGrant(auth()->user(), $formData['role'])) {
+            return RoleGrantGuard::denied('approve a registration with that role');
+        }
 
         try {
             DB::beginTransaction();

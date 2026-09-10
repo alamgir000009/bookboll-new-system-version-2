@@ -4,8 +4,11 @@ namespace App\Services;
 
 use App\Models\CommissionRate;
 use App\Models\LoyaltyProgram;
+use App\Models\LoyaltyTier;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Nnjeim\World\Models\City;
 use Nnjeim\World\Models\Country;
 
@@ -200,8 +203,18 @@ class GeographyService
     {
         $programs = LoyaltyProgram::query()->orderBy('country_id')->get();
 
+        // Each country's tier ladder rides along, in the shape the dashboard
+        // renders (threshold / sort_order). Rows with a null program_id are the
+        // legacy global defaults and are offered to every country.
+        $tiers = LoyaltyTier::query()
+            ->orderBy('order')
+            ->get()
+            ->map(fn (LoyaltyTier $t) => $t->toDashboardRow())
+            ->values();
+
         return sendSuccess('Loyalty programs fetched', [
             'loyalty_programs' => $programs,
+            'loyalty_tiers'    => $tiers,
             'defaults'         => LoyaltyProgram::defaults(),
         ]);
     }
@@ -217,6 +230,17 @@ class GeographyService
             'max_redeem_pct' => 'required|integer|min:0|max:100',
             'expiry_months'  => 'required|integer|min:0|max:600',
             'is_active'      => 'required|boolean',
+            // The tier ladder for this country. Absent = leave the tiers alone;
+            // present (even empty) = replace them, matching the Supabase build,
+            // which deleted the program's tiers and re-inserted what was on screen.
+            'tiers'              => 'sometimes|array',
+            // Blank rows are the editor's empty placeholders; replaceTiers drops
+            // them. Rejecting the whole save over one would lose the other edits.
+            'tiers.*.name'       => 'nullable|string|max:60',
+            'tiers.*.threshold'  => 'nullable|numeric|min:0',
+            'tiers.*.multiplier' => 'nullable|numeric|min:0',
+            'tiers.*.color'      => 'nullable|string|max:32',
+            'tiers.*.bg_color'   => 'nullable|string|max:32',
         ]);
 
         // redeem_value is standardised at 1 currency unit per step for every currency —
@@ -237,7 +261,49 @@ class GeographyService
             ]
         );
 
-        return sendSuccess('Loyalty program saved', ['loyalty_program' => $program]);
+        if ($request->has('tiers')) {
+            $this->replaceTiers($program, $data['tiers'] ?? []);
+        }
+
+        return sendSuccess('Loyalty program saved', [
+            'loyalty_program' => $program,
+            'loyalty_tiers'   => $program->tiers()->orderBy('order')->get()
+                ->map(fn (LoyaltyTier $t) => $t->toDashboardRow())->values(),
+        ]);
+    }
+
+    /**
+     * Replace a program's tiers with exactly what was submitted.
+     *
+     * Done inside a transaction: a half-written ladder would silently re-grade
+     * every customer in the country.
+     */
+    protected function replaceTiers(LoyaltyProgram $program, array $rows): void
+    {
+        DB::transaction(function () use ($program, $rows) {
+            LoyaltyTier::where('program_id', $program->id)->delete();
+
+            $order = 0;
+            foreach ($rows as $row) {
+                $name = trim((string) ($row['name'] ?? ''));
+                if ($name === '') {
+                    continue;   // blank rows are the editor's empty placeholders
+                }
+
+                LoyaltyTier::create([
+                    'program_id' => $program->id,
+                    'name'       => $name,
+                    'slug'       => Str::slug($name.'-'.$program->id.'-'.$order) ?: 'tier-'.$program->id.'-'.$order,
+                    'color'      => $row['color'] ?? '#92400e',
+                    'bg_color'   => $row['bg_color'] ?? '#fef3c7',
+                    'min_points' => (int) ($row['threshold'] ?? 0),
+                    'multiplier' => (float) ($row['multiplier'] ?? 1),
+                    'order'      => $order,
+                    'is_active'  => true,
+                ]);
+                $order++;
+            }
+        });
     }
 
     protected function mapCountry(Country $c): array
@@ -273,6 +339,31 @@ class GeographyService
             'name'       => $c->name,
             'timezone'   => null,
             'status'     => $raw === 1 ? 'active' : 'inactive',
+            // Per-city service modules. NULL reads as ON, matching the dashboard's
+            // `module_* === false` test and the original Supabase default.
+            'module_listings'    => $c->module_listings !== 0 && $c->module_listings !== false,
+            'module_classes'     => $c->module_classes !== 0 && $c->module_classes !== false,
+            'module_matchmaking' => $c->module_matchmaking !== 0 && $c->module_matchmaking !== false,
         ];
+    }
+
+    /**
+     * Turn one service module on or off for a city.
+     *
+     * Disabling a module stops providers creating that kind of thing in the city;
+     * anything already published is left alone, exactly as the Supabase build did.
+     */
+    public function updateCityModule(Request $request, int $id)
+    {
+        $data = $request->validate([
+            'module'  => 'required|in:module_listings,module_classes,module_matchmaking',
+            'enabled' => 'required|boolean',
+        ]);
+
+        $city = City::findOrFail($id);
+        $city->{$data['module']} = (bool) $data['enabled'];
+        $city->save();
+
+        return sendSuccess('City module updated', ['city' => $this->mapCity($city->fresh())]);
     }
 }

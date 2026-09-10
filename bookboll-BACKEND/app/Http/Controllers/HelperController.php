@@ -11,6 +11,7 @@ use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\User;
 use App\Models\Venue;
+use App\Support\AccessScope;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -34,9 +35,32 @@ class HelperController extends Controller
         return sendSuccess('Data fetched successfully', compact('venues', 'listings'));
     }
 
-    public function extraCustomers()
+    /**
+     * Customer lookup for the legacy helper endpoints.
+     *
+     * Was an unscoped `->get()` over every customer on the platform: 15k+ rows of
+     * name and email handed to anyone who could reach /api/admin, and heavy enough
+     * to exhaust memory. Now scoped to the caller's own customers and bounded, with
+     * an optional `search` so a picker can find someone without pulling the list.
+     */
+    public function extraCustomers(Request $request)
     {
-        $customers = User::role('customer')->get(['id', 'name', 'email']);
+        $query = User::role('customer');
+
+        $scope = AccessScope::customerIdsInScope(auth()->user());
+        if ($scope !== null) {
+            $query->whereIn('id', $scope ?: [0]);
+        }
+
+        if ($term = trim((string) $request->input('search', ''))) {
+            $like = '%'.$term.'%';
+            $query->where(fn ($q) => $q->where('name', 'LIKE', $like)->orWhere('email', 'LIKE', $like));
+        }
+
+        $customers = $query->orderBy('name')
+            ->limit(min(max((int) $request->input('limit', 100), 1), 500))
+            ->get(['id', 'name', 'email']);
+
         return sendSuccess('Data fetched successfully', compact('customers'));
     }
 

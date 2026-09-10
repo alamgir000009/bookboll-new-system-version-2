@@ -246,6 +246,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
                 Route::patch('countries/{id}/status', [GeographyController::class, 'updateCountryStatus'])->name('countries.status');
                 Route::patch('cities/{id}/status', [GeographyController::class, 'updateCityStatus'])->name('cities.status');
                 Route::post('cities/bulk-status', [GeographyController::class, 'bulkUpdateCityStatus'])->name('cities.bulk-status');
+                Route::patch('cities/{id}/module', [GeographyController::class, 'updateCityModule'])->name('cities.module');
                 Route::put('commission-rates', [GeographyController::class, 'upsertCommission'])->name('commission-rates');
                 Route::get('loyalty-programs', [GeographyController::class, 'loyaltyPrograms'])->name('loyalty-programs.index');
                 Route::put('loyalty-programs', [GeographyController::class, 'upsertLoyaltyProgram'])->name('loyalty-programs');
@@ -356,33 +357,63 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('subscriptions/dashboard/{id}/winback', [ClassMembershipController::class, 'winback'])->name('subscriptions.dashboard.winback');
         });
 
-        Route::get('registrations/requests', [UserController::class, 'listPendingUsers'])->name('users.pending');
-        Route::post('registrations/{id}/approve', [UserController::class, 'approveUser'])->name('users.approve');
-        Route::post('registrations/{id}/reject', [UserController::class, 'rejectUser'])->name('users.reject');
+        // Team & account administration. The dashboard hides these behind
+        // CAP.MANAGE_TEAM (PAGE_CAP '/team'); without the same gate here the
+        // check was cosmetic — any signed-in admin-area role could call the API
+        // directly and mint or delete an administrator.
+        Route::middleware('capability:manage_team')->group(function () {
+            Route::get('registrations/requests', [UserController::class, 'listPendingUsers'])->name('users.pending');
+            Route::post('registrations/{id}/approve', [UserController::class, 'approveUser'])->name('users.approve');
+            Route::post('registrations/{id}/reject', [UserController::class, 'rejectUser'])->name('users.reject');
 
-        Route::apiResource('users', UserController::class);
-        Route::get('users/required-data', [UserController::class, 'requiredDataForUser']);
-        Route::get('businesses', [BusinessController::class, 'adminIndex'])->name('businesses.index');
+            Route::apiResource('users', UserController::class);
+            Route::get('users/required-data', [UserController::class, 'requiredDataForUser']);
+            Route::get('businesses', [BusinessController::class, 'adminIndex'])->name('businesses.index');
+        });
+
+        // A user editing their OWN profile needs no team rights.
         Route::post('users/update-profile', [UserController::class, 'updateProfile']);
-        Route::post('customers/register', [CustomerController::class, 'createCustomer']);
 
+        // Creating a customer inline from the booking drawer.
+        Route::middleware('capability:manage_customers,manage_bookings')->group(function () {
+            Route::post('customers/register', [CustomerController::class, 'createCustomer']);
+        });
+
+        // Reading settings stays open — the brand/theme loader needs it on every
+        // page. WRITING them is the Brand page, gated as the dashboard gates it.
         Route::get('settings', [SettingController::class, 'index'])->name('settings.index');
-        Route::post('settings/{key}', [SettingController::class, 'updateSingle'])->name('settings.updateSingle');
-        Route::post('settings', [SettingController::class, 'update'])->name('settings.update');
+        Route::middleware('capability:platform_admin,manage_platform_website')->group(function () {
+            Route::post('settings/{key}', [SettingController::class, 'updateSingle'])->name('settings.updateSingle');
+            Route::post('settings', [SettingController::class, 'update'])->name('settings.update');
+        });
 
-        Route::get('notification-templates', [NotificationTemplateController::class, 'showPlatform'])->name('notification-templates.show');
-        Route::put('notification-templates', [NotificationTemplateController::class, 'updatePlatform'])->name('notification-templates.update');
+        // Marketplace-default message templates — the platform half of the
+        // Notifications page. A provider's own templates are on
+        // /business/notification-templates and keep their own gate.
+        Route::middleware('capability:platform_admin,manage_platform_website')->group(function () {
+            Route::get('notification-templates', [NotificationTemplateController::class, 'showPlatform'])->name('notification-templates.show');
+            Route::put('notification-templates', [NotificationTemplateController::class, 'updatePlatform'])->name('notification-templates.update');
+        });
 
-        Route::apiResource('sports-types', SportsTypeController::class)->only(['store', 'update', 'destroy']);
-        Route::post('sports-types/sort', [SportsTypeController::class, 'sort'])->name('sports-types.sort');
+        // Platform-wide sport catalogue — Bookboll's own taxonomy, not a provider's.
+        Route::middleware('capability:manage_platform_catalog')->group(function () {
+            Route::apiResource('sports-types', SportsTypeController::class)->only(['store', 'update', 'destroy']);
+            Route::post('sports-types/sort', [SportsTypeController::class, 'sort'])->name('sports-types.sort');
 
-        Route::post('sports-categories/sort', [SportsCategoryController::class, 'sort'])->name('sports-categories.sort');
-        Route::apiResource('sports-categories', SportsCategoryController::class);
-        Route::get('sports-categories/popular-emojis', [SportsCategoryController::class, 'popularEmojis'])->name('sports-categories.popular-emojis');
+            Route::post('sports-categories/sort', [SportsCategoryController::class, 'sort'])->name('sports-categories.sort');
+            Route::apiResource('sports-categories', SportsCategoryController::class);
+            Route::get('sports-categories/popular-emojis', [SportsCategoryController::class, 'popularEmojis'])->name('sports-categories.popular-emojis');
+        });
 
-        Route::apiResource('gift-cards', GiftCardController::class);
+        // Gift cards are bearer money instruments — same gate as platform promocodes.
+        Route::middleware('capability:manage_promocodes_platform,manage_promocodes')->group(function () {
+            Route::apiResource('gift-cards', GiftCardController::class);
+        });
 
-        Route::apiResource('resources', ResourceController::class);
+        // Bookable resources belong to the catalogue, same gate as listings/add-ons.
+        Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
+            Route::apiResource('resources', ResourceController::class);
+        });
 
         // Notification bell feed (derived from recent domain activity)
         Route::get('notifications/feed', [NotificationFeedController::class, 'index'])->name('notifications.feed');
@@ -413,17 +444,26 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::get('audit-logs/stats', [AuditLogController::class, 'stats']);
             Route::get('audit-logs/export', [AuditLogController::class, 'export']);
         });
-        Route::post('notifications/whatsapp', [WhatsappController::class, 'send']);
-        Route::post('notifications/email', [NotificationEmailController::class, 'send'])->name('notifications.email');
-        Route::get('notifications/owner-phone', [WhatsappController::class, 'ownerPhone']);
+        // Outbound message dispatch, fired by the booking and membership flows
+        // (Bookings, Subscribers and the booking drawer/detail modal). Gated on
+        // those same rights so a view-only role cannot send mail or WhatsApp
+        // in the platform's name.
+        Route::middleware('capability:manage_bookings,manage_subscriptions')->group(function () {
+            Route::post('notifications/whatsapp', [WhatsappController::class, 'send']);
+            Route::post('notifications/email', [NotificationEmailController::class, 'send'])->name('notifications.email');
+            Route::get('notifications/owner-phone', [WhatsappController::class, 'ownerPhone']);
+        });
 
-        Route::post('add-ons/sort', [AddOnController::class, 'sort'])->name('add-ons.sort');
-        Route::apiResource('add-ons', AddOnController::class);
+        // Catalogue editing — the dashboard gates '/listings' on exactly these two.
+        Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
+            Route::post('add-ons/sort', [AddOnController::class, 'sort'])->name('add-ons.sort');
+            Route::apiResource('add-ons', AddOnController::class);
 
-        Route::post('listings/sort', [ListingController::class, 'sort'])->name('listings.sort');
-        Route::post('listings/{id}/images', [ListingController::class, 'uploadImage'])->name('listings.uploadImage');
-        Route::delete('listings/{id}/images', [ListingController::class, 'deleteImage'])->name('listings.deleteImage');
-        Route::apiResource('listings', ListingController::class);
+            Route::post('listings/sort', [ListingController::class, 'sort'])->name('listings.sort');
+            Route::post('listings/{id}/images', [ListingController::class, 'uploadImage'])->name('listings.uploadImage');
+            Route::delete('listings/{id}/images', [ListingController::class, 'deleteImage'])->name('listings.deleteImage');
+            Route::apiResource('listings', ListingController::class);
+        });
 
         // Promotions
         Route::middleware('capability:manage_promocodes,manage_promocodes_platform')->group(function () {
@@ -438,14 +478,25 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::apiResource('promocodes', PromocodeController::class);
         });
 
-        Route::get('extra-data', [HelperController::class, 'extraData'])->name('extra-data');
-        Route::get('extra-customers', [HelperController::class, 'extraCustomers'])->name('extra-customers');
-        Route::get('extra-resources', [HelperController::class, 'extraResources'])->name('extra-resources');
-        Route::get('extra-add-ons', [HelperController::class, 'extraAddOns'])->name('extra-add-ons');
-        Route::get('extra-sport-categories', [HelperController::class, 'extraSportCategories'])->name('extra-sport-categories');
-        Route::get('extra-data-for-listing', [HelperController::class, 'extraDataForListing'])->name('extra-data-for-listing');
-        Route::get('extra-loyalty-data', [LoyaltyPointController::class, 'extraDataForLoyalty'])->name('extra-loyalty-data');
-        Route::get('extra-special-days', [HelperController::class, 'extraSpecialDays'])->name('extra-special-days');
+        // ── Legacy helper dumps ──────────────────────────────────────────────
+        // Pre-dating the dashboard rewrite and called by none of the three apps.
+        // They stay routed for any external integration, but behind a gate:
+        // `extra-customers` was handing every customer's name and email to any
+        // role that could reach /api/admin, `guard` included.
+        Route::middleware('capability:manage_platform_catalog,manage_listings')->group(function () {
+            Route::get('extra-data', [HelperController::class, 'extraData'])->name('extra-data');
+            Route::get('extra-resources', [HelperController::class, 'extraResources'])->name('extra-resources');
+            Route::get('extra-add-ons', [HelperController::class, 'extraAddOns'])->name('extra-add-ons');
+            Route::get('extra-sport-categories', [HelperController::class, 'extraSportCategories'])->name('extra-sport-categories');
+            Route::get('extra-data-for-listing', [HelperController::class, 'extraDataForListing'])->name('extra-data-for-listing');
+            Route::get('extra-special-days', [HelperController::class, 'extraSpecialDays'])->name('extra-special-days');
+        });
+        Route::middleware('capability:manage_customers')->group(function () {
+            Route::get('extra-customers', [HelperController::class, 'extraCustomers'])->name('extra-customers');
+        });
+        Route::middleware('capability:manage_loyalty')->group(function () {
+            Route::get('extra-loyalty-data', [LoyaltyPointController::class, 'extraDataForLoyalty'])->name('extra-loyalty-data');
+        });
 
         Route::get('dashboard-data', [BookingController::class, 'dashboardData'])->name('dashboard-data');
         Route::get('dashboard/chart', [BookingController::class, 'dashboardChart'])->name('dashboard.chart');

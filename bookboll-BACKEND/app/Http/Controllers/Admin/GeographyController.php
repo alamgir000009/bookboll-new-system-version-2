@@ -35,6 +35,11 @@ class GeographyController extends Controller
         return $this->geography->bulkUpdateCityStatus($request);
     }
 
+    public function updateCityModule(Request $request, int $id)
+    {
+        return $this->geography->updateCityModule($request, $id);
+    }
+
     public function upsertCommission(Request $request)
     {
         return $this->geography->upsertCommission($request);

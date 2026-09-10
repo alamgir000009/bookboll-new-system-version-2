@@ -133,7 +133,12 @@ class AdminReferenceDataService
         $countryIds = AccessScope::jurisdictionCountryIds($user);
         $venueCityIds = $venues->pluck('city_id')->filter()->unique()->all();
 
-        $query = City::query()->select(['id', 'name', 'country_id']);
+        // The module_* flags ride along: Listings and Memberships refuse to create
+        // in a city whose module is off, and they read them off this payload.
+        $query = City::query()->select([
+            'id', 'name', 'country_id',
+            'module_listings', 'module_classes', 'module_matchmaking',
+        ]);
 
         if (AccessScope::isProviderScoped($user)) {
             $query->whereIn('id', $venueCityIds ?: [0]);
@@ -154,7 +159,17 @@ class AdminReferenceDataService
             $query->whereIn('id', $venueCityIds ?: [0]);
         }
 
-        return $query->orderBy('name')->get();
+        // Cast the module flags to real booleans. MySQL hands back 1/0 and the
+        // dashboard tests `city.module_listings === false`; an integer 0 is not
+        // `false` in JS, so a disabled module would have read as enabled.
+        return $query->orderBy('name')->get()->map(fn ($c) => [
+            'id'                 => $c->id,
+            'name'               => $c->name,
+            'country_id'         => $c->country_id,
+            'module_listings'    => (bool) ($c->module_listings ?? true),
+            'module_classes'     => (bool) ($c->module_classes ?? true),
+            'module_matchmaking' => (bool) ($c->module_matchmaking ?? true),
+        ])->values();
     }
 
     /** Countries, narrowed to the jurisdiction for platform roles. */
