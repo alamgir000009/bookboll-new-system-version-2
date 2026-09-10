@@ -96,7 +96,6 @@ import PaginationBar from '../components/PaginationBar.vue'
 import AddMenu from '../components/AddMenu.vue'
 import PickerSelect from '../components/PickerSelect.vue'
 import InfoTip from '../components/InfoTip.vue'
-import { usePagination } from '../lib/usePagination.js'
 import { createTouchReorder } from '../lib/touchReorder.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { logAudit } from '../lib/audit.js'
@@ -246,6 +245,24 @@ const filterCity = ref([])          // multi-select city ids
 const filterCategory = ref('all')   // 'all' | venue category key (sports/hangout/work)
 const filterType = ref('all')       // 'all' | sport_category value
 const filterLocation = ref('')      // '' | location id
+
+// Server-driven pagination. The grouped view pages over VENUE CARDS; the flat view
+// pages over LISTINGS. Totals come from the server so the footers stay honest.
+// The grouped view's current page of venue cards. Kept apart from `locations`,
+// which must stay the complete list for lookups.
+const venueCards    = ref([])
+// Sport dropdown options for the whole scope, supplied by the server.
+const sportOptions  = ref([])
+const venuePage     = ref(1)
+const venuePerPage  = ref(10)
+const venueTotal    = ref(0)
+const venueLastPage = ref(1)
+const flatPage      = ref(1)
+const flatPerPage   = ref(25)
+const flatTotal     = ref(0)
+const flatLastPage  = ref(1)
+// Listings in scope ignoring filters — the export dialog offers both counts.
+const scopeTotal    = ref(0)
 const showFilters = ref(false)
 const expanded = ref(new Set())
 
@@ -284,7 +301,6 @@ function setFilterCountries(ids) {
 // Type chips are the distinct sport_category values actually present for the
 // chosen category, so admins only ever see real, matching options.
 watch(filterCategory, () => { filterType.value = 'all' })
-const hasListingFilter = computed(() => filterCategory.value !== 'all' || filterType.value !== 'all')
 const activeFilterCount = computed(() =>
   (filterCountry.value.length ? 1 : 0) + (filterCity.value.length ? 1 : 0) +
   (filterLocation.value ? 1 : 0) +
@@ -302,9 +318,9 @@ const typeOptionsForFilter = computed(() => {
   // Dedupe case-insensitively (seed data has e.g. "Football" and "football"),
   // preferring a properly-cased variant for display.
   const groups = new Map()
-  for (const l of listings.value) {
+  for (const l of sportOptions.value) {
     if (normCategory(l.category) !== filterCategory.value) continue
-    const v = (l.sport_category || '').trim()
+    const v = (l.sport || '').trim()
     if (!v) continue
     const k = v.toLowerCase()
     if (!groups.has(k)) groups.set(k, v)
@@ -322,22 +338,6 @@ function clearListingFilters() {
 }
 // Changing the category resets the type (the available types are category-scoped).
 function setFilterCategory(k) { filterCategory.value = k; filterType.value = 'all' }
-// Category + type predicate (search is applied separately by each view).
-// Type is matched case-insensitively so "Football" also catches "football".
-function listingMatchesFilters(l) {
-  if (filterCategory.value !== 'all' && normCategory(l.category) !== filterCategory.value) return false
-  if (filterType.value !== 'all' && (l.sport_category || '').toLowerCase() !== filterType.value.toLowerCase()) return false
-  return true
-}
-// Placement filter (Bookboll marketplace), shared by the flat + grouped views.
-function placementMatches(row) {
-  if (!flatFilterStatus.value) return true
-  const onMkt = row.show_on_marketplace !== false
-  if (flatFilterStatus.value === 'live')       return onMkt && rowState(row) === 'active'
-  if (flatFilterStatus.value === 'review')      return onMkt && rowState(row) !== 'active'
-  if (flatFilterStatus.value === 'off_market')  return !onMkt
-  return true
-}
 
 function countryOfLocation(loc) {
   const city = cities.value.find(c => c.id === loc?.city_id)
@@ -406,26 +406,71 @@ async function confirmAddType(catKey) {
   sportQuery.value = ''
 }
 
+// Filter state that the SERVER applies. Everything the two views can filter by is
+// sent as query params; the browser no longer holds the whole catalogue.
+function catalogParams() {
+  const p = {}
+  if (!isSuperAdmin.value && currentOwnerUserId.value) p.owner_user_id = currentOwnerUserId.value
+  if (search.value.trim()) p.search = search.value.trim()
+  if (filterCountry.value.length) p.country_id = filterCountry.value.join(',')
+  if (filterCity.value.length) p.city_id = filterCity.value.join(',')
+  if (filterLocation.value) p.venue_id = filterLocation.value
+  if (filterCategory.value !== 'all') p.category = filterCategory.value
+  if (filterType.value !== 'all') p.sport = filterType.value
+  if (flatFilterStatus.value) p.placement = flatFilterStatus.value
+  return p
+}
+
+let listSeq = 0
 async function loadList() {
-  const ownerQuery = (!isSuperAdmin.value && currentOwnerUserId.value)
-    ? { owner_user_id: currentOwnerUserId.value }
-    : {}
-  const [venuesRes, listingsRes, ref, addOnsRes, resourcesRes] = await Promise.all([
-    fetchVenuesDashboard(ownerQuery),
-    fetchListingsDashboard(ownerQuery),
+  const seq = ++listSeq
+  const base = catalogParams()
+
+  // The GROUPED view pages over venue cards and then pulls only those venues'
+  // listings; the FLAT view pages over listings directly. Either way one page of
+  // rows crosses the wire instead of the entire catalogue.
+  const grouped = layout.value === 'grouped'
+
+  // `locations` is the page's venue LOOKUP table — every editor, picker and filter
+  // dropdown resolves a venue through it — so it stays the full scoped list and is
+  // never paginated. The grouped view's CARDS are a separate, paged request.
+  const listingQuery = grouped
+    ? base                                   // filled in below, once the cards are known
+    : { ...base, page: flatPage.value, per_page: flatPerPage.value, sort: flatSortKey.value, sort_dir: flatSortDir.value }
+
+  const [venuesRes, cardsRes, ref, addOnsRes, resourcesRes] = await Promise.all([
+    fetchVenuesDashboard({}),
+    grouped
+      ? fetchVenuesDashboard({ ...base, page: venuePage.value, per_page: venuePerPage.value, match_listings: 1 })
+      : Promise.resolve(null),
     loadReferenceData(),
     fetchAddOns(),
     fetchResources(),
   ])
+  if (seq !== listSeq) return
+
   cities.value = ref.cities
   countries.value = ref.countries
-  // Narrow to the user's assigned venues (Managers/Staff); owners/admins unaffected.
-  locations.value = scopeLocations(venuesRes.data?.locations || [])
-  // Platform jurisdiction: country_admin / platform_staff only keep venues in their scope.
-  const allowed = allowedLocationIds.value
-  if (allowed) locations.value = locations.value.filter(l => allowed.has(l.id))
-  const ownedLocIds = new Set(locations.value.map(l => l.id))
-  listings.value = scopeListings((listingsRes.data?.listings || []).filter(x => isSuperAdmin.value || ownedLocIds.has(x.location_id)))
+  locations.value = venuesRes.data?.locations || []
+
+  venueCards.value = grouped ? (cardsRes?.data?.locations || []) : []
+  venueTotal.value = cardsRes?.data?.pagination?.total ?? venueCards.value.length
+  venueLastPage.value = cardsRes?.data?.pagination?.last_page ?? 1
+
+  // Grouped: fetch listings for exactly the venue cards on screen.
+  const listingsRes = await fetchListingsDashboard(
+    grouped
+      ? { ...listingQuery, venue_ids: venueCards.value.map(l => l.id).join(',') || '0' }
+      : listingQuery
+  )
+  if (seq !== listSeq) return
+
+  listings.value = listingsRes.data?.listings || []
+  flatTotal.value = listingsRes.data?.pagination?.total ?? listings.value.length
+  flatLastPage.value = listingsRes.data?.pagination?.last_page ?? 1
+  scopeTotal.value = listingsRes.data?.scope_total ?? flatTotal.value
+  if (listingsRes.data?.sport_options) sportOptions.value = listingsRes.data.sport_options
+
   allAddons.value = addOnsRes.success ? (addOnsRes.data || []) : []
   allResources.value = resourcesRes.success ? (resourcesRes.data || []) : []
   const rates = {}
@@ -437,8 +482,8 @@ async function loadList() {
   // Default: every location card starts uncollapsed. Reassign the Set (not just .add)
   // so the change reliably triggers re-render. The size guard preserves the user's
   // manual collapses when loadList re-runs (e.g. after saving a listing).
-  if (expanded.value.size === 0 && locations.value.length) {
-    expanded.value = new Set(locations.value.map(l => l.id))
+  if (expanded.value.size === 0 && venueCards.value.length) {
+    expanded.value = new Set(venueCards.value.map(l => l.id))
   }
 }
 onMounted(loadList)
@@ -465,34 +510,14 @@ async function handleAddQuery(a) {
 onMounted(() => handleAddQuery(route.query.add))
 watch(() => route.query.add, (a) => { if (a) handleAddQuery(a) })
 
-const filteredLocations = computed(() => {
-  const q = search.value.toLowerCase()
-  return locations.value.filter(l => {
-    if (!idIn(countryOfLocation(l), filterCountry.value)) return false
-    if (!idIn(cityOfLocation(l), filterCity.value)) return false
-    if (filterLocation.value && l.id !== filterLocation.value) return false
-    const nMatch = listingsByLocation(l.id).length
-    // When any content filter is active, only show locations that still have a
-    // matching row (location-name search alone shouldn't surface them).
-    if (hasListingFilter.value || flatFilterStatus.value) return nMatch > 0
-    if (!q) return true
-    if (l.name.toLowerCase().includes(q)) return true
-    return nMatch > 0
-  })
-})
+// Venue cards come back already filtered and paged: `match_listings` makes the
+// server drop venues whose listings all filtered out, so the count in the pager
+// and the cards on screen agree. Filtering again here would fight it.
+const filteredLocations = computed(() => venueCards.value)
 
-const listingsByLocation = (id) => {
-  const q = search.value.toLowerCase()
-  return listings.value.filter(l => l.location_id === id).filter(l => {
-    if (!listingMatchesFilters(l)) return false
-    if (!placementMatches(l)) return false
-    if (!q) return true
-    return l.name.toLowerCase().includes(q) ||
-      (l.sport_category || '').toLowerCase().includes(q) ||
-      (l.description || '').toLowerCase().includes(q) ||
-      (locations.value.find(x => x.id === l.location_id)?.name || '').toLowerCase().includes(q)
-  })
-}
+// Grouped mode fetches listings for exactly the venues on screen, with the same
+// filters applied — so this only has to split them by venue.
+const listingsByLocation = (id) => listings.value.filter(l => l.location_id === id)
 
 function toggle(id) {
   if (expanded.value.has(id)) expanded.value.delete(id); else expanded.value.add(id)
@@ -2111,55 +2136,77 @@ function toggleFlatSort(key) {
   else { flatSortKey.value = key; flatSortDir.value = 'asc' }
 }
 
-// Flat view: venue listings only, ordered by the shared sort controls.
-function flatRowMatches(row) {
-  const q = search.value.toLowerCase()
-  const loc = locations.value.find(x => x.id === row.location_id)
-  if (!idIn(countryOfLocation(loc), filterCountry.value)) return false
-  if (!idIn(cityOfLocation(loc), filterCity.value)) return false
-  if (filterLocation.value && row.location_id !== filterLocation.value) return false
-  if (!placementMatches(row)) return false
-  if (!q) return true
-  return (row.name || '').toLowerCase().includes(q) ||
-    (row.sport_category || '').toLowerCase().includes(q) ||
-    (row.description || '').toLowerCase().includes(q) ||
-    (loc?.name || '').toLowerCase().includes(q)
-}
-function sortFlatList(list) {
-  return [...list].sort((a, b) => {
-    let av, bv
-    if (flatSortKey.value === 'name')                 { av = a.name || ''; bv = b.name || '' }
-    else if (flatSortKey.value === 'sport_category')  { av = a.sport_category || ''; bv = b.sport_category || '' }
-    else if (flatSortKey.value === 'base_price') {
-      av = Number(a.base_price || 0)
-      bv = Number(b.base_price || 0)
-    }
-    else { av = Number(a.sort_order ?? 9999); bv = Number(b.sort_order ?? 9999) }
-    if (av < bv) return flatSortDir.value === 'asc' ? -1 : 1
-    if (av > bv) return flatSortDir.value === 'asc' ?  1 : -1
-    return 0
-  })
-}
-const flatVenues = computed(() =>
-  sortFlatList(listings.value.filter(l => listingMatchesFilters(l) && flatRowMatches(l)))
-)
-// Used by the CSV export.
-const allListingsFlat = computed(() => flatVenues.value)
+// The server applies every filter and the sort, and returns one page. Filtering
+// again here could only hide rows it deliberately sent — and did, because
+// `locations` is now a single page of venues, so the venue lookup missed.
+const flatVenues = computed(() => listings.value)
 
-// Paginate the flat venue table.
-const { page: venuePage, perPage: venuePerPage, totalPages: venueTotalPages, paginated: paginatedVenues, visiblePages: venueVisiblePages, goTo: venueGoTo } = usePagination(flatVenues)
+// Both views are paged by the SERVER now. `paginatedVenues` keeps its name (the
+// flat table binds to it) but is simply the page of listings the server returned;
+// `flatVenues` was always listings despite the name.
+const paginatedVenues = computed(() => flatVenues.value)
+const venueTotalPages = computed(() => Math.max(1, flatLastPage.value))
+const venueVisiblePages = computed(() => pageWindow(flatPage.value, venueTotalPages.value))
+function venueGoTo(p) {
+  const next = Math.min(Math.max(1, p), venueTotalPages.value)
+  if (next === flatPage.value) return
+  flatPage.value = next
+  loadList()
+}
+
+// Grouped view: paging over venue cards.
+const groupedTotalPages = computed(() => Math.max(1, venueLastPage.value))
+const groupedVisiblePages = computed(() => pageWindow(venuePage.value, groupedTotalPages.value))
+function groupedGoTo(p) {
+  const next = Math.min(Math.max(1, p), groupedTotalPages.value)
+  if (next === venuePage.value) return
+  venuePage.value = next
+  loadList()
+}
+
+/** A five-page window centred on the current page, shared by both footers. */
+function pageWindow(current, totalP) {
+  const out = []
+  const from = Math.max(1, Math.min(current - 2, totalP - 4))
+  for (let i = from; i <= Math.min(totalP, from + 4); i++) out.push(i)
+  return out
+}
+
+// Any filter, sort, view or page-size change restarts at page 1 and refetches.
+// Search is debounced so typing does not fire a request per keystroke.
+let listSearchTimer = null
+watch(search, () => {
+  clearTimeout(listSearchTimer)
+  listSearchTimer = setTimeout(() => { flatPage.value = 1; venuePage.value = 1; loadList() }, 300)
+})
+watch([filterCountry, filterCity, filterLocation, filterCategory, filterType, flatFilterStatus,
+       flatSortKey, flatSortDir, flatPerPage, venuePerPage, layout], () => {
+  flatPage.value = 1; venuePage.value = 1; loadList()
+})
 
 // Export for listings
 const canExport = computed(() => can(CAP.EXPORT_CATALOG))
 const { isPremium, requirePremium } = usePremium()   // exports are a Premium feature for providers
 const showExportModal = ref(false)
-function doExport(useFilters) {
-  const rows = useFilters ? allListingsFlat.value : listings.value
+// Export covers EVERY matching listing, not the page on screen — so it asks the
+// server for them rather than exporting whatever the table happens to hold.
+const exportingList = ref(false)
+async function doExport(useFilters) {
+  if (exportingList.value) return
+  exportingList.value = true
+  const params = useFilters ? { ...catalogParams(), export: 1 } : { export: 1 }
+  const res = await fetchListingsDashboard(params)
+  exportingList.value = false
+  if (!res.success) { toast.error(res.message || 'Could not prepare the export.'); return }
+  const rows = res.data?.listings || []
+  if (res.data?.truncated) {
+    toast.error(`Export capped at ${rows.length.toLocaleString()} rows — narrow the filters for the rest.`)
+  }
   downloadCSV(rows, [
     { label: 'ID',            key: 'id' },
     { label: 'Name',          key: 'name' },
     { label: 'Sport',         key: 'sport_category' },
-    { label: 'Location',      fn: r => locations.value.find(l => l.id === r.location_id)?.name || '' },
+    { label: 'Location',      fn: r => r.location_name || '' },
     { label: 'Base Price/slot', key: 'base_price' },
     { label: 'Duration (min)',key: 'slot_duration' },
     { label: 'Capacity',      key: 'max_players' },
@@ -2192,7 +2239,10 @@ async function onFlatDrop(e, targetId) {
   arr.splice(toIdx, 0, arr.splice(fromIdx, 1)[0])
   listings.value = arr
   dragFlatId.value = null
-  await sortListings(arr.map((l, i) => ({ id: Number(l.id), sort_order: i })))
+  // Rows are numbered from their offset in the full list — restarting at 0 on
+  // page 2 would renumber it over the top of page 1.
+  const offset = (flatPage.value - 1) * flatPerPage.value
+  await sortListings(arr.map((l, i) => ({ id: Number(l.id), sort_order: offset + i })))
 }
 function onFlatDragEnd() { dragFlatId.value = null; dragOverFlatId.value = null }
 
@@ -2216,13 +2266,18 @@ async function onLocDrop(e, targetId) {
   e.preventDefault()
   dragOverLocId.value = null
   if (!dragLocId.value || dragLocId.value === targetId) { dragLocId.value = null; return }
-  const arr = [...locations.value]
+  // The cards on screen are `venueCards` (one page), not the full `locations`
+  // lookup — reordering the lookup would move nothing.
+  const arr = [...venueCards.value]
   const fromIdx = arr.findIndex(l => l.id === dragLocId.value)
   const toIdx = arr.findIndex(l => l.id === targetId)
+  if (fromIdx < 0 || toIdx < 0) { dragLocId.value = null; return }
   arr.splice(toIdx, 0, arr.splice(fromIdx, 1)[0])
-  locations.value = arr
+  venueCards.value = arr
   dragLocId.value = null
-  await sortVenues(arr.map((l, i) => ({ id: Number(l.id), sort_order: i })))
+  // Numbered from this page's offset, so page 2 does not renumber over page 1.
+  const offset = (venuePage.value - 1) * venuePerPage.value
+  await sortVenues(arr.map((l, i) => ({ id: Number(l.id), sort_order: offset + i })))
 }
 function onLocDragEnd() { dragLocId.value = null; dragOverLocId.value = null }
 
@@ -2364,7 +2419,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
       <template v-if="layout === 'flat'">
         <!-- VENUE LISTINGS TABLE -->
         <div class="flat-section">
-          <div class="flat-section-head"><Boxes :size="15" /><span>Venue Listings</span><span class="flat-section-count">{{ flatVenues.length }}</span></div>
+          <div class="flat-section-head"><Boxes :size="15" /><span>Venue Listings</span><span class="flat-section-count">{{ flatTotal }}</span></div>
           <div class="flat-list">
             <div class="flat-header">
               <span class="flat-col-grip"></span>
@@ -2420,7 +2475,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             </div>
             <div v-if="!flatVenues.length" class="flat-empty">No venue listings found.</div>
           </div>
-          <PaginationBar v-if="flatVenues.length > 0" :page="venuePage" :perPage="venuePerPage" :totalPages="venueTotalPages" :total="flatVenues.length" :visiblePages="venueVisiblePages" @update:perPage="venuePerPage = $event" @goTo="venueGoTo" />
+          <PaginationBar v-if="flatTotal > 0" :page="flatPage" :perPage="flatPerPage" :totalPages="venueTotalPages" :total="flatTotal" :visiblePages="venueVisiblePages" @update:perPage="flatPerPage = $event" @goTo="venueGoTo" />
         </div>
 
         <!-- Export modal -->
@@ -2433,11 +2488,11 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
               <button class="export-choice-btn" @click="doExport(true)">
                 <Download :size="16"/>
-                <div><strong>Export with filters</strong><br><span>{{ allListingsFlat.length }} listings</span></div>
+                <div><strong>Export with filters</strong><br><span>{{ flatTotal }} listings</span></div>
               </button>
               <button class="export-choice-btn" @click="doExport(false)">
                 <Download :size="16"/>
-                <div><strong>Export all listings</strong><br><span>{{ listings.length }} listings</span></div>
+                <div><strong>Export all listings</strong><br><span>{{ scopeTotal }} listings</span></div>
               </button>
             </div>
             <div class="modal-footer"><button class="btn btn-secondary" @click="showExportModal=false">Cancel</button></div>
@@ -2590,6 +2645,12 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             :action-label="(!locations.length && canManageListings) ? 'Add Location' : ''" @action="openNewLoc" />
         </div>
       </div>
+        <!-- The grouped view pages over VENUE CARDS. It previously rendered every
+             venue at once, which is fine at 19 and not at a few thousand. -->
+        <PaginationBar v-if="venueTotal > 0" :page="venuePage" :perPage="venuePerPage"
+          :totalPages="groupedTotalPages" :total="venueTotal" :visiblePages="groupedVisiblePages"
+          @update:perPage="venuePerPage = $event" @goTo="groupedGoTo" />
+
     </template>
 
     <!-- EDITOR DRAWER (slides in from the right) -->
