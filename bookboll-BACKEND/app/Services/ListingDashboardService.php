@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Listing;
 use App\Support\AccessScope;
 use App\Support\CityModules;
+use App\Support\HourPeriods;
 use Nnjeim\World\Models\City;
 use App\Models\PricingCell;
 use App\Models\PricingGroup;
@@ -757,12 +758,17 @@ class ListingDashboardService
 
         $out = [];
         for ($i = 0; $i < 7; $i++) {
-            $out[] = $byDay[$i] ?? [
+            $day = $byDay[$i] ?? [
                 'day_of_week'           => $i,
                 'is_open'               => false,
                 'periods'               => [],
                 'inherit_from_location' => false,
             ];
+            // Stored one row per period; imported listings often carry a row per
+            // half hour, which the editor would draw as 48 lines a day. Merge for
+            // display — the stored rows and the bookable window are unchanged.
+            $day['periods'] = HourPeriods::merge($day['periods']);
+            $out[] = $day;
         }
 
         return $out;

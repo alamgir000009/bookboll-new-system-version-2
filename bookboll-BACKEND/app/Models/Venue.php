@@ -141,12 +141,6 @@ class Venue extends Model
         return $this->hasMany(Schedule::class)->whereNull('listing_id');
     }
 
-    /** Dashboard venue hours (= Postgres location_hours / venue_hour_periods). */
-    public function hourPeriods()
-    {
-        return $this->hasMany(VenueHourPeriod::class);
-    }
-
     public function users()
     {
         return $this->belongsToMany(User::class);

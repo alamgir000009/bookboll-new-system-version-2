@@ -4,7 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\ClassProgram;
 use App\Models\Venue;
-use App\Models\VenueHourPeriod;
+use App\Models\Schedule;
 use App\Support\SupabaseRestClient;
 use Illuminate\Database\Seeder;
 use Nnjeim\World\Models\City;
@@ -93,10 +93,15 @@ class ProgramVenuesFromSupabaseSeeder extends Seeder
         $this->command?->info("Done. {$created} venue(s) created, {$reused} reused, {$linked} program(s) linked, {$hourRows} opening-hour row(s), {$skipped} skipped.");
     }
 
-    /** Weekly opening hours — drives the gym hours block on the program page. */
+    /**
+     * Weekly opening hours — drives the gym hours block on the program page.
+     *
+     * Venue hours are `schedules` rows with a null listing_id: the same table a
+     * listing's own hours live in, and the one the booking engine reads.
+     */
     protected function importHours(Venue $venue, $rows): int
     {
-        $days = array_flip(VenueHourPeriod::DAY_INDEX);   // 0..6 → 'sunday'…
+        $days = array_flip(Schedule::DAY_INDEX);   // 0..6 → 'sunday'…
         $written = 0;
 
         foreach ($rows as $row) {
@@ -105,15 +110,19 @@ class ProgramVenuesFromSupabaseSeeder extends Seeder
                 continue;
             }
 
-            VenueHourPeriod::updateOrCreate(
+            $isOpen = (bool) ($row['is_open'] ?? false);
+
+            Schedule::updateOrCreate(
                 [
-                    'venue_id' => $venue->id,
-                    'day'      => $day,
+                    'venue_id'   => $venue->id,
+                    'listing_id' => null,
+                    'day'        => $day,
                 ],
                 [
-                    'is_open'    => (bool) ($row['is_open'] ?? false),
-                    'open_time'  => $row['open_time'] ?? null,
-                    'close_time' => $row['close_time'] ?? null,
+                    'is_open'               => $isOpen,
+                    'start_time'            => $isOpen ? ($row['open_time'] ?? null) : null,
+                    'end_time'              => $isOpen ? ($row['close_time'] ?? null) : null,
+                    'inherit_from_location' => true,
                 ]
             );
             $written++;

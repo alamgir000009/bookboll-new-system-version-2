@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Business;
+use App\Support\HourPeriods;
 use App\Models\ClassProgram;
 use App\Models\Listing;
 use App\Models\ProviderWallet;
@@ -110,7 +111,7 @@ class AdminOverviewService
     {
         $query = Venue::query()
             ->select(['id', 'name', 'address', 'city_id', 'photos', 'photo_url', 'status', 'sort_order', 'created_at'])
-            ->with(['hourPeriods'])
+            ->with(['schedules'])
             ->orderBy('sort_order')
             ->orderBy('created_at');
 
@@ -146,8 +147,12 @@ class AdminOverviewService
                 'photos'    => is_array($v->photos) ? $v->photos : [],
                 'photo_url' => $v->photo_url,
                 'status'    => $v->status,
-                // Raw weekly rows — Home.vue formats them into its own schedule view.
-                'hours'     => $v->hourPeriods->map(fn ($r) => $r->toDashboardRow())->values()->all(),
+                // Weekly rows — Home.vue formats them into its own schedule view.
+                // Merged, because the stored rows can be one per half hour.
+                'hours'     => HourPeriods::mergeDashboardRows(
+                    $v->schedules->map(fn ($r) => $r->toDashboardLocationHour())
+                        ->filter(fn ($r) => $r['day_of_week'] !== null)->values()->all()
+                ),
                 'listings'  => ($listings->get($v->id) ?? collect())->map(fn (Listing $l) => [
                     'id'             => (string) $l->id,
                     'name'           => $l->name,

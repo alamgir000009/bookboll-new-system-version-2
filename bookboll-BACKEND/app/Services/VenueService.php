@@ -3,10 +3,12 @@ namespace App\Services;
 
 use App\Models\Venue;
 use App\Support\AccessScope;
+use App\Support\HourPeriods;
 use Nnjeim\World\Models\City;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class VenueService
 {
@@ -520,7 +522,7 @@ class VenueService
 
     public function dashboardShow($id)
     {
-        $venue = $this->venueModel::with(['hourPeriods', 'listings.sportsCategory'])->find($id);
+        $venue = $this->venueModel::with(['schedules', 'listings.sportsCategory'])->find($id);
         if (! $venue) {
             return sendError('Venue not found', [], 404);
         }
@@ -529,20 +531,18 @@ class VenueService
         }
 
         $location = $this->mapDashboardVenue($venue);
-        $hours = $venue->hourPeriods
-            ->map(fn ($row) => $row->toDashboardRow())
-            ->filter(fn ($r) => $r['day_of_week'] !== null)
-            ->values()
-            ->all();
-
-        if (! $hours) {
-            $hours = $venue->schedules()
-                ->get()
+        // `schedules` is the single source of venue hours (rows with no
+        // listing_id). Stored one row per period, and imported data often holds a
+        // row per half hour — a venue open all day is 48 rows and the editor would
+        // draw 48 lines — so merge for display. The rows themselves are untouched
+        // and the bookable window is identical either way.
+        $hours = HourPeriods::mergeDashboardRows(
+            $venue->schedules
                 ->map(fn ($row) => $row->toDashboardLocationHour())
                 ->filter(fn ($r) => $r['day_of_week'] !== null)
                 ->values()
-                ->all();
-        }
+                ->all()
+        );
 
         $listings = $venue->listings->map(fn ($l) => [
             'id'             => (string) $l->id,
@@ -581,11 +581,11 @@ class VenueService
 
             DB::commit();
 
-            $venue->load('hourPeriods');
+            $venue->load('schedules');
 
             return sendSuccess('Venue created', [
                 'location' => $this->mapDashboardVenue($venue),
-                'hours'    => $venue->hourPeriods->map(fn ($r) => $r->toDashboardRow())->values()->all(),
+                'hours'    => $this->venueHourRows($venue),
             ]);
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -631,11 +631,11 @@ class VenueService
 
             DB::commit();
 
-            $venue->load('hourPeriods');
+            $venue->load('schedules');
 
             return sendSuccess('Venue updated', [
                 'location' => $this->mapDashboardVenue($venue->fresh()),
-                'hours'    => $venue->hourPeriods->map(fn ($r) => $r->toDashboardRow())->values()->all(),
+                'hours'    => $this->venueHourRows($venue),
             ]);
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -657,7 +657,6 @@ class VenueService
 
         DB::beginTransaction();
         try {
-            $venue->hourPeriods()->delete();
             $venue->schedules()->delete();
             $venue->delete();
             DB::commit();
@@ -727,7 +726,7 @@ class VenueService
 
     public function applyHoursToListings($request, $id)
     {
-        $venue = $this->venueModel::with('hourPeriods')->find($id);
+        $venue = $this->venueModel::with('schedules')->find($id);
         if (! $venue) {
             return sendError('Venue not found', [], 404);
         }
@@ -743,9 +742,11 @@ class VenueService
 
         $hoursUi = $data['hours'] ?? null;
         if ($hoursUi === null) {
-            // Rebuild UI shape from current venue hour periods.
+            // Rebuild the UI shape from the venue's own hours, merged — copying
+            // 48 half-hour rows onto every listing would just spread the
+            // fragmentation, and the window is the same either way.
             $byDay = [];
-            foreach ($venue->hourPeriods as $row) {
+            foreach ($venue->schedules as $row) {
                 $dow = $row->day_of_week;
                 if ($dow === null) {
                     continue;
@@ -760,6 +761,9 @@ class VenueService
                         'close_time' => $this->fmtHm($row->close_time) ?? '23:00',
                     ];
                 }
+            }
+            foreach ($byDay as $dow => $day) {
+                $byDay[$dow]['periods'] = HourPeriods::merge($day['periods']);
             }
             $hoursUi = array_values($byDay);
         }
@@ -866,11 +870,32 @@ class VenueService
     }
 
     /**
-     * Replace venue_hour_periods + venue-level schedules from UI hours payload.
+     * A venue's opening hours in the shape the dashboard reads, merged for
+     * display. Venue hours are `schedules` rows with no listing_id.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function venueHourRows(Venue $venue): array
+    {
+        return HourPeriods::mergeDashboardRows(
+            $venue->schedules
+                ->map(fn ($row) => $row->toDashboardLocationHour())
+                ->filter(fn ($r) => $r['day_of_week'] !== null)
+                ->values()
+                ->all()
+        );
+    }
+
+    /**
+     * Replace a venue's opening hours from the UI payload.
+     *
+     * Hours live in ONE place: `schedules` rows with a null listing_id, the same
+     * table a listing's own hours live in. Deleting the venue-level rows and
+     * rewriting them is the whole operation — there is no second table to keep
+     * in step, and so no way for the two to disagree.
      */
     public function syncDashboardHours(Venue $venue, array $hoursUi): void
     {
-        $venue->hourPeriods()->delete();
         $venue->schedules()->whereNull('listing_id')->delete();
 
         if (! $hoursUi) {
@@ -894,12 +919,6 @@ class VenueService
             $isOpen = (bool) ($day['is_open'] ?? false);
 
             if (! $isOpen) {
-                $venue->hourPeriods()->create([
-                    'day'        => $dayName,
-                    'is_open'    => false,
-                    'open_time'  => '09:00',
-                    'close_time' => '23:00',
-                ]);
                 $venue->schedules()->create([
                     'day'                   => $dayName,
                     'is_open'               => false,
@@ -918,12 +937,6 @@ class VenueService
             foreach ($periods as $p) {
                 $open  = $this->normalizeHm($p['open_time'] ?? '09:00');
                 $close = $this->normalizeHm($p['close_time'] ?? '23:00');
-                $venue->hourPeriods()->create([
-                    'day'        => $dayName,
-                    'is_open'    => true,
-                    'open_time'  => $open,
-                    'close_time' => $close,
-                ]);
                 $venue->schedules()->create([
                     'day'                   => $dayName,
                     'is_open'               => true,

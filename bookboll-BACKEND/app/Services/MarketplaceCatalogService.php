@@ -100,7 +100,7 @@ class MarketplaceCatalogService
         $venues = Venue::query()
             ->where('status', Venue::ACTIVE)
             ->where('owner_user_id', $scope['ownerId'])
-            ->with(['city:id,name', 'hourPeriods'])
+            ->with(['city:id,name', 'schedules'])
             ->orderBy('sort_order')
             ->orderBy('name')
             ->get();
@@ -677,9 +677,12 @@ class MarketplaceCatalogService
      */
     protected function weeklyHours(Venue $venue): array
     {
-        $rows = $venue->relationLoaded('hourPeriods')
-            ? $venue->hourPeriods
-            : $venue->hourPeriods()->get();
+        // Venue hours are `schedules` rows with no listing_id — the same rows the
+        // booking engine uses, so the storefront can never advertise hours the
+        // venue cannot actually be booked in.
+        $rows = $venue->relationLoaded('schedules')
+            ? $venue->schedules
+            : $venue->schedules()->get();
 
         $byDay = [];
         foreach ($rows as $row) {

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\AccessScope;
+use App\Support\HourPeriods;
 use App\Models\AddOn;
 use App\Models\AuditLog;
 use App\Models\Booking;
@@ -1396,7 +1397,9 @@ class BookingService
 
     /**
      * Opening hours for calendar closed-slot shading.
-     * Prefer venue_hour_periods when rows exist; fall back to schedules (venue-level).
+     *
+     * Read from `schedules` (rows with no listing_id) — the one place venue
+     * hours live, and the same rows the booking engine intersects against.
      */
     protected function calendarLocationHours(array $venueIds): array
     {
@@ -1404,23 +1407,7 @@ class BookingService
             return [];
         }
 
-        if (Schema::hasTable('venue_hour_periods') && class_exists(\App\Models\VenueHourPeriod::class)) {
-            $fromPeriods = \App\Models\VenueHourPeriod::query()
-                ->whereIn('venue_id', $venueIds)
-                ->orderBy('venue_id')
-                ->orderBy('day')
-                ->get()
-                ->map(fn($row) => $row->toDashboardRow())
-                ->filter(fn($r) => $r['day_of_week'] !== null)
-                ->values()
-                ->all();
-
-            if ($fromPeriods) {
-                return $fromPeriods;
-            }
-        }
-
-        return Schedule::query()
+        $rows = Schedule::query()
             ->whereIn('venue_id', $venueIds)
             ->forVenueHours()
             ->orderBy('venue_id')
@@ -1428,6 +1415,22 @@ class BookingService
             ->get()
             ->map(fn(Schedule $row) => $row->toDashboardLocationHour())
             ->filter(fn($r) => $r['day_of_week'] !== null)
+            ->values()
+            ->all();
+
+        return $this->mergeHourRowsPerVenue($rows);
+    }
+
+    /**
+     * Hours are stored one row per period, and imported data often holds a row
+     * per half hour — the calendar would shade opening time in slivers. Merge
+     * per venue for display; nothing is rewritten.
+     */
+    protected function mergeHourRowsPerVenue(array $rows): array
+    {
+        return collect($rows)
+            ->groupBy('location_id')
+            ->flatMap(fn($perVenue) => HourPeriods::mergeDashboardRows($perVenue->all()))
             ->values()
             ->all();
     }

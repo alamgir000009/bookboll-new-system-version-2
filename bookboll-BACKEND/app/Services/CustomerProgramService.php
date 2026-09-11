@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ClassProgram;
+use App\Support\HourPeriods;
 use App\Models\ClassSubscription;
 use App\Models\EntryPass;
 use App\Models\LoyaltyPoint;
@@ -11,8 +12,8 @@ use App\Models\OfferRedemption;
 use App\Models\Payment;
 use App\Models\ProviderWallet;
 use App\Models\User;
+use App\Models\Schedule;
 use App\Models\Venue;
-use App\Models\VenueHourPeriod;
 use App\Models\WalletTransaction;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -745,21 +746,34 @@ class CustomerProgramService
 
     protected function venueHours(int $venueId): ?array
     {
-        $rows = VenueHourPeriod::where('venue_id', $venueId)->get();
+        // Venue hours are `schedules` rows with no listing_id — one table, the
+        // same rows the booking engine reads.
+        $rows = Schedule::where('venue_id', $venueId)->whereNull('listing_id')->get();
         if ($rows->isEmpty()) {
             return null;
         }
         $DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        $byDay = [];
+
+        // Collect raw periods per day, then merge: stored rows can be one per
+        // half hour, which would read as "12:00am–12:30am, 12:30am–1:00am, …".
+        $periodsByDay = [];
         foreach ($rows as $r) {
             $d = $r->day_of_week;
             if ($d === null) {
                 continue;
             }
-            $byDay[$d] ??= [];
+            $periodsByDay[$d] ??= [];
             if ($r->is_open && $r->open_time && $r->close_time) {
-                $byDay[$d][] = $this->fmt12Range($r->toDashboardRow()['open_time'], $r->toDashboardRow()['close_time']);
+                $periodsByDay[$d][] = ['open_time' => $r->open_time, 'close_time' => $r->close_time];
             }
+        }
+
+        $byDay = [];
+        foreach ($periodsByDay as $d => $periods) {
+            $byDay[$d] = array_map(
+                fn ($p) => $this->fmt12Range($p['open_time'], $p['close_time']),
+                HourPeriods::merge($periods)
+            );
         }
 
         return collect([1, 2, 3, 4, 5, 6, 0])->map(fn ($d) => [
