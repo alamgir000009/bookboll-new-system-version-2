@@ -78,6 +78,14 @@ const hours = ref(defaultHours())
 const saving = ref(false)
 const savedFlag = ref(false)
 const errorMsg = ref('')
+// Photo upload state. All four were dropped when image upload moved to the
+// Laravel backend, but handleFiles() and the template still use them:
+// `imgError` threw on open, and `fileInput` being undefined made
+// `fileInput && fileInput.click()` permanently falsy — the picker never opened.
+const uploading = ref(false)
+const imgError = ref('')
+const fileInput = ref(null)     // the hidden <input type="file">
+const dropActive = ref(false)   // drag-and-drop hover state
 const triedSave = ref(false)   // failed save attempt ΓåÆ red-flag the missing required fields
 // Apply-schedule-to-listings prompt (shown after a schedule change on a location
 // that has connected listings).

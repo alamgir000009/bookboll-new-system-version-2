@@ -161,6 +161,25 @@ function currencyForLocation(locationId) {
 function fmtMoney(n, cur = 'AED') { return `${cur} ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 function formatDays(mask) { return (mask || []).map(d => DAY_NAMES[d]).join(', ') }
+
+// Session dates in the first month, for the "will generate N sessions" hint on
+// the new-subscription form. The server schedules the real sessions; this is the
+// preview beside the date picker. (It was lost in the port — the template still
+// called it, so the hint threw as soon as a program was picked.)
+function generateMonthlyDates(program, startDateStr) {
+  if (!program || !startDateStr) return []
+  const dates = []
+  const start = new Date(startDateStr)
+  if (Number.isNaN(start.getTime())) return []
+  const end = new Date(start); end.setMonth(end.getMonth() + 1)
+  const mask = new Set(program.day_of_week_mask || [])
+  const cur = new Date(start)
+  while (cur < end) {
+    if (mask.has(cur.getDay())) dates.push(new Date(cur))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return dates
+}
 const BILLING_INTERVALS = [
   { value: 'weekly', label: 'Weekly' }, { value: 'biweekly', label: 'Bi-weekly' },
   { value: 'monthly', label: 'Monthly' }, { value: 'quarterly', label: 'Quarterly' }, { value: 'yearly', label: 'Yearly' },
