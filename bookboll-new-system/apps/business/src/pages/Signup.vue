@@ -276,6 +276,9 @@ async function goDashboard() {
                 <input v-model="password" :type="showPw ? 'text' : 'password'" class="auth-input" placeholder="Min 8 characters" autocomplete="new-password" />
                 <button type="button" class="auth-pw-eye" @click="showPw = !showPw"><component :is="showPw ? EyeOff : Eye" :size="16" /></button>
               </div>
+              <!-- One person can be both a customer and a provider, so an email
+                   already on file is fine — the password just has to match it. -->
+              <div class="auth-hint">Already book on Bookboll with this email? Enter that account's password and we'll add the business to it.</div>
             </div>
           </div>
 
@@ -509,6 +512,7 @@ async function goDashboard() {
 }
 .auth-pw-eye:hover { color: #0f172a; }
 
+.auth-hint { margin-top: 6px; font-size: 12px; line-height: 1.4; color: var(--text-muted, #64748b); }
 .auth-error { font-size: 13px; color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 12px; margin-top: 14px; }
 
 .auth-btn {

@@ -11,6 +11,13 @@ const client = axios.create({
   headers: { Accept: 'application/json' },
 })
 
+// Same key businessAuth.js writes on register/login. Read here rather than
+// importing it: businessAuth imports apiFetch, so importing back would be a cycle.
+const TOKEN_KEY = 'bb_api_token'
+function storedToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || '' } catch { return '' }
+}
+
 /**
  * @param {string} path - Absolute path under the API base, e.g. `/business/register`
  * @param {{ method?: string, body?: object|null, token?: string|null, query?: Record<string, string|number|undefined|null> }} [opts]
@@ -18,7 +25,13 @@ const client = axios.create({
  */
 export async function apiFetch(path, { method = 'GET', body = null, token = null, query = null } = {}) {
   const headers = {}
-  if (token) headers.Authorization = `Bearer ${token}`
+  // Fall back to the stored token, as the admin and web apps do. Without this,
+  // only calls that passed a token explicitly were authenticated — which is why
+  // the signup logo upload (POST /uploads/image) came back 401 even though
+  // registration had just issued and saved a token.
+  // An explicit `token: ''` still opts out, for deliberately anonymous calls.
+  const bearer = token !== null && token !== undefined ? token : storedToken()
+  if (bearer) headers.Authorization = `Bearer ${bearer}`
 
   try {
     const res = await client.request({
