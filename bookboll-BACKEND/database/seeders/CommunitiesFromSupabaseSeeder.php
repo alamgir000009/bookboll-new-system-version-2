@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Community;
 use App\Support\SupabaseRestClient;
+use Database\Seeders\Concerns\ResolvesSupabaseIds;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -15,6 +16,8 @@ use Throwable;
  */
 class CommunitiesFromSupabaseSeeder extends Seeder
 {
+    use ResolvesSupabaseIds;
+
     public function run(): void
     {
         try {
@@ -33,6 +36,10 @@ class CommunitiesFromSupabaseSeeder extends Seeder
         }
 
         try {
+            // city_id / country_id are unsigned bigints locally but UUIDs in
+            // Supabase — resolve them before inserting or every row is truncated.
+            $this->loadSupabaseMaps($client);
+
             $this->command?->info('Fetching communities…');
             $rows = $client->fetchAll('communities', 'created_at.desc', 500, ['created_at.asc', 'id.asc']);
             $ok = 0;
@@ -72,8 +79,8 @@ class CommunitiesFromSupabaseSeeder extends Seeder
             'description'       => (string) ($row['description'] ?? ''),
             'sport'             => (string) ($row['sport'] ?? ''),
             'sports'            => $this->jsonVal($row['sports'] ?? null, []),
-            'city_id'           => $this->uuidOrNull($row['city_id'] ?? null),
-            'country_id'        => $this->uuidOrNull($row['country_id'] ?? null),
+            'city_id'           => $this->localCityId($row['city_id'] ?? null),
+            'country_id'        => $this->localCountryId($row['country_id'] ?? null),
             'cover_image'       => (string) ($row['cover_image'] ?? ''),
             'images'            => $this->jsonVal($row['images'] ?? null, []),
             'is_private'        => (bool) ($row['is_private'] ?? false),

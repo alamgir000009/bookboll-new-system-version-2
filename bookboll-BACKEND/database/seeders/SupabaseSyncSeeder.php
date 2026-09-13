@@ -37,6 +37,10 @@ class SupabaseSyncSeeder extends Seeder
         ['brand settings',                   BrandSettingsFromSupabaseSeeder::class],
         ['custom types',                     CustomTypesFromSupabaseSeeder::class],
         ['listings (pending approvals)',     ListingsApprovalsFromSupabaseSeeder::class],
+        // Imports the Supabase `locations` that class programs point at, with their
+        // opening hours. Must precede ClassMembership, which matches venues BY NAME
+        // and silently skips programs whose venue is missing.
+        ['program venues',                   ProgramVenuesFromSupabaseSeeder::class],
         ['wallets → withdrawals → ledger',   WalletPayoutFromSupabaseSeeder::class],
         ['class programs & subscriptions',   ClassMembershipFromSupabaseSeeder::class],
         ['communities, members, posts',      CommunityModerationFromSupabaseSeeder::class],

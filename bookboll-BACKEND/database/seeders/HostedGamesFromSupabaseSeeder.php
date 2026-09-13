@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\Community;
 use App\Models\HostedGame;
 use App\Support\SupabaseRestClient;
+use Database\Seeders\Concerns\ResolvesSupabaseIds;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -19,6 +20,8 @@ use Throwable;
  */
 class HostedGamesFromSupabaseSeeder extends Seeder
 {
+    use ResolvesSupabaseIds;
+
     public function run(): void
     {
         try {
@@ -38,6 +41,10 @@ class HostedGamesFromSupabaseSeeder extends Seeder
 
         try {
             $this->command?->info('Fetching hosted_games…');
+            // Venue/listing/geo columns are unsigned bigints locally but UUIDs in
+            // Supabase — resolve them or MySQL truncates and drops the whole row.
+            $this->loadSupabaseMaps($client, withVenues: true);
+
             $rows = $client->fetchAll('hosted_games', 'created_at.desc', 500, ['created_at.asc', 'id.asc']);
             $communityIdsByUuid = Community::query()->pluck('id', 'uuid');
             $ok = 0;
@@ -78,11 +85,11 @@ class HostedGamesFromSupabaseSeeder extends Seeder
             'host_name'                => (string) ($row['host_name'] ?? ''),
             'host_phone'               => (string) ($row['host_phone'] ?? ''),
             'host_whatsapp'            => (string) ($row['host_whatsapp'] ?? ''),
-            'location_id'              => $this->uuidOrNull($row['location_id'] ?? null),
-            'listing_id'               => $this->uuidOrNull($row['listing_id'] ?? null),
-            'booking_id'               => $this->uuidOrNull($row['booking_id'] ?? null),
-            'city_id'                  => $this->uuidOrNull($row['city_id'] ?? null),
-            'country_id'               => $this->uuidOrNull($row['country_id'] ?? null),
+            'location_id'              => $this->localVenueId($row['location_id'] ?? null),
+            'listing_id'               => $this->localListingId($row['listing_id'] ?? null),
+            'booking_id'               => $this->localBookingId($row['booking_id'] ?? null),
+            'city_id'                  => $this->localCityId($row['city_id'] ?? null),
+            'country_id'               => $this->localCountryId($row['country_id'] ?? null),
             'title'                    => (string) ($row['title'] ?? ''),
             'sport'                    => (string) ($row['sport'] ?? ''),
             'game_type'                => (string) ($row['game_type'] ?? 'game'),
