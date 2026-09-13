@@ -2,6 +2,7 @@
 namespace App\Services;
 
 use App\Models\Asset;
+use App\Support\AccessScope;
 use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\Resource;
@@ -1067,10 +1068,8 @@ class ListingService
         if ($venueId) {
             $user = auth()->user();
             if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
-                $venueIds = DB::table('user_venue')
-                    ->where('user_id', $user->id)
-                    ->pluck('venue_id')
-                    ->toArray();
+                // AccessScope: ownership + assignment + jurisdiction, one authority.
+                $venueIds = AccessScope::allowedVenueIds($user) ?? [];
                 if (! in_array($venueId, $venueIds)) {
                     $query->whereRaw('1 = 0');
                 } else {

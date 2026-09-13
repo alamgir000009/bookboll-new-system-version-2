@@ -203,10 +203,8 @@ class VenueService
 
         $user = auth()->user();
         if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
-            $venueIds = DB::table('user_venue')
-                ->where('user_id', $user->id)
-                ->pluck('venue_id')
-                ->toArray();
+            // AccessScope: ownership + assignment + jurisdiction, one authority.
+            $venueIds = AccessScope::allowedVenueIds($user) ?? [];
             if (! in_array($venue->id, $venueIds)) {
                 return sendError('You do not have access to this venue', [], 403);
             }
@@ -576,7 +574,28 @@ class VenueService
                 $attrs['status'] = Venue::ACTIVE;
             }
 
+            // A provider-side creator owns what they create. Without this the venue
+            // is saved with no owner and no user_venue row, so the very next request
+            // — loading it back, saving its schedule — is refused as "not your venue".
+            // A provider may not hand the venue to someone else, so their own id wins
+            // over anything posted; platform roles keep the supplied owner.
+            $actor = auth()->user();
+            $ownerId = AccessScope::ownerUserId($actor);
+            if ($ownerId !== null) {
+                $attrs['owner_user_id'] = $ownerId;
+            }
+
             $venue = $this->venueModel::create($attrs);
+
+            // Both notions of "my venue" are written: AccessScope reads
+            // venues.owner_user_id, assertDashboardVenueAccess reads the pivot.
+            if ($actor) {
+                DB::table('user_venue')->updateOrInsert(
+                    ['user_id' => $actor->id, 'venue_id' => $venue->id],
+                    []
+                );
+            }
+
             $this->syncDashboardHours($venue, $validated['hours'] ?? []);
 
             DB::commit();
@@ -613,17 +632,30 @@ class VenueService
         DB::beginTransaction();
         try {
             $attrs = $this->normalizeDashboardVenueAttrs($validated);
-            // Keep intentional nulls (e.g. Bookboll-owned owner_user_id) while
-            // dropping keys that were never part of the payload defaults.
-            $keepNull = [
+            // These may legitimately be set to null (a Bookboll-owned venue has no
+            // owner_user_id, say) — but only when the client actually SENT the key.
+            // Treating "absent" as "null" wiped owner_user_id on every ordinary save,
+            // which silently un-owned the venue: the next list call no longer showed
+            // it and the next update was refused as someone else's.
+            $nullable = [
                 'owner_user_id', 'maps_url', 'latitude', 'longitude',
                 'timezone_override', 'currency_override',
             ];
+            $keepNull = array_values(array_filter(
+                $nullable,
+                fn ($k) => array_key_exists($k, $validated)
+            ));
             $attrs = array_filter(
                 $attrs,
                 fn ($v, $k) => $v !== null || in_array($k, $keepNull, true),
                 ARRAY_FILTER_USE_BOTH
             );
+
+            // A provider may not reassign their venue to another account.
+            if (AccessScope::ownerUserId(auth()->user()) !== null) {
+                unset($attrs['owner_user_id']);
+            }
+
             $venue->update($attrs);
             if (array_key_exists('hours', $validated)) {
                 $this->syncDashboardHours($venue, $validated['hours'] ?? []);
@@ -1029,15 +1061,15 @@ class VenueService
         if (! $user) {
             return sendError('Unauthorized', [], 401);
         }
-        if ($user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
+
+        // One authority for "may I touch this venue": ownership, explicit
+        // assignment and platform jurisdiction all live in AccessScope. Asking
+        // the user_venue pivot directly missed venues a provider OWNS.
+        if (AccessScope::canTouchVenue($user, $venueId)) {
             return null;
         }
-        $ok = DB::table('user_venue')
-            ->where('user_id', $user->id)
-            ->where('venue_id', $venueId)
-            ->exists();
 
-        return $ok ? null : sendError('You do not have access to this venue.', [], 403);
+        return sendError('You do not have access to this venue.', [], 403);
     }
 
     protected function normalizeHm(?string $t): string

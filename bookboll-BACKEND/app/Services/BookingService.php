@@ -409,10 +409,10 @@ class BookingService
 
         $user = auth()->user();
         if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
-            $venueIds = DB::table('user_venue')
-                ->where('user_id', $user->id)
-                ->pluck('venue_id')
-                ->toArray();
+            // AccessScope is the one authority: ownership (venues.owner_user_id),
+            // explicit assignment (user_venue) and platform jurisdiction. Reading
+            // the pivot alone missed venues a provider OWNS.
+            $venueIds = AccessScope::allowedVenueIds($user) ?? [];
             if (! empty($venueIds)) {
                 $query->whereIn('bookings.venue_id', $venueIds);
                 if (! empty($filters['selectedVenues'])) {
@@ -1197,10 +1197,8 @@ class BookingService
         if ($request->venue_id) {
             $user = auth()->user();
             if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
-                $venueIds = DB::table('user_venue')
-                    ->where('user_id', $user->id)
-                    ->pluck('venue_id')
-                    ->toArray();
+                // AccessScope: ownership + assignment + jurisdiction, one authority.
+                $venueIds = AccessScope::allowedVenueIds($user) ?? [];
                 if (! in_array($request->venue_id, $venueIds)) {
                     $query->whereRaw('1 = 0');
                 } else {
@@ -1263,10 +1261,7 @@ class BookingService
 
         $user = auth()->user();
         $venueQuery = Venue::where('status', Venue::ACTIVE)->orderBy('sort_order')->orderBy('name');
-        if ($user && ! $user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
-            $allowed = DB::table('user_venue')->where('user_id', $user->id)->pluck('venue_id');
-            $venueQuery->whereIn('id', $allowed);
-        }
+        AccessScope::applyVenue($venueQuery, 'id', $user);
         if ($request->filled('venue_id') || $request->filled('location_id')) {
             $venueQuery->where('id', $request->input('venue_id') ?: $request->input('location_id'));
         }
@@ -3163,10 +3158,8 @@ class BookingService
         if (! empty($data['venue_ids'])) {
             $user = auth()->user();
             if ($user && ! $user->hasAnyRole(['super_admin', 'admin'])) {
-                $venueIds = DB::table('user_venue')
-                    ->where('user_id', $user->id)
-                    ->pluck('venue_id')
-                    ->toArray();
+                // AccessScope: ownership + assignment + jurisdiction, one authority.
+                $venueIds = AccessScope::allowedVenueIds($user) ?? [];
                 $intersected = array_intersect($data['venue_ids'], $venueIds);
                 if (empty($intersected)) {
                     $query->whereRaw('1 = 0');
@@ -4633,12 +4626,18 @@ class BookingService
             }
         }
 
-        $venues = Venue::with('users')->orderBy('name')->get($venueCols);
+        // Scoped like every other admin surface. These pickers were unscoped, so a
+        // provider opening the new-booking drawer saw EVERY venue and listing on the
+        // platform — other businesses' names, courts and prices — and could pick one.
+        $venueQuery = Venue::with('users')->orderBy('name');
+        AccessScope::applyVenue($venueQuery, 'id', auth()->user());
+        $venues = $venueQuery->get($venueCols);
 
         $locations = $venues->map(fn(Venue $v) => $this->mapDashboardLocation($v))->values();
 
-        $listings = Listing::with(['sportsCategory:id,name', 'addOns'])
-            ->orderBy('name')
+        $listingQuery = Listing::with(['sportsCategory:id,name', 'addOns'])->orderBy('name');
+        AccessScope::applyVenue($listingQuery, 'venue_id', auth()->user());
+        $listings = $listingQuery
             ->get()
             ->map(fn(Listing $l) => $this->mapDashboardListing($l))
             ->values();

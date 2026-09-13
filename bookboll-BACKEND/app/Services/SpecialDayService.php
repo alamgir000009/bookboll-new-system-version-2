@@ -2,6 +2,7 @@
 namespace App\Services;
 
 use App\Models\Booking;
+use App\Support\AccessScope;
 use App\Models\Listing;
 use App\Models\SpecialDay;
 use App\Models\Venue;
@@ -72,10 +73,7 @@ class SpecialDayService
     {
         $user = auth()->user();
         $venueQuery = Venue::query()->orderBy('sort_order')->orderBy('name');
-        if ($user && ! $user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
-            $allowed = DB::table('user_venue')->where('user_id', $user->id)->pluck('venue_id');
-            $venueQuery->whereIn('id', $allowed);
-        }
+        AccessScope::applyVenue($venueQuery, 'id', $user);
 
         $venueCols = ['id', 'name', 'status', 'sort_order', 'created_by'];
         foreach (['city_id', 'country_id', 'owner_user_id', 'currency_override'] as $col) {
@@ -508,20 +506,15 @@ class SpecialDayService
         if (! $user) {
             return sendError('Unauthorized', [], 401);
         }
-        if ($user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
+
+        // One authority for "may I touch this venue": ownership, explicit
+        // assignment and platform jurisdiction all live in AccessScope. Asking
+        // the user_venue pivot directly missed venues a provider OWNS.
+        if (AccessScope::canTouchVenue($user, $venueId)) {
             return null;
         }
 
-        $allowed = DB::table('user_venue')
-            ->where('user_id', $user->id)
-            ->where('venue_id', $venueId)
-            ->exists();
-
-        if (! $allowed) {
-            return sendError('You do not have access to this venue.', [], 403);
-        }
-
-        return null;
+        return sendError('You do not have access to this venue.', [], 403);
     }
 
     protected function parseSpecialDayId($id): int

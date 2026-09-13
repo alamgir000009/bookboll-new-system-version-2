@@ -237,12 +237,21 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::apiResource('cities', LocationCityController::class);
         });
 
-        // Countries & Cities admin page (World package + commission rates)
-        // Countries, cities, commission & loyalty
+        // Countries & Cities admin page (World package + commission rates).
+        //
+        // READING the country/city list is not administering geography: a provider
+        // picking the country for a new venue needs it, and they hold none of the
+        // platform capabilities. The payload is a public-ish lookup (name, ISO,
+        // dialling code, currency, active flag) — the same shape as the already-open
+        // /admin/locations/countries — so it stays open to any admin-area role.
+        // Everything that CHANGES geography keeps the platform gate below.
+        Route::prefix('geography')->name('geography.')->group(function () {
+            Route::get('countries', [GeographyController::class, 'countries'])->name('countries');
+            Route::get('cities', [GeographyController::class, 'cities'])->name('cities');
+        });
+
         Route::middleware('capability:manage_geography,manage_loyalty')->group(function () {
             Route::prefix('geography')->name('geography.')->group(function () {
-                Route::get('countries', [GeographyController::class, 'countries'])->name('countries');
-                Route::get('cities', [GeographyController::class, 'cities'])->name('cities');
                 Route::patch('countries/{id}/status', [GeographyController::class, 'updateCountryStatus'])->name('countries.status');
                 Route::patch('cities/{id}/status', [GeographyController::class, 'updateCityStatus'])->name('cities.status');
                 Route::post('cities/bulk-status', [GeographyController::class, 'bulkUpdateCityStatus'])->name('cities.bulk-status');

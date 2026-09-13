@@ -257,6 +257,27 @@ class AccessScope
     }
 
     /**
+     * May this user act on this one venue?
+     *
+     * THE authority for per-venue permission. Services used to ask
+     * `DB::table('user_venue')` directly, which only knows about explicitly
+     * assigned venues — so a provider who OWNED a venue (venues.owner_user_id,
+     * which is what allowedVenueIds uses) was refused by those checks. The venue
+     * appeared in their list and then every write on it came back 403.
+     */
+    public static function canTouchVenue(?User $user, int $venueId): bool
+    {
+        if (! $user || $venueId <= 0) {
+            return false;
+        }
+
+        $ids = self::allowedVenueIds($user);
+
+        // null = unrestricted (global admin); [] = nothing allowed.
+        return $ids === null ? true : in_array($venueId, $ids, true);
+    }
+
+    /**
      * Constrain a query to the venues this user may see.
      *
      * @param  string  $column  the venue foreign key on the query's table

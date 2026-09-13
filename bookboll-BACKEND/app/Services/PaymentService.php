@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Booking;
+use App\Support\AccessScope;
 use App\Models\Listing;
 use App\Models\Payment;
 use App\Models\Venue;
@@ -281,10 +282,7 @@ class PaymentService
         // Filter dropdowns: all venues the actor can see (not just this page).
         $filterVenuesQuery = Venue::orderBy('name');
         $actor = $request->user();
-        if ($actor && ! $actor->hasAnyRole(['super_admin', 'admin'])) {
-            $allowedVenueIds = DB::table('user_venue')->where('user_id', $actor->id)->pluck('venue_id');
-            $filterVenuesQuery->whereIn('id', $allowedVenueIds);
-        }
+        AccessScope::applyVenue($filterVenuesQuery, 'id', $actor);
         $filterVenues = $filterVenuesQuery
             ->get(['id', 'name', 'city_id', 'country_id', 'owner_user_id', 'status', 'currency_override']);
 
@@ -377,7 +375,8 @@ class PaymentService
             ->when(
                 $actor && ! $actor->hasAnyRole(['super_admin', 'admin']),
                 function ($q) use ($actor) {
-                    $allowedVenueIds = DB::table('user_venue')->where('user_id', $actor->id)->pluck('venue_id');
+                    // AccessScope: ownership + assignment + jurisdiction, one authority.
+                    $allowedVenueIds = AccessScope::allowedVenueIds($actor) ?? [];
                     $q->whereIn('venue_id', $allowedVenueIds);
                 }
             )

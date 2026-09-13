@@ -1067,18 +1067,18 @@ class ListingDashboardService
         if (! $user) {
             return sendError('Unauthorized', [], 401);
         }
-        if ($user->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff'])) {
-            return null;
-        }
         if (! Venue::find($venueId)) {
             return sendError('Venue not found', [], 404);
         }
-        $ok = DB::table('user_venue')
-            ->where('user_id', $user->id)
-            ->where('venue_id', $venueId)
-            ->exists();
 
-        return $ok ? null : sendError('You do not have access to this venue.', [], 403);
+        // One authority for "may I touch this venue": ownership, explicit
+        // assignment and platform jurisdiction all live in AccessScope. Asking
+        // the user_venue pivot directly missed venues a provider OWNS.
+        if (AccessScope::canTouchVenue($user, $venueId)) {
+            return null;
+        }
+
+        return sendError('You do not have access to this venue.', [], 403);
     }
 
     protected function normalizeHm(?string $t): string
