@@ -13,7 +13,7 @@
  * (brand name = business name, subdomain = username, teal theme).
  */
 import { ref, computed, watch, onMounted } from 'vue'
-import { registerBusiness, checkUsername as apiCheckUsername, loadCountries, updateBusinessBrand, firstApiError, getApiToken } from '../lib/businessAuth.js'
+import { registerBusiness, checkUsername as apiCheckUsername, loadCountries, updateBusinessBrand, firstApiError, getApiToken, clearApiToken } from '../lib/businessAuth.js'
 import { uploadImage } from '../lib/imageUpload.js'
 import { brandPreviewUrl, brandHost, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
 import { Eye, EyeOff, Loader, Check, ArrowRight, ArrowLeft, Globe, Upload, X, Rocket, Copy, ExternalLink, RotateCcw, Home, Dumbbell, GraduationCap, Search, Sparkles, Lock } from 'lucide-vue-next'
@@ -189,8 +189,11 @@ async function copyUrl() {
 }
 function openUrl() { if (finalUrl.value) window.open(finalUrl.value, '_blank', 'noopener') }
 async function goDashboard() {
-  // Sanctum token is already in localStorage (bb_api_token). Admin login is still
-  // Supabase-based — next integration step will accept Sanctum. Prefill email for now.
+  // The signup token has done its job (it only authorises step 2's brand save).
+  // The admin app signs people in itself and cannot take this token, so keeping
+  // it here just leaves this origin believing it holds a session it can't use —
+  // which is what previously made /signup unreachable on a second visit.
+  clearApiToken()
   window.location.href = adminLoginUrl(email.value ? `email=${encodeURIComponent(email.value)}` : '')
 }
 </script>

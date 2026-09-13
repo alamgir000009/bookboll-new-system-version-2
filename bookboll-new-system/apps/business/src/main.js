@@ -4,10 +4,9 @@ import { createHead } from '@unhead/vue'
 import './style.css'
 import App from './App.vue'
 import { installUnsavedGuards } from './lib/unsavedGuard.js'
-import { initAuth, authUser, authLoading } from './lib/auth.js'
+import { initAuth, authLoading, signOut } from './lib/auth.js'
 import { i18n } from './lib/i18n.js'
 import { initAutoTranslate } from './lib/autoTranslate.js'
-import { adminDashboardUrl } from './lib/crossApp.js'
 import { loadAdminBrand } from './lib/adminBrand.js'
 
 import ForBusiness from './pages/ForBusiness.vue'
@@ -39,10 +38,21 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   if (authLoading.value) await initAuth()
-  // Signed-in providers opening /signup go to the admin dashboard
-  if (to.path === '/signup' && authUser.value && !to.meta?.allowAuthed) {
-    window.location.replace(adminDashboardUrl('/admin'))
-    return false
+
+  // /signup used to bounce anyone holding a token straight to the admin app.
+  // That token is a signup artifact minted by POST /business/register — it is
+  // NOT an admin dashboard session, because the admin app has its own login and
+  // no token handoff (its /auth/callback just forwards to /login). So the bounce
+  // always landed on the sign-in screen, and because the token outlives signing
+  // out over there (Sanctum logout revokes only the token it was called with,
+  // and localStorage is per-origin anyway) there was no way back to /signup.
+  //
+  // Signup is now always reachable. A visitor who already owns a business gets a
+  // clear message from the API instead of a redirect they cannot escape.
+  if (to.path === '/signup' && to.query.fresh !== undefined) {
+    // Explicit reset, for anyone still carrying a token from an abandoned signup.
+    signOut()
+    return { path: '/signup', replace: true }
   }
 })
 
