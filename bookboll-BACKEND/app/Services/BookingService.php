@@ -690,7 +690,10 @@ class BookingService
                     'notes'                 => $bookingData['notes'],
                     'venue_id'              => $bookingData['venue_id'],
                     'end_time'              => $bookingData['end_time'],
-                    'status'                => BookingStatus::PENDING,
+                    // Confirmed only when nothing is left to collect — a
+                    // pre-paid or payment-skipped booking. Cash on arrival
+                    // stays pending until the money is taken.
+                    'status'                => initialBookingStatus($paymentStatus, (float) $totalPrice),
                     'start_time'            => $bookingData['start_time'],
                     'listing_id'            => $bookingData['listing_id'],
                     'loyalty_points_earned' => $listing->loyalty_points ?? 0,
@@ -4250,7 +4253,10 @@ class BookingService
                 'total_price'           => $total,
                 'payment_method'        => $mapped['method'],
                 'payment_status'        => $mapped['status'],
-                'status'                => BookingStatus::CONFIRMED,
+                // Was hardcoded CONFIRMED, which confirmed "Pay on Arrival"
+                // bookings before a fil had been collected. The rule is the
+                // same everywhere now: confirmed only when nothing is owed.
+                'status'                => initialBookingStatus($mapped['status'], (float) $total),
                 'notes'                 => $data['notes'] ?? '',
                 'players'               => (int) ($data['players'] ?? 1),
                 'origin'                => 'manual_admin',
@@ -4493,6 +4499,12 @@ class BookingService
                 'action'      => 'payment_collected',
                 'description' => 'Payment collected in admin dashboard via ' . $data['method'],
             ]);
+
+            // Bookings now start pending whenever money is owed, so collecting
+            // the last outstanding payment is what confirms them. Without this
+            // a cash-on-arrival booking would stay pending after being paid.
+            autoConfirmBookingIfPaid($booking);
+            $booking->refresh();
 
             DB::commit();
 

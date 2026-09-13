@@ -867,6 +867,33 @@ if (! function_exists('regenerateBookingInvoice')) {
     }
 }
 
+if (! function_exists('initialBookingStatus')) {
+    /**
+     * The status a brand-new booking starts at.
+     *
+     * A booking is CONFIRMED only when there is nothing left to collect —
+     * either the money is already in (`fully_paid`), or none was ever due
+     * (payment explicitly skipped, or the booking costs nothing). Anything
+     * with a balance outstanding — cash on arrival, a deposit with the rest
+     * due at the venue — starts PENDING, and autoConfirmBookingIfPaid()
+     * promotes it the moment that balance is actually collected.
+     *
+     * Every path that creates a booking must go through here, so admin-made,
+     * customer-made and hosted-game bookings all answer the question the
+     * same way.
+     */
+    function initialBookingStatus(?string $paymentStatus, float $totalPrice): string
+    {
+        if ($paymentStatus === BookingPaymentStatus::FULLY_PAID
+            || $paymentStatus === BookingPaymentStatus::PAYMENT_SKIPPED
+            || $totalPrice <= 0) {
+            return BookingStatus::CONFIRMED;
+        }
+
+        return BookingStatus::PENDING;
+    }
+}
+
 if (! function_exists('autoConfirmBookingIfPaid')) {
     function autoConfirmBookingIfPaid($booking)
     {
@@ -879,11 +906,21 @@ if (! function_exists('autoConfirmBookingIfPaid')) {
             $totalPaid  = (float) $booking->payments()->where('status', PaymentStatus::PAID)->sum('amount');
             $totalPrice = (float) $booking->total_price;
 
-            if ($totalPrice <= 0 || $totalPaid < $totalPrice) {
+            // Nothing owed at all: a free booking, or one whose price was fully
+            // covered by a promocode or loyalty. There is no payment left to
+            // wait for, so it confirms on the same rule as a paid booking —
+            // otherwise a 100%-discount booking sits at pending for ever.
+            $nothingToCollect = $totalPrice <= 0
+                && ! $booking->payments()->where('status', PaymentStatus::PENDING)->exists();
+
+            if (! $nothingToCollect && ($totalPrice <= 0 || $totalPaid < $totalPrice)) {
                 return;
             }
 
-            if ($booking->payment_status !== BookingPaymentStatus::FULLY_PAID) {
+            // A payment-skipped booking keeps that payment_status — no money
+            // changed hands, so calling it "fully paid" would misreport revenue.
+            if ($booking->payment_status !== BookingPaymentStatus::FULLY_PAID
+                && $booking->payment_status !== BookingPaymentStatus::PAYMENT_SKIPPED) {
                 $booking->update([
                     'payment_status'        => BookingPaymentStatus::FULLY_PAID,
                     'full_payment_received' => true,

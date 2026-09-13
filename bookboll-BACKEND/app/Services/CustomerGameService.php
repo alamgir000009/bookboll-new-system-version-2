@@ -710,7 +710,11 @@ class CustomerGameService
             'players'        => max(1, (int) ($data['max_players'] ?? 1)),
             'subtotal'       => $charge['courtTotal'],
             'total_price'    => $charge['courtTotal'],
-            'status'         => 'confirmed',
+            // A hosted game's court is confirmed on the same rule as every
+            // other booking: only when nothing is left to collect. A host who
+            // paid a deposit with the balance due at the venue leaves this
+            // pending until the venue collects it.
+            'status'         => initialBookingStatus($paymentStatus, (float) $charge['courtTotal']),
             'payment_status' => $paymentStatus,
             'payment_method' => $paymentMethod,
             'origin'         => 'customer_game',
