@@ -187,11 +187,22 @@ class BusinessService
             DB::beginTransaction();
 
             $user = $existing ?: $this->user::create([
-                'name'     => $data['name'],
-                'email'    => $data['email'],
-                'password' => $data['password'],
-                'status'   => User::ACTIVE,
+                'name'       => $data['name'],
+                'email'      => $data['email'],
+                'password'   => $data['password'],
+                'status'     => User::ACTIVE,
+                // The signup form asks for a country; it used to be written to the
+                // business only, so the owner's own country stayed empty and every
+                // country-keyed lookup for them (loyalty programme, alert routing)
+                // fell back to nothing.
+                'country_id' => $data['country_id'] ?? null,
             ]);
+
+            // An existing customer adding a business keeps whatever country they
+            // already had — this only fills a blank, never overwrites their answer.
+            if ($existing && ! $existing->country_id && ! empty($data['country_id'])) {
+                $existing->forceFill(['country_id' => (int) $data['country_id']])->save();
+            }
 
             // Additive: an existing customer keeps the customer role and gains this
             // one, so their bookings and rewards are untouched.
