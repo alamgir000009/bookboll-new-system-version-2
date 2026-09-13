@@ -723,6 +723,8 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('default-city', [MarketplaceCatalogController::class, 'defaultCity'])->name('default-city');
     Route::get('served-regions', [MarketplaceCatalogController::class, 'servedRegions'])->name('served-regions');
     Route::get('loyalty-config', [MarketplaceCatalogController::class, 'loyaltyConfig'])->name('loyalty-config');
+    // Build-time sitemap generator (apps/web scripts/gen-sitemap.mjs).
+    Route::get('sitemap', [MarketplaceCatalogController::class, 'sitemap'])->name('sitemap');
     Route::get('profiles/{uuid}', [PublicProfileController::class, 'show'])->name('profiles.show');
     Route::get('communities/probe', [CustomerCommunityController::class, 'probe'])->name('communities.probe');
     Route::get('communities', [CustomerCommunityController::class, 'index'])->name('communities.index');

@@ -81,6 +81,12 @@ class MarketplaceCatalogController extends Controller
         ]);
     }
 
+    /** Flat catalogue for the build-time sitemap generator. */
+    public function sitemap()
+    {
+        return sendSuccess('Sitemap data', $this->catalog->sitemap());
+    }
+
     public function countries(Request $request)
     {
         return $this->geo->countries($request);

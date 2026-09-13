@@ -3,8 +3,11 @@
 namespace App\Services;
 
 use App\Models\Business;
+use App\Models\ClassProgram;
+use App\Models\HostedGame;
 use App\Models\Listing;
 use App\Models\LoyaltyProgram;
+use App\Models\Post;
 use App\Models\ProviderWallet;
 use App\Models\Setting;
 use App\Models\Venue;
@@ -291,6 +294,82 @@ class MarketplaceCatalogService
      * Loyalty earn/redeem config for a country. A country without a row uses the
      * platform defaults, so this never 404s — the storefront always gets a config.
      */
+    /**
+     * Everything the build-time sitemap generator needs, in one request.
+     *
+     * The generator used to read Supabase directly and re-implement the
+     * marketplace visibility rules in JavaScript. Two copies of one rule drift:
+     * a listing hidden here could still be advertised to crawlers. This returns
+     * only what the marketplace actually shows, using the same scope the
+     * storefront queries with.
+     */
+    public function sitemap(): array
+    {
+        $visible = $this->listingQuery(['whiteLabel' => false]);
+
+        $listings = (clone $visible)->get(['id', 'venue_id', 'category', 'sport_category', 'created_at']);
+
+        $venueIds = $listings->pluck('venue_id')->filter()->unique();
+        $venues = Venue::whereIn('id', $venueIds)
+            ->where('status', 'active')
+            ->get(['id', 'city_id', 'created_at']);
+
+        $programs = ClassProgram::query()
+            ->where('status', 'active')
+            ->where(fn ($q) => $q->where('show_on_marketplace', true)->orWhereNull('show_on_marketplace'))
+            ->where(fn ($q) => $q->where('approval_status', 'approved')->orWhereNull('approval_status'))
+            ->where(fn ($q) => $q->whereNull('eligibility_status')->orWhere('eligibility_status', '!=', 'paused'))
+            ->get(['id', 'venue_id', 'category', 'sport_category', 'created_at']);
+
+        // Only games a crawler can still act on: open, not removed, not past.
+        $today = now()->toDateString();
+        $games = HostedGame::query()
+            ->where(fn ($q) => $q->where('status', 'open')->orWhereNull('status'))
+            ->where(fn ($q) => $q->whereNull('moderation_status')->orWhere('moderation_status', '!=', 'removed'))
+            ->where(fn ($q) => $q->whereNull('game_date')->orWhereDate('game_date', '>=', $today))
+            ->get(['id', 'game_type', 'game_date', 'created_at']);
+
+        $posts = Post::query()
+            ->where('status', 'published')
+            ->get(['slug', 'published_at']);
+
+        $cityIds = $venues->pluck('city_id')->filter()->unique();
+        $cities = City::whereIn('id', $cityIds)->get(['id', 'name', 'country_id']);
+        $countries = Country::whereIn('id', $cities->pluck('country_id')->filter()->unique())
+            ->get(['id', 'name']);
+
+        return [
+            'venues'    => $venues->map(fn ($v) => [
+                'id' => (string) $v->id, 'city_id' => $v->city_id ? (string) $v->city_id : null,
+                'created_at' => optional($v->created_at)->toIso8601String(),
+            ])->values()->all(),
+            'listings'  => $listings->map(fn ($l) => [
+                'id' => (string) $l->id, 'location_id' => (string) $l->venue_id,
+                'category' => $l->category, 'sport_category' => $l->sport_category,
+                'created_at' => optional($l->created_at)->toIso8601String(),
+            ])->values()->all(),
+            'programs'  => $programs->map(fn ($p) => [
+                'id' => (string) $p->id, 'location_id' => (string) $p->venue_id,
+                'category' => $p->category, 'sport_category' => $p->sport_category,
+                'created_at' => optional($p->created_at)->toIso8601String(),
+            ])->values()->all(),
+            'games'     => $games->map(fn ($g) => [
+                'id' => (string) $g->id, 'game_type' => $g->game_type,
+                'created_at' => optional($g->created_at)->toIso8601String(),
+            ])->values()->all(),
+            'posts'     => $posts->map(fn ($p) => [
+                'slug' => $p->slug, 'published_at' => optional($p->published_at)->toIso8601String(),
+            ])->values()->all(),
+            'cities'    => $cities->map(fn ($c) => [
+                'id' => (string) $c->id, 'name' => $c->name,
+                'country_id' => $c->country_id ? (string) $c->country_id : null,
+            ])->values()->all(),
+            'countries' => $countries->map(fn ($c) => [
+                'id' => (string) $c->id, 'name' => $c->name,
+            ])->values()->all(),
+        ];
+    }
+
     public function loyaltyConfig(Request $request)
     {
         $data = $request->validate([

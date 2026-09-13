@@ -26,6 +26,8 @@ return [
         'http://localhost:5175',
 
         'https://bookboll.com',
+        'https://new.bookboll.com',
+        'https://newadmin.bookboll.com',
         'https://www.bookboll.com',
         'https://admin.bookboll.com',
         'https://www.admin.bookboll.com',
