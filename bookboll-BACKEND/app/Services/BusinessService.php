@@ -8,6 +8,7 @@ use App\Models\Business;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Nnjeim\World\Models\Country;
 
@@ -131,7 +132,12 @@ class BusinessService
             'username'              => 'required|string|min:3|max:30',
             'business_types'        => 'required|array|min:1',
             'business_types.*'      => ['required', 'string', Rule::in($this->business::BUSINESS_TYPE_KEYS)],
-            'email'                 => 'required|email|max:255|unique:users,email',
+            // NOT unique: one person can be both a customer and a provider. The
+            // Supabase design kept `customers` and `admin_users` in separate tables
+            // with no unique email between them; consolidating into one `users`
+            // table turned that into a wall every existing customer hit. Ownership
+            // of an existing account is proved by password below.
+            'email'                 => 'required|email|max:255',
             'password'              => 'required|string|min:8|confirmed',
             'country_id'            => 'nullable|integer|exists:countries,id',
         ]);
@@ -156,17 +162,42 @@ class BusinessService
             ], 422);
         }
 
+        // An email already on file belongs to an existing account — most often a
+        // customer adding a business. Attach the business to that account rather
+        // than refusing, but only once the password proves they own it; this
+        // endpoint is public, so accepting the email alone would be takeover.
+        $existing = $this->user::where('email', $data['email'])->first();
+
+        if ($existing) {
+            if (! Hash::check($data['password'], $existing->password)) {
+                // The dashboard surfaces errors[] before message (firstApiError),
+                // so the guidance has to live in the field error too.
+                $msg = 'An account already exists with this email. Enter that account\'s password to add a business to it, or sign up with a different email.';
+
+                return sendError($msg, ['email' => [$msg]], 422);
+            }
+            if ($this->business::where('owner_id', $existing->id)->exists()) {
+                return sendError('This account already has a business.', [
+                    'email' => ['This account already has a business.'],
+                ], 422);
+            }
+        }
+
         try {
             DB::beginTransaction();
 
-            $user = $this->user::create([
+            $user = $existing ?: $this->user::create([
                 'name'     => $data['name'],
                 'email'    => $data['email'],
                 'password' => $data['password'],
                 'status'   => User::ACTIVE,
             ]);
 
-            $user->assignRole('provider_admin');
+            // Additive: an existing customer keeps the customer role and gains this
+            // one, so their bookings and rewards are untouched.
+            if (! $user->hasRole('provider_admin')) {
+                $user->assignRole('provider_admin');
+            }
 
             $business = $this->business::create([
                 'owner_id'        => $user->id,
