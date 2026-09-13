@@ -1,13 +1,18 @@
 /**
  * gen-sitemap.mjs — build-time sitemap generator.
  *
- * Reads Supabase creds from .env (the same anon key the storefront uses) and writes
- * public/sitemap.xml with the static marketing routes plus every public venue, court,
- * program and event/tournament detail URL. Runs as part of `npm run build` so the
- * sitemap refreshes on each deploy. Best-effort: any DB error still emits the static
- * routes so the build never fails on this.
+ * Writes public/sitemap.xml with the static marketing routes plus every public
+ * venue, court, program and event/tournament URL. Runs as part of `npm run build`
+ * so the sitemap refreshes on each deploy.
+ *
+ * Data comes from the Laravel API (GET /marketplace/sitemap), which applies the
+ * SAME marketplace visibility rules the storefront queries with. This used to read
+ * Supabase directly and re-implement those rules here; two copies of one rule drift,
+ * and the sitemap would then advertise listings the marketplace no longer shows.
+ *
+ * Best-effort: any network/API error still emits the static routes, so a build
+ * never fails because the API was unreachable.
  */
-import { createClient } from '@supabase/supabase-js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -29,8 +34,8 @@ function readEnv() {
 }
 
 const env = readEnv()
-const URL = process.env.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL
-const KEY = process.env.VITE_SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY
+// Same base the storefront uses (src/lib/api.js).
+const API = (process.env.VITE_API_URL || env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '')
 
 const urls = new Map()   // loc -> lastmod (dedup)
 const add = (path, lastmod) => { if (path) urls.set(`${SITE}${path}`, lastmod || null) }
@@ -43,33 +48,29 @@ const slug = (s) => String(s || '').toLowerCase().trim()
 ;['/', '/facilities', '/programs', '/games', '/host-game', '/blog', '/venues', '/memberships', '/terms'].forEach(p => add(p))
 
 async function collect() {
-  if (!URL || !KEY) { console.warn('[sitemap] No Supabase creds — writing static routes only.'); return }
-  const sb = createClient(URL, KEY)
-  // Supabase returns query errors in `.error` (no throw) — surface those too.
-  const safe = async (label, fn) => {
-    try { const r = await fn(); if (r.error) console.warn(`[sitemap] ${label}:`, r.error.message); return r.data || [] }
-    catch (e) { console.warn(`[sitemap] ${label}:`, e.message); return [] }
+  let data
+  try {
+    const res = await fetch(`${API}/marketplace/sitemap`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(30000),
+    })
+    if (!res.ok) { console.warn(`[sitemap] API ${res.status} ${res.statusText} — writing static routes only.`); return }
+    const body = await res.json()
+    data = body?.data ?? body
+  } catch (e) {
+    console.warn(`[sitemap] ${API} unreachable (${e.message}) — writing static routes only.`)
+    return
   }
 
-  const [locs, allListings, allPrograms, games, posts, cities, countries] = await Promise.all([
-    safe('locations', () => sb.from('locations').select('id, city_id, created_at').eq('status', 'active')),
-    safe('listings', () => sb.from('listings').select('id, location_id, category, sport_category, created_at, show_on_marketplace, approval_status, eligibility_status')),
-    safe('class_programs', () => sb.from('class_programs').select('id, location_id, category, sport_category, created_at, show_on_marketplace, approval_status, eligibility_status').eq('status', 'active')),
-    safe('hosted_games', () => sb.from('hosted_games').select('id, game_type, created_at, status, game_date, moderation_status')),
-    safe('blog_posts', () => sb.from('blog_posts').select('slug, published_at').eq('status', 'published')),
-    safe('cities', () => sb.from('cities').select('id, name, country_id').eq('status', 'active')),
-    safe('countries', () => sb.from('countries').select('id, name').eq('status', 'active')),
-  ])
-
-  // Marketplace visibility — same rule as the storefront (data.js listingVisible /
-  // programVisible on the apex): flagged for the marketplace AND approved AND not
-  // paused. Missing values count as visible (pre-migration rows). The sitemap only
-  // advertises what the marketplace actually shows.
-  const visible = (r) => r.show_on_marketplace !== false
-    && (r.approval_status || 'approved') === 'approved'
-    && (r.eligibility_status || 'eligible') !== 'paused'
-  const listings = allListings.filter(visible)
-  const programs = allPrograms.filter(visible)
+  // The API already applied marketplace visibility (MarketplaceCatalogService::sitemap),
+  // so everything returned is something the storefront genuinely shows.
+  const locs      = data.venues    || []
+  const listings  = data.listings  || []
+  const programs  = data.programs  || []
+  const games     = data.games     || []
+  const posts     = data.posts     || []
+  const cities    = data.cities    || []
+  const countries = data.countries || []
 
   // A venue page is only listed when the venue has ≥1 marketplace-visible listing —
   // empty/unapproved venues are hidden on the marketplace, so don't send crawlers there.
@@ -77,13 +78,8 @@ async function collect() {
   locs.forEach(r => { if (bookableLocs.has(r.id)) add(`/facilities/${r.id}`, r.created_at) })
   listings.forEach(r => add(`/listings/${r.id}`, r.created_at))
   programs.forEach(r => add(`/programs/${r.id}`, r.created_at))
-  // Only advertise games that are still joinable: open, not admin-removed, and not
-  // in the past — otherwise crawlers hit dead/soft-404 event pages.
-  const todayISO = new Date().toISOString().slice(0, 10)
-  const gameVisible = (r) => (r.status || 'open') === 'open'
-    && (r.moderation_status || 'active') !== 'removed'
-    && (!r.game_date || r.game_date >= todayISO)
-  games.filter(gameVisible).forEach(r => add(r.game_type === 'tournament' ? `/tournaments/${r.id}` : `/games/${r.id}`, r.created_at))
+  // Already filtered server-side to games still joinable (open, not removed, not past).
+  games.forEach(r => add(r.game_type === 'tournament' ? `/tournaments/${r.id}` : `/games/${r.id}`, r.created_at))
   posts.forEach(r => add(`/blog/${r.slug}`, r.published_at))
 
   // City/country × (category|sport) landing pages, from active venues only.
