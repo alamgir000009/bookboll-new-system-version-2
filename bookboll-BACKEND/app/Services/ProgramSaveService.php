@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\ClassProgram;
+use Illuminate\Support\Facades\Log;
+use App\Support\AdminAlerts;
 use App\Models\ProviderTrialAgreement;
 use App\Models\Venue;
 use App\Support\AccessScope;
@@ -156,7 +158,12 @@ class ProgramSaveService
             'images'      => $base['images'] ?? [],
         ];
 
-        return DB::transaction(function () use ($request, $existing, $base, $content, $isAdmin, $isDraft, $data, $ownerId) {
+        // Captured before the write so a re-save of something already queued does
+        // not raise a second alert.
+        $wasPending = ($existing?->approval_status ?? null) === 'pending';
+        $entersReview = false;
+
+        $result = DB::transaction(function () use ($request, $existing, $base, $content, $isAdmin, $isDraft, $data, $ownerId, &$entersReview) {
             [$program, $stageMode] = $existing
                 ? $this->applyUpdate($existing, $base, $content, $isAdmin, $isDraft)
                 : $this->applyCreate($base, $isAdmin, $isDraft);
@@ -173,6 +180,7 @@ class ProgramSaveService
                     'submitted_at'      => now(),
                     'submitted_by_name' => $request->user()?->name ?: '',
                 ])->save();
+                $entersReview = true;
             }
 
             $this->recordTrialAgreement($program, $data, $ownerId);
@@ -182,6 +190,28 @@ class ProgramSaveService
                 'stage_mode' => $stageMode,
             ]);
         });
+
+        // After the commit, never inside it: a rolled-back save must not leave staff
+        // chasing a programme that was never written. Nothing here may break the save.
+        if ($entersReview && ! $wasPending) {
+            try {
+                $program = ClassProgram::find($existing?->id ?? ($result->getData(true)['data']['program']['id'] ?? null));
+                $venue = $program?->venue;
+                AdminAlerts::toPlatform(
+                    'approval',
+                    'info',
+                    ($existing ? 'Programme resubmitted for review — ' : 'New programme awaiting review — ')
+                        .($program?->name ?: 'Untitled'),
+                    $venue?->name ?: '',
+                    '/approvals',
+                    $venue?->country_id ? (int) $venue->country_id : null,
+                );
+            } catch (\Throwable $e) {
+                Log::warning('programme approval alert failed: '.$e->getMessage());
+            }
+        }
+
+        return $result;
     }
 
     /** @return array{0: ClassProgram, 1: string} */

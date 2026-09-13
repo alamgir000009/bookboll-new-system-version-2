@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Listing;
 use App\Support\AccessScope;
+use App\Support\AdminAlerts;
 use App\Support\CityModules;
 use App\Support\HourPeriods;
 use Nnjeim\World\Models\City;
@@ -436,6 +437,8 @@ class ListingDashboardService
 
             DB::commit();
 
+            $this->alertPlatformIfAwaitingReview($listing->fresh(), true);
+
             return $this->show($listing->id);
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -472,12 +475,20 @@ class ListingDashboardService
 
         DB::beginTransaction();
         try {
+            $wasPending = ($listing->approval_status ?? null) === Listing::APPROVAL_PENDING;
+
             $attrs = $this->normalizeListingAttrs($validated);
             $attrs['venue_id'] = $venueId;
             $listing->update($attrs);
             $this->syncChildren($listing->fresh(), $validated);
 
             DB::commit();
+
+            // Only when it has just ENTERED review — editing something already in
+            // the queue must not re-alert on every keystroke-save.
+            if (! $wasPending) {
+                $this->alertPlatformIfAwaitingReview($listing->fresh(), false);
+            }
 
             return $this->show($listing->id);
         } catch (\Throwable $e) {
@@ -1059,6 +1070,46 @@ class ListingDashboardService
             'addons'                  => 'nullable|array',
             'resources'               => 'nullable|array',
         ]);
+    }
+
+    /**
+     * Tell Bookboll staff a listing is waiting on them.
+     *
+     * Approval alerts only ever ran in the OTHER direction — ApprovalsDashboardService
+     * tells the provider once staff decide — so a submission sat in the queue with
+     * nobody told it was there.
+     *
+     * Only marketplace-bound listings raise one: a provider's own-site listing needs
+     * no Bookboll review, and alerting on those would bury the real queue. Failure to
+     * notify must never fail the save, so it is best-effort.
+     */
+    protected function alertPlatformIfAwaitingReview(?Listing $listing, bool $isNew): void
+    {
+        if (! $listing) {
+            return;
+        }
+        if (($listing->approval_status ?: Listing::APPROVAL_APPROVED) !== Listing::APPROVAL_PENDING) {
+            return;
+        }
+        if ($listing->show_on_marketplace === false) {
+            return;   // own-site only — Bookboll has nothing to review
+        }
+
+        try {
+            $venue = $listing->venue ?: Venue::find($listing->venue_id);
+            $venueName = $venue?->name ?: 'a venue';
+
+            AdminAlerts::toPlatform(
+                'approval',
+                'info',
+                ($isNew ? 'New listing awaiting review — ' : 'Listing resubmitted for review — ').($listing->name ?: 'Untitled'),
+                $venueName,
+                '/approvals',
+                $venue?->country_id ? (int) $venue->country_id : null,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('listing approval alert failed: '.$e->getMessage());
+        }
     }
 
     protected function assertAccess(int $venueId)
