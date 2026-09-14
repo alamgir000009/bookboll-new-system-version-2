@@ -8,7 +8,7 @@
  */
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { loadOverview } from '../lib/overview.js'
+import { loadOverview, setupChangedAt } from '../lib/overview.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { brandPreviewUrl, brandPreviewById, providerSlug } from '../lib/brand.js'
 import { pushToast } from '../lib/toast.js'
@@ -44,8 +44,12 @@ async function refresh() {
   } catch { /* keep previous state */ }
 }
 onMounted(refresh)
-watch(() => route.path, () => { if (visible.value) refresh() })
+watch(() => route.fullPath, () => { if (visible.value) refresh() })
 watch(currentOwnerUserId, refresh)
+// A venue or listing is saved in a modal on the page you are already on — no
+// navigation happens, so without this the coach never notices and keeps asking
+// for the step the provider has just completed.
+watch(setupChangedAt, () => { viewIdx.value = -1; refresh() })
 
 // ── steps (ONE line of text each — the coach stays light). Payouts are NOT a
 // step: they're optional, and the listing/membership flows already surface the

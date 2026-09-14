@@ -89,6 +89,7 @@ const SPORTS = [
   'Cricket Simulator',
 ].sort((a, b) => a.localeCompare(b))
 import WeeklyHours from '../components/WeeklyHours.vue'
+import { notifySetupChanged } from '../lib/overview.js'
 import LocationModal from '../components/LocationModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PricingGrid from '../components/PricingGrid.vue'
@@ -548,6 +549,9 @@ function openEditLoc(l) {
 async function onLocationSaved(loc) {
   locModal.value = false
   await loadList()
+  // The setup guide sits on this same page — tell it the venue step is done,
+  // otherwise it keeps asking for the venue that was just added.
+  notifySetupChanged()
   // Created from the listing form's dropdown → assign it to the listing right
   // away (through the normal change path, so the add-on/resource detach
   // confirmation still applies when relevant).
@@ -1919,6 +1923,7 @@ async function save() {
 
   savedFlag.value = true
   setTimeout(() => (savedFlag.value = false), 2000)
+  notifySetupChanged()   // moves the setup guide past "Add your first listing"
   clearDirty()
   clearFormDraft(listingDraftKey())   // a real save supersedes any local draft
   // Tell the provider exactly what happened. Operational-only edits are fully live —

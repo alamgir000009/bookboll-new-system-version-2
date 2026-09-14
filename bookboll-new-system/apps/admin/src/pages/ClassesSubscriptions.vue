@@ -5,6 +5,7 @@ import { loadReferenceData } from '../lib/referenceData.js'
 import { fetchWallets } from '../lib/walletPayouts.js'
 import { askConfirm } from '../lib/confirm.js'
 import { pushToast } from '../lib/toast.js'
+import { notifySetupChanged } from '../lib/overview.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty, registerDraftSaver } from '../lib/unsavedGuard.js'
 import { saveFormDraft, loadFormDraft, clearFormDraft, draftAgeLabel } from '../lib/formDrafts.js'
 import { rowState, TRIAL_TERMS_VERSION, PLATFORM_COMMISSION, DEFAULT_TRIAL_DAYS } from '../lib/approvalState.js'
@@ -485,6 +486,7 @@ function openNewLocation() { newLocModal.value = true }
 function onLocationSaved(saved) {
   newLocModal.value = false
   if (!saved) return
+  notifySetupChanged()   // a venue can be created from here too — keep the guide honest
   // Merge into the local list (insert or replace) and auto-select it
   if (locations.value.some(l => l.id === saved.id)) {
     locations.value = locations.value.map(l => (l.id === saved.id ? saved : l))
@@ -1085,6 +1087,9 @@ async function saveProgram() {
   // Calendar slots are derived from the program's schedule now — nothing to
   // materialise. The calendar and booking form pick up the recurrence automatically.
   loadAll()
+  // A programme counts as a listing on the setup checklist, so the guide has to
+  // hear about it too — it is saved in a modal with no navigation.
+  notifySetupChanged()
   emit('saved')   // let an embedding parent (Listings) refresh its program list
 }
 
