@@ -448,7 +448,7 @@ async function save() {
   saving.value = true
   const location  = locations.value.find(l => l.id === venueId.value)
   const isPrepaid = ['paid_cash', 'paid_cheque', 'paid_card', 'paid_wire'].includes(paymentMethod.value)
-  const curr      = location?.currency_override || 'AED'
+  const curr      = location?.currency_override || ''
 
   const dates      = allBookingDates.value
   const createdIds = []
@@ -543,7 +543,7 @@ function selectCustomer(c) {
   showCustomerDropdown.value = false
 }
 
-const currency = computed(() => locations.value.find(l => l.id === venueId.value)?.currency_override || 'AED')
+const currency = computed(() => locations.value.find(l => l.id === venueId.value)?.currency_override || '')
 function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
 </script>
 

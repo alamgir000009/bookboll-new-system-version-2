@@ -44,7 +44,7 @@ watch(() => props.customerId, async (id) => {
 
 function listingName(id)  { return listings.value.find(l => l.id === id)?.name  || '—' }
 function locationName(id) { return locations.value.find(l => l.id === id)?.name || '—' }
-function currency(locId)  { return locations.value.find(l => l.id === locId)?.currency_override || 'AED' }
+function currency(locId)  { return locations.value.find(l => l.id === locId)?.currency_override || '' }
 
 function bookingRef(b) {
   const id = String(b.id || '')
@@ -164,7 +164,7 @@ const stats = computed(() => ({
             <div class="chm-stat"><div class="chm-stat-val">{{ stats.total }}</div><div class="chm-stat-lbl">Total</div></div>
             <div class="chm-stat"><div class="chm-stat-val">{{ stats.completed }}</div><div class="chm-stat-lbl">Completed</div></div>
             <div class="chm-stat"><div class="chm-stat-val">{{ stats.pending }}</div><div class="chm-stat-lbl">Upcoming</div></div>
-            <div class="chm-stat"><div class="chm-stat-val">AED {{ stats.totalSpent.toLocaleString() }}</div><div class="chm-stat-lbl">Spent</div></div>
+            <div class="chm-stat"><div class="chm-stat-val">{{ stats.totalSpent.toLocaleString() }}</div><div class="chm-stat-lbl">Spent</div></div>
           </div>
 
           <!-- Filters -->

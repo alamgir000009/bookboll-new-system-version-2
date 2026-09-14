@@ -107,7 +107,11 @@ export function isWalletUsable(wallet) {
 export function walletForCountry(wallets, countryId, purpose = 'subscription') {
   if (!Array.isArray(wallets) || !countryId) return null
   const want = normWalletPurpose(purpose)
-  const match = (w) => w.country_id === countryId && normWalletPurpose(w.purpose) === want
+  // provider_wallets.country_id is a CHAR column, so it arrives as "1" while a
+  // countries.id is the number 1. Compare as strings or the wallet is never found
+  // and the page offers to create one that already exists.
+  const cid = v => (v === null || v === undefined || v === '') ? '' : String(v)
+  const match = (w) => cid(w.country_id) === cid(countryId) && normWalletPurpose(w.purpose) === want
   return wallets.find(w => match(w) && w.is_current !== false)
     || wallets.find(match)
     || null
@@ -204,7 +208,7 @@ export async function recordAutoPayout({ ownerUserId, wallet, amount, currency, 
       country_id: wallet.country_id || null,
       wallet_id: wallet.id,
       amount: Number(amount),
-      currency: currency || wallet.currency || 'AED',
+      currency: currency || wallet.currency || '',
       payout_method: 'stripe_connect',
       payout_details: 'Automatic Stripe Connect payout (split at checkout)',
       notes: sourceLabel ? `Auto-payout · ${sourceLabel}` : 'Automatic payout',
@@ -225,7 +229,7 @@ export async function ensureCountryWallet(ownerUserId, countryId, fallbackCurren
   if (existing) return existing
   const samePurpose = list.filter(w => normWalletPurpose(w.purpose) === want)
   const template = samePurpose.find(w => w.is_current !== false && isWalletUsable(w)) || samePurpose.find(isWalletUsable) || samePurpose[0] || null
-  let currency = fallbackCurrency || template?.currency || 'AED'
+  let currency = fallbackCurrency || template?.currency || ''
   if (countryId) {
     // reference-data already carries every country with its currency_code, and the
     // dashboard has it loaded — one shared payload instead of a lookup per wallet.

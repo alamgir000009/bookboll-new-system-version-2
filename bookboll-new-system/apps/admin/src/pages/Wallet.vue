@@ -147,9 +147,23 @@ function currencyForOwner(ownerId) {
 }
 
 // Currency for a specific country (multi-country wallets each hold one currency).
+// provider_wallets.country_id is a CHAR column (it used to hold Supabase UUIDs),
+// so the API returns "1" while countries.id is the number 1. `===` between them is
+// false, and a Set holds "1" and 1 as two different countries — which is why one
+// country rendered as two cards: the real wallet under an unmatched id (labelled
+// "Country") plus an empty "set up" card for the same place. Every country-id
+// comparison on this page goes through here.
+const cid = v => (v === null || v === undefined || v === '') ? '' : String(v)
+
 function currencyForCountry(countryId) {
-  return countries.value.find(c => c.id === countryId)?.currency_code
-    || currencyForOwner(selectedProvider.value) || 'AED'
+  // The country's own currency, then whatever wallet this provider already holds
+  // for that country — that wallet's code is the currency their money actually
+  // arrived in. Never a hardcoded guess: that is how a PKR provider's wallet came
+  // to read AED in the first place.
+  return countries.value.find(c => cid(c.id) === cid(countryId))?.currency_code
+    || providerWalletList.value.find(w => cid(w.country_id) === cid(countryId))?.currency
+    || currencyForOwner(selectedProvider.value)
+    || ''
 }
 
 // Countries the given provider operates in (has at least one location).
@@ -159,7 +173,7 @@ function operatingCountryIdsFor(ownerId) {
   for (const l of locationsData.value) {
     if (String(l.owner_user_id) !== oid) continue
     const city = citiesData.value.find(c => c.id === l.city_id)
-    if (city?.country_id) ids.add(city.country_id)
+    if (city?.country_id) ids.add(cid(city.country_id))
   }
   return ids
 }
@@ -180,16 +194,16 @@ const purposeWalletList = computed(() => providerWalletList.value.filter(w => no
 // The country chips for the switcher: every country the provider has a wallet in OR
 // operates in (plus their home country as a fallback so there's always one).
 const walletCountryOptions = computed(() => {
-  const ids = new Set(providerWalletList.value.map(w => w.country_id).filter(Boolean))
+  const ids = new Set(providerWalletList.value.map(w => cid(w.country_id)).filter(Boolean))
   for (const id of operatingCountryIdsFor(selectedProvider.value)) ids.add(id)
   const home = providers.value.find(u => String(u.id) === String(selectedProvider.value))?.country_id
     || allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
-  if (home) ids.add(home)
+  if (home) ids.add(cid(home))
   return Array.from(ids).map(id => {
     const w = walletForCountry(purposeWalletList.value, id, selectedPurpose.value)
     return {
       id,
-      name: countries.value.find(c => c.id === id)?.name || 'Country',
+      name: countries.value.find(c => cid(c.id) === cid(id))?.name || 'Country',
       currency: currencyForCountry(id),
       hasWallet: !!w,
       ready: isWalletReady(w),
@@ -200,7 +214,7 @@ const walletCountryOptions = computed(() => {
 watch([walletCountryOptions, selectedProvider], () => {
   const opts = walletCountryOptions.value
   if (!opts.length) return
-  if (selectedCountryId.value && opts.some(o => o.id === selectedCountryId.value)) return
+  if (selectedCountryId.value && opts.some(o => cid(o.id) === cid(selectedCountryId.value))) return
   const wanted = String(route.query.country || '')
   const home = providers.value.find(u => String(u.id) === String(selectedProvider.value))?.country_id
     || allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
@@ -216,7 +230,7 @@ watch([walletCountryOptions, selectedProvider], () => {
 // the provider just sets up a PAYOUT METHOD for each one to start getting paid.
 // A ?country= deep-link opens that country's wallet directly.
 const walletView = ref(route.query.country ? 'detail' : 'list')
-function openWallet(w) { selectedWalletId.value = w.id; selectedCountryId.value = w.country_id; selectedPurpose.value = normWalletPurpose(w.purpose); walletView.value = 'detail' }
+function openWallet(w) { selectedWalletId.value = w.id; selectedCountryId.value = cid(w.country_id); selectedPurpose.value = normWalletPurpose(w.purpose); walletView.value = 'detail' }
 // Open a country card from the landing. The wallet row may not exist yet — it's
 // created lazily the moment a payout method is set up.
 function openWalletCard(card) {
@@ -236,7 +250,7 @@ const isLegacyWallet = (w) => w?.is_current === false
 // "Set up payout method" call to action.
 const walletCards = computed(() => {
   const cards = walletCountryOptions.value.map(opt => {
-    const w = purposeWalletList.value.find(x => x.country_id === opt.id && x.is_current !== false) || null
+    const w = purposeWalletList.value.find(x => cid(x.country_id) === cid(opt.id) && x.is_current !== false) || null
     return {
       key: w?.id || ('country-' + opt.id),
       country_id: opt.id, name: opt.name, currency: opt.currency,
@@ -563,7 +577,7 @@ async function openRequest(wd) {
   reqTxns.value    = reqLedger.value.filter(t => t.direction === 'credit')
   reqWallet.value = wd.wallet_id
     ? (wallets.value.find(x => x.id === wd.wallet_id) || null)
-    : (wallets.value.find(x => x.owner_user_id === wd.owner_user_id && x.country_id === wd.country_id && x.is_current !== false) || null)
+    : (wallets.value.find(x => x.owner_user_id === wd.owner_user_id && cid(x.country_id) === cid(wd.country_id) && x.is_current !== false) || null)
   // The provider directory is already loaded and scoped, so no extra lookup.
   reqProvider.value = providerDirectory.value.find(p => String(p.id) === String(wd.owner_user_id)) || null
   reqHistory.value = (wdRes.success ? (wdRes.data?.withdrawals || []) : []).filter(r => r.id !== wd.id)
@@ -755,8 +769,8 @@ async function releaseDueHolds() {
 const jurisdictionCountryIds = computed(() => {
   if (isSuperAdmin.value) return null   // null = no country limit
   const assigned = (assignedCountryIds.value || []).filter(Boolean)
-  if (assigned.length) return new Set(assigned)
-  if (currentCountryId.value) return new Set([currentCountryId.value])
+  if (assigned.length) return new Set(assigned.map(cid))
+  if (currentCountryId.value) return new Set([cid(currentCountryId.value)])
   return new Set()
 })
 const jurisdictionOwnerIds = computed(() => {
@@ -775,7 +789,7 @@ function rowInJurisdiction(row) {
   if (owners) return owners.has(row.owner_user_id)
   const countrySet = jurisdictionCountryIds.value
   if (!countrySet) return true
-  return row.country_id ? countrySet.has(row.country_id) : true
+  return row.country_id ? countrySet.has(cid(row.country_id)) : true
 }
 
 // ── Load ──────────────────────────────────────────────────────────────────────
@@ -817,7 +831,7 @@ async function loadAll() {
       const homeCountry = p.country_id || null
       if (!homeCountry) continue
       if (wallets.value.find(w => String(w.owner_user_id) === String(p.id))) continue
-      const currency = countries.value.find(c => c.id === homeCountry)?.currency_code || currencyForOwner(p.id) || 'AED'
+      const currency = countries.value.find(c => cid(c.id) === cid(homeCountry))?.currency_code || currencyForOwner(p.id) || 'AED'
       const created = await apiCreateWallet({ owner_user_id: p.id, country_id: homeCountry, currency })
       if (created.success && created.data?.wallet) wallets.value.push(created.data.wallet)
     }
@@ -896,7 +910,7 @@ watch(currentOwnerUserId, id => {
 const currentWallet = computed(() => {
   const byId = selectedWalletId.value && wallets.value.find(w => w.id === selectedWalletId.value)
   if (byId) return byId
-  const list = purposeWalletList.value.filter(w => w.country_id === selectedCountryId.value)
+  const list = purposeWalletList.value.filter(w => cid(w.country_id) === cid(selectedCountryId.value))
   return list.find(w => w.is_current !== false) || list[0] ||
     { available_balance: 0, pending_balance: 0, lifetime_earnings: 0, lifetime_withdrawn: 0, currency: currencyForCountry(selectedCountryId.value), hold_days: 7, country_id: selectedCountryId.value, purpose: selectedPurpose.value }
 })
@@ -907,7 +921,7 @@ const providerName = id => {
   return providers.value.find(p => String(p.id) === key)?.business_name
     || o?.business_name || o?.full_name || o?.email || '—'
 }
-const countryName  = id => countries.value.find(c => c.id === id)?.name || '—'
+const countryName  = id => countries.value.find(c => cid(c.id) === cid(id))?.name || '—'
 // Re-fill the payout form whenever the selected country wallet changes.
 watch(currentWallet, initPayoutForm, { immediate: true })
 
@@ -923,12 +937,12 @@ const currentIsAutomatic = computed(() => isAutomaticPayout(currentWallet.value)
 const setupMethod    = computed(() => currentWallet.value?.setup_method || null)
 const setupStatus    = computed(() => currentWallet.value?.setup_status || null)
 // The country whose wallet is being set up / viewed (the selected chip).
-const businessCountry = computed(() => countries.value.find(c => c.id === selectedCountryId.value) || null)
+const businessCountry = computed(() => countries.value.find(c => cid(c.id) === cid(selectedCountryId.value)) || null)
 // The payout BANK-ACCOUNT country (where we send the money). This — not the wallet's currency
 // — decides which payout methods are available (Stripe needs a bank in a supported country).
 // Defaults to the wallet's country but is freely switchable on the setup step.
 const payoutCountryId = ref('')
-const payoutCountry = computed(() => countries.value.find(c => c.id === payoutCountryId.value) || null)
+const payoutCountry = computed(() => countries.value.find(c => cid(c.id) === cid(payoutCountryId.value)) || null)
 watch(() => currentWallet.value?.id, () => {
   const w = currentWallet.value
   payoutCountryId.value = w?.payout_bank_country || w?.country_id || selectedCountryId.value || payoutCountryId.value || ''
@@ -1040,11 +1054,11 @@ function initAccountPayoutForm() {
 // current wallets ∪ home), creating rows that don't exist yet. Resilient to a
 // missing setup_completed_at column.
 async function applyMethodToAllWallets(patch) {
-  const ids = new Set(purposeWalletList.value.filter(w => w.is_current !== false).map(w => w.country_id).filter(Boolean))
-  for (const id of operatingCountryIdsFor(selectedProvider.value)) ids.add(id)
+  const ids = new Set(purposeWalletList.value.filter(w => w.is_current !== false).map(w => cid(w.country_id)).filter(Boolean))
+  for (const id of operatingCountryIdsFor(selectedProvider.value)) ids.add(cid(id))
   const home = providers.value.find(u => String(u.id) === String(selectedProvider.value))?.country_id
     || allBusinessOwners.value.find(u => u.id === selectedProvider.value)?.country_id
-  if (home) ids.add(home)
+  if (home) ids.add(cid(home))
   if (!ids.size) return { error: { message: 'Add a location first so we know which country to pay you in.' } }
   const res = await applyMethodToWallets({
     owner_user_id: selectedProvider.value,
@@ -1323,7 +1337,14 @@ const { page: pendPage, perPage: pendPerPage, totalPages: pendTotalPages, pagina
 const { page: procPage, perPage: procPerPage, totalPages: procTotalPages, paginated: paginatedProcWd, visiblePages: procVisiblePages, goTo: procGoTo } = usePagination(processedWithdrawalsAll)
 
 // ── Formatters ────────────────────────────────────────────────────────────────
-function fmtMoney(n, c = 'AED') { return `${c} ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
+// No default currency. Labelling money "AED" when it was charged in PKR is worse
+// than showing no code at all — and the aggregate KPIs below genuinely span
+// several currencies, so there is no single right code to print for them.
+function fmtMoney(n, c) {
+  const amt = Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const code = String(c ?? '').trim()
+  return code ? `${code} ${amt}` : amt
+}
 function fmtDate(d)  { if (!d) return '—'; return new Date(d).toLocaleString() }
 function fmtDay(d)   { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }
 function daysUntil(dateStr) { if (!dateStr) return 0; const today = new Date(); today.setHours(0,0,0,0); return Math.max(0, Math.ceil((new Date(dateStr) - today) / 864e5)) }
@@ -1439,7 +1460,7 @@ async function releaseEarly(t) {
       w = (list.data?.wallets || []).find(x => x.id === t.wallet_id) || null
     }
   } else {
-    w = wallets.value.find(x => x.owner_user_id === t.owner_user_id && (!t.country_id || x.country_id === t.country_id) && x.is_current !== false) || null
+    w = wallets.value.find(x => x.owner_user_id === t.owner_user_id && (!t.country_id || cid(x.country_id) === cid(t.country_id)) && x.is_current !== false) || null
   }
   if (!w) { pushToast('Could not find the provider wallet.', 'error'); return }
   const releasedAt = new Date().toISOString()

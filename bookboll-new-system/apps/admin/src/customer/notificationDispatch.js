@@ -134,7 +134,7 @@ function membershipData(sub, program, extra = {}) {
     program: program?.name || 'your program',
     plan: INTERVAL_LABEL[program?.billing_interval] || 'Membership',
     amount: extra.amount != null ? Number(extra.amount).toFixed(2) : (sub?.monthly_amount != null ? Number(sub.monthly_amount).toFixed(2) : ''),
-    currency: program?.currency || 'AED',
+    currency: program?.currency || '',
     next_billing_date: fmtDate(sub?.next_billing_at),
     trial_end_date: fmtDate(sub?.trial_ends_at),
     membership_link: siteOrigin() + '/my-memberships',

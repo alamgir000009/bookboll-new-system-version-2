@@ -159,7 +159,7 @@ export async function recordRedemption({ code, customer = {}, source = {}, amoun
         source_id: source.id || null,
         order_amount: Number(amount) || 0,
         discount_amount: Number(discount) || 0,
-        currency: currency || 'AED',
+        currency: currency || '',
         recipient: code.recipient || '',
         owner_user_id: code.owner_user_id || null,
         country_id: source.countryId || null,
