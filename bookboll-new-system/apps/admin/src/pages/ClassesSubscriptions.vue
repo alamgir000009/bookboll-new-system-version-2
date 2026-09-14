@@ -2037,7 +2037,7 @@ const canSaveProgram = computed(() =>
           <div class="form-group" style="margin-top:16px;max-width:300px;">
             <label class="form-label">Platform Commission (%)</label>
             <input type="number" v-model="pgForm.commission_percentage" :min="PLATFORM_COMMISSION" :disabled="role !== 'admin'" />
-            <div class="field-hint">Minimum {{ PLATFORM_COMMISSION }}%. Only admins can change this. Applies to every plan.</div>
+            <div class="field-hint">Minimum {{ PLATFORM_COMMISSION }}%. Applies to every plan.</div>
           </div>
 
           <!-- Commission disclosure -->
