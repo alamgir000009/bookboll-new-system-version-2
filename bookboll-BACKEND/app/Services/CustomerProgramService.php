@@ -385,6 +385,11 @@ class CustomerProgramService
                 'startedAt'   => optional($s->started_at)?->toDateString(),
                 'nextBilling' => optional($s->next_billing_at)?->toDateString(),
                 'trialEndsAt' => optional($s->trial_ends_at)?->toDateString(),
+                // Cancelled but still inside the period already paid for. Without
+                // this the page could not tell "cancelled" from "nothing happened"
+                // and kept offering Cancel on a membership already winding down.
+                'cancelPending' => $s->status !== 'cancelled' && $s->cancelled_at !== null,
+                'endsAt'        => optional($s->current_period_end ?: $s->next_billing_at)?->toDateString(),
             ];
         }
 
@@ -614,6 +619,12 @@ class CustomerProgramService
             'trial_ends_at'    => optional($s->trial_ends_at)?->toDateString(),
             'status'           => $s->status,
             'trial_status'     => $s->trial_status,
+            // A cancellation that has been scheduled but not yet taken effect:
+            // the member keeps the period they paid for, and the page needs to
+            // say so instead of offering Cancel again as if nothing happened.
+            'cancelled_at'     => optional($s->cancelled_at)?->toIso8601String(),
+            'cancel_pending'   => $s->status !== 'cancelled' && $s->cancelled_at !== null,
+            'ends_at'          => optional($s->current_period_end ?: $s->next_billing_at)?->toDateString(),
             'billing_interval' => $s->billing_interval,
             'monthly_amount'   => (float) $s->monthly_amount,
             'provider_payout'  => (float) $s->provider_payout,

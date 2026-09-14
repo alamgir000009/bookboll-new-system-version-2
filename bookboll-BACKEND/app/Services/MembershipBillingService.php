@@ -376,10 +376,21 @@ class MembershipBillingService
         }
 
         $status = (string) ($stripeSub->status ?? '');
+
+        // Setting cancel_at_period_end fires this very event with the status still
+        // `active`/`trialing`, so mapping that straight to 'active' used to undo the
+        // customer's cancellation the instant they made it — the membership kept
+        // showing as live with a Cancel button that appeared to do nothing.
+        // A subscription winding down keeps whatever status it already has.
+        $windingDown = (bool) ($stripeSub->cancel_at_period_end ?? false);
+
         $sub->update([
             'stripe_status'      => $status,
-            'status'             => in_array($status, ['active', 'trialing'], true) ? 'active' : ($status === 'past_due' ? 'past_due' : $sub->status),
-            'trial_status'       => $status === 'trialing' ? 'in_trial' : $sub->trial_status,
+            'status'             => $windingDown
+                ? $sub->status
+                : (in_array($status, ['active', 'trialing'], true) ? 'active' : ($status === 'past_due' ? 'past_due' : $sub->status)),
+            // Same reasoning: don't re-open a trial the member has already cancelled.
+            'trial_status'       => ($status === 'trialing' && ! $windingDown) ? 'in_trial' : $sub->trial_status,
             'trial_ends_at'      => ($stripeSub->trial_end ?? null) ? now()->setTimestamp($stripeSub->trial_end) : $sub->trial_ends_at,
             'current_period_end' => $this->periodEnd($stripeSub) ?: $sub->current_period_end,
             'next_billing_at'    => $this->periodEnd($stripeSub) ?: $sub->next_billing_at,
@@ -416,7 +427,10 @@ class MembershipBillingService
     public function cancel(ClassSubscription $sub): array
     {
         if (! $sub->stripe_subscription_id) {
-            $sub->update(['status' => 'cancelled', 'cancelled_at' => now()]);
+            $sub->update(array_merge(
+                ['status' => 'cancelled', 'cancelled_at' => now()],
+                $this->trialCancelPatch($sub)
+            ));
 
             return ['ok' => true];
         }
@@ -428,17 +442,78 @@ class MembershipBillingService
 
         Stripe::setApiKey($secret);
 
+        // A member still inside a free trial has paid nothing, so there is no
+        // paid period to see out — end it now, which is also what the customer
+        // is promised ("your membership pass will be removed"). A member who has
+        // paid keeps the period they bought and stops renewing after it.
+        $inTrial = $sub->trial_status === 'in_trial' && ! $sub->first_charge_at;
+
         try {
-            \Stripe\Subscription::update($sub->stripe_subscription_id, ['cancel_at_period_end' => true]);
+            if ($inTrial) {
+                // Immediate cancel. This supersedes any cancel_at_period_end a
+                // previous attempt may have set, so there is nothing to undo first.
+                \Stripe\Subscription::retrieve($sub->stripe_subscription_id)->cancel();
+            } else {
+                \Stripe\Subscription::update($sub->stripe_subscription_id, ['cancel_at_period_end' => true]);
+            }
         } catch (\Throwable $e) {
+            // Already gone at Stripe (cancelled elsewhere, or the id is stale) is
+            // not a failure — the member asked to stop, and refusing here would
+            // strand them on a membership they cannot get rid of.
+            if ($this->stripeSubscriptionIsGone($e)) {
+                $sub->update(array_merge(
+                    ['status' => 'cancelled', 'cancel_reason' => 'customer', 'cancelled_at' => now()],
+                    $this->trialCancelPatch($sub)
+                ));
+
+                return ['ok' => true];
+            }
+
             Log::error('Membership cancel failed', ['sub' => $sub->id, 'error' => $e->getMessage()]);
 
             return ['error' => 'Could not cancel right now. Please try again.'];
         }
 
+        if ($inTrial) {
+            $sub->update(array_merge(
+                ['status' => 'cancelled', 'stripe_status' => 'canceled', 'cancel_reason' => 'customer', 'cancelled_at' => now()],
+                $this->trialCancelPatch($sub)
+            ));
+
+            return ['ok' => true];
+        }
+
+        // Scheduled, not ended: `cancelled_at` set while `status` is still active
+        // is how the rest of the app reads "cancels at the end of this period".
+        // The status itself only flips when Stripe sends customer.subscription.deleted.
         $sub->update(['cancel_reason' => 'customer', 'cancelled_at' => now()]);
 
         return ['ok' => true];
+    }
+
+    /** Trial bookkeeping applied whenever a cancellation ends a trial outright. */
+    protected function trialCancelPatch(ClassSubscription $sub): array
+    {
+        $inTrial = $sub->trial_status === 'in_trial'
+            || ($sub->trial_ends_at && $sub->trial_ends_at->isFuture());
+
+        return $inTrial
+            ? ['trial_status' => 'cancelled_in_trial', 'cancelled_during_trial_at' => now()]
+            : [];
+    }
+
+    /** True when Stripe says the subscription no longer exists / is already cancelled. */
+    protected function stripeSubscriptionIsGone(\Throwable $e): bool
+    {
+        if ($e instanceof \Stripe\Exception\InvalidRequestException) {
+            $msg = strtolower((string) $e->getMessage());
+
+            return str_contains($msg, 'no such subscription')
+                || str_contains($msg, 'already canceled')
+                || str_contains($msg, 'already cancelled');
+        }
+
+        return false;
     }
 
     /**
