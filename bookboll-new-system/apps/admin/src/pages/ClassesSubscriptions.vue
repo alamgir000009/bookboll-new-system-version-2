@@ -192,14 +192,23 @@ const providerName = (id) => { const p = providers.value.find(p => p.id === id);
 const listingName = (id) => listings.value.find(l => l.id === id)?.name || '—'
 const locationName = (id) => locations.value.find(l => l.id === id)?.name || '—'
 
+// Returns '' when the location's currency cannot be resolved — an unset location,
+// a venue with no city, or lists that have not loaded yet.
+//
+// This used to return 'AED' in those cases, which was worse than useless: every
+// caller reads `currencyForLocation(...) || program.currency || 'AED'`, so the
+// hardcoded 'AED' always won and the program's OWN stored currency was never
+// reached. A PKR program with no location displayed as AED — and because the save
+// payload is built from the same expression, opening and saving it rewrote the
+// currency to AED while its Stripe price stayed in PKR.
 function currencyForLocation(locationId) {
   const loc = locations.value.find(l => l.id === locationId)
-  if (!loc) return 'AED'
+  if (!loc) return ''
   if (loc.currency_override) return loc.currency_override
   const city = cities.value.find(c => c.id === loc.city_id)
-  if (!city) return 'AED'
+  if (!city) return ''
   const country = countries.value.find(c => c.id === city.country_id)
-  return country?.currency_code || 'AED'
+  return country?.currency_code || ''
 }
 const programById = (id) => programs.value.find(p => p.id === id)
 const subsForProgram = (id) => subscriptions.value.filter(s => s.program_id === id).length
@@ -269,7 +278,7 @@ const pgTrialAccepted = ref(false)
 // Currency always follows the program's location → city → country. Keep the
 // form's currency in lock-step with the selected location so it can never drift.
 watch(() => pgForm.value.location_id, (locId) => {
-  if (locId) pgForm.value.currency = currencyForLocation(locId)
+  if (locId) pgForm.value.currency = currencyForLocation(locId) || pgForm.value.currency || 'AED'
 })
 
 // ── MOAT: every program must offer an incentive — never "none" ────────────────
@@ -585,7 +594,7 @@ function applyTemplate(tpl) {
   // Start from a clean default so a second template click never leaves stale fields,
   // then overlay the template patch. Keep any location the provider already chose.
   pgForm.value = { ...defaultProgram(), ...tpl.patch }
-  if (loc) { pgForm.value.location_id = loc; pgForm.value.currency = cur || currencyForLocation(loc) }
+  if (loc) { pgForm.value.location_id = loc; pgForm.value.currency = cur || currencyForLocation(loc) || 'AED' }
   if (owner) pgForm.value.owner_user_id = owner
   reseedOffer()   // pick a valid recommended trial/discount for the new plan
   pgActiveTemplate.value = tpl.key
@@ -606,7 +615,7 @@ async function openNewProgram(locationId = '') {
     pgForm.value.location_id = locationId
     const loc = locations.value.find(l => l.id === locationId)
     if (loc?.owner_user_id) pgForm.value.owner_user_id = loc.owner_user_id
-    pgForm.value.currency = currencyForLocation(locationId)
+    pgForm.value.currency = currencyForLocation(locationId) || pgForm.value.currency || 'AED'
   }
   pgTrialAccepted.value = false
   pgTriedSave.value = false
@@ -1166,7 +1175,9 @@ const shareRow = ref(null)      // { id, name, kind, url }
 const shareQr = ref('')
 const shareCopied = ref(false)
 function programPublicUrl(row) {
-  return `${appBaseUrl()}/programs/${row.id}`
+  // The public site looks a program up by uuid. Sharing the numeric id produced
+  // links like /programs/2 that 404'd for everyone who opened them.
+  return `${appBaseUrl()}/programs/${row.uuid || row.id}`
 }
 async function openShare(row) {
   shareCopied.value = false
@@ -1504,7 +1515,7 @@ watch(() => pgForm.value.program_type, (type) => {
 // Auto-set currency and owner from selected location
 watch(() => pgForm.value.location_id, (locId) => {
   if (!locId) return
-  pgForm.value.currency = currencyForLocation(locId)
+  pgForm.value.currency = currencyForLocation(locId) || pgForm.value.currency || 'AED'
   const loc = locations.value.find(l => l.id === locId)
   if (loc?.owner_user_id && !pgEditing.value) {
     pgForm.value.owner_user_id = loc.owner_user_id

@@ -130,7 +130,11 @@ const progBtnLabel = ref('Join now')
 
 // The chosen program (single-membership widget) + its public path (/programs/:id).
 const selectedProgram = computed(() => programs.value.find(p => p.id === selectedProgramId.value) || null)
-const programPath = computed(() => selectedProgram.value ? `/programs/${selectedProgram.value.id}` : '/programs')
+// uuid, not id — the public route resolves programs by uuid (a numeric id in an
+// embed snippet pasted onto a provider's site would 404 for their visitors).
+const programPath = computed(() => selectedProgram.value
+  ? `/programs/${selectedProgram.value.uuid || selectedProgram.value.id}`
+  : '/programs')
 
 const TAG_OPEN = '<' + 'script>'
 const TAG_CLOSE = '<' + '/script>'

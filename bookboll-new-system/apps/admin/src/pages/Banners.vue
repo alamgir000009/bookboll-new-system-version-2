@@ -132,8 +132,10 @@ async function loadTargets() {
     // everything, a provider only what their own business owns.
     const [ref, dash] = await Promise.all([loadReferenceData(), fetchSubscriptionsDashboard()])
     venueOpts.value = ref.listings.map(l => ({ value: String(l.id), label: l.name }))
+    // The stored target is pasted straight into /programs/<target>, and that
+    // route resolves by uuid — so the option value has to be the uuid.
     programOpts.value = (dash.success ? (dash.data?.programs || []) : [])
-      .map(p => ({ value: String(p.id), label: p.name }))
+      .map(p => ({ value: String(p.uuid || p.id), label: p.name }))
     if (isPlatformMode.value) {
       // Events are a marketplace-only mechanic, so providers get none.
       const ev = await fetchEventModerationDashboard()
