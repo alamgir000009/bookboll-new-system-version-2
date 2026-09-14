@@ -109,10 +109,34 @@ class CustomerProgramService
         return sendSuccess('Programs fetched', ['programs' => $cards]);
     }
 
+    /**
+     * Resolve a program from the identifier in a public URL.
+     *
+     * The canonical public id is the uuid, but links built from the numeric id
+     * are already out in the world: the admin share dialog, its QR code, the
+     * website-embed snippet and banner deep-links all used to emit `/programs/{id}`.
+     * Those are printed, pasted into provider sites and sent to members — they
+     * cannot be recalled, so both forms have to resolve or the links 404.
+     *
+     * This exposes nothing extra: isVisible() still decides what a visitor may
+     * see, and it is applied to whichever form was used.
+     */
+    protected function findPublicProgram(string $key): ?ClassProgram
+    {
+        $program = ClassProgram::with('venue')->where('uuid', $key)->first();
+        if ($program) {
+            return $program;
+        }
+
+        return ctype_digit($key)
+            ? ClassProgram::with('venue')->whereKey((int) $key)->first()
+            : null;
+    }
+
     public function show(string $uuid, Request $request)
     {
         $brandOwner = $request->query('brand_owner') ?: null;
-        $program = ClassProgram::with('venue')->where('uuid', $uuid)->first();
+        $program = $this->findPublicProgram($uuid);
         if (! $program || ! $this->isVisible($program, $brandOwner)) {
             return sendError('Program not found.', [], 404);
         }
@@ -174,7 +198,7 @@ class CustomerProgramService
 
     public function hours(string $uuid)
     {
-        $program = ClassProgram::with('venue')->where('uuid', $uuid)->first();
+        $program = $this->findPublicProgram($uuid);
         if (! $program?->venue_id) {
             return sendSuccess('Hours', ['openingHours' => null]);
         }
@@ -207,7 +231,7 @@ class CustomerProgramService
             return sendError('Please sign in to continue.');
         }
 
-        $program = ClassProgram::with('venue')->where('uuid', $uuid)->first();
+        $program = $this->findPublicProgram($uuid);
         if (! $program || ! $this->isVisible($program, null)) {
             return sendError('Program not found.');
         }
@@ -856,10 +880,46 @@ class CustomerProgramService
         return null;
     }
 
+    /**
+     * Every key a provider's wallet might be filed under.
+     *
+     * `provider_wallets.owner_user_id` is not consistent: booking wallets store
+     * the numeric users.id (venues.owner_user_id is a real FK), while membership
+     * wallets stored the users.uuid, because class_programs.owner_user_id holds a
+     * uuid. Legacy Supabase rows are uuid too. Looking up under one shape only is
+     * what left a provider with an invisible wallet — and would mint a second one.
+     *
+     * @return string[] both forms, so a lookup finds the wallet whichever was used
+     */
+    /** The provider behind a wallet owner key, whichever form it is in. */
+    protected function ownerUserFor(string $ownerUserId): ?User
+    {
+        return ctype_digit($ownerUserId)
+            ? User::find((int) $ownerUserId)
+            : User::where('uuid', $ownerUserId)->first();
+    }
+
+    protected function ownerWalletKeys(string $ownerUserId): array
+    {
+        $user = $this->ownerUserFor($ownerUserId);
+
+        if (! $user) {
+            return [$ownerUserId];
+        }
+
+        return array_values(array_unique(array_filter([
+            (string) $user->id,
+            (string) $user->uuid,
+            $ownerUserId,
+        ])));
+    }
+
     protected function ensureSubscriptionWallet(string $ownerUserId, ?string $countryId, string $currency): ?ProviderWallet
     {
+        $keys = $this->ownerWalletKeys($ownerUserId);
+
         $q = ProviderWallet::query()
-            ->where('owner_user_id', $ownerUserId)
+            ->whereIn('owner_user_id', $keys)
             ->where('purpose', 'subscription')
             ->where('is_current', true);
         if ($countryId) {
@@ -869,6 +929,10 @@ class CustomerProgramService
         if ($wallet) {
             return $wallet;
         }
+
+        // New wallets are filed under the numeric id — the same key bookings use
+        // and the only one the admin UI knows the provider by.
+        $ownerUserId = $keys[0];
 
         return ProviderWallet::create([
             'owner_user_id'      => $ownerUserId,
@@ -1051,14 +1115,59 @@ class CustomerProgramService
         $commission = (float) ($program->commission_percentage ?: 0);
         $fullGross = round((float) $sub->monthly_amount + (! $sub->first_charge_at ? (float) $sub->joining_fee : 0), 2);
 
+        // Stripe can collect MORE than this membership costs: an unpaid balance
+        // from elsewhere on the customer's account is added to whatever they are
+        // billed next (Stripe's starting_balance). That money is not this
+        // membership's revenue, and the old `amountPaid - providerShare` quietly
+        // booked every fil of it as Bookboll commission.
+        //
+        // Paying LESS than full price is normal and unchanged — a promocode or
+        // loyalty redemption comes out of Bookboll's cut, so the provider keeps
+        // their full share and the platform fee absorbs the difference.
+        $billable = min($amountPaid, $fullGross);
+        $overCollected = round($amountPaid - $billable, 2);
+
         $providerShare = round($fullGross * (1 - $commission / 100), 2);
-        $providerShare = min($providerShare, $amountPaid);
-        $netPlatformFee = round($amountPaid - $providerShare, 2);
+        $providerShare = min($providerShare, $billable);
+        $netPlatformFee = round($billable - $providerShare, 2);
+
+        if ($overCollected > 0.001) {
+            // Someone has to give this back — it is not ours and not the
+            // provider's. Loud, and on the platform's alert feed.
+            \Illuminate\Support\Facades\Log::error('Subscription over-collected — refund due', [
+                'subscription' => $sub->uuid,
+                'program'      => $program->id,
+                'charged'      => $amountPaid,
+                'owed'         => $fullGross,
+                'excess'       => $overCollected,
+                'currency'     => $currency,
+            ]);
+
+            try {
+                \App\Support\AdminAlerts::toPlatform('wallet', 'warn',
+                    'Membership over-charged — refund '.$currency.' '.number_format($overCollected, 2),
+                    ($sub->customer_email ?: 'a member').' paid '.number_format($amountPaid, 2)
+                        .' for a '.number_format($fullGross, 2).' membership',
+                    '/wallet',
+                    is_numeric($sub->country_id) ? (int) $sub->country_id : null);
+            } catch (\Throwable $e) {
+                // An alert must never break the money booking.
+            }
+        }
 
         $ownerKey = $program->owner_user_id ?: ($program->mapped_owner_user_id ? (string) $program->mapped_owner_user_id : null);
+
+        // A wallet with no country is invisible: the dashboard lists wallets by
+        // country, so a null one renders nowhere however much money is in it.
+        // A program with no venue (LOCATION "—") produced exactly that, so fall
+        // back to the venue's country and then the owner's own.
+        $countryId = $sub->country_id
+            ?: ($program->venue?->country_id
+                ?: ($ownerKey ? optional($this->ownerUserFor($ownerKey))->country_id : null));
+
         $wallet = $sub->wallet_id
             ? ProviderWallet::find($sub->wallet_id)
-            : ($ownerKey ? $this->ensureSubscriptionWallet($ownerKey, $sub->country_id, $currency) : null);
+            : ($ownerKey ? $this->ensureSubscriptionWallet($ownerKey, $countryId, $currency) : null);
 
         $user = User::where('uuid', $sub->customer_id)->first();
         $desc = $sub->first_charge_at ? 'Membership renewal' : 'First membership charge';
@@ -1107,7 +1216,9 @@ class CustomerProgramService
             'owner_user_id'      => $wallet->owner_user_id,
             'type'               => 'subscription_online',
             'direction'          => 'credit',
-            'amount'             => $amountPaid,
+            // Billable, not charged: an over-collection is a refund owed, not
+            // income, and must not make amount != provider_share + platform_fee.
+            'amount'             => $billable,
             'provider_share'     => $providerShare,
             'platform_fee'       => $netPlatformFee,
             'source_id'          => $sub->uuid,

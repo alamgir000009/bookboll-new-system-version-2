@@ -154,11 +154,40 @@ class WalletPayoutService
         return $map;
     }
 
+    /** @var array<string,?string> owner key → numeric users.id, resolved once per request */
+    protected array $ownerIdCache = [];
+
+    /** Numeric users.id for a wallet's owner key, whichever form it was stored in. */
+    protected function ownerNumericId($key): ?string
+    {
+        $key = (string) ($key ?? '');
+        if ($key === '') {
+            return null;
+        }
+        if (array_key_exists($key, $this->ownerIdCache)) {
+            return $this->ownerIdCache[$key];
+        }
+
+        $id = ctype_digit($key)
+            ? \App\Models\User::whereKey((int) $key)->value('id')
+            : \App\Models\User::where('uuid', $key)->value('id');
+
+        return $this->ownerIdCache[$key] = $id !== null ? (string) $id : null;
+    }
+
     public function listWallets($request)
     {
         $q = ProviderWallet::query();
         if ($request->filled('owner_user_id')) {
-            $q->where('owner_user_id', $request->query('owner_user_id'));
+            // Match whichever key shape the wallet was filed under.
+            $key = (string) $request->query('owner_user_id');
+            $user = ctype_digit($key)
+                ? \App\Models\User::find((int) $key)
+                : \App\Models\User::where('uuid', $key)->first();
+            $keys = $user
+                ? array_values(array_unique(array_filter([(string) $user->id, (string) $user->uuid, $key])))
+                : [$key];
+            $q->whereIn('owner_user_id', $keys);
         }
         if ($request->filled('country_id')) {
             $q->where('country_id', $request->query('country_id'));
@@ -817,6 +846,12 @@ class WalletPayoutService
             'id'                     => $w->id,
             'uuid'                   => $w->uuid,
             'owner_user_id'          => $w->owner_user_id,
+            // The column is not one key: booking wallets hold users.id, membership
+            // wallets and every legacy Supabase row hold users.uuid. Callers know a
+            // provider by their numeric id, so a membership wallet keyed by uuid
+            // matched nothing and the provider saw no wallets at all. Resolve it
+            // once here so there is a single key to compare against.
+            'owner_id'               => $this->ownerNumericId($w->owner_user_id),
             'available_balance'      => (float) $w->available_balance,
             'pending_balance'        => (float) $w->pending_balance,
             'lifetime_earnings'      => (float) $w->lifetime_earnings,

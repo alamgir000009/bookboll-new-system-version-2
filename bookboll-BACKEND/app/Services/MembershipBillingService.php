@@ -404,6 +404,10 @@ class MembershipBillingService
             return;
         }
 
+        // Safety net for cancellations that did not come through cancel() —
+        // the Stripe dashboard, a failed-payment cancel, or an older client.
+        $this->dropPendingJoiningFee($sub);
+
         $inTrial = $sub->trial_ends_at && $sub->trial_ends_at->isFuture();
         $sub->update([
             'status'                    => 'cancelled',
@@ -449,6 +453,10 @@ class MembershipBillingService
         $inTrial = $sub->trial_status === 'in_trial' && ! $sub->first_charge_at;
 
         try {
+            // Before anything else: a joining fee that was queued for an invoice
+            // that will now never be raised must not outlive the subscription.
+            $this->dropPendingJoiningFee($sub);
+
             if ($inTrial) {
                 // Immediate cancel. This supersedes any cancel_at_period_end a
                 // previous attempt may have set, so there is nothing to undo first.
@@ -489,6 +497,63 @@ class MembershipBillingService
         $sub->update(['cancel_reason' => 'customer', 'cancelled_at' => now()]);
 
         return ['ok' => true];
+    }
+
+    /**
+     * Remove a joining fee that was queued but never invoiced.
+     *
+     * queueJoiningFee() parks the fee on the Stripe CUSTOMER as a pending invoice
+     * item so it rides the invoice that closes the trial. If the member cancels
+     * during the trial that item is orphaned — it is not deleted with the
+     * subscription. Stripe then sweeps it onto the customer's next invoice, or
+     * finalises it into a standalone invoice whose total becomes customer-balance
+     * debt that is added to whatever they are billed next.
+     *
+     * That is exactly how a member who cancelled a trial was still charged its
+     * joining fee weeks later, on top of a different membership.
+     *
+     * Pending items can be deleted; invoiced ones cannot, so an already-billed fee
+     * is left alone (it is real money that needs a refund, not a delete).
+     */
+    protected function dropPendingJoiningFee(ClassSubscription $sub): void
+    {
+        if (! $sub->stripe_customer_id) {
+            return;
+        }
+
+        try {
+            $items = \Stripe\InvoiceItem::all([
+                'customer' => $sub->stripe_customer_id,
+                'pending'  => true,
+                'limit'    => 100,
+            ]);
+
+            foreach ($items->autoPagingIterator() as $item) {
+                $itemSub = $item->subscription ?? null;
+                if (is_object($itemSub)) {
+                    $itemSub = $itemSub->id ?? null;
+                }
+
+                // Only this subscription's fee. A pending item with no subscription
+                // is not ours to judge, so it is left untouched.
+                if (! $itemSub || $itemSub !== $sub->stripe_subscription_id) {
+                    continue;
+                }
+
+                \Stripe\InvoiceItem::retrieve($item->id)->delete();
+                Log::info('Dropped un-invoiced joining fee for a cancelled membership', [
+                    'sub'  => $sub->id,
+                    'item' => $item->id,
+                ]);
+            }
+        } catch (\Throwable $e) {
+            // Never block a cancellation on this, but make it findable: a survivor
+            // here is money the member will be wrongly charged later.
+            Log::error('Could not drop pending joining fee on cancel', [
+                'sub'   => $sub->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /** Trial bookkeeping applied whenever a cancellation ends a trial outright. */
