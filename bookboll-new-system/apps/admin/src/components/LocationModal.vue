@@ -1,6 +1,6 @@
 <script setup>
 /**
- * LocationModal.vue ΓÇö the ONE shared "New / Edit Location" form.
+ * LocationModal.vue — the ONE shared "New / Edit Location" form.
  *
  * Used by both Listings.vue and ClassesSubscriptions.vue so there is a single
  * source of truth for creating locations (no more duplicate quick-add form).
@@ -44,7 +44,7 @@ const emit = defineEmits(['close', 'saved'])
 const { isSuperAdmin, isCountryAdmin, isProviderScoped, currentOwnerUserId, currentCountryId, allBusinessOwners } = useCurrentUser()
 const toast = useToast()
 
-// ΓöÇΓöÇ Option lists (small + self-contained so the component is portable) ΓöÇΓöÇ
+// ── Option lists (small + self-contained so the component is portable) ──
 const COMMON_TIMEZONES = [
   'Africa/Cairo','Africa/Lagos','Africa/Nairobi','America/Chicago','America/Los_Angeles',
   'America/New_York','America/Sao_Paulo','America/Toronto','Asia/Baghdad','Asia/Bangkok',
@@ -67,7 +67,7 @@ const ISO_CURRENCIES = [
   { code:'CNY', name:'Chinese Yuan' },
 ]
 
-// ΓöÇΓöÇ State ΓöÇΓöÇ
+// ── State ──
 const countries = ref([])
 const cities = ref([])
 const form = ref(defaultForm())
@@ -86,7 +86,7 @@ const uploading = ref(false)
 const imgError = ref('')
 const fileInput = ref(null)     // the hidden <input type="file">
 const dropActive = ref(false)   // drag-and-drop hover state
-const triedSave = ref(false)   // failed save attempt ΓåÆ red-flag the missing required fields
+const triedSave = ref(false)   // failed save attempt → red-flag the missing required fields
 // Apply-schedule-to-listings prompt (shown after a schedule change on a location
 // that has connected listings).
 const connectedListings = ref([])
@@ -108,7 +108,7 @@ function defaultForm() {
   }
 }
 function defaultHours() {
-  // New venues start open 24/7 (close '00:00' = midnight at the END of the day) ΓÇö
+  // New venues start open 24/7 (close '00:00' = midnight at the END of the day) —
   // providers close days / trim hours from there, which is less work than building up.
   return Array.from({ length: 7 }, (_, i) => ({
     day_of_week: i, is_open: true, periods: [{ open_time: '00:00', close_time: '00:00' }],
@@ -121,7 +121,7 @@ const citiesForCountry = computed(() =>
     : cities.value
 )
 
-// Providers can now operate in MULTIPLE countries ΓÇö each country needs its own
+// Providers can now operate in MULTIPLE countries — each country needs its own
 // wallet for full online payments (see My Wallet). The country picker is always
 // available; we just default a provider to their home country.
 const selectedCountryName = computed(() => countries.value.find(c => String(c.id) === String(selectedCountryId.value))?.name || '')
@@ -140,7 +140,7 @@ const resolvedGeo = computed(() => {
 
 const providerName = (id) => {
   const p = allBusinessOwners.value.find(x => x.id === id)
-  return p?.business_name || p?.full_name || 'ΓÇö'
+  return p?.business_name || p?.full_name || '—'
 }
 
 const canSave = computed(() => !!form.value.name && !!form.value.city_id)
@@ -241,7 +241,7 @@ async function onCountryChange() {
   await ensureCities(selectedCountryId.value)
 }
 
-// ΓöÇΓöÇ Open / close lifecycle ΓöÇΓöÇ
+// ── Open / close lifecycle ──
 watch(() => props.open, async (v) => {
   // This modal can open ON TOP of the listing editor ("Edit location schedule"),
   // so it gets its own dirty scope: closing it must not wipe the outer form's
@@ -306,7 +306,7 @@ watch(() => props.open, async (v) => {
   initMap()   // after any draft restore, so the map pin reflects the draft's coords
 })
 
-// ΓöÇΓöÇ Local "save as draft" for the location form ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// ── Local "save as draft" for the location form ──────────────────────────────
 function locationDraftKey() { return props.editing?.id ? `location_${props.editing.id}` : 'location_new' }
 function locationDraftSnapshot() { return { form: form.value, hours: hours.value, selectedCountryId: selectedCountryId.value } }
 async function offerLocationDraft() {
@@ -322,7 +322,7 @@ async function offerLocationDraft() {
     if (d.data.form) form.value = { ...form.value, ...d.data.form }
     if (Array.isArray(d.data.hours)) hours.value = d.data.hours
     if (d.data.selectedCountryId !== undefined) selectedCountryId.value = d.data.selectedCountryId
-    markDirty()   // restored draft is still unsaved ΓÇö keep the guard armed
+    markDirty()   // restored draft is still unsaved — keep the guard armed
   } else {
     clearFormDraft(key)
   }
@@ -333,7 +333,7 @@ watch(tab, async (t) => {
   if (t === 'details') { await nextTick(); mapInst && mapInst.invalidateSize() }
 })
 
-// ΓöÇΓöÇ Leaflet map picker ΓöÇΓöÇ
+// ── Leaflet map picker ──
 const mapEl = ref(null)
 let mapInst = null
 let markerInst = null
@@ -379,7 +379,7 @@ function destroyMap() {
 }
 onBeforeUnmount(destroyMap)
 
-// ΓöÇΓöÇ Reverse geocode (OpenStreetMap Nominatim) ΓåÆ auto-fill country/city/address ΓöÇΓöÇ
+// ── Reverse geocode (OpenStreetMap Nominatim) → auto-fill country/city/address ──
 const geoStatus = ref('idle')   // idle | detecting | done | error
 async function reverseGeocode(lat, lng) {
   try {
@@ -423,7 +423,7 @@ function detectGeoLocation() {
   )
 }
 
-// ΓöÇΓöÇ Google Maps share-link ΓåÆ try to extract coordinates ΓöÇΓöÇ
+// ── Google Maps share-link → try to extract coordinates ──
 const mapsLinkStatus = ref('')   // '' | 'ok' | 'nocoords'
 function applyMapsLink() {
   const url = (form.value.google_maps_url || '').trim()
@@ -463,16 +463,16 @@ function onDrop(e) { dropActive.value = false; if (e.dataTransfer?.files?.length
 function removePhoto(i) { form.value.photos.splice(i, 1) }
 function makePrimary(i) { if (i === 0) return; const [p] = form.value.photos.splice(i, 1); form.value.photos.unshift(p) }
 
-// ΓöÇΓöÇ Save ΓöÇΓöÇ
-// andClose = false ΓåÆ "Save & Continue": persist but keep the drawer open (advance to
-// the next card). andClose = true ΓåÆ final save: persist + close (emit 'saved').
+// ── Save ──
+// andClose = false → "Save & Continue": persist but keep the drawer open (advance to
+// the next card). andClose = true → final save: persist + close (emit 'saved').
 async function saveAndContinue() {
   await save(false)
   if (!errorMsg.value) tab.value = 'schedule'
 }
 async function save(andClose = true) {
   if (!canSave.value) {
-    // Red-flag the missing fields and bring the user TO them ΓÇö a footer message
+    // Red-flag the missing fields and bring the user TO them — a footer message
     // alone leaves the invalid inputs out of view on a long form.
     triedSave.value = true
     errorMsg.value = 'Venue name and city are required.'
@@ -520,7 +520,7 @@ async function save(andClose = true) {
     clearFormDraft(locationDraftKey())   // a real save supersedes any local draft
     savedFlag.value = true; setTimeout(() => { savedFlag.value = false }, 2000)
 
-    // Existing location whose schedule changed and that has listings ΓåÆ ask whether
+    // Existing location whose schedule changed and that has listings → ask whether
     // to push the new hours onto them. Hold off closing until they answer.
     if (!wasNew && scheduleChanged && connectedListings.value.length) {
       applySaved.value = saved
@@ -535,7 +535,7 @@ async function save(andClose = true) {
       toast.success(wasNew ? 'Location created' : 'Location updated')
       emit('saved', saved)
     } else {
-      toast.success(wasNew ? 'Location created ΓÇö now set weekly hours' : 'Saved')
+      toast.success(wasNew ? 'Location created — now set weekly hours' : 'Saved')
     }
   } catch (e) {
     errorMsg.value = e.message || 'Could not save location. Please try again.'
@@ -546,13 +546,13 @@ async function save(andClose = true) {
 }
 
 async function close() {
-  const res = await confirmDiscardIfDirty()   // false = stay ┬╖ true = discard ┬╖ 'draft' = saved a draft
+  const res = await confirmDiscardIfDirty()   // false = stay · true = discard · 'draft' = saved a draft
   if (!res) return
-  if (res === 'draft') toast.success('Draft saved ΓÇö it will be offered when you reopen this form')
+  if (res === 'draft') toast.success('Draft saved — it will be offered when you reopen this form')
   emit('close')
 }
 
-// ΓöÇΓöÇ Apply-schedule-to-listings prompt handlers ΓöÇΓöÇ
+// ── Apply-schedule-to-listings prompt handlers ──
 function toggleApplyTarget(id) {
   applyTargets.value = applyTargets.value.includes(id)
     ? applyTargets.value.filter(x => x !== id)
@@ -597,7 +597,7 @@ async function applyScheduleToSelected() {
       </div>
 
       <div class="bb-drawer-body lm-body">
-        <!-- ΓöÇΓöÇ DETAILS SECTION ΓöÇΓöÇ -->
+        <!-- ── DETAILS SECTION ── -->
         <section class="lm-section" :class="{ open: tab === 'details' }">
           <button type="button" class="lm-section-head" @click="tab = tab === 'details' ? '' : 'details'">
             <div class="lm-section-title"><div>Location Details</div><div class="lm-section-sub">Name, map, address &amp; photos</div></div>
@@ -614,7 +614,7 @@ async function applyScheduleToSelected() {
               </option>
             </select>
             <div v-if="!form.owner_user_id" class="form-hint">
-              This location belongs to Bookboll ΓÇö 100% of revenue is retained by the platform. No provider payout applies.
+              This location belongs to Bookboll — 100% of revenue is retained by the platform. No provider payout applies.
             </div>
             <div v-else class="form-hint">
               Payment will be split: platform commission to Bookboll, remaining balance collected by the provider.
@@ -637,11 +637,11 @@ async function applyScheduleToSelected() {
               <span class="map-hint">Click the map or drag the pin to set the exact spot.</span>
               <button class="btn btn-secondary btn-sm" :disabled="geoStatus === 'detecting'" @click="detectGeoLocation">
                 <LocateFixed :size="13" />
-                {{ geoStatus === 'detecting' ? 'DetectingΓÇª' : 'Use my location' }}
+                {{ geoStatus === 'detecting' ? 'Detecting…' : 'Use my location' }}
               </button>
             </div>
             <div ref="mapEl" class="bb-map"></div>
-            <div v-if="geoStatus === 'error'" class="geo-error" style="margin-top:6px;">Location access denied or unavailable ΓÇö pin it manually on the map.</div>
+            <div v-if="geoStatus === 'error'" class="geo-error" style="margin-top:6px;">Location access denied or unavailable — pin it manually on the map.</div>
             <div v-if="form.latitude && form.longitude" class="geo-success" style="margin-top:6px;">
               <Check :size="13" />Coordinates set: {{ form.latitude }}, {{ form.longitude }}
             </div>
@@ -651,15 +651,15 @@ async function applyScheduleToSelected() {
           <div class="form-group" style="margin-top:14px;">
             <label class="form-label">Google Maps link <span class="opt-tag">optional</span></label>
             <div class="maps-link-row">
-              <input v-model="form.google_maps_url" placeholder="Paste a Google Maps share linkΓÇª" @blur="applyMapsLink" />
+              <input v-model="form.google_maps_url" placeholder="Paste a Google Maps share link…" @blur="applyMapsLink" />
               <button class="btn btn-secondary btn-sm" @click="applyMapsLink" :disabled="!form.google_maps_url">Locate</button>
             </div>
             <div v-if="mapsLinkStatus === 'ok'" class="form-hint" style="color:#059669;">Pin moved to the link's coordinates.</div>
-            <div v-else-if="mapsLinkStatus === 'nocoords'" class="form-hint" style="color:#b45309;">Link saved, but it has no coordinates to read ΓÇö pin it on the map above.</div>
-            <div v-else class="form-hint">Optional ΓÇö good for getting Google reviews. Powers the customer "Open in Maps" button; if left blank we use the map pin's coordinates instead. Tip: links with coordinates auto-drop the pin.</div>
+            <div v-else-if="mapsLinkStatus === 'nocoords'" class="form-hint" style="color:#b45309;">Link saved, but it has no coordinates to read — pin it on the map above.</div>
+            <div v-else class="form-hint">Optional — good for getting Google reviews. Powers the customer "Open in Maps" button; if left blank we use the map pin's coordinates instead. Tip: links with coordinates auto-drop the pin.</div>
           </div>
 
-          <!-- Country ΓåÆ City -->
+          <!-- Country → City -->
           <div class="form-row" style="margin-top:14px;">
             <div class="form-group">
               <label class="form-label">Country <span style="color:#dc2626">*</span></label>
@@ -680,7 +680,7 @@ async function applyScheduleToSelected() {
           <!-- A payout wallet (any country) enables full online payments anywhere; a local
                wallet for this country is created automatically so earnings stay in local currency. -->
           <p v-if="isProviderScoped && selectedCountryId" class="lm-country-hint">
-            Once you have a payout wallet, full online payments work here too ΓÇö a {{ selectedCountryName }} wallet is set up automatically using your payout method, so you're paid in local currency.
+            Once you have a payout wallet, full online payments work here too — a {{ selectedCountryName }} wallet is set up automatically using your payout method, so you're paid in local currency.
           </p>
 
           <!-- Inherited geo preview -->
@@ -692,7 +692,7 @@ async function applyScheduleToSelected() {
               <span v-if="resolvedGeo.countryName" class="geo-pill geo-pill-muted">{{ resolvedGeo.countryName }}</span>
             </div>
             <!-- Currency is the only override that changes anything (listing/program prices).
-                 The old free-text timezone override drove nothing, so it's gone ΓÇö timezone
+                 The old free-text timezone override drove nothing, so it's gone — timezone
                  simply follows the city/country shown above. -->
             <details style="margin-top:10px;">
               <summary style="font-size:12px; color:var(--text-muted); cursor:pointer;">Charge prices in a different currency</summary>
@@ -700,8 +700,8 @@ async function applyScheduleToSelected() {
                 <div class="form-group">
                   <label class="form-label">Price currency</label>
                   <select v-model="form.currency_override">
-                    <option :value="null">{{ resolvedGeo.currency ? `${resolvedGeo.currency} ΓÇö ${resolvedGeo.countryName || 'country'} default` : 'Country default' }}</option>
-                    <option v-for="c in ISO_CURRENCIES" :key="c.code" :value="c.code">{{ c.code }} ΓÇö {{ c.name }}</option>
+                    <option :value="null">{{ resolvedGeo.currency ? `${resolvedGeo.currency} — ${resolvedGeo.countryName || 'country'} default` : 'Country default' }}</option>
+                    <option v-for="c in ISO_CURRENCIES" :key="c.code" :value="c.code">{{ c.code }} — {{ c.name }}</option>
                   </select>
                   <div class="form-hint">All listing &amp; program prices at this venue use this currency.</div>
                 </div>
@@ -728,11 +728,11 @@ async function applyScheduleToSelected() {
             >
               <input ref="fileInput" type="file" accept="image/*" multiple style="display:none" @change="onFileChange" />
               <template v-if="uploading">
-                <Loader :size="20" class="spin" /><span>Uploading &amp; compressingΓÇª</span>
+                <Loader :size="20" class="spin" /><span>Uploading &amp; compressing…</span>
               </template>
               <template v-else>
                 <Upload :size="20" /><span>Drag &amp; drop images here, or <strong>click to browse</strong></span>
-                <span class="img-sub">Multiple allowed ┬╖ auto-compressed before upload</span>
+                <span class="img-sub">Multiple allowed · auto-compressed before upload</span>
               </template>
             </div>
             <div v-if="imgError" class="geo-error" style="margin-top:6px;">{{ imgError }}</div>
@@ -751,20 +751,20 @@ async function applyScheduleToSelected() {
           <!-- Description -->
           <div class="form-group" style="margin-top:14px;">
             <label class="form-label">Description <span class="opt-tag">optional</span></label>
-            <textarea v-model="form.description" rows="3" placeholder="Describe the facility, parking, amenitiesΓÇª"></textarea>
+            <textarea v-model="form.description" rows="3" placeholder="Describe the facility, parking, amenities…"></textarea>
           </div>
 
           <div class="lm-foot">
             <div v-if="errorMsg" class="geo-error lm-foot-err"><TriangleAlert :size="13" /> {{ errorMsg }}</div>
             <div class="lm-foot-btns">
               <button class="btn btn-secondary" @click="close">Cancel</button>
-              <button class="btn btn-primary" :disabled="saving" @click="editingExisting ? save() : saveAndContinue()">{{ saving ? 'SavingΓÇª' : (editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue') }}</button>
+              <button class="btn btn-primary" :disabled="saving" @click="editingExisting ? save() : saveAndContinue()">{{ saving ? 'Saving…' : (editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue') }}</button>
             </div>
           </div>
           </div>
         </section>
 
-        <!-- ΓöÇΓöÇ WEEKLY SCHEDULE SECTION ΓöÇΓöÇ -->
+        <!-- ── WEEKLY SCHEDULE SECTION ── -->
         <section class="lm-section" :class="{ open: tab === 'schedule' }">
           <button type="button" class="lm-section-head" @click="tab = tab === 'schedule' ? '' : 'schedule'">
             <div class="lm-section-title"><div>Weekly Schedule</div><div class="lm-section-sub">Operating hours that listings inherit by default</div></div>
@@ -779,7 +779,7 @@ async function applyScheduleToSelected() {
               <div class="lm-foot-btns">
                 <button class="btn btn-secondary" @click="close">Cancel</button>
                 <button class="btn btn-primary" :disabled="!canSave || saving" @click="save()">
-                  {{ saving ? 'SavingΓÇª' : (editingExisting ? 'Save &amp; Close' : 'Create location') }}
+                  {{ saving ? 'Saving…' : (editingExisting ? 'Save &amp; Close' : 'Create location') }}
                 </button>
               </div>
             </div>
@@ -794,7 +794,7 @@ async function applyScheduleToSelected() {
     <div class="modal apply-modal">
       <div class="apply-icon"><Clock :size="26" /></div>
       <div class="apply-title">Update connected listings too?</div>
-      <p class="apply-text">You changed this location's weekly schedule. Pick which listings should copy the new hours ΓÇö unticked ones keep their current schedule. Listings stay independent either way.</p>
+      <p class="apply-text">You changed this location's weekly schedule. Pick which listings should copy the new hours — unticked ones keep their current schedule. Listings stay independent either way.</p>
       <div class="apply-list">
         <label v-for="l in connectedListings" :key="l.id" class="apply-item" :class="{ on: applyTargets.includes(l.id) }">
           <input type="checkbox" :checked="applyTargets.includes(l.id)" @change="toggleApplyTarget(l.id)" />
@@ -807,7 +807,7 @@ async function applyScheduleToSelected() {
       </div>
       <div class="apply-actions">
         <button class="btn btn-secondary" :disabled="applying" @click="finishApply">Skip</button>
-        <button class="btn btn-primary" :disabled="applying || !applyTargets.length" @click="applyScheduleToSelected">{{ applying ? 'UpdatingΓÇª' : (applyTargets.length ? `Update ${applyTargets.length} listing${applyTargets.length !== 1 ? 's' : ''}` : 'Update') }}</button>
+        <button class="btn btn-primary" :disabled="applying || !applyTargets.length" @click="applyScheduleToSelected">{{ applying ? 'Updating…' : (applyTargets.length ? `Update ${applyTargets.length} listing${applyTargets.length !== 1 ? 's' : ''}` : 'Update') }}</button>
       </div>
     </div>
   </div>
@@ -891,12 +891,12 @@ async function applyScheduleToSelected() {
 .assigned-chip { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--text-muted); background:var(--bg-subtle, #f1f5f9); padding:6px 12px; border-radius:8px; }
 .form-hint { font-size:12px; color:var(--text-muted); margin-top:5px; }
 
-/* ΓöÇΓöÇ Phone (Γëñ600px) ΓÇö 360px-wide fixes, desktop untouched ΓöÇΓöÇ */
+/* ── Phone (≤600px) — 360px-wide fixes, desktop untouched ── */
 @media (max-width: 600px) {
   /* Map toolbar: hint + "Use my location" no longer share one crushed row */
   .map-toolbar { flex-wrap: wrap; align-items: flex-start; gap: 6px; }
 
-  /* Photo tile actions: no hover on touch ΓÇö always visible + 36px touch targets */
+  /* Photo tile actions: no hover on touch — always visible + 36px touch targets */
   .img-cell-actions { opacity: 1; }
   .img-mini-btn { width: 36px; height: 36px; }
 
