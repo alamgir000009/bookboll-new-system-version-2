@@ -1214,7 +1214,10 @@ class ListingService
         $user      = auth()->user();
         $ipAddress = $request->ip();
         $listingId = $request->listing_id;
-        $date      = Carbon::parse(request('date', now()->toDateString()));
+        // $request, not the global helper: this method is also called internally with
+        // a request built by the caller, and reading the global one silently served
+        // TODAY's slots for whatever date was asked for.
+        $date      = Carbon::parse($request->input('date', now()->toDateString()));
         $sessionId = getSessionId();
 
         $requestFrom          = $request->header('from');
