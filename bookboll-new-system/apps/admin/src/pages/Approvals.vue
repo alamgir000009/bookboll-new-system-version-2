@@ -49,6 +49,7 @@ const programs = ref([])
 const withdrawals = ref([])   // pending count only — payouts are processed in /wallet now
 const wallets = ref([])
 const allProviders = ref([])
+const commissionRates = ref([])   // per country + listing type — Bookboll's real rate
 const allLocations = ref([])
 const allCities = ref([])
 const allCountries = ref([])
@@ -87,6 +88,7 @@ async function load() {
   allLocations.value = ref.venues
   allCities.value = ref.cities
   allCountries.value = ref.countries.filter(c => (c.status || 'active') === 'active')
+  commissionRates.value = ref.commissionRates || []
 }
 onMounted(load)
 watch(() => currentUser.value?.id, load)
@@ -116,15 +118,41 @@ function inJurisdiction(item) {
   return cid ? set.has(cid) : false
 }
 
+// The queue and reference-data come from different endpoints that disagree on id
+// TYPE: the approvals payload casts location_id / owner_user_id to strings while
+// reference-data venues, cities and countries carry numeric ids. `===` between "1"
+// and 1 is false, so locationById() returned null and the modal's whole Location
+// tab rendered blank — the venue was there all along, just never matched.
+const sameId = (a, b) => a != null && b != null && String(a) === String(b)
+
 const providerName = (id) => {
-  const p = allProviders.value.find(x => x.id === id)
+  const p = allProviders.value.find(x => sameId(x.id, id))
   return p?.business_name || p?.full_name || '—'
 }
-const providerById = (id) => allProviders.value.find(x => x.id === id) || null
-const locationById = (id) => allLocations.value.find(x => x.id === id) || null
-const cityById = (id) => allCities.value.find(x => x.id === id) || null
-const countryById = (id) => allCountries.value.find(x => x.id === id) || null
+const providerById = (id) => allProviders.value.find(x => sameId(x.id, id)) || null
+const locationById = (id) => allLocations.value.find(x => sameId(x.id, id)) || null
+const cityById = (id) => allCities.value.find(x => sameId(x.id, id)) || null
+const countryById = (id) => allCountries.value.find(x => sameId(x.id, id)) || null
 const countryName = (id) => countryById(id)?.name || ''
+// provider_wallets.owner_user_id holds a numeric users.id for some rows and the
+// uuid for others, so match on either (the API resolves a numeric `owner_id`).
+/**
+ * The commission that actually applies to this item: Bookboll charges per country
+ * and listing type (commission_rates), not per provider. Falls back to the rate
+ * stored on the listing itself; null when neither is known, so the row is hidden
+ * instead of showing a made-up number.
+ */
+function providerCommission(item) {
+  if (item?.commission_rate != null && item.commission_rate !== '') return Number(item.commission_rate)
+  const venue = locationById(item?.location_id)
+  const countryId = venue?.country_id ?? cityById(venue?.city_id)?.country_id
+  const type = item?._type === 'program' ? 'program' : 'listing'
+  const rate = commissionRates.value.find(r => sameId(r.country_id, countryId) && r.listing_type === type)
+    || commissionRates.value.find(r => sameId(r.country_id, countryId))
+  return rate ? Number(rate.rate_percent) : null
+}
+const walletForOwner = (ownerId) => wallets.value.find(w =>
+  sameId(w.owner_user_id, ownerId) || sameId(w.owner_id, ownerId)) || null
 
 function locationForItem(item) {
   if (item._type === 'listing') return locationById(item.location_id)
@@ -406,8 +434,9 @@ async function confirmBulkApprove() {
 // out") → paid (escrow settles: pending_balance down, lifetime_withdrawn up,
 // debit ledger row). Reject refunds escrow → available_balance.
 function walletForW(wd) {
-  return wallets.value.find(x => x.id === wd.wallet_id)
-    || wallets.value.find(x => x.owner_user_id === wd.owner_user_id && x.country_id === wd.country_id && x.is_current !== false)
+  return wallets.value.find(x => sameId(x.id, wd.wallet_id))
+    || wallets.value.find(x => (sameId(x.owner_user_id, wd.owner_user_id) || sameId(x.owner_id, wd.owner_user_id))
+      && sameId(x.country_id, wd.country_id) && x.is_current !== false)
 }
 // Sanity check the admin needs at a glance: is the requested amount actually
 // sitting in the wallet's escrow?
@@ -681,7 +710,6 @@ const PREVIEW_LISTING_FIELDS = [
   { key: 'loyalty_points', label: 'Loyalty Points' },
   { key: 'status', label: 'Status' },
   { key: 'description', label: 'Description' },
-  { key: 'photo_url', label: 'Photo URL' },
 ]
 const PREVIEW_PROGRAM_FIELDS = [
   { key: 'name', label: 'Name' },
@@ -699,11 +727,30 @@ const PREVIEW_PROGRAM_FIELDS = [
   { key: 'program_type', label: 'Program Type' },
   { key: 'status', label: 'Status' },
   { key: 'description', label: 'Description' },
-  { key: 'photo_url', label: 'Photo URL' },
 ]
 function previewFields(item) {
   return item._type === 'listing' ? PREVIEW_LISTING_FIELDS : PREVIEW_PROGRAM_FIELDS
 }
+
+/**
+ * Every photo on the item, cover first, de-duplicated.
+ *
+ * Listings carry `photos`, programmes `images`, and both a `photo_url` cover that
+ * is usually also the first gallery entry — hence the de-dupe. A reviewer is being
+ * asked to approve what a customer will see, so the modal has to SHOW these, not
+ * print the URL and leave them guessing.
+ */
+function previewPhotos(item) {
+  const all = [item?.photo_url, ...(item?.photos || []), ...(item?.images || [])]
+  const seen = new Set()
+  return all
+    .map(u => (typeof u === 'string' ? u : (u?.url || u?.photo_url || '')))
+    .filter(u => u && !seen.has(u) && seen.add(u))
+}
+// A photo that 404s should not leave a broken-image icon in a review screen.
+const brokenPhotos = ref(new Set())
+function onPhotoError(url) { brokenPhotos.value = new Set([...brokenPhotos.value, url]) }
+function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos.value.has(u)) }
 </script>
 
 <template>
@@ -1017,9 +1064,13 @@ function previewFields(item) {
               <span><strong>Changes requested:</strong> {{ previewItem.admin_note }}</span>
             </div>
 
-            <div v-if="previewItem.photo_url" class="preview-photo-wrap">
-              <img :src="previewItem.photo_url" class="preview-photo" alt="Preview" />
+            <div v-if="livePhotos(previewItem).length" class="pv-gallery">
+              <a v-for="(u, i) in livePhotos(previewItem)" :key="u" :href="u" target="_blank" rel="noopener"
+                 class="pv-shot" :class="{ lead: i === 0 }" :title="'Open full size'">
+                <img :src="u" :alt="`Photo ${i + 1}`" loading="lazy" @error="onPhotoError(u)" />
+              </a>
             </div>
+            <div v-else class="pv-nophoto">No photos submitted</div>
 
             <div class="pv-section-title">{{ previewItem._type === 'listing' ? 'Listing' : 'Program' }} Details</div>
             <div class="preview-fields">
@@ -1090,13 +1141,18 @@ function previewFields(item) {
                   <div class="preview-field-label"><Globe :size="10" /> Country</div>
                   <div class="preview-field-value">{{ countryById(providerById(previewItem.owner_user_id)?.country_id)?.name || '—' }}</div>
                 </div>
-                <div class="preview-field">
+                <!-- License number and a per-PROVIDER commission rate came from the
+                     Supabase admin_users table and have no equivalent here: commission
+                     is set per country + listing type (commission_rates), and no licence
+                     column exists. Rather than two fields that can only ever show a dash,
+                     each appears when there is something real to show. -->
+                <div v-if="providerById(previewItem.owner_user_id)?.license_number" class="preview-field">
                   <div class="preview-field-label"><FileText :size="10" /> License No.</div>
-                  <div class="preview-field-value pv-mono">{{ providerById(previewItem.owner_user_id)?.license_number || '—' }}</div>
+                  <div class="preview-field-value pv-mono">{{ providerById(previewItem.owner_user_id).license_number }}</div>
                 </div>
-                <div class="preview-field">
+                <div v-if="providerCommission(previewItem) !== null" class="preview-field">
                   <div class="preview-field-label"><Star :size="10" /> Commission Rate</div>
-                  <div class="preview-field-value">{{ providerById(previewItem.owner_user_id)?.commission_rate ?? '—' }}%</div>
+                  <div class="preview-field-value">{{ providerCommission(previewItem) }}%</div>
                 </div>
                 <div class="preview-field">
                   <div class="preview-field-label"><Shield :size="10" /> Account Status</div>
@@ -1116,18 +1172,18 @@ function previewFields(item) {
 
               <!-- Wallet summary -->
               <div class="pv-section-title" style="margin-top:18px"><DollarSign :size="13" />Wallet</div>
-              <div v-if="wallets.find(w => w.owner_user_id === previewItem.owner_user_id)" class="pv-wallet-row">
+              <div v-if="walletForOwner(previewItem.owner_user_id)" class="pv-wallet-row">
                 <div class="pv-wallet-chip">
                   <div class="pv-wallet-label">Available</div>
-                  <div class="pv-wallet-val">{{ wallets.find(w => w.owner_user_id === previewItem.owner_user_id)?.currency || 'AED' }} {{ Number(wallets.find(w => w.owner_user_id === previewItem.owner_user_id)?.available_balance || 0).toLocaleString() }}</div>
+                  <div class="pv-wallet-val">{{ walletForOwner(previewItem.owner_user_id)?.currency || '' }} {{ Number(walletForOwner(previewItem.owner_user_id)?.available_balance || 0).toLocaleString() }}</div>
                 </div>
                 <div class="pv-wallet-chip">
                   <div class="pv-wallet-label">Pending</div>
-                  <div class="pv-wallet-val">{{ wallets.find(w => w.owner_user_id === previewItem.owner_user_id)?.currency || 'AED' }} {{ Number(wallets.find(w => w.owner_user_id === previewItem.owner_user_id)?.pending_balance || 0).toLocaleString() }}</div>
+                  <div class="pv-wallet-val">{{ walletForOwner(previewItem.owner_user_id)?.currency || '' }} {{ Number(walletForOwner(previewItem.owner_user_id)?.pending_balance || 0).toLocaleString() }}</div>
                 </div>
                 <div class="pv-wallet-chip">
                   <div class="pv-wallet-label">Lifetime Withdrawn</div>
-                  <div class="pv-wallet-val">{{ wallets.find(w => w.owner_user_id === previewItem.owner_user_id)?.currency || 'AED' }} {{ Number(wallets.find(w => w.owner_user_id === previewItem.owner_user_id)?.lifetime_withdrawn || 0).toLocaleString() }}</div>
+                  <div class="pv-wallet-val">{{ walletForOwner(previewItem.owner_user_id)?.currency || '' }} {{ Number(walletForOwner(previewItem.owner_user_id)?.lifetime_withdrawn || 0).toLocaleString() }}</div>
                 </div>
               </div>
               <div v-else class="muted-val" style="font-size:13px">No wallet record found.</div>
@@ -1138,9 +1194,11 @@ function previewFields(item) {
           <!-- ── LOCATION TAB ── -->
           <template v-else-if="previewTab === 'location'">
             <template v-if="locationForItem(previewItem)">
-              <div v-if="locationForItem(previewItem).photo_url" class="preview-photo-wrap">
-                <img :src="locationForItem(previewItem).photo_url" class="preview-photo" alt="Location" />
-              </div>
+              <a v-if="locationForItem(previewItem).photo_url && !brokenPhotos.has(locationForItem(previewItem).photo_url)"
+                 :href="locationForItem(previewItem).photo_url" target="_blank" rel="noopener" class="preview-photo-wrap">
+                <img :src="locationForItem(previewItem).photo_url" class="preview-photo" alt="Location"
+                     loading="lazy" @error="onPhotoError(locationForItem(previewItem).photo_url)" />
+              </a>
 
               <div class="pv-section-title"><MapPin :size="13" />Location Info</div>
               <div class="preview-fields">
@@ -1455,7 +1513,15 @@ function previewFields(item) {
 .preview-body { overflow-y: auto; flex: 1; }
 
 .preview-provider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.preview-photo-wrap { margin-bottom: 16px; border-radius: 10px; overflow: hidden; max-height: 200px; }
+/* Review gallery: the first shot leads full width, the rest tile under it. */
+.pv-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.pv-shot { display: block; border-radius: 10px; overflow: hidden; border: 1px solid var(--border, #e2e8f0); background: var(--bg, #f1f5f9); aspect-ratio: 4 / 3; }
+.pv-shot.lead { grid-column: 1 / -1; aspect-ratio: 16 / 7; }
+.pv-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pv-shot:hover { border-color: var(--primary, #14b8a6); }
+.pv-nophoto { margin-bottom: 16px; padding: 14px; border: 1px dashed var(--border, #e2e8f0); border-radius: 10px;
+  text-align: center; font-size: 12px; color: var(--text-muted, #64748b); }
+.preview-photo-wrap { display: block; margin-bottom: 16px; border-radius: 10px; overflow: hidden; max-height: 200px; }
 .preview-photo { width: 100%; height: 200px; object-fit: cover; display: block; }
 .preview-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
 .preview-field { padding: 10px 14px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
