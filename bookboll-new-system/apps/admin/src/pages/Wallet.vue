@@ -163,8 +163,17 @@ function operatingCountryIdsFor(ownerId) {
   }
   return ids
 }
+// A wallet's owner_user_id is not one key: bookings wallets store the numeric
+// users.id, membership wallets and every legacy Supabase row store the uuid. The
+// API now resolves a numeric `owner_id` alongside it, so match on either —
+// comparing only owner_user_id is what made the membership wallets invisible.
+function walletBelongsTo(w, providerId) {
+  const want = String(providerId || '')
+  if (!want) return false
+  return String(w.owner_user_id ?? '') === want || String(w.owner_id ?? '') === want
+}
 // All wallet rows belonging to the selected provider.
-const providerWalletList = computed(() => wallets.value.filter(w => String(w.owner_user_id) === String(selectedProvider.value)))
+const providerWalletList = computed(() => wallets.value.filter(w => walletBelongsTo(w, selectedProvider.value)))
 // …and just those for the currently-selected PURPOSE (bookings vs subscription). Rows missing
 // the purpose column (pre-migration) are treated as 'subscription'.
 const purposeWalletList = computed(() => providerWalletList.value.filter(w => normWalletPurpose(w.purpose) === selectedPurpose.value))
@@ -236,6 +245,23 @@ const walletCards = computed(() => {
   })
   for (const w of purposeWalletList.value.filter(x => x.is_current === false)) {
     cards.push({ key: w.id, country_id: w.country_id, name: countryName(w.country_id), currency: w.currency, wallet: w, legacy: true, hasMethod: isWalletReady(w) })
+  }
+  // Safety net: every card above is keyed off a COUNTRY, so a wallet whose
+  // country_id is null (or a country this provider no longer operates in) matched
+  // no card and simply vanished — real money, shown nowhere. Anything not already
+  // rendered gets its own card, labelled by its currency.
+  const shown = new Set(cards.map(c => c.wallet?.id).filter(Boolean))
+  for (const w of purposeWalletList.value) {
+    if (shown.has(w.id)) continue
+    cards.push({
+      key: w.id,
+      country_id: w.country_id || null,
+      name: countryName(w.country_id) || `${w.currency || 'Wallet'} wallet`,
+      currency: w.currency,
+      wallet: w,
+      legacy: w.is_current === false,
+      hasMethod: isWalletReady(w),
+    })
   }
   return cards
 })
@@ -820,7 +846,7 @@ function resolveSelectedProvider() {
   if (!isPlatformAdmin.value) {
     const email = (currentUser.value?.email || '').toLowerCase()
     const laravelId = currentOwnerUserId.value ? String(currentOwnerUserId.value) : ''
-    if (laravelId && wallets.value.some(w => String(w.owner_user_id) === laravelId)) {
+    if (laravelId && wallets.value.some(w => walletBelongsTo(w, laravelId))) {
       selectedProvider.value = laravelId
       return
     }
