@@ -12,7 +12,7 @@ import { saveHostDraft } from '../../customer/hostDraft.js'
 import { pushToast } from '../../lib/toast.js'
 import { profileStrength } from '../../lib/social.js'
 import { fmt12, fmtRange12 } from '../../lib/slots.js'
-import { getSavedPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
+import { getPrefillPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
 import { avatarColor } from '../../lib/avatarColor.js'
 import PhoneInput from '../components/PhoneInput.vue'
 import JoinModal from '../components/JoinModal.vue'
@@ -284,7 +284,7 @@ async function load() {
     gameIso.value = await loadCountryIso(game.value.country_id)
     if (isCustomer.value) {
       form.value.name = customer.value.full_name || ''
-      const saved = getSavedPhone(game.value.country_id)   // remembered for THIS game's country
+      const saved = getPrefillPhone(game.value.country_id)   // this country's number, else the account's
       form.value.whatsapp = saved
       form.value.phone = saved
       myReq.value = await myRequestForGame(game.value.id, customer.value.id)

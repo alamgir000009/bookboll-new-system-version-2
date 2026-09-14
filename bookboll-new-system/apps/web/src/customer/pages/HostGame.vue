@@ -14,7 +14,7 @@ import { PLAY_FORMATS } from '../../customer/matchmaking.js'
 import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../../customer/apiBooking.js'
 import { hostDraft, saveHostDraft, clearHostDraft } from '../../customer/hostDraft.js'
 import { loadCommunity } from '../../customer/community.js'
-import { getSavedPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
+import { getPrefillPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
 import { loadStripeConnect, startStripeConnect, syncStripeConnect, saveStripeKeys, disconnectStripe, isStripeConnected } from '../../customer/hostPayouts.js'
 import { TEAM_OPTIONS, roundsFor, matchesInRound, totalGames, roundName, fmtTime, consecutiveSlots, normTime, addMinutes } from '../../customer/bracket.js'
 import PhoneInput from '../components/PhoneInput.vue'
@@ -209,7 +209,7 @@ onMounted(async () => {
 
   if (!restoring && isCustomer.value) {
     f.value.host_name = customer.value.full_name || ''
-    const savedPhone = getSavedPhone(selectedCountry.value?.id)   // remembered for this country only
+    const savedPhone = getPrefillPhone(selectedCountry.value?.id)   // this country's number, else the account's
     f.value.host_phone = savedPhone
     f.value.host_whatsapp = savedPhone
   }

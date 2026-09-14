@@ -26,6 +26,19 @@ export function getSavedPhone(countryId) {
   return readAll()[who()]?.[countryId] || ''
 }
 
+/**
+ * What the phone field should start with.
+ *
+ * The number remembered for THIS country wins — a Qatar number should not be
+ * offered for a UAE booking. Failing that, a signed-in shopper's account number
+ * is used: they gave it at sign-up, and making them retype it on every first
+ * booking (or on any new device, where the per-country memory is empty) is the
+ * bug this fixes. Guests still start blank.
+ */
+export function getPrefillPhone(countryId) {
+  return getSavedPhone(countryId) || (customer.value?.phone || '').trim()
+}
+
 // Remember a phone for (this shopper, country). No-op for blank values.
 export function saveCustomerPhone(countryId, phone) {
   const p = (phone || '').trim()

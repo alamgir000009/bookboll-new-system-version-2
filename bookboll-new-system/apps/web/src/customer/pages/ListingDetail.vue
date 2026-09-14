@@ -14,7 +14,7 @@ import { validatePromo } from '../../lib/promocodes.js'
 import { loadLoyaltyConfig } from '../../lib/loyalty.js'
 import { loadCustomerLoyalty, clearCustomerLoyaltyCache } from '../../lib/customerSession.js'
 import { isWhiteLabel } from '../../lib/brand.js'
-import { getSavedPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
+import { getPrefillPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
 import { fmt12, dayPeriod, toMinutes, endMinutes } from '../../lib/slots.js'
 import DateField from '../components/DateField.vue'
 import PhoneInput from '../components/PhoneInput.vue'
@@ -370,7 +370,7 @@ async function load() {
   activePhoto.value = 0
   loading.value = false
   if (isCustomer.value) guest.value = { name: customer.value.full_name || '', email: customer.value.email || '', phone: '' }
-  phone.value = getSavedPhone(selectedCountry.value?.id)   // remembered for THIS country only
+  phone.value = getPrefillPhone(selectedCountry.value?.id)   // this country's number, else the account's
   if (!selectMode.value) setupRealtime(data.value?.listing?.id)   // live grid updates
   // All date.value mutations below are followed by a single loadDay() at the end — mute the
   // date watcher so we don't fire two or three overlapping availability fetches (and a
@@ -488,6 +488,9 @@ async function goCheckout() {
   // Mandatory: must have a Bookboll account before checking out.
   if (!isCustomer.value && !(await ensureSignedIn())) return
   if (isCustomer.value) guest.value = { name: customer.value.full_name || '', email: customer.value.email || '', phone: '' }
+  // Signing in happens right above, so this is the first moment the account's
+  // number is known. Only fill a field the shopper has left empty.
+  if (!phone.value.trim()) phone.value = getPrefillPhone(selectedCountry.value?.id)
   // Slots are already held from selection; refresh/re-validate before showing checkout.
   saving.value = true
   const res = await syncHolds()

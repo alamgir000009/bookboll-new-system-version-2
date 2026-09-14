@@ -5,7 +5,7 @@ import { customer, isCustomer } from '../../lib/customerSession.js'
 import { ensureSignedIn } from '../../lib/authGate.js'
 import { pushToast } from '../../lib/toast.js'
 import { loadTournament, requestToJoin, respondToRequest, generateMatchups, setMatchWinner, clearMatchWinner, tournamentsEnabled, probeTournaments, loadCountryIso } from '../../customer/apiGames.js'
-import { getSavedPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
+import { getPrefillPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
 import PhoneInput from '../components/PhoneInput.vue'
 import JoinModal from '../components/JoinModal.vue'
 import FormAnswers from '../../components/FormAnswers.vue'
@@ -154,7 +154,7 @@ async function load() {
   tIso.value = await loadCountryIso(t.value?.country_id)
   if (isCustomer.value && data.value) {
     form.value.name = customer.value.full_name || ''
-    const saved = getSavedPhone(t.value?.country_id)   // remembered for THIS tournament's country
+    const saved = getPrefillPhone(t.value?.country_id)   // this country's number, else the account's
     form.value.whatsapp = saved
     form.value.phone = saved
   }
