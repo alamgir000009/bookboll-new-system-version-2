@@ -97,7 +97,7 @@ class HostedGamesFromSupabaseSeeder extends Seeder
             'start_time'               => (string) ($row['start_time'] ?? ''),
             'end_time'                 => (string) ($row['end_time'] ?? ''),
             'price_per_person'         => $row['price_per_person'] ?? 0,
-            'currency'                 => (string) ($row['currency'] ?? 'AED'),
+            'currency'                 => (string) ($row['currency'] ?? ''),
             'max_players'              => (int) ($row['max_players'] ?? 10),
             'skill_level'              => (string) ($row['skill_level'] ?? 'all'),
             'description'              => (string) ($row['description'] ?? ''),

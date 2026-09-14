@@ -235,15 +235,17 @@ class PaymentService
             : \Nnjeim\World\Models\Country::with('currency')
             ->whereIn('id', $countryIdsForCurrency)
             ->get()
-            ->mapWithKeys(fn($c) => [$c->id => $c->currency?->code ?: 'AED']);
+            ->mapWithKeys(fn($c) => [$c->id => $c->currency?->code ?: null]);
 
         $mapOne = function (Payment $p) use ($bookingsRaw, $venuesRaw, $owners, $currencyByCountry) {
             $booking = $p->booking_id ? $bookingsRaw->get($p->booking_id) : null;
             $venue = $booking?->venue_id ? $venuesRaw->get($booking->venue_id) : null;
             $owner = $venue?->owner_user_id ? $owners->get($venue->owner_user_id) : null;
+            // The venue's own currency, then its country's. No hardcoded last
+            // resort: a row with no currency anywhere shows the amount alone,
+            // which is honest, rather than a code that was never charged.
             $currencyFallback = $venue?->currency_override
-                ?: ($venue?->country_id ? ($currencyByCountry[$venue->country_id] ?? null) : null)
-                ?: 'AED';
+                ?: ($venue?->country_id ? ($currencyByCountry[$venue->country_id] ?? null) : null);
 
             return $this->mapDashboardPayment($p, $currencyFallback, $owner);
         };
@@ -610,7 +612,7 @@ class PaymentService
         $paid = $clean($query)->where('status', 'paid');
 
         $byCurrency = (clone $paid)
-            ->selectRaw("COALESCE(currency, 'AED') as currency_code, SUM(amount) as total")
+            ->selectRaw("COALESCE(NULLIF(currency, ''), '?') as currency_code, SUM(amount) as total")
             ->groupBy('currency_code')
             ->pluck('total', 'currency_code');
 
@@ -619,21 +621,26 @@ class PaymentService
                 $q->whereNull('recipient')
                     ->orWhereIn('recipient', ['bookboll', '@bookboll']);
             })
-            ->selectRaw("COALESCE(currency, 'AED') as currency_code, SUM(amount) as total")
+            ->selectRaw("COALESCE(NULLIF(currency, ''), '?') as currency_code, SUM(amount) as total")
             ->groupBy('currency_code')
             ->pluck('total', 'currency_code');
 
         $toProvider = (clone $paid)
             ->whereNotNull('recipient')
             ->whereNotIn('recipient', ['bookboll', '@bookboll'])
-            ->selectRaw("COALESCE(currency, 'AED') as currency_code, SUM(amount) as total")
+            ->selectRaw("COALESCE(NULLIF(currency, ''), '?') as currency_code, SUM(amount) as total")
             ->groupBy('currency_code')
             ->pluck('total', 'currency_code');
 
+        // One line per currency. Two things this must not do: round (159.20 is not
+        // 159), and print a currency nobody was charged — money whose currency is
+        // missing is called out as unknown rather than quietly swelling the AED
+        // total, because that hides a data problem instead of showing it.
         $fmt = function ($map) {
             $out = [];
             foreach ($map as $c => $v) {
-                $out[] = $c . ' ' . number_format((float) $v);
+                $label = ($c === '?' || $c === null || $c === '') ? 'Unknown currency' : $c;
+                $out[] = $label . ' ' . number_format((float) $v, 2);
             }
             sort($out);
 
@@ -648,14 +655,14 @@ class PaymentService
         ];
     }
 
-    protected function mapDashboardPayment(Payment $p, ?string $currencyFallback = 'AED', $owner = null): array
+    protected function mapDashboardPayment(Payment $p, ?string $currencyFallback = null, $owner = null): array
     {
         $method = (string) $p->method;
         if ($method === 'credit_card') {
             $method = 'card';
         }
 
-        $currency = $p->currency ?: ($currencyFallback ?: 'AED');
+        $currency = $p->currency ?: ($currencyFallback ?: '');
 
         $recipient = $p->recipient;
         if (! $recipient) {
@@ -1428,6 +1435,10 @@ class PaymentService
                             'date'       => null,
                             'user_id'    => $booking->user_id,
                             'amount'     => $amountDue,
+                            // Without this the row shows as "Unknown currency".
+                            'currency'   => $booking->venue
+                                ? ($booking->venue->currency_override ?: ($booking->venue->country?->currency?->code ?: ''))
+                                : '',
                             'type'       => PaymentType::FULL,
                             'method'     => PaymentMethod::CASH,
                             'status'     => PaymentStatus::PENDING,

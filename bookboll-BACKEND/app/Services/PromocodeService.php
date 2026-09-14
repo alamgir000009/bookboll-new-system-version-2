@@ -222,7 +222,7 @@ class PromocodeService
             'source_id'       => $data['source_id'] ?? null,
             'order_amount'    => $data['order_amount'] ?? 0,
             'discount_amount' => $data['discount_amount'] ?? 0,
-            'currency'        => $data['currency'] ?? 'AED',
+            'currency'        => $data['currency'] ?? '',
             'recipient'       => $data['recipient'] ?? ($promocode?->recipient ?? ''),
             'owner_user_id'   => $data['owner_user_id'] ?? $promocode?->owner_user_id,
             'country_id'      => $data['country_id'] ?? null,

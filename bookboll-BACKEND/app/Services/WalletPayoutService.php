@@ -217,13 +217,32 @@ class WalletPayoutService
             'status'        => 'nullable|string|max:32',
         ]);
 
+        // A provider has ONE current wallet per country per purpose. Creating blindly
+        // is how a second one appeared: the dashboard compared a numeric countries.id
+        // against this CHAR column, missed the wallet that already existed, and asked
+        // for another. Hand back the existing row instead of minting a rival that
+        // splits the balance.
+        $purposeKey = $data['purpose'] ?? 'subscription';
+        if (! empty($data['country_id'])) {
+            $existing = ProviderWallet::query()
+                ->where('owner_user_id', $data['owner_user_id'])
+                ->where('country_id', (string) $data['country_id'])
+                ->where('purpose', $purposeKey)
+                ->where('is_current', true)
+                ->first();
+
+            if ($existing) {
+                return sendSuccess('Wallet already exists', ['wallet' => $this->mapWallet($existing)]);
+            }
+        }
+
         $attrs = array_merge([
             'available_balance'  => 0,
             'pending_balance'    => 0,
             'lifetime_earnings'  => 0,
             'lifetime_withdrawn' => 0,
-            'currency'           => $data['currency'] ?? 'AED',
-            'purpose'            => $data['purpose'] ?? 'subscription',
+            'currency'           => $data['currency'] ?? '',
+            'purpose'            => $purposeKey,
             'is_current'         => $data['is_current'] ?? true,
             'status'             => $data['status'] ?? 'current',
             'hold_days'          => 7,
@@ -311,7 +330,12 @@ class WalletPayoutService
         }
 
         // Ensure wallets for requested countries that don't exist yet.
-        $countryIds = $data['country_ids'] ?? [];
+        // Dedupe first: country_id is a CHAR column, so a caller sending both 1 and
+        // "1" for the same country would otherwise have two wallets created for it.
+        $countryIds = array_values(array_unique(array_map(
+            fn ($c) => (string) $c,
+            array_filter($data['country_ids'] ?? [], fn ($c) => $c !== null && $c !== '')
+        )));
         $created = 0;
         foreach ($countryIds as $cid) {
             $exists = ProviderWallet::query()
@@ -329,7 +353,7 @@ class WalletPayoutService
                 'purpose'              => $purpose,
                 'is_current'           => true,
                 'status'               => 'current',
-                'currency'             => 'AED',
+                'currency'             => $data['currency'] ?? '',
                 'available_balance'    => 0,
                 'pending_balance'      => 0,
                 'lifetime_earnings'    => 0,

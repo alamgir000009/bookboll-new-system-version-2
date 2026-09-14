@@ -105,7 +105,7 @@ class NotificationSweepService
                     'start_time'    => $b->start_time,
                     'end_time'      => $b->end_time,
                     'code'          => strtoupper(substr((string) $b->id, 0, 8)),
-                    'currency'      => $venue?->currency_override ?: 'AED',
+                    'currency'      => $venue?->currency_override ?: '',
                     'amount'        => $b->total_price,
                 ],
             ];
@@ -230,7 +230,7 @@ class NotificationSweepService
             'id'       => $p->id,
             'uuid'     => $p->uuid,
             'name'     => $p->name,
-            'currency' => $p->currency ?: 'AED',
+            'currency' => $p->currency ?: '',
         ];
     }
 }

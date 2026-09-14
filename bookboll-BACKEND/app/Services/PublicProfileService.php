@@ -270,7 +270,7 @@ class PublicProfileService
                 'start_time'           => $g->start_time ?? '',
                 'end_time'             => $g->end_time ?? '',
                 'price_per_person'     => (float) $g->price_per_person,
-                'currency'             => $g->currency ?? 'AED',
+                'currency'             => $g->currency ?? '',
                 'max_players'          => (int) $g->max_players,
                 'status'               => $g->status ?? 'open',
                 'prize_pot'            => (float) ($g->prize_pot ?? 0),

@@ -528,7 +528,7 @@ class CustomerGameService
     protected function priceHost(User $host, ?Listing $listing, array $data): array
     {
         $venue    = $listing ? $this->venueFor($listing) : null;
-        $currency = $venue?->currency_override ?: 'AED';
+        $currency = $venue?->currency_override ?: '';
 
         if (! $listing) {
             return $this->charge($currency, 0, 0, 0, false, 0);
@@ -1419,7 +1419,7 @@ class CustomerGameService
     protected function priceTournament(User $host, $listings, array $matches, array $data): array
     {
         $teams    = (int) ($data['num_teams'] ?? 0);
-        $currency = 'AED';
+        $currency = '';
         $lines    = [];
         $bookbollNow = 0.0;
 
@@ -1760,7 +1760,7 @@ class CustomerGameService
             'start_time'              => $g->start_time,
             'end_time'                => $g->end_time,
             'price_per_person'        => (float) $g->price_per_person,
-            'currency'                => $g->currency ?? 'AED',
+            'currency'                => $g->currency ?? '',
             'max_players'             => (int) $g->max_players,
             'skill_level'             => $g->skill_level ?? 'all',
             'description'             => $g->description ?? '',

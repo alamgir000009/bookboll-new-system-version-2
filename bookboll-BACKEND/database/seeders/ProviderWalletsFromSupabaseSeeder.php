@@ -77,7 +77,7 @@ class ProviderWalletsFromSupabaseSeeder extends Seeder
             'pending_balance'       => $row['pending_balance'] ?? 0,
             'lifetime_earnings'     => $row['lifetime_earnings'] ?? 0,
             'lifetime_withdrawn'    => $row['lifetime_withdrawn'] ?? 0,
-            'currency'              => $row['currency'] ?? 'AED',
+            'currency'              => $row['currency'] ?? '',
             'hold_days'             => $row['hold_days'] ?? 7,
             'setup_method'          => $row['setup_method'] ?? null,
             'setup_status'          => $row['setup_status'] ?? null,

@@ -733,6 +733,9 @@ class BookingService
 
                 if (! $isFreeBooking) {
                     $this->paymentModel::create([
+                        // The currency this money is in — without it the row reports as
+                        // "Unknown currency" on the Payments page.
+                        'currency'   => $this->bookingCurrency($booking),
                         'user_id'    => $user->id,
                         'booking_id' => $booking->id,
                         'type'       => PaymentType::FULL,
@@ -853,6 +856,9 @@ class BookingService
                 $pendingRemaining->update(['amount' => $paymentBreakdown['remaining_amount']]);
             } elseif ($amountDue > 0) {
                 $booking->payments()->create([
+                    // The currency this money is in — without it the row reports as
+                    // "Unknown currency" on the Payments page.
+                    'currency'   => $this->bookingCurrency($booking),
                     'date'       => null,
                     'amount'     => $amountDue,
                     'user_id'    => $booking->user_id,
@@ -877,6 +883,9 @@ class BookingService
                 $pendingPayment->update(['amount' => $newPrice]);
             } else {
                 $booking->payments()->create([
+                    // The currency this money is in — without it the row reports as
+                    // "Unknown currency" on the Payments page.
+                    'currency'   => $this->bookingCurrency($booking),
                     'date'       => null,
                     'amount'     => $newPrice,
                     'user_id'    => $booking->user_id,
@@ -890,6 +899,9 @@ class BookingService
         } elseif ($booking->payment_status == BookingPaymentStatus::FULLY_PAID || $totalPaid > 0) {
             if ($amountDue > 0) {
                 $booking->payments()->create([
+                    // The currency this money is in — without it the row reports as
+                    // "Unknown currency" on the Payments page.
+                    'currency'   => $this->bookingCurrency($booking),
                     'date'       => null,
                     'user_id'    => $booking->user_id,
                     'amount'     => $amountDue,
@@ -2518,6 +2530,9 @@ class BookingService
                         }
                     } elseif (! $booking->is_free) {
                         $booking->payments()->create([
+                            // The currency this money is in — without it the row reports as
+                            // "Unknown currency" on the Payments page.
+                            'currency'   => $this->bookingCurrency($booking),
                             'user_id'    => $booking->user_id,
                             'booking_id' => $booking->id,
                             'amount'     => $totalPrice,
@@ -3362,6 +3377,9 @@ class BookingService
                 $depositPaymentDate = $paymentIntentId ? now()->format('Y-m-d') : null;
 
                 $this->paymentModel::create([
+                    // The currency this money is in — without it the row reports as
+                    // "Unknown currency" on the Payments page.
+                    'currency'   => $this->bookingCurrency($booking),
                     'charge_id'         => $chargeId,
                     'user_id'           => $user->id,
                     'booking_id'        => $booking->id,
@@ -3378,6 +3396,9 @@ class BookingService
                 ]);
 
                 $this->paymentModel::create([
+                    // The currency this money is in — without it the row reports as
+                    // "Unknown currency" on the Payments page.
+                    'currency'   => $this->bookingCurrency($booking),
                     'date'       => null,
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
@@ -3410,6 +3431,9 @@ class BookingService
                     : null;
 
                 $booking->payments()->create([
+                    // The currency this money is in — without it the row reports as
+                    // "Unknown currency" on the Payments page.
+                    'currency'   => $this->bookingCurrency($booking),
                     'charge_id'         => $chargeId,
                     'user_id'           => $user->id,
                     'amount'            => $totalPrice,
@@ -3982,6 +4006,14 @@ class BookingService
 
     protected function venueCountryId($venue): ?int
     {
+        // The venue's own country first. The city map below is built from
+        // scopedVenues(), which is empty at some points in a request — so a venue
+        // that plainly has country_id 179 resolved to NULL, and its payments were
+        // written with no currency at all.
+        if (! empty($venue->country_id)) {
+            return (int) $venue->country_id;
+        }
+
         if ($this->cityCountryCache === null) {
             $ids = $this->scopedVenues()->pluck('city_id')->filter()->unique();
             $this->cityCountryCache = $ids->isEmpty() || ! class_exists(City::class)
@@ -3993,6 +4025,28 @@ class BookingService
     }
 
     /** venue override → the country's currency → AED, matching the dashboard exactly. */
+    /**
+     * The currency a booking's money is in.
+     *
+     * Payments used to be written with no currency at all: the column was added
+     * later and back-filled to QAR for the rows that existed, but the create calls
+     * were never updated. Every booking payment made since has been NULL, which is
+     * why the Payments page reports money under "Unknown currency".
+     */
+    protected function bookingCurrency($booking): string
+    {
+        if (! $booking) {
+            return '';
+        }
+        // Load the venue by id rather than reusing a loaded relation: venues that
+        // arrive via scopedVenues() are hydrated from a narrow column list with no
+        // country_id, so the relation can look complete while the field needed to
+        // resolve a currency is silently absent.
+        $venue = $booking->venue_id ? Venue::find($booking->venue_id) : null;
+
+        return $venue ? $this->venueCurrency($venue) : '';
+    }
+
     protected function venueCurrency($venue): string
     {
         if (! empty($venue->currency_override)) {
@@ -4001,13 +4055,15 @@ class BookingService
 
         if ($this->countryCurrencyCache === null) {
             $this->countryCurrencyCache = class_exists(Country::class)
-                ? Country::with('currency')->get()->mapWithKeys(fn ($c) => [(int) $c->id => ($c->currency?->code ?: 'AED')])->all()
+                ? Country::with('currency')->get()->mapWithKeys(fn ($c) => [(int) $c->id => ($c->currency?->code ?: '')])->all()
                 : [];
         }
 
         $countryId = $this->venueCountryId($venue);
 
-        return $countryId ? ($this->countryCurrencyCache[$countryId] ?? 'AED') : 'AED';
+        // No last-resort code: a venue with no resolvable country shows its amounts
+        // without one, instead of labelling them a currency nobody charged.
+        return $countryId ? ($this->countryCurrencyCache[$countryId] ?? '') : '';
     }
 
     /**
@@ -4055,7 +4111,7 @@ class BookingService
                 'customer_phone' => $b->user?->phone,
                 'listing_name'   => $b->listing?->name,
                 'location_name'  => $venue?->name,
-                'currency'       => $venue ? $this->venueCurrency($venue) : 'AED',
+                'currency'       => $venue ? $this->venueCurrency($venue) : '',
                 'city_id'        => $venue?->city_id ? (string) $venue->city_id : null,
                 'country_id'     => $venue && $this->venueCountryId($venue) ? (string) $this->venueCountryId($venue) : null,
             ]);
@@ -4095,7 +4151,8 @@ class BookingService
         $listing  = $this->mapDashboardListing($booking->listing);
         $location = $this->mapDashboardLocation($booking->venue);
 
-        $payments = $booking->payments->map(fn(Payment $p) => $this->mapDashboardPayment($p))->values();
+        $payCur   = $booking->venue ? $this->venueCurrency($booking->venue) : null;
+        $payments = $booking->payments->map(fn(Payment $p) => $this->mapDashboardPayment($p, $payCur))->values();
 
         $auditLogs = AuditLog::query()
             ->where('resource', 'booking')
@@ -4290,6 +4347,9 @@ class BookingService
 
             if ($mapped['status'] !== BookingPaymentStatus::PAYMENT_SKIPPED && $total > 0) {
                 $this->paymentModel::create([
+                    // The currency this money is in — without it the row reports as
+                    // "Unknown currency" on the Payments page.
+                    'currency'   => $this->bookingCurrency($booking),
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
                     'type'       => PaymentType::FULL,
@@ -4525,7 +4585,7 @@ class BookingService
 
             return sendSuccess('Payment collected', [
                 'booking'    => $this->mapDashboardBooking($booking),
-                'payments'   => $booking->payments->map(fn(Payment $p) => $this->mapDashboardPayment($p))->values(),
+                'payments'   => $booking->payments->map(fn(Payment $p) => $this->mapDashboardPayment($p, $booking->venue ? $this->venueCurrency($booking->venue) : null))->values(),
                 'audit_logs' => $auditLogs,
             ]);
         } catch (Exception $e) {
@@ -4608,7 +4668,7 @@ class BookingService
                     'booking_id'    => $b ? (string) $b->id : null,
                     'customer_id'   => $b && $b->user_id ? (string) $b->user_id : null,
                     'amount'        => (float) $p->amount,
-                    'currency'      => 'AED',
+                    'currency'      => '',
                     'payment_type'  => $type,
                     'booking_date'  => $date,
                     'created_at'    => $b?->created_at?->toIso8601String() ?: $p->created_at?->toIso8601String(),
@@ -4682,7 +4742,7 @@ class BookingService
             ->map(fn(Country $c) => [
                 'id'            => (string) $c->id,
                 'name'          => $c->name,
-                'currency_code' => $c->currency?->code ?: 'AED',
+                'currency_code' => $c->currency?->code ?: '',
                 'status'        => 'active',
             ])->values()
             : collect();
@@ -4810,7 +4870,7 @@ class BookingService
         ];
     }
 
-    protected function mapDashboardPayment(Payment $p): array
+    protected function mapDashboardPayment(Payment $p, ?string $currencyFallback = null): array
     {
         $status = (string) $p->status;
         if ($status === PaymentStatus::PAID) {
@@ -4839,7 +4899,11 @@ class BookingService
             'payment_type' => $type,
             'method'       => $this->toDashboardPaymentMethod($p->method),
             'amount'       => (float) $p->amount,
-            'currency'     => 'AED',
+            // Was hardcoded 'AED' — every payment on a booking read as AED no
+            // matter what was actually charged. The payment row carries the real
+            // currency; rows predating that column fall back to the booking's
+            // venue, and to nothing rather than a code nobody was charged.
+            'currency'     => $p->currency ?: ($currencyFallback ?: ''),
             'status'       => $status,
             'paid_at'      => $status === 'paid' ? $paidAt : null,
             'created_at'   => $p->created_at?->toIso8601String(),

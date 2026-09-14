@@ -73,7 +73,7 @@ class MembershipBillingService
             return ['error' => 'This membership has no price set.'];
         }
 
-        $currency = strtolower((string) ($program->currency ?: 'AED'));
+        $currency = strtolower((string) ($program->currency ?: ''));
         $joiningFee = max(0, round((float) ($program->joining_fee ?: 0), 2));
         $discount = min(max(0, round((float) ($payload['discount'] ?? 0), 2)), $amount);
         $loyalty = max(0, round((float) ($payload['loyalty_redeem'] ?? 0), 2));
@@ -274,7 +274,7 @@ class MembershipBillingService
                 'customer'     => $sub->stripe_customer_id,
                 'subscription' => $stripeSubId,
                 'amount'       => (int) round((float) $sub->joining_fee * 100),
-                'currency'     => strtolower((string) ($sub->program?->currency ?: 'AED')),
+                'currency'     => strtolower((string) ($sub->program?->currency ?: '')),
                 'description'  => 'Joining fee',
             ]);
         } catch (\Throwable $e) {
@@ -309,7 +309,12 @@ class MembershipBillingService
         DB::transaction(function () use ($sub, $invoice, $gross, $isFirst) {
             $loyalty = $isFirst ? $this->spendLoyalty($sub, $this->invoiceDiscount($invoice)) : 0;
 
-            $this->programs->recordSubscriptionCharge($sub, $gross, $loyalty, (string) ($invoice->id ?? ''));
+            // Hand over the currency Stripe actually charged — the ledger records
+            // the money that moved, not what the program was configured with.
+            $this->programs->recordSubscriptionCharge(
+                $sub, $gross, $loyalty, (string) ($invoice->id ?? ''),
+                strtoupper((string) ($invoice->currency ?? '')) ?: null
+            );
 
             $sub->update([
                 'status'            => 'active',

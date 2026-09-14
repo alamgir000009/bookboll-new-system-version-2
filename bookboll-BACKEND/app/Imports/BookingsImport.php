@@ -591,6 +591,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
 
                 // Create deposit payment (paid amount)
                 Payment::create([
+                    'currency'   => $this->importCurrency($booking),
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
                     'type'       => PaymentType::DEPOSIT,
@@ -612,6 +613,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
                         : "Remaining payment of {$remainingAmount} via {$depositMethodName} for booking #{$booking->booking_id}";
 
                     Payment::create([
+                        'currency'   => $this->importCurrency($booking),
                         'user_id'    => $user->id,
                         'booking_id' => $booking->id,
                         'type'       => PaymentType::REMAINING,
@@ -636,6 +638,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
             } elseif ($paymentStatus === BookingPaymentStatus::PENDING) {
                 // Delay/pending payment - create as pending
                 Payment::create([
+                    'currency'   => $this->importCurrency($booking),
                     'user_id'    => $user->id,
                     'booking_id' => $booking->id,
                     'type'       => PaymentType::FULL,
@@ -661,6 +664,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 if ($paymentStatus == BookingPaymentStatus::FULLY_PAID && $paymentProcessor !== 'delay' && !empty($paymentProcessor) && $bookingPrice > $paymentAmount && $depositAmount > 0 && $remainingAmount > 0) {
                     // Create deposit payment (paid)
                     Payment::create([
+                        'currency'   => $this->importCurrency($booking),
                         'user_id'    => $user->id,
                         'booking_id' => $booking->id,
                         'type'       => PaymentType::DEPOSIT,
@@ -674,6 +678,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
 
                     // Create remaining payment (paid)
                     Payment::create([
+                        'currency'   => $this->importCurrency($booking),
                         'user_id'    => $user->id,
                         'booking_id' => $booking->id,
                         'type'       => PaymentType::REMAINING,
@@ -693,6 +698,7 @@ class BookingsImport implements ToCollection, WithHeadingRow
                 } else {
                     // Single payment (Price = Amount) or other cases - create full payment
                     Payment::create([
+                        'currency'   => $this->importCurrency($booking),
                         'user_id'    => $user->id,
                         'booking_id' => $booking->id,
                         'type'       => PaymentType::FULL,
@@ -759,6 +765,35 @@ class BookingsImport implements ToCollection, WithHeadingRow
         }
 
         $this->successCount++;
+    }
+
+    /**
+     * Currency for an imported booking's payments.
+     *
+     * The import never wrote one, so every imported payment reported as
+     * "Unknown currency" on the Payments page. Cached: an import runs thousands
+     * of rows over a handful of venues.
+     *
+     * @var array<int,string>
+     */
+    protected array $venueCurrencyCache = [];
+
+    protected function importCurrency($booking): string
+    {
+        $venueId = (int) ($booking->venue_id ?? 0);
+        if ($venueId <= 0) {
+            return '';
+        }
+        if (array_key_exists($venueId, $this->venueCurrencyCache)) {
+            return $this->venueCurrencyCache[$venueId];
+        }
+
+        $venue = Venue::with('country.currency')->find($venueId);
+        $code  = $venue
+            ? ((string) ($venue->currency_override ?: ($venue->country?->currency?->code ?? '')))
+            : '';
+
+        return $this->venueCurrencyCache[$venueId] = $code;
     }
 
     protected function getValue($row, $key, $default = null)

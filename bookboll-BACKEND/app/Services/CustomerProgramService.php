@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Models\Schedule;
 use App\Models\Venue;
 use App\Models\WalletTransaction;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -302,7 +303,7 @@ class CustomerProgramService
         $countryId = $this->resolveCountryId($program);
         $wallet = null;
         if ($ownerKey) {
-            $wallet = $this->ensureSubscriptionWallet($ownerKey, $countryId, $program->currency ?: 'AED');
+            $wallet = $this->ensureSubscriptionWallet($ownerKey, $countryId, $program->currency);
         }
 
         try {
@@ -914,20 +915,102 @@ class CustomerProgramService
         ])));
     }
 
-    protected function ensureSubscriptionWallet(string $ownerUserId, ?string $countryId, string $currency): ?ProviderWallet
+    /**
+     * Keep a wallet's label honest about the money inside it.
+     *
+     * A subscription stays bound to its wallet, so a wallet created with the wrong
+     * currency would keep that label for ever while PKR kept landing in it. If no
+     * transaction in the wallet was ever booked in another currency, the label is
+     * simply wrong and is corrected. A wallet that really does hold two currencies
+     * is left alone — relabelling that would misstate money.
+     */
+    protected function reconcileWalletCurrency(?ProviderWallet $wallet, string $currency): ?ProviderWallet
     {
+        if (! $wallet || $currency === '') {
+            return $wallet;
+        }
+        if (strtoupper(trim((string) $wallet->currency)) === $currency) {
+            return $wallet;
+        }
+
+        $mixed = WalletTransaction::query()
+            ->where('wallet_id', $wallet->id)
+            ->whereNotNull('currency')
+            ->where('currency', '!=', $currency)
+            ->exists();
+
+        if ($mixed) {
+            Log::warning('Wallet holds more than one currency; leaving its label alone', [
+                'wallet' => $wallet->id, 'label' => $wallet->currency, 'charged' => $currency,
+            ]);
+
+            return $wallet;
+        }
+
+        Log::info('Corrected a wallet currency to match the money in it', [
+            'wallet' => $wallet->id, 'from' => $wallet->currency, 'to' => $currency,
+        ]);
+        $wallet->update(['currency' => $currency]);
+
+        return $wallet;
+    }
+
+    /**
+     * The wallet a membership's earnings belong in.
+     *
+     * A wallet's currency must be the currency the money actually arrived in —
+     * the program's, which is what Stripe charged. There is deliberately NO
+     * fallback: inventing a default is how a Pakistani provider paid in PKR ended
+     * up with a wallet labelled AED, its balance reading as a currency nobody had
+     * charged. With no currency to bank in, no wallet is opened and the caller
+     * logs it, rather than quietly filing the money under a guess.
+     */
+    protected function ensureSubscriptionWallet(string $ownerUserId, ?string $countryId, ?string $currency): ?ProviderWallet
+    {
+        $currency = strtoupper(trim((string) $currency));
+        if ($currency === '') {
+            Log::error('Subscription wallet skipped: the program has no currency', [
+                'owner' => $ownerUserId,
+            ]);
+
+            return null;
+        }
+
         $keys = $this->ownerWalletKeys($ownerUserId);
 
-        $q = ProviderWallet::query()
+        $scoped = fn () => ProviderWallet::query()
             ->whereIn('owner_user_id', $keys)
             ->where('purpose', 'subscription')
-            ->where('is_current', true);
-        if ($countryId) {
-            $q->where('country_id', $countryId);
-        }
-        $wallet = $q->first();
+            ->where('is_current', true)
+            ->when($countryId, fn ($q) => $q->where('country_id', $countryId));
+
+        // 1. The right wallet already exists.
+        $wallet = $scoped()->where('currency', $currency)->first();
         if ($wallet) {
             return $wallet;
+        }
+
+        // 2. A wallet for this country exists but carries a different currency.
+        //    If nothing in it was ever booked in another currency, the label is
+        //    simply wrong — correct it rather than opening a rival wallet and
+        //    splitting the provider's balance in two.
+        $other = $scoped()->first();
+        if ($other) {
+            $mixed = WalletTransaction::query()
+                ->where('wallet_id', $other->id)
+                ->whereNotNull('currency')
+                ->where('currency', '!=', $currency)
+                ->exists();
+
+            if (! $mixed) {
+                $other->update(['currency' => $currency]);
+                Log::info('Corrected a wallet currency to match the money in it', [
+                    'wallet' => $other->id, 'from' => $other->getOriginal('currency'), 'to' => $currency,
+                ]);
+
+                return $other;
+            }
+            // Genuinely holds another currency's money: this one needs its own wallet.
         }
 
         // New wallets are filed under the numeric id — the same key bookings use
@@ -940,7 +1023,7 @@ class CustomerProgramService
             'purpose'            => 'subscription',
             'is_current'         => true,
             'status'             => 'current',
-            'currency'           => $currency ?: 'AED',
+            'currency'           => $currency,
             'available_balance'  => 0,
             'pending_balance'    => 0,
             'lifetime_earnings'  => 0,
@@ -1104,14 +1187,38 @@ class CustomerProgramService
      * wallet credit. The provider's share is always computed on the full price, so
      * a discount or loyalty redemption only ever comes out of Bookboll's fee.
      */
-    public function recordSubscriptionCharge(ClassSubscription $sub, float $amountPaid, float $loyalty, string $reference = ''): void
-    {
+    public function recordSubscriptionCharge(
+        ClassSubscription $sub,
+        float $amountPaid,
+        float $loyalty,
+        string $reference = '',
+        ?string $chargedCurrency = null
+    ): void {
         $program = $sub->program;
         if (! $program) {
             return;
         }
 
-        $currency = $program->currency ?: 'AED';
+        // The currency Stripe actually took is the only fact here — the program's
+        // setting is what we ASKED for, and a stale one must never relabel money
+        // that has already moved. No default: money is never booked under a
+        // currency nobody charged.
+        $currency = strtoupper(trim((string) ($chargedCurrency ?: $program->currency)));
+        if ($currency === '') {
+            Log::error('Subscription charge has no currency — not booked', [
+                'subscription' => $sub->uuid, 'reference' => $reference,
+            ]);
+
+            return;
+        }
+
+        if ($program->currency && strtoupper(trim((string) $program->currency)) !== $currency) {
+            Log::warning('Charged currency differs from the program currency', [
+                'subscription' => $sub->uuid,
+                'program'      => $program->currency,
+                'charged'      => $currency,
+            ]);
+        }
         $commission = (float) ($program->commission_percentage ?: 0);
         $fullGross = round((float) $sub->monthly_amount + (! $sub->first_charge_at ? (float) $sub->joining_fee : 0), 2);
 
@@ -1166,7 +1273,7 @@ class CustomerProgramService
                 ?: ($ownerKey ? optional($this->ownerUserFor($ownerKey))->country_id : null));
 
         $wallet = $sub->wallet_id
-            ? ProviderWallet::find($sub->wallet_id)
+            ? $this->reconcileWalletCurrency(ProviderWallet::find($sub->wallet_id), $currency)
             : ($ownerKey ? $this->ensureSubscriptionWallet($ownerKey, $countryId, $currency) : null);
 
         $user = User::where('uuid', $sub->customer_id)->first();

@@ -351,7 +351,7 @@ class ProgramSaveService
             'sport_category'           => $d['sport_category'] ?? '',
             'coach_name'               => $isGym ? '' : ($d['coach_name'] ?? ''),
             'monthly_price'            => (float) ($d['monthly_price'] ?? 0),
-            'currency'                 => $d['currency'] ?? 'AED',
+            'currency'                 => $d['currency'] ?? '',
             'billing_interval'         => $d['billing_interval'] ?? 'monthly',
             'sessions_per_week'        => $isGym ? 0 : (int) ($d['sessions_per_week'] ?? 1),
             'session_duration_minutes' => $isGym ? 0 : (int) ($d['session_duration_minutes'] ?? 60),

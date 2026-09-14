@@ -425,7 +425,7 @@ class MarketplaceGeoService
             'id'            => $c->id,
             'name'          => $c->name,
             'iso_code'      => $c->iso2,
-            'currency_code' => $currency?->code ?: 'AED',
+            'currency_code' => $currency?->code ?: '',
         ];
     }
 

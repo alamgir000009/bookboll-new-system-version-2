@@ -188,7 +188,7 @@ class AdminReferenceDataService
             'name'          => $c->name,
             'iso_code'      => $c->iso2,
             'status'        => $c->status,
-            'currency_code' => $c->currency?->code ?: 'AED',
+            'currency_code' => $c->currency?->code ?: '',
         ])->values();
     }
 }

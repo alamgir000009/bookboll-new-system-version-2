@@ -176,7 +176,7 @@ class ClassMembershipFromSupabaseSeeder extends Seeder
             'sport_category'            => $row['sport_category'] ?? '',
             'coach_name'                => $row['coach_name'] ?? '',
             'monthly_price'             => $row['monthly_price'] ?? 0,
-            'currency'                  => $row['currency'] ?? 'AED',
+            'currency'                  => $row['currency'] ?? '',
             'sessions_per_week'         => (int) ($row['sessions_per_week'] ?? 1),
             'session_duration_minutes'  => (int) ($row['session_duration_minutes'] ?? 60),
             'day_of_week_mask'          => $this->jsonArray($row['day_of_week_mask'] ?? [1]),

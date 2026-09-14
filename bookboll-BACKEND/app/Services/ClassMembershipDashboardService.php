@@ -494,7 +494,7 @@ class ClassMembershipDashboardService
             : ((float) ($program->commission_percentage ?: self::PLATFORM_COMMISSION) / 100);
         $platformFee = round($fullGross * $feeRate, 2);
         $providerShare = round($fullGross - $platformFee, 2);
-        $currency = $program->currency ?: 'AED';
+        $currency = $program->currency ?: '';
 
         $recipient = '@provider';
         if ($program->mapped_owner_user_id) {

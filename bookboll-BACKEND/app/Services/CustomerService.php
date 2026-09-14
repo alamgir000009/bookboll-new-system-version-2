@@ -719,7 +719,7 @@ class CustomerService
                 ],
                 'favorite_sports' => [],
                 'language'        => 'english',
-                'currency'        => 'AED',
+                'currency'        => '',
             ]);
 
             DB::commit();
@@ -969,7 +969,7 @@ class CustomerService
         $currencyByCountry = $countryIds->isEmpty()
             ? collect()
             : Country::with('currency')->whereIn('id', $countryIds)->get()
-                ->mapWithKeys(fn (Country $c) => [$c->id => $c->currency?->code ?: 'AED']);
+                ->mapWithKeys(fn (Country $c) => [$c->id => $c->currency?->code ?: '']);
 
         $locations = $venues->map(function (Venue $v) use ($currencyByCountry) {
             $ownerId = $v->users->first()?->id ?? $v->created_by;
@@ -1018,7 +1018,7 @@ class CustomerService
                 return [
                     'id'            => (string) $c->id,
                     'name'          => $c->name,
-                    'currency_code' => $c->currency?->code ?: 'AED',
+                    'currency_code' => $c->currency?->code ?: '',
                     'status'        => 'active',
                 ];
             })->values();

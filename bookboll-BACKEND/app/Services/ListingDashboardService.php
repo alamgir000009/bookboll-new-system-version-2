@@ -698,7 +698,7 @@ class ListingDashboardService
                 'start_time'     => $this->normalizeHm($g['start_time'] ?? '18:00'),
                 'end_time'       => $this->normalizeHm($g['end_time'] ?? '22:00'),
                 'days'           => $this->normalizeGroupDays($g['days'] ?? null),
-                'currency'       => $g['currency'] ?? 'AED',
+                'currency'       => $g['currency'] ?? '',
                 'sort_order'     => (int) ($g['sort_order'] ?? $idx),
             ]);
             $oldId = isset($g['id']) ? (string) $g['id'] : null;

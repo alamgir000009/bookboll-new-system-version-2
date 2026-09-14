@@ -319,7 +319,7 @@ class AdminAnalyticsService
             ->map(fn (Country $c) => [
                 'id'            => $c->id,
                 'name'          => $c->name,
-                'currency_code' => $c->currency?->code ?: 'AED',
+                'currency_code' => $c->currency?->code ?: '',
             ]);
     }
 

@@ -133,7 +133,7 @@ class BookingWalletService
 
         // The new wallet earns in the country's own currency (world package keeps
         // that on a related row, not on `countries` itself).
-        $currency = $fallbackCurrency ?: ($template?->currency ?: 'AED');
+        $currency = $fallbackCurrency ?: ($template?->currency ?: '');
         if ($countryId) {
             $code = Country::query()->with('currency')->find($countryId)?->currency?->code;
             if ($code) {
@@ -196,7 +196,7 @@ class BookingWalletService
                 'country_id'     => $wallet->country_id,
                 'wallet_id'      => $wallet->id,
                 'amount'         => $amount,
-                'currency'       => $currency ?: ($wallet->currency ?: 'AED'),
+                'currency'       => $currency ?: ($wallet->currency ?: ''),
                 'payout_method'  => 'stripe_connect',
                 'payout_details' => 'Automatic Stripe Connect payout (split at checkout)',
                 'status'         => 'paid',
@@ -278,7 +278,7 @@ class BookingWalletService
         $netPlatformFee = round($platformFee - $loyalty, 2);
         $collected = round($gross - $loyalty, 2);
 
-        $currency = ($args['currency'] ?? '') ?: 'AED';
+        $currency = ($args['currency'] ?? '') ?: '';
         $bookingId = $args['bookingId'] ?? null;
         $label = ($args['customerLabel'] ?? '') ?: 'customer';
         // The customer the money came from — payments.user_id is required.
