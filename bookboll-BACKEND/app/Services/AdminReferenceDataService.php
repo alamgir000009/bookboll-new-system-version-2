@@ -36,7 +36,9 @@ class AdminReferenceDataService
 
         $venueQuery = Venue::query()->select([
             'id', 'name', 'status', 'owner_user_id', 'city_id', 'country_id',
-            'address', 'currency_override', 'timezone_override', 'sort_order',
+            // The approvals reviewer shows the venue's phone; it was never selected,
+            // so that field sat permanently blank in the review modal.
+            'address', 'phone', 'currency_override', 'timezone_override', 'sort_order',
             'approval_status', 'eligibility_status',
         ])->orderBy('sort_order')->orderBy('name');
 
