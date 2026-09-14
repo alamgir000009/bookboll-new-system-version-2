@@ -133,13 +133,42 @@ class CustomerProgramService
         $memberCount = (int) ($this->activeMemberCounts([$program->id])[$program->id] ?? 0);
         $mapped = $this->mapProgramRow($program);
 
+        // Is the viewer already a member? This route is public, but the customer
+        // token rides along on every call, so a signed-in viewer resolves here.
+        // Enrolment is refused server-side by hasLiveMembership() — answering the
+        // same question up front is what stops the page inviting someone to sign
+        // up for a membership they already hold.
+        $viewer = auth('sanctum')->user();
+        $isMember = false;
+        $mySubscriptionId = null;
+
+        if ($viewer) {
+            $email = strtolower(trim((string) ($viewer->email ?: '')));
+            $isMember = $this->hasLiveMembership($program->id, (string) $viewer->uuid, $email);
+
+            if ($isMember) {
+                $mySubscriptionId = ClassSubscription::where('program_id', $program->id)
+                    ->whereIn('status', ['active', 'trial', 'trialing', 'paused', 'past_due'])
+                    ->where(function ($q) use ($viewer, $email) {
+                        $q->where('customer_id', $viewer->uuid);
+                        if ($email) {
+                            $q->orWhereRaw('LOWER(customer_email) = ?', [$email]);
+                        }
+                    })
+                    ->orderByDesc('started_at')
+                    ->value('uuid');
+            }
+        }
+
         return sendSuccess('Program fetched', [
-            'program'      => $mapped,
-            'image'        => $this->firstPhoto($program),
-            'photos'       => $this->allPhotos($program),
-            'location'     => $location,
-            'openingHours' => $openingHours,
-            'memberCount'  => $memberCount,
+            'program'          => $mapped,
+            'image'            => $this->firstPhoto($program),
+            'photos'           => $this->allPhotos($program),
+            'location'         => $location,
+            'openingHours'     => $openingHours,
+            'memberCount'      => $memberCount,
+            'isMember'         => $isMember,
+            'mySubscriptionId' => $mySubscriptionId,
         ]);
     }
 
