@@ -33,6 +33,18 @@ async function load() { loading.value = true; activePhoto.value = 0; data.value 
 onMounted(async () => { await load(); await resumeFromStripe() })
 watch(() => route.params.id, load)
 
+// The membership check is answered server-side and depends on who is asking, so
+// the page has to re-ask when the viewer signs in or out — otherwise someone who
+// signs in on this very page keeps seeing the sign-up CTA for a membership they
+// already hold.
+watch(() => customer.value?.id, (now, before) => { if (now !== before) load() })
+
+// Already a member of THIS program (server's answer, same rule that refuses a
+// duplicate enrolment). Enrolling again is refused anyway — this stops the page
+// offering it in the first place.
+const isMember = computed(() => !!data.value?.isMember)
+function goToMyMemberships() { router.push('/my-memberships') }
+
 useSeo(() => {
   if (!data.value) return { path: route.path, noindex: !loading.value }
   const venue = data.value.location?.name
@@ -218,8 +230,15 @@ const payLabel = computed(() => hasTrial.value ? 'Start — free now' : `Pay ${c
 
 async function openCheckout() {
   if (isFull.value) return   // capped program at capacity — nothing to open
+  if (isMember.value) { goToMyMemberships(); return }
   // Mandatory: must have a Bookboll account before subscribing.
   if (!isCustomer.value && !(await ensureSignedIn())) return
+  // The program was fetched anonymously, so membership was unknown until now.
+  // Re-fetch as the signed-in viewer before offering to take their money.
+  if (!data.value?.isMember && !isMember.value) {
+    await load()
+    if (isMember.value) { goToMyMemberships(); return }
+  }
   answers.value = blankAnswers(signupFields.value)
   ansErrors.value = {}
   checkoutErr.value = ''
@@ -361,7 +380,11 @@ async function resumeFromStripe() {
           <div v-if="joiningFee > 0" class="pd-joinfee"><Tag :size="14" /> {{ cur }} {{ joiningFee.toLocaleString() }} one-time joining fee</div>
           <div v-if="showMembers" class="pd-members"><Users :size="14" /> {{ memberCount.toLocaleString() }} active members</div>
           <div v-if="introUsed" class="pd-introused"><Gift :size="14" /> Welcome back! You've already used a free trial at this business, so this membership starts with the first payment.</div>
-          <button v-if="isFull" class="pd-btn pd-btn-full" disabled><X :size="16" /> Full</button>
+          <template v-if="isMember">
+            <div class="pd-member"><Check :size="14" /> You're already a member</div>
+            <button class="pd-btn pd-btn-manage" @click="goToMyMemberships">Manage membership</button>
+          </template>
+          <button v-else-if="isFull" class="pd-btn pd-btn-full" disabled><X :size="16" /> Full</button>
           <button v-else class="pd-btn" @click="openCheckout"><Check :size="16" /> {{ hasTrial ? 'Start free trial' : 'Sign up' }}</button>
         </aside>
       </div>
@@ -371,7 +394,8 @@ async function resumeFromStripe() {
            same checkout via openCheckout). Desktop keeps the sticky sidebar CTA. -->
       <div class="pd-dock">
         <div class="pd-dock-price">{{ cur }} {{ payPrice.toLocaleString() }}<span v-if="!oneTime">/{{ intervalLabel(p.billing_interval) }}</span></div>
-        <button v-if="isFull" class="pd-dock-btn pd-dock-btn-full" disabled><X :size="15" /> Full</button>
+        <button v-if="isMember" class="pd-dock-btn pd-dock-btn-manage" @click="goToMyMemberships"><Check :size="15" /> Manage membership</button>
+        <button v-else-if="isFull" class="pd-dock-btn pd-dock-btn-full" disabled><X :size="15" /> Full</button>
         <button v-else class="pd-dock-btn" @click="openCheckout"><Check :size="15" /> {{ hasTrial ? 'Start free trial' : 'Sign up' }}</button>
       </div>
     </div>
@@ -531,6 +555,8 @@ async function resumeFromStripe() {
 .pd-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; box-sizing: border-box; background: var(--brand, #7c3aed); color: #fff; font-weight: 800; padding: 14px; border-radius: 12px; border: none; cursor: pointer; text-decoration: none; font-size: 15px; margin-top: 8px; }
 /* Full (at capacity) — clearly disabled, no brand fill. */
 .pd-btn-full { background: #f1f5f9; color: var(--text-light, #94a3b8); cursor: not-allowed; }
+.pd-member { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 8px; padding: 8px 10px; border-radius: 10px; background: #ecfdf5; color: #047857; font-size: 13px; font-weight: 700; }
+.pd-btn-manage { background: var(--surface, #fff); color: var(--text, #0f172a); border: 1px solid var(--border, #e2e8f0); }
 /* mobile docked signup bar — desktop uses the sidebar CTA, so hidden by default */
 .pd-dock { display: none; }
 @media (max-width: 720px) {
@@ -559,6 +585,7 @@ async function resumeFromStripe() {
   .pd-dock-price span { font-size: 12.5px; font-weight: 600; color: var(--text-light, #94a3b8); }
   .pd-dock-btn { flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px; min-height: 44px; background: var(--brand, #7c3aed); color: #fff; font-weight: 800; font-size: 15px; padding: 13px 22px; border: none; border-radius: 12px; cursor: pointer; }
   .pd-dock-btn-full { background: var(--border, #e2e8f0); color: var(--text-light, #94a3b8); cursor: not-allowed; }
+  .pd-dock-btn-manage { background: #047857; }
 }
 
 /* ── Membership checkout modal ── */

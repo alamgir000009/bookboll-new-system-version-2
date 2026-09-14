@@ -43,6 +43,10 @@ export async function apiLoadProgram(id, brandOwner = null) {
     location: res.data.location || null,
     openingHours: res.data.openingHours || null,
     memberCount: res.data.memberCount || 0,
+    // Server-side answer to "does this viewer already hold this membership?",
+    // using the same rule that refuses a duplicate enrolment.
+    isMember: !!res.data.isMember,
+    mySubscriptionId: res.data.mySubscriptionId || null,
   }
 }
 
