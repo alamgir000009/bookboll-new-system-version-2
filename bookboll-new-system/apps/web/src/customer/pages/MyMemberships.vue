@@ -52,12 +52,18 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
 
 const cancelling = ref('')
 async function cancelSub(s) {
-  if (!window.confirm(`Cancel your ${s.name} membership? No further payments will be collected and your membership pass will be removed. This can't be undone.`)) return
+  // Say what will actually happen. A trial ends on the spot (nothing was paid);
+  // a paid membership runs to the end of the period the member already bought.
+  const inTrial = s.trialStatus === 'in_trial'
+  const msg = inTrial
+    ? `Cancel your ${s.name} membership? Your free trial ends now, your pass is removed and no payment will be taken. This can't be undone.`
+    : `Cancel your ${s.name} membership? No further payments will be collected. You keep access until ${fmtDate(s.endsAt || s.nextBilling) || 'the end of the current period'}. This can't be undone.`
+  if (!window.confirm(msg)) return
   cancelling.value = s.id
   const { error } = await cancelMySubscription(s.id)
   cancelling.value = ''
-  if (error) { window.alert('Could not cancel — please try again or contact the venue.'); return }
-  load()
+  if (error) { window.alert(error); return }
+  await load()
 }
 
 const active = computed(() => subs.value.filter(s => s.status !== 'cancelled'))
@@ -67,8 +73,16 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
 function fmtD(d) { return d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '' }
 function statusLabel(s) {
   if (s.status === 'cancelled') return 'Cancelled'
+  if (s.cancelPending) return 'Cancelling'
   if (s.trialStatus === 'in_trial') return 'Free trial'
   return 'Active'
+}
+
+// A membership that has been cancelled but still runs to the end of the period
+// the member already paid for.
+function endLabel(s) {
+  const when = s.endsAt || s.nextBilling || s.trialEndsAt
+  return when ? `Access until ${fmtDate(when)}` : 'Cancelled — no further payments'
 }
 
 // Retry a QR that failed to render (network blip at the door).
@@ -195,15 +209,18 @@ async function signIn() { if (await ensureSignedIn('see your memberships')) load
               <div class="mm-title">{{ s.name }}</div>
               <div v-if="s.sport" class="mm-sub">{{ s.sport }}</div>
               <div class="mm-meta">
-                <span><CalendarClock :size="12" /> {{ s.nextBilling ? `Renews ${fmtDate(s.nextBilling)}` : 'No renewal' }}</span>
+                <span v-if="s.cancelPending"><CalendarClock :size="12" /> {{ endLabel(s) }}</span>
+                <span v-else><CalendarClock :size="12" /> {{ s.nextBilling ? `Renews ${fmtDate(s.nextBilling)}` : 'No renewal' }}</span>
               </div>
             </div>
             <div class="mm-right">
               <div class="mm-price">{{ s.currency }} {{ s.amount.toLocaleString() }}<span v-if="s.interval">/{{ s.interval }}</span></div>
-              <span class="mm-badge" :class="s.trialStatus === 'in_trial' ? 'trial' : 'active'">
-                <Gift v-if="s.trialStatus === 'in_trial'" :size="11" /><CreditCard v-else :size="11" /> {{ statusLabel(s) }}
+              <span class="mm-badge" :class="s.cancelPending ? 'ending' : (s.trialStatus === 'in_trial' ? 'trial' : 'active')">
+                <Gift v-if="!s.cancelPending && s.trialStatus === 'in_trial'" :size="11" /><CreditCard v-else :size="11" /> {{ statusLabel(s) }}
               </span>
-              <button type="button" class="mm-cancel" :disabled="cancelling === s.id" @click="cancelSub(s)">
+              <!-- Already winding down: offering Cancel again just looks broken. -->
+              <div v-if="s.cancelPending" class="mm-cancelled-note">No further payments will be taken.</div>
+              <button v-else type="button" class="mm-cancel" :disabled="cancelling === s.id" @click="cancelSub(s)">
                 {{ cancelling === s.id ? 'Cancelling…' : 'Cancel membership' }}
               </button>
             </div>
@@ -253,6 +270,8 @@ async function signIn() { if (await ensureSignedIn('see your memberships')) load
 .mm-badge.trial { background: #fef3c7; color: #92400e; }
 .mm-cancel { display: block; margin-top: 7px; margin-left: auto; background: none; border: none; padding: 2px 0; font-size: 12px; font-weight: 700; color: #dc2626; cursor: pointer; text-decoration: underline; }
 .mm-cancel:disabled { opacity: .6; cursor: default; }
+.mm-badge.ending { background: #fff7ed; color: #c2410c; }
+.mm-cancelled-note { margin-top: 7px; font-size: 11px; font-weight: 600; color: #64748b; text-align: right; }
 
 /* ── Pass cards (merged from the old /pass page) ── */
 .mp-state { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
