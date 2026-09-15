@@ -58,7 +58,14 @@ class CustomerBookingQuoteService
         $start       = Carbon::createFromFormat('H:i', substr($startTime, 0, 5));
         $end         = Carbon::createFromFormat('H:i', substr($endTime, 0, 5));
 
-        if ($end->lte($start) && $endTime !== '00:00') {
+        // Midnight is the END of the day, so 23:00-00:00 is one hour, not a block
+        // that ends before it starts. The old `&& $endTime !== '00:00'` skipped the
+        // roll-over for exactly the case that needs it most: `end` stayed at 00:00,
+        // never got past `start`, and the loop below produced ZERO slots. Every
+        // block finishing at midnight then failed to price — the customer could not
+        // book the last slot of the day, and a hosted game got the court for free
+        // because courtPrice() swallows the resulting exception and returns 0.
+        if ($end->lte($start)) {
             $end->addDay();
         }
 

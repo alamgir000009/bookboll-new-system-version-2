@@ -331,6 +331,15 @@ class PaymentController extends Controller
         $bookingIds = $state['booking_ids'] ?? [];
         $source     = $state['source'] ?? 'customer';
 
+        // A host who just paid for their courts belongs back on the hosting page,
+        // where the share link for the event they published is waiting.
+        if ($source === \App\Services\CustomerGameService::CHECKOUT_SOURCE) {
+            return redirect($this->hostReturnUrl($state, [
+                'published' => $state['session']->metadata['hosted_game_uuid'] ?? '',
+                'type'      => $state['session']->metadata['game_type'] ?? 'game',
+            ]));
+        }
+
         if ($source === 'admin') {
             $bookings = Booking::with(['venue:id,name', 'listing:id,name'])
                 ->whereIn('id', $bookingIds)
@@ -350,6 +359,12 @@ class PaymentController extends Controller
         $source  = $state['source'] ?? 'customer';
         $message = $state['message'] ?? 'Payment was not completed.';
 
+        // The event was discarded with the payment, so send the host back to the
+        // form rather than to a booking page that no longer means anything.
+        if ($source === \App\Services\CustomerGameService::CHECKOUT_SOURCE) {
+            return redirect($this->hostReturnUrl($state, ['payment' => 'cancelled']));
+        }
+
         if ($source === 'admin') {
             return view('payment-cancel', ['error' => $message]);
         }
@@ -357,6 +372,14 @@ class PaymentController extends Controller
         $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
 
         return redirect(rtrim($frontendUrl, '/') . '/payment/cancel');
+    }
+
+    /** Where a host lands after Stripe, on the hosting page of the storefront. */
+    protected function hostReturnUrl(array $state, array $query): string
+    {
+        $frontendUrl = rtrim(config('app.frontend_url', 'http://localhost:5173'), '/');
+
+        return $frontendUrl.'/host-game?'.http_build_query(array_filter($query));
     }
 
     protected function renderPaymentReturnFailure(string $source = 'customer')

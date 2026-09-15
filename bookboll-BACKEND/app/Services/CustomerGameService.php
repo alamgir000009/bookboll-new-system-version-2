@@ -13,18 +13,32 @@ use App\Models\LoyaltyProgram;
 use App\Models\Payment;
 use App\Models\TournamentMatch;
 use App\Models\User;
+use Nnjeim\World\Models\Country;
+use App\Models\StripeSession;
 use App\Models\Venue;
+use BookingPaymentMethod;
+use BookingPaymentStatus;
+use BookingStatus;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use PaymentStatus;
+use PaymentType;
 
 /**
  * Hosting a game, hangout or tournament.
  *
  * A hosted game that uses a venue reserves the court with a real booking, exactly
- * like a normal customer booking, and the host pays Bookboll up front: the court
- * deposit (or the full price at a Bookboll-owned venue) plus a non-refundable
- * seats service fee. The rest is settled with the venue on arrival.
+ * like a normal customer booking, and the host really pays for it up front through
+ * the same Stripe checkout: the court deposit (or the full price where the venue
+ * takes online payment) plus a non-refundable seats service fee. The rest is
+ * settled with the venue on arrival.
+ *
+ * Nothing goes live on credit. When there is money due the game is written with
+ * published_at NULL — invisible to every feed — and only becomes real once Stripe
+ * confirms the charge (settleHostCheckout). An abandoned checkout takes the game
+ * and its court reservation with it (discardUnpaidGame).
  *
  * A hangout at the host's own spot books no court and costs nothing.
  *
@@ -40,6 +54,9 @@ class CustomerGameService
 
     /** Points awarded for hosting, once per game. */
     private const HOST_BONUS = 50;
+
+    /** Marks a Stripe checkout as belonging to the hosting flow. */
+    public const CHECKOUT_SOURCE = 'customer_game';
 
     public function __construct(protected CustomerBookingQuoteService $quotes) {}
 
@@ -80,7 +97,15 @@ class CustomerGameService
             return sendError('Court not found.', [], 404);
         }
 
-        return sendSuccess('Quote', ['charge' => $this->priceHost($host, $listing, $data)]);
+        try {
+            $charge = $this->priceHost($host, $listing, $data);
+        } catch (\RuntimeException $e) {
+            // The wizard asks for a price on every change, so a court we cannot
+            // price has to come back as a plain message rather than a 500.
+            return sendError($e->getMessage(), [], 422);
+        }
+
+        return sendSuccess('Quote', ['charge' => $charge]);
     }
 
     /** Publish a game or a hangout. */
@@ -103,8 +128,14 @@ class CustomerGameService
             return sendError('Tell people where to meet.', [], 422);
         }
 
-        $venue    = $listing ? $this->venueFor($listing) : null;
-        $charge   = $this->priceHost($host, $listing, $data);
+        $venue = $listing ? $this->venueFor($listing) : null;
+
+        try {
+            $charge = $this->priceHost($host, $listing, $data);
+        } catch (\RuntimeException $e) {
+            return sendError($e->getMessage(), [], 422);
+        }
+
         $currency = $charge['currency'];
 
         if (! $ownSpot && $this->slotTaken($listing->id, $data['game_date'], $data['start_time'], $data['end_time'])) {
@@ -115,61 +146,97 @@ class CustomerGameService
             ? Community::where('uuid', $data['community_id'])->first()
             : null;
 
-        return DB::transaction(function () use ($host, $listing, $venue, $ownSpot, $data, $charge, $currency, $community) {
-            $booking = $ownSpot ? null : $this->reserveCourt($host, $listing, $venue, $data, $charge);
+        // Is there anything to collect? A free court, an own-spot hangout or a bill
+        // fully covered by points all publish straight away; anything else has to
+        // go through Stripe before the event is real.
+        $needsPayment = ! $ownSpot && $charge['dueNow'] > 0;
 
-            $game = HostedGame::create([
-                'host_customer_id'        => $host->uuid,
-                'host_name'               => $data['host_name'] ?? ($host->name ?: ''),
-                'host_phone'              => $data['host_phone'] ?? ($host->phone ?: ''),
-                'host_whatsapp'           => $data['host_whatsapp'] ?? ($data['host_phone'] ?? ''),
-                'listing_id'              => $listing?->id,
-                'location_id'             => $venue?->id,
-                'booking_id'              => $booking?->id,
-                'city_id'                 => $data['city_id'] ?? $venue?->city_id,
-                'country_id'              => $data['country_id'] ?? $venue?->country_id,
-                'title'                   => $data['title'] ?? '',
-                'sport'                   => $data['sport'] ?? '',
-                'game_type'               => $data['game_type'] ?? 'game',
-                'game_date'               => $data['game_date'],
-                'start_time'              => $data['start_time'],
-                'end_time'                => $data['end_time'],
-                'price_per_person'        => round((float) ($data['price_per_person'] ?? 0), 2),
-                'currency'                => $currency,
-                'max_players'             => (int) ($data['max_players'] ?? 0),
-                'skill_level'             => $data['skill_level'] ?? 'all',
-                'description'             => $data['description'] ?? '',
-                'status'                  => 'open',
-                'prize_pot'               => round((float) ($data['prize_pot'] ?? 0), 2),
-                'prize_note'              => $data['prize_note'] ?? null,
-                'custom_location_name'    => $data['custom_location_name'] ?? null,
-                'custom_location_address' => $data['custom_location_address'] ?? null,
-                'hide_location'           => (bool) ($data['hide_location'] ?? false),
-                'images'                  => $data['images'] ?? [],
-                'signup_form'             => $data['signup_form'] ?? [],
-                'request_deadline'        => $data['request_deadline'] ?? null,
-                'approval_mode'           => $data['approval_mode'] ?? 'review',
-                'allow_waitlist'          => ($data['allow_waitlist'] ?? true) !== false,
-                'lock_minutes_before'     => $data['lock_minutes_before'] ?? null,
-                'play_format'             => $data['play_format'] ?? null,
-                'courts_count'            => $data['courts_count'] ?? null,
-                'charge'                  => $charge,
-                'community_id'            => $community?->id,
-                'community_public'        => $community ? (bool) ($data['community_public'] ?? false) : false,
-                'moderation_status'       => 'active',
-            ]);
+        try {
+            return DB::transaction(function () use ($host, $listing, $venue, $ownSpot, $data, $charge, $currency, $community, $needsPayment) {
+                if (! $ownSpot) {
+                    // The check above happened outside any transaction, so two hosts
+                    // could both pass it and both insert. Take the listing's booking
+                    // mutex and ask again with the answer held still — the same guard
+                    // the customer and dashboard booking paths use.
+                    app(BookingService::class)->lockListingForBooking($listing->id);
 
-            if ($booking) {
-                $this->recordHostPayments($host, $booking, $charge, $currency);
-            }
+                    if ($this->slotTaken($listing->id, $data['game_date'], $data['start_time'], $data['end_time'])) {
+                        throw new \RuntimeException('That court was just booked for this time. Pick another time or court.');
+                    }
+                }
 
-            $this->awardHostBonus($host);
+                $booking = $ownSpot ? null : $this->reserveCourt($host, $listing, $venue, $data, $charge, ! $needsPayment);
 
-            return sendSuccess('Game published', [
-                'game'   => $this->mapGame($game),
-                'charge' => $charge,
-            ]);
-        });
+                $game = HostedGame::create([
+                    'host_customer_id'        => $host->uuid,
+                    'host_name'               => $data['host_name'] ?? ($host->name ?: ''),
+                    'host_phone'              => $data['host_phone'] ?? ($host->phone ?: ''),
+                    'host_whatsapp'           => $data['host_whatsapp'] ?? ($data['host_phone'] ?? ''),
+                    'listing_id'              => $listing?->id,
+                    'location_id'             => $venue?->id,
+                    'booking_id'              => $booking?->id,
+                    'city_id'                 => $data['city_id'] ?? $venue?->city_id,
+                    'country_id'              => $data['country_id'] ?? $venue?->country_id,
+                    'title'                   => $data['title'] ?? '',
+                    'sport'                   => $data['sport'] ?? '',
+                    'game_type'               => $data['game_type'] ?? 'game',
+                    'game_date'               => $data['game_date'],
+                    'start_time'              => $data['start_time'],
+                    'end_time'                => $data['end_time'],
+                    'price_per_person'        => round((float) ($data['price_per_person'] ?? 0), 2),
+                    'currency'                => $currency,
+                    'max_players'             => (int) ($data['max_players'] ?? 0),
+                    'skill_level'             => $data['skill_level'] ?? 'all',
+                    'description'             => $data['description'] ?? '',
+                    'status'                  => 'open',
+                    'prize_pot'               => round((float) ($data['prize_pot'] ?? 0), 2),
+                    'prize_note'              => $data['prize_note'] ?? null,
+                    'custom_location_name'    => $data['custom_location_name'] ?? null,
+                    'custom_location_address' => $data['custom_location_address'] ?? null,
+                    'hide_location'           => (bool) ($data['hide_location'] ?? false),
+                    'images'                  => $data['images'] ?? [],
+                    'signup_form'             => $data['signup_form'] ?? [],
+                    'request_deadline'        => $data['request_deadline'] ?? null,
+                    'approval_mode'           => $data['approval_mode'] ?? 'review',
+                    'allow_waitlist'          => ($data['allow_waitlist'] ?? true) !== false,
+                    'lock_minutes_before'     => $data['lock_minutes_before'] ?? null,
+                    'play_format'             => $data['play_format'] ?? null,
+                    'courts_count'            => $data['courts_count'] ?? null,
+                    'charge'                  => $charge,
+                    'community_id'            => $community?->id,
+                    'community_public'        => $community ? (bool) ($data['community_public'] ?? false) : false,
+                    'moderation_status'       => 'active',
+                    // Nothing is live until the money is in.
+                    'published_at'            => $needsPayment ? null : now(),
+                ]);
+
+                if ($booking) {
+                    $this->recordHostPayments($host, $booking, $charge, $currency, true, ! $needsPayment);
+                }
+
+                if ($needsPayment) {
+                    $checkout = $this->startHostCheckout($host, $game, [$booking->id], $charge, $currency);
+
+                    return sendSuccess('Complete payment to publish', [
+                        'game'             => $this->mapGame($game),
+                        'charge'           => $charge,
+                        'requires_payment' => true,
+                        'checkout_url'     => $checkout['url'],
+                        'session_id'       => $checkout['session_id'],
+                    ]);
+                }
+
+                $this->awardHostBonus($host);
+
+                return sendSuccess('Game published', [
+                    'game'             => $this->mapGame($game),
+                    'charge'           => $charge,
+                    'requires_payment' => false,
+                ]);
+            });
+        } catch (\RuntimeException $e) {
+            return sendError($e->getMessage(), [], 422);
+        }
     }
 
     /**
@@ -528,7 +595,7 @@ class CustomerGameService
     protected function priceHost(User $host, ?Listing $listing, array $data): array
     {
         $venue    = $listing ? $this->venueFor($listing) : null;
-        $currency = $venue?->currency_override ?: '';
+        $currency = $this->venueCurrency($venue);
 
         if (! $listing) {
             return $this->charge($currency, 0, 0, 0, false, 0);
@@ -585,11 +652,48 @@ class CustomerGameService
                 (string) $data['end_time'],
                 max(1, (int) ($data['max_players'] ?? 1))
             );
+        } catch (\Throwable $e) {
+            // NEVER fall back to zero. This used to `return 0.0`, which turned any
+            // pricing failure into a free court: a block ending at midnight threw,
+            // was swallowed here, and the host reserved the venue for nothing.
+            // Refusing is the only safe answer — the venue must never be given away
+            // because we could not work out what it costs.
+            Log::error('Hosted game court pricing failed', [
+                'listing_id' => $listing->id,
+                'date'       => $data['game_date'] ?? null,
+                'start_time' => $data['start_time'] ?? null,
+                'end_time'   => $data['end_time'] ?? null,
+                'error'      => $e->getMessage(),
+            ]);
 
-            return round((float) ($quote['subtotal'] ?? 0), 2);
-        } catch (\Throwable) {
-            return 0.0;
+            throw new \RuntimeException(
+                "We couldn't price that court for the time you picked. Please choose another time or court."
+            );
         }
+
+        return round((float) ($quote['subtotal'] ?? 0), 2);
+    }
+
+    /**
+     * The currency this venue charges in. The venue's own override wins, then its
+     * country's currency. There is deliberately no platform default: charging a
+     * host in a guessed currency is worse than refusing to charge them at all.
+     */
+    protected function venueCurrency(?Venue $venue): string
+    {
+        if (! $venue) {
+            return '';
+        }
+
+        if (! empty($venue->currency_override)) {
+            return strtoupper((string) $venue->currency_override);
+        }
+
+        $code = $venue->country_id
+            ? Country::with('currency')->find($venue->country_id)?->currency?->code
+            : null;
+
+        return strtoupper((string) ($code ?: ''));
     }
 
     /** Listing override → the venue's country rate → platform default. */
@@ -683,9 +787,19 @@ class CustomerGameService
             ->exists();
     }
 
-    protected function reserveCourt(User $host, Listing $listing, ?Venue $venue, array $data, array $charge): Booking
-    {
-        // Record it under the method the host actually paid on.
+    protected function reserveCourt(
+        User $host,
+        Listing $listing,
+        ?Venue $venue,
+        array $data,
+        array $charge,
+        bool $settled = true
+    ): Booking {
+        // Record it under the method the host is paying on. `$settled` says whether
+        // the money is already in: it is only true when there is nothing to collect
+        // (a free court, or points covering the whole bill). When the host is being
+        // sent to Stripe the booking starts unpaid, exactly like a normal customer
+        // checkout, and Stripe's confirmation is what marks it paid.
         if ($charge['courtTotal'] <= 0) {
             $paymentStatus = 'payment_skipped';
             $paymentMethod = 'payment_skipped';
@@ -693,10 +807,10 @@ class CustomerGameService
             $paymentStatus = 'pending';
             $paymentMethod = 'cash_on_arrival';
         } elseif ($charge['courtArrival'] > 0) {
-            $paymentStatus = 'deposit_paid';
+            $paymentStatus = $settled ? 'deposit_paid' : 'pending';
             $paymentMethod = 'deposit_remaining_on_arrival';
         } else {
-            $paymentStatus = 'fully_paid';
+            $paymentStatus = $settled ? 'fully_paid' : 'pending';
             $paymentMethod = 'online_payment';
         }
 
@@ -729,8 +843,20 @@ class CustomerGameService
      * Loyalty is Bookboll's to give, so it comes off the service fee first, then
      * the deposit — never the venue's balance.
      */
-    protected function recordHostPayments(User $host, Booking $booking, array $charge, string $currency, bool $spendLoyalty = true): void
-    {
+    protected function recordHostPayments(
+        User $host,
+        Booking $booking,
+        array $charge,
+        string $currency,
+        bool $spendLoyalty = true,
+        bool $settled = true
+    ): void {
+        // Money the host still has to pay is written as PENDING, never 'paid'.
+        // These rows used to be created already marked paid with no charge id, so
+        // venues were shown money that had never arrived. settleHostCheckout()
+        // flips them once Stripe confirms.
+        $nowStatus = $settled ? 'paid' : 'pending';
+
         $remaining = $charge['loyaltyRedeem'];
 
         $serviceNet = max(0, $charge['serviceFee'] - $remaining);
@@ -746,7 +872,7 @@ class CustomerGameService
                 'type'      => $charge['bookbollOwned'] ? 'full' : 'deposit',
                 'amount'    => $courtNet,
                 'recipient' => '@bookboll',
-                'status'    => 'paid',
+                'status'    => $nowStatus,
                 'notes'     => $charge['bookbollOwned'] ? 'Court paid in full online' : 'Court deposit',
             ];
         }
@@ -756,7 +882,7 @@ class CustomerGameService
                 'type'      => 'commission',
                 'amount'    => $serviceNet,
                 'recipient' => '@bookboll',
-                'status'    => 'paid',
+                'status'    => $nowStatus,
                 'notes'     => 'Seats service fee (non-refundable)',
             ];
         }
@@ -789,9 +915,339 @@ class CustomerGameService
             ]);
         }
 
-        // A bracket spends its points once for the whole thing, not per match.
-        if ($spendLoyalty && $charge['loyaltyRedeem'] > 0) {
+        // A bracket spends its points once for the whole thing, not per match, and
+        // never before the payment they part-funded actually goes through.
+        if ($spendLoyalty && $settled && $charge['loyaltyRedeem'] > 0) {
             $this->spendLoyalty($host, $charge['loyaltyRedeem']);
+        }
+    }
+
+    /**
+     * Send the host to Stripe for what they owe now, on the same checkout the rest
+     * of the platform uses. The game already exists but is unpublished, and its
+     * courts are reserved but unpaid — this session is what turns both real.
+     *
+     * @param  array<int,int>  $bookingIds  every court this game holds
+     * @return array{url:string,session_id:string}
+     */
+    protected function startHostCheckout(
+        User $host,
+        HostedGame $game,
+        array $bookingIds,
+        array $charge,
+        string $currency
+    ): array {
+        $amount = round((float) $charge['dueNow'], 2);
+
+        if ($amount <= 0) {
+            throw new \RuntimeException('There is nothing to pay for this event.');
+        }
+
+        if ($currency === '') {
+            // Charging in a guessed currency is worse than not charging: the host
+            // would be billed in one currency and the venue paid in another.
+            throw new \RuntimeException(
+                'This venue has no currency set, so we cannot take payment for it yet. Please contact support.'
+            );
+        }
+
+        \Stripe\Stripe::setApiKey(config('services.stripe.secret'));
+
+        $host->createOrGetStripeCustomer();
+
+        if (! $host->stripe_id) {
+            throw new \RuntimeException('We could not start the payment. Please try again.');
+        }
+
+        $stripe   = app(StripeService::class);
+        $urls     = $stripe->checkoutReturnUrls();
+        $listing  = $game->listing_id ? Listing::find($game->listing_id) : null;
+        $venue    = $game->location_id ? Venue::find($game->location_id) : null;
+        $label    = $game->game_type === 'tournament' ? 'Tournament' : ($game->game_type === 'event' ? 'Hangout' : 'Game');
+
+        $lines = array_filter([
+            $charge['courtNow'] > 0
+                ? ($charge['bookbollOwned'] ? 'Court' : 'Court deposit').': '.$currency.' '.number_format($charge['courtNow'], 2)
+                : null,
+            $charge['serviceFee'] > 0 ? 'Seats service fee: '.$currency.' '.number_format($charge['serviceFee'], 2) : null,
+            $charge['loyaltyRedeem'] > 0 ? 'Points applied: -'.$currency.' '.number_format($charge['loyaltyRedeem'], 2) : null,
+            $charge['courtArrival'] > 0 ? 'Due at the venue on arrival: '.$currency.' '.number_format($charge['courtArrival'], 2) : null,
+        ]);
+
+        $description = substr(trim(implode(' | ', $lines)), 0, 500);
+
+        $session = \Stripe\Checkout\Session::create([
+            'customer'             => $host->stripe_id,
+            'payment_method_types' => ['card'],
+            'mode'                 => 'payment',
+            'success_url'          => $urls['success_url'],
+            'cancel_url'           => $urls['cancel_url'],
+            'metadata'             => [
+                // `source` routes fulfilment here instead of the normal booking path.
+                'source'           => self::CHECKOUT_SOURCE,
+                'hosted_game_uuid' => (string) $game->uuid,
+                'game_type'        => (string) $game->game_type,
+                'user_id'          => (string) $host->id,
+                'user_email'       => (string) ($host->email ?? ''),
+                'booking_id'       => (string) ($bookingIds[0] ?? ''),
+                'all_booking_ids'  => json_encode(array_values($bookingIds)),
+                'venue_id'         => (string) ($game->location_id ?? ''),
+                'venue_name'       => (string) ($venue?->name ?? ''),
+                'listing_id'       => (string) ($game->listing_id ?? ''),
+                'listing_name'     => (string) ($listing?->name ?? ''),
+                'payment_type'     => 'hosted_game',
+                'currency'         => $currency,
+                'court_now'        => (string) $charge['courtNow'],
+                'service_fee'      => (string) $charge['serviceFee'],
+                'loyalty_redeem'   => (string) $charge['loyaltyRedeem'],
+                'due_now'          => (string) $amount,
+            ],
+            'line_items' => [[
+                'price_data' => [
+                    'currency'     => strtolower($currency),
+                    'unit_amount'  => (int) round($amount * 100),
+                    'product_data' => [
+                        'name'        => $label.': '.($game->title ?: $game->sport ?: 'Hosted event'),
+                        'description' => $description !== '' ? $description : 'Hosted event',
+                    ],
+                ],
+                'quantity' => 1,
+            ]],
+        ]);
+
+        StripeSession::create([
+            'session_id'  => $session->id,
+            'booking_id'  => $bookingIds[0] ?? null,
+            'booking_ids' => array_values($bookingIds),
+            'source'      => self::CHECKOUT_SOURCE,
+            'processed'   => false,
+        ]);
+
+        return ['url' => $session->url, 'session_id' => $session->id];
+    }
+
+    /**
+     * Stripe confirmed the host's payment: settle every row it covered, credit the
+     * venue, spend the points and put the event live.
+     *
+     * Runs inside the fulfilment transaction and must be idempotent — Stripe will
+     * happily deliver the same webhook twice.
+     */
+    public function settleHostCheckout(string $gameUuid, string $chargeId, string $paymentIntentId): void
+    {
+        $game = HostedGame::withUnpublished()
+            ->where('uuid', $gameUuid)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $game) {
+            Log::error('Hosted game missing during Stripe fulfilment', ['uuid' => $gameUuid]);
+
+            return;
+        }
+
+        if ($game->isPublished()) {
+            return;   // already settled by an earlier delivery of this webhook
+        }
+
+        foreach ($this->bookingIdsFor($game) as $bookingId) {
+            $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
+            if (! $booking) {
+                continue;
+            }
+
+            if ($booking->status === BookingStatus::CANCELLED) {
+                // The court went away while the host was paying. Publishing now
+                // would advertise an event with nowhere to play it.
+                throw new \RuntimeException(
+                    "Court booking #{$booking->booking_id} was cancelled; refusing to publish a paid hosted game without its court."
+                );
+            }
+
+            $this->settleHostBooking($booking, $chargeId, $paymentIntentId);
+        }
+
+        $charge = is_array($game->charge) ? $game->charge : [];
+        $host   = User::where('uuid', $game->host_customer_id)->first();
+
+        if ($host) {
+            // Points are only spent now — the charge they discounted has landed.
+            if ((float) ($charge['loyaltyRedeem'] ?? 0) > 0) {
+                $this->spendLoyalty($host, (float) $charge['loyaltyRedeem']);
+            }
+
+            $this->awardHostBonus($host);
+        }
+
+        $game->forceFill(['published_at' => now()])->save();
+
+        Log::info('Hosted game published after payment', [
+            'uuid'       => $game->uuid,
+            'game_type'  => $game->game_type,
+            'charge_id'  => $chargeId,
+            'booking_ids' => $this->bookingIdsFor($game),
+        ]);
+    }
+
+    /**
+     * The host walked away from Stripe. Release the courts and drop the event so
+     * nothing half-made is left behind — the slot has to go back on sale.
+     */
+    public function discardUnpaidGame(string $gameUuid, string $reason = 'Payment was not completed.'): void
+    {
+        $game = HostedGame::withUnpublished()
+            ->where('uuid', $gameUuid)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $game || $game->isPublished()) {
+            return;   // nothing pending, or the host paid after all
+        }
+
+        $bookingIds = $this->bookingIdsFor($game);
+
+        Payment::whereIn('booking_id', $bookingIds)
+            ->where('status', PaymentStatus::PENDING)
+            ->update(['status' => PaymentStatus::CANCELLED, 'notes' => DB::raw("CONCAT(COALESCE(notes,''), ' — cancelled: unpaid hosted event')")]);
+
+        foreach ($bookingIds as $bookingId) {
+            $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
+            if (! $booking || $booking->status === BookingStatus::CANCELLED) {
+                continue;
+            }
+
+            $booking->update([
+                'status' => BookingStatus::CANCELLED,
+                'notes'  => trim((string) $booking->notes.' — '.$reason),
+            ]);
+        }
+
+        TournamentMatch::where('tournament_id', $game->id)->delete();
+        $game->delete();
+
+        Log::info('Unpaid hosted game discarded', ['uuid' => $gameUuid, 'booking_ids' => $bookingIds]);
+    }
+
+    /** Every court booking this event holds — one for a game, many for a bracket. */
+    protected function bookingIdsFor(HostedGame $game): array
+    {
+        $ids = $game->booking_id ? [(int) $game->booking_id] : [];
+
+        if ($game->game_type === 'tournament') {
+            $ids = array_merge(
+                $ids,
+                TournamentMatch::where('tournament_id', $game->id)
+                    ->whereNotNull('booking_id')
+                    ->pluck('booking_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all()
+            );
+        }
+
+        return array_values(array_unique(array_filter($ids)));
+    }
+
+    /**
+     * Mark one court's collected money as received, exactly the way a normal
+     * customer booking is settled: flip its pending rows, set the booking's
+     * payment state from what was actually collected, and credit the provider.
+     */
+    protected function settleHostBooking(Booking $booking, string $chargeId, string $paymentIntentId): void
+    {
+        // The seats service fee is Bookboll's own money — it settles, but it is
+        // not part of what the venue is owed, so it is handled apart from the
+        // court rows below and never reaches the provider wallet.
+        Payment::where('booking_id', $booking->id)
+            ->where('type', 'commission')
+            ->where('status', PaymentStatus::PENDING)
+            ->update([
+                'status'            => PaymentStatus::PAID,
+                'method'            => 'online',
+                'charge_id'         => $chargeId,
+                'payment_intent_id' => $paymentIntentId,
+                'paid_at'           => now(),
+                'date'              => now()->toDateString(),
+            ]);
+
+        $courtRows = Payment::where('booking_id', $booking->id)
+            ->where('status', PaymentStatus::PENDING)
+            ->whereIn('type', [PaymentType::FULL, PaymentType::DEPOSIT])
+            ->lockForUpdate()
+            ->get();
+
+        if ($courtRows->isEmpty()) {
+            // Cash on arrival: Stripe only collected the seats fee, so the court
+            // is still owed to the venue and the booking stays pending.
+            return;
+        }
+
+        $paidInFull = $courtRows->contains(fn (Payment $p) => $p->type === PaymentType::FULL);
+        $collected  = (float) $courtRows->sum('amount');
+
+        foreach ($courtRows as $row) {
+            $row->update([
+                'status'            => PaymentStatus::PAID,
+                'method'            => 'online',
+                'charge_id'         => $chargeId,
+                'payment_intent_id' => $paymentIntentId,
+                'paid_at'           => now(),
+                'date'              => now()->toDateString(),
+            ]);
+        }
+
+        $booking->update([
+            'payment_status'        => $paidInFull ? BookingPaymentStatus::FULLY_PAID : BookingPaymentStatus::DEPOSIT_PAID,
+            'payment_method'        => $paidInFull ? BookingPaymentMethod::ONLINE_PAYMENT : BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL,
+            'full_payment_received' => $paidInFull,
+        ]);
+
+        $booking->history()->create([
+            'user_id'     => $booking->user_id,
+            'action'      => 'payment_received',
+            'description' => "Hosted event payment marked as PAID via Stripe. Charge ID: {$chargeId}",
+        ]);
+
+        autoConfirmBookingIfPaid($booking->fresh());
+        regenerateBookingInvoice($booking->fresh());
+
+        // Same rule as every other booking: a deposit IS Bookboll's commission, so
+        // the provider is credited only when the whole court was collected.
+        if ($paidInFull) {
+            $this->creditProviderWallet($booking, $collected);
+        }
+    }
+
+    /** Credit the venue owner's wallet for court money Bookboll collected. */
+    protected function creditProviderWallet(Booking $booking, float $collected): void
+    {
+        try {
+            $venue       = $booking->venue_id ? Venue::find($booking->venue_id) : null;
+            $ownerUserId = $venue?->owner_user_id;
+
+            if (! $ownerUserId || $collected <= 0) {
+                return;   // Bookboll-run venue — there is no provider to pay
+            }
+
+            $wallets = app(BookingWalletService::class);
+
+            $wallets->recordBookingOnlinePayment([
+                'bookingId'     => $booking->id,
+                'ownerUserId'   => $ownerUserId,
+                'countryId'     => $wallets->countryIdForVenue($venue),
+                'total'         => $collected,
+                'currency'      => $this->venueCurrency($venue),
+                'ratePct'       => $wallets->courtCommissionPct($booking->listing),
+                'customerLabel' => $booking->user?->name ?: 'Hosted event',
+            ]);
+        } catch (\Throwable $e) {
+            // A booking is paid whether or not the ledger writes; never roll the
+            // host's payment back over an accounting error.
+            Log::error('Hosted game provider wallet credit failed', [
+                'booking_id' => $booking->id,
+                'error'      => $e->getMessage(),
+            ]);
         }
     }
 
@@ -1298,15 +1754,23 @@ class CustomerGameService
             }
         }
 
-        $charge   = $this->priceTournament($host, $listings, $matches, $data);
+        try {
+            $charge = $this->priceTournament($host, $listings, $matches, $data);
+        } catch (\RuntimeException $e) {
+            return sendError($e->getMessage(), [], 422);
+        }
+
         $currency = $charge['currency'];
+
+        // A bracket is paid for as one bill covering every court in it.
+        $needsPayment = $charge['dueNow'] > 0;
 
         $community = ! empty($data['community_id'])
             ? Community::where('uuid', $data['community_id'])->first()
             : null;
 
         try {
-            return DB::transaction(function () use ($host, $data, $teams, $matches, $first, $last, $listings, $charge, $currency, $community) {
+            return DB::transaction(function () use ($host, $data, $teams, $matches, $first, $last, $listings, $charge, $currency, $community, $needsPayment) {
                 $firstListing = $listings->get($first['listing_id']);
 
                 $tournament = HostedGame::create([
@@ -1343,9 +1807,24 @@ class CustomerGameService
                     'community_id'        => $community?->id,
                     'community_public'    => $community ? (bool) ($data['community_public'] ?? false) : false,
                     'moderation_status'   => 'active',
+                    // Nothing is live until the money is in.
+                    'published_at'        => $needsPayment ? null : now(),
                 ]);
 
+                // Lock every court this bracket touches before checking any of
+                // them, always in id order: two brackets sharing courts then queue
+                // behind each other instead of deadlocking half-way through.
+                $lockIds = array_values(array_unique(array_map('intval', array_column($matches, 'listing_id'))));
+                sort($lockIds);
+
+                $bookings = app(BookingService::class);
+
+                foreach ($lockIds as $lockId) {
+                    $bookings->lockListingForBooking($lockId);
+                }
+
                 $firstBooking = null;
+                $bookingIds   = [];
 
                 foreach ($matches as $i => $m) {
                     $listing = $listings->get($m['listing_id']);
@@ -1365,10 +1844,11 @@ class CustomerGameService
                         'max_players' => $teams,
                         'game_type'   => 'tournament',
                         'title'       => ($data['title'] ?? $data['sport'] ?? '').' — round '.((int) $m['round'] + 1).', match '.((int) $m['index'] + 1),
-                    ], $line);
+                    ], $line, ! $needsPayment);
 
                     $firstBooking ??= $booking;
-                    $this->recordHostPayments($host, $booking, $line, $currency, spendLoyalty: false);
+                    $bookingIds[] = $booking->id;
+                    $this->recordHostPayments($host, $booking, $line, $currency, spendLoyalty: false, settled: ! $needsPayment);
 
                     TournamentMatch::create([
                         'tournament_id' => $tournament->id,
@@ -1389,10 +1869,23 @@ class CustomerGameService
                 if ($charge['serviceFee'] > 0 && $firstBooking) {
                     $this->recordHostPayments($host, $firstBooking, $this->charge(
                         $currency, 0, 0, $charge['serviceFee'], true, $charge['serviceFeeLoyalty']
-                    ), $currency, spendLoyalty: false);
+                    ), $currency, spendLoyalty: false, settled: ! $needsPayment);
                 }
 
-                // Points are spent once for the whole bracket, not per match.
+                if ($needsPayment) {
+                    $checkout = $this->startHostCheckout($host, $tournament, $bookingIds, $charge, $currency);
+
+                    return sendSuccess('Complete payment to publish', [
+                        'tournament'       => $this->mapGame($tournament),
+                        'charge'           => $charge,
+                        'requires_payment' => true,
+                        'checkout_url'     => $checkout['url'],
+                        'session_id'       => $checkout['session_id'],
+                    ]);
+                }
+
+                // Points are spent once for the whole bracket, not per match — and
+                // only when there was nothing left to collect.
                 if ($charge['loyaltyRedeem'] > 0) {
                     $this->spendLoyalty($host, $charge['loyaltyRedeem']);
                 }
@@ -1400,8 +1893,9 @@ class CustomerGameService
                 $this->awardHostBonus($host);
 
                 return sendSuccess('Tournament published', [
-                    'tournament' => $this->mapGame($tournament),
-                    'charge'     => $charge,
+                    'tournament'       => $this->mapGame($tournament),
+                    'charge'           => $charge,
+                    'requires_payment' => false,
                 ]);
             });
         } catch (\RuntimeException $e) {
@@ -1426,7 +1920,7 @@ class CustomerGameService
         foreach ($matches as $m) {
             $listing = $listings->get($m['listing_id']);
             $venue   = $this->venueFor($listing);
-            $currency = $venue?->currency_override ?: $currency;
+            $currency = $this->venueCurrency($venue) ?: $currency;
 
             $courtTotal = $this->courtPrice($listing, [
                 'game_date'   => $m['date'],

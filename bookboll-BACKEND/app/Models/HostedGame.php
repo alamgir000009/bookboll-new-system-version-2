@@ -5,6 +5,7 @@ namespace App\Models;
 
 use App\Traits\GeneratesUuid;
 use App\Traits\LogsModelActivity;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -37,6 +38,7 @@ class HostedGame extends Model
         'skill_level',
         'description',
         'status',
+        'published_at',
         'num_teams',
         'format',
         'prize_pot',
@@ -72,6 +74,7 @@ class HostedGame extends Model
         'prize_pot'            => 'decimal:2',
         'hide_location'        => 'boolean',
         'images'               => 'array',
+        'published_at'         => 'datetime',
         'moderated_at'         => 'datetime',
         'signup_form'          => 'array',
         'request_deadline'     => 'datetime',
@@ -84,6 +87,34 @@ class HostedGame extends Model
         'created_at'           => 'datetime',
         'updated_at'           => 'datetime',
     ];
+
+    /**
+     * A game is only real once the host has paid for the court. Hosting creates
+     * the row first and sends the host to Stripe, so an unpaid game exists in the
+     * table with published_at NULL — it must stay out of every feed, every
+     * listing, the moderation queue and the analytics until the money lands.
+     *
+     * Gating it here rather than at each query means a read path added later is
+     * safe by default. The fulfilment and abandon paths, which must see these
+     * rows, opt back in with HostedGame::withUnpublished().
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('published', function (Builder $query) {
+            $query->whereNotNull($query->getModel()->getTable().'.published_at');
+        });
+    }
+
+    /** Query including games still awaiting the host's payment. */
+    public static function withUnpublished(): Builder
+    {
+        return static::withoutGlobalScope('published');
+    }
+
+    public function isPublished(): bool
+    {
+        return $this->published_at !== null;
+    }
 
     public function joinRequests(): HasMany
     {
@@ -121,6 +152,7 @@ class HostedGame extends Model
             'skill_level',
             'description',
             'status',
+            'published_at',
             'num_teams',
             'format',
             'prize_pot',

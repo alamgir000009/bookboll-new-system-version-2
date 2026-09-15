@@ -340,6 +340,16 @@ class StripeService
                 if ($cancelPendingBookings && $source === 'customer' && ! empty($bookingIds)) {
                     $this->cancelUnpaidBookingsForCheckout($bookingIds, 'Payment was not completed.');
                 }
+
+                // A hosted event the host never paid for must not linger: its
+                // courts go back on sale and the unpublished event is removed.
+                if ($cancelPendingBookings && $source === CustomerGameService::CHECKOUT_SOURCE) {
+                    $uuid = $session->metadata['hosted_game_uuid'] ?? null;
+
+                    if ($uuid) {
+                        app(CustomerGameService::class)->discardUnpaidGame((string) $uuid);
+                    }
+                }
             });
         } catch (Exception $e) {
             Log::error('Failed to abandon Stripe checkout session', [
@@ -429,9 +439,10 @@ class StripeService
             ];
         }
 
-        $bookingIds  = $this->resolveBookingIdsFromSession($session);
-        $paymentType = $session->metadata['payment_type'] ?? 'full';
-        $source      = $session->metadata['source'] ?? 'customer';
+        $bookingIds     = $this->resolveBookingIdsFromSession($session);
+        $paymentType    = $session->metadata['payment_type'] ?? 'full';
+        $source         = $session->metadata['source'] ?? 'customer';
+        $hostedGameUuid = $session->metadata['hosted_game_uuid'] ?? null;
 
         if (empty($bookingIds)) {
             return [
@@ -451,7 +462,8 @@ class StripeService
                 $source,
                 $userId,
                 $chargeId,
-                $paymentIntentId
+                $paymentIntentId,
+                $hostedGameUuid
             ) {
                 $stripeSession = StripeSession::where('session_id', $sessionId)
                     ->lockForUpdate()
@@ -484,33 +496,46 @@ class StripeService
                     'source'       => $source,
                 ]);
 
-                foreach ($bookingIds as $bookingId) {
-                    $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
-
-                    if (! $booking) {
-                        throw new Exception("Booking #{$bookingId} not found during Stripe fulfillment.");
-                    }
-
-                    if ($booking->status === BookingStatus::CANCELLED) {
-                        throw new Exception(
-                            "Booking #{$booking->booking_id} is cancelled; refusing Stripe payment fulfillment."
-                        );
-                    }
-
-                    $this->applyPaymentToBooking(
-                        (int) $bookingId,
-                        (int) $userId,
-                        $paymentType,
+                if ($source === CustomerGameService::CHECKOUT_SOURCE) {
+                    // A hosted event pays for its courts and the seats service fee
+                    // in one charge, and a bracket's courts can each be on a
+                    // different payment method — more than the single payment_type
+                    // this generic path carries. CustomerGameService settles every
+                    // row it covers and publishes the event.
+                    app(CustomerGameService::class)->settleHostCheckout(
+                        (string) ($hostedGameUuid ?? ''),
                         $chargeId,
                         $paymentIntentId
                     );
-                }
+                } else {
+                    foreach ($bookingIds as $bookingId) {
+                        $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
 
-                foreach ($bookingIds as $bookingId) {
-                    $booking = Booking::find($bookingId);
-                    if ($booking) {
-                        autoConfirmBookingIfPaid($booking);
-                        regenerateBookingInvoice($booking);
+                        if (! $booking) {
+                            throw new Exception("Booking #{$bookingId} not found during Stripe fulfillment.");
+                        }
+
+                        if ($booking->status === BookingStatus::CANCELLED) {
+                            throw new Exception(
+                                "Booking #{$booking->booking_id} is cancelled; refusing Stripe payment fulfillment."
+                            );
+                        }
+
+                        $this->applyPaymentToBooking(
+                            (int) $bookingId,
+                            (int) $userId,
+                            $paymentType,
+                            $chargeId,
+                            $paymentIntentId
+                        );
+                    }
+
+                    foreach ($bookingIds as $bookingId) {
+                        $booking = Booking::find($bookingId);
+                        if ($booking) {
+                            autoConfirmBookingIfPaid($booking);
+                            regenerateBookingInvoice($booking);
+                        }
                     }
                 }
 
