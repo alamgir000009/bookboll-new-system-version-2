@@ -648,6 +648,20 @@ class BookingService
                 $listing = Listing::find($bookingData['listing_id']);
                 $user    = User::find($bookingData['user_id']);
 
+                // validateBooking() above ran OUTSIDE this transaction, so the slot
+                // could have been taken since. Re-check under the listing lock —
+                // this is the decision that counts.
+                $conflict = $this->capacityGuard(
+                    $bookingData['listing_id'], $bookingData['date'],
+                    $bookingData['start_time'], $bookingData['end_time'],
+                    (int) ($bookingData['quantity'] ?? 1)
+                );
+                if ($conflict) {
+                    DB::rollBack();
+
+                    return sendError($conflict, ['capacity' => $conflict], 422);
+                }
+
                 $subtotal      = $bookingData['subtotal'];
                 $discount      = $bookingData['discount_amount'] ?? 0;
                 $totalPrice    = $bookingData['total_price'];
@@ -1122,6 +1136,93 @@ class BookingService
             }
         }
 
+        return $errors + $this->physicalCapacityErrors($listing, $data, $editingId);
+    }
+
+    /**
+     * Take the booking mutex for a listing.
+     *
+     * Capacity is decided by COUNTING existing bookings and then inserting. Without
+     * a lock two requests can both count the last free spot and both take it — the
+     * admin dashboard, the customer site and the mobile apps all race each other.
+     *
+     * The lock is the listing ROW, not a range of bookings: `bookings` has no
+     * composite (listing_id, date) index, so a ranged `FOR UPDATE` would gap-lock
+     * far more than the slot — every booking on that date, or every booking for
+     * that listing — which is both slow and a deadlock source. A single primary-key
+     * row lock serialises exactly what must be serialised: two people booking the
+     * SAME court wait for each other, two people booking DIFFERENT courts never do.
+     *
+     * Each booking transaction takes exactly one such lock, so there is no ordering
+     * between locks and therefore no deadlock cycle to create.
+     *
+     * MUST be called inside the transaction that performs the insert — the lock is
+     * held until commit, which is what closes the window.
+     */
+    public function lockListingForBooking($listingId): void
+    {
+        if (! $listingId) {
+            return;
+        }
+
+        Listing::whereKey($listingId)->lockForUpdate()->first();
+    }
+
+    /**
+     * The authoritative capacity decision, taken under the listing lock.
+     *
+     * Callers still validate up-front for fast, detailed feedback; this is the
+     * re-check immediately before the insert, when nothing else can slip in.
+     *
+     * @return string|null  the refusal message, or null when the booking fits
+     */
+    protected function capacityGuard(
+        $listingId,
+        $date,
+        $startTime,
+        $endTime,
+        int $quantity = 1,
+        $editingId = null
+    ): ?string {
+        $this->lockListingForBooking($listingId);
+
+        $listing = Listing::with('resourceRequirements')->find($listingId);
+
+        $errors = $this->physicalCapacityErrors($listing, [
+            'listing_id' => $listingId,
+            'date'       => $date,
+            'start_time' => $this->fmtTime($startTime),
+            'end_time'   => $this->fmtTime($endTime),
+            'quantity'   => max(1, $quantity),
+        ], $editingId);
+
+        if (! $errors) {
+            return null;
+        }
+
+        return $errors['capacity'] ?? reset($errors);
+    }
+
+    /**
+     * The constraints that are physically impossible to break: the slot's own
+     * capacity, and any shared resource the listing draws on.
+     *
+     * Split out so EVERY create path can enforce it. The admin dashboard used to
+     * insert without any of this — two bookings on a one-court slot, no warning —
+     * while the customer and staff paths refused correctly. Schedule and holiday
+     * rules stay in validateBooking(): those are policy, and staff legitimately
+     * override them.
+     *
+     * @return array<string, string> empty when the booking fits
+     */
+    protected function physicalCapacityErrors(?Listing $listing, array $data, $editingId = null): array
+    {
+        if (! $listing) {
+            return [];
+        }
+
+        $errors = [];
+
         $resourceConflicts = [];
         foreach ($listing->resourceRequirements ?? [] as $resource) {
             $currentUsage = DB::table('booking_resource')
@@ -1539,6 +1640,20 @@ class BookingService
         try {
 
             DB::beginTransaction();
+
+            // The validation above ran OUTSIDE this transaction, so the slot may have
+            // gone since. Re-check under the listing lock — this is the decision that
+            // actually governs whether the booking is created.
+            $conflict = $this->capacityGuard(
+                $formData['listing_id'], $formData['date'],
+                $formData['start_time'], $formData['end_time'],
+                (int) ($formData['quantity'] ?? 1)
+            );
+            if ($conflict) {
+                DB::rollBack();
+
+                return sendError($conflict, ['capacity' => $conflict], 422);
+            }
 
             if ($request->filled('phone') && $user->phone !== $request->phone) {
                 $user->phone = $request->phone;
@@ -2000,6 +2115,11 @@ class BookingService
         try {
             DB::beginTransaction();
 
+            // prepareCustomerCheckout() counts existing bookings for every requested
+            // slot. Take the listing's booking mutex FIRST so those counts cannot be
+            // invalidated by a booking landing between the count and the insert.
+            $this->lockListingForBooking($formData['listing_id'] ?? null);
+
             if ($request->filled('phone') && $user->phone !== $request->phone) {
                 $user->phone = $request->phone;
                 $user->save();
@@ -2280,6 +2400,10 @@ class BookingService
                     'venue_id'   => $formData['venue_id'] ?? $booking->venue_id,
                     'listing_id' => $formData['listing_id'] ?? $booking->listing_id,
                 ];
+
+                // Moving a booking to a new time competes for capacity exactly like a
+                // new one, so the same mutex applies before the count below.
+                $this->lockListingForBooking($validationData['listing_id']);
 
                 $validationErrors = $this->validateBooking($validationData, $bookingId);
                 if (! empty($validationErrors)) {
@@ -4279,7 +4403,7 @@ class BookingService
             'addons.*.unit_price' => 'nullable|numeric|min:0',
         ]);
 
-        $listing = Listing::findOrFail($data['listing_id']);
+        $listing = Listing::with('resourceRequirements')->findOrFail($data['listing_id']);
         $user    = $this->resolveDashboardCustomer($data['customer_id'] ?? null);
         $mapped  = $this->fromDashboardPaymentMethod($data['payment_method']);
         $total   = (float) ($data['total'] ?? 0);
@@ -4288,6 +4412,21 @@ class BookingService
 
         try {
             DB::beginTransaction();
+
+            // A court cannot hold two bookings at once however it was created. This
+            // path inserted without checking at all, so staff could overbook a slot
+            // the customer site had already sold. Under the listing lock, so a
+            // simultaneous booking elsewhere cannot slip in between check and insert.
+            // Only PHYSICAL limits are enforced — schedule and holiday rules stay
+            // overridable by staff, as before.
+            $conflict = $this->capacityGuard(
+                $listing->id, $data['booking_date'], $data['start_time'], $data['end_time']
+            );
+            if ($conflict) {
+                DB::rollBack();
+
+                return sendError($conflict, ['capacity' => $conflict], 422);
+            }
 
             $startMins = $this->timeToMinutes($this->fmtTime($data['start_time']));
             $endMins   = $this->timeToMinutes($this->fmtTime($data['end_time']));

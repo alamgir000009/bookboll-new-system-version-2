@@ -1534,6 +1534,11 @@ class PaymentService
 
             $bookingService = app(\App\Services\BookingService::class);
 
+            // prepareCustomerCheckout() decides capacity by counting. Take the
+            // listing's booking mutex first, inside this transaction, so a booking
+            // made elsewhere cannot land between that count and the insert below.
+            $bookingService->lockListingForBooking($validated['listing_id'] ?? null);
+
             $prepared = $bookingService->prepareCustomerCheckout($validated, $user);
             if (! empty($prepared['errors'])) {
                 DB::rollBack();
