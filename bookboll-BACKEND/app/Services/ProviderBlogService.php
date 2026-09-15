@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Post;
+use App\Models\Tag;
 use App\Support\AccessScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -28,6 +29,7 @@ class ProviderBlogService
         }
 
         $posts = Post::query()
+            ->with('tags:id,name')   // map() reads them; without this it is 200 queries
             ->where('owner_user_id', $ownerId)
             ->orderByDesc('id')
             ->limit(200)
@@ -62,8 +64,9 @@ class ProviderBlogService
             'created_by'    => $request->user()?->id,
             'slug'          => $this->uniqueSlug($data['slug'] ?? $data['title'], null),
         ]);
+        $this->syncTags($post, $data['tags'] ?? []);
 
-        return sendSuccess('Post created successfully', ['post' => $this->map($post)], 201);
+        return sendSuccess('Post created successfully', ['post' => $this->map($post->fresh())], 201);
     }
 
     public function update(Request $request, $id)
@@ -79,6 +82,7 @@ class ProviderBlogService
             $attrs['slug'] = $this->uniqueSlug($data['slug'], $post->id);
         }
         $post->update($attrs);
+        $this->syncTags($post, array_key_exists('tags', $data) ? ($data['tags'] ?? []) : null);
 
         return sendSuccess('Post updated successfully', ['post' => $this->map($post->fresh())]);
     }
@@ -114,7 +118,54 @@ class ProviderBlogService
         ]);
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * The post's tag NAMES.
+     *
+     * `$post->tags` cannot be used: `posts.tags` is a legacy text column, and an
+     * attribute always shadows a relation of the same name in Eloquent — so that
+     * returns the (empty) column, never the related rows. Read the relation
+     * explicitly, preferring an eager-loaded copy so a list is not N+1.
+     *
+     * @return string[]
+     */
+    protected function tagNames(Post $post): array
+    {
+        $rel = $post->relationLoaded('tags') ? $post->getRelation('tags') : $post->tags()->get();
+
+        return $rel->pluck('name')->values()->all();
+    }
+
+    /**
+     * Attach the submitted tag names to the post, creating any that are new.
+     * Passing an empty list clears them, so removing a tag in the editor sticks.
+     */
+    protected function syncTags(Post $post, ?array $tags): void
+    {
+        if ($tags === null) {
+            return;   // field not submitted at all — leave what is there
+        }
+
+        $ids = collect($tags)
+            ->map(fn ($t) => trim((string) $t))
+            ->filter()
+            ->unique()
+            ->map(fn ($t) => Tag::firstOrCreate(['slug' => Str::slug($t)], ['name' => $t])->id)
+            ->all();
+
+        $post->tags()->sync($ids);
+    }
+
+    /**
+     * Column values only.
+     *
+     * `tags` is deliberately absent: Post::tags() is a belongsToMany to the tags
+     * table, so putting the submitted array in here made Eloquent try to bind an
+     * array to the legacy `posts.tags` text column — "Array to string conversion",
+     * and no post could be saved. syncTags() puts them where they belong, which is
+     * also what the platform blog has always done.
+     *
+     * @return array<string, mixed>
+     */
     protected function attributes(array $data, Request $request, ?Post $existing = null): array
     {
         $status = ($data['status'] ?? 'draft') === 'published' ? 'published' : 'draft';
@@ -124,12 +175,14 @@ class ProviderBlogService
             'excerpt'         => $data['excerpt'] ?? '',
             'content'         => $data['content'] ?? '',
             'status'          => $status,
-            'tags'            => $data['tags'] ?? [],
             'seo_title'       => $data['seo_title'] ?? '',
             'seo_description' => $data['seo_description'] ?? '',
             'read_time'       => $data['read_time'] ?? '5 min read',
-            // A provider's post belongs to their site, not to either Bookboll blog.
-            'type'            => 'provider',
+            // `posts.type` is enum('main','business') — 'provider' was never one of
+            // them, so MySQL truncated it and refused the row. What separates a
+            // provider's blog from Bookboll's is owner_user_id (see scopeForOwner);
+            // type just says which KIND of blog, and a business site's is 'business'.
+            'type'            => Post::TYPE_BUSINESS,
             'featured'        => false,
         ];
 
@@ -187,7 +240,7 @@ class ProviderBlogService
             'content'         => $p->content,
             'featured_image'  => $p->featured_image,
             'status'          => $p->status,
-            'tags'            => is_array($p->tags) ? $p->tags : [],
+            'tags'            => $this->tagNames($p),
             'seo_title'       => $p->seo_title,
             'seo_description' => $p->seo_description,
             'read_time'       => $p->read_time,
