@@ -401,6 +401,36 @@ class ProviderPlanService
     }
 
     /** @return array<string, mixed> */
+    /**
+     * Write a Stripe subscription onto a business, exactly as the webhook would.
+     *
+     * Used by `plan:sync-from-stripe` to repair accounts whose webhook was missed,
+     * so a repaired row and a webhook-built row are the same row — there is one
+     * definition of what a plan is, not two that can drift.
+     */
+    public function syncSubscriptionFromStripe(Business $business, object $stripeSub): BusinessSubscription
+    {
+        $sub = BusinessSubscription::where('stripe_subscription_id', $stripeSub->id)->first()
+            ?: new BusinessSubscription([
+                'business_id' => $business->id,
+                'plan'        => 'premium',
+                'billing'     => $stripeSub->metadata['billing'] ?? 'monthly',
+                'amount'      => PremiumPlan::billedAmount($stripeSub->metadata['billing'] ?? 'monthly'),
+                'currency'    => strtoupper(PremiumPlan::CURRENCY),
+            ]);
+
+        $sub->fill(array_merge($this->subscriptionFields($stripeSub), [
+            'business_id'        => $business->id,
+            'billing'            => $stripeSub->metadata['billing'] ?? ($sub->billing ?: 'monthly'),
+            'stripe_customer_id' => (string) ($stripeSub->customer ?? $sub->stripe_customer_id),
+            'started_at'         => $sub->started_at ?: now(),
+        ]))->save();
+
+        $this->applyEntitlement($business, $sub);
+
+        return $sub;
+    }
+
     protected function subscriptionFields(object $stripeSub): array
     {
         $status = (string) $stripeSub->status;
