@@ -321,6 +321,11 @@ export async function updateCustomerProfile(patch) {
           marketing_whatsapp: customer.value?.marketing_whatsapp,
         },
       }),
+      // LOCAL ONLY. /customer/update-profile has no avatar field, so passing
+      // avatar_url here changes what this device shows and nothing on the server —
+      // the picture reverts on reload and no one else ever sees it. To actually
+      // change the avatar call uploadCustomerAvatar(), which posts the file to
+      // /customer/update-profile-image and writes users.image.
       ...(patch.avatar_url ? { avatar_url: patch.avatar_url } : {}),
     })
     return { ok: true }

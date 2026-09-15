@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { customer, isCustomer, updateCustomerProfile } from '../../lib/customerSession.js'
+import { customer, isCustomer, updateCustomerProfile, uploadCustomerAvatar } from '../../lib/customerSession.js'
 import {
   loadPublicProfileBundle,
   followUser,
@@ -178,15 +178,20 @@ const galBusy = ref(false)
 const editErr = ref('')
 const avatarInput = ref(null)
 const galInput = ref(null)
-async function persist() { await updateCustomerProfile({ avatar_url: profile.value.avatar || '', photos: profile.value.photos || [] }) }
+// The gallery only. The avatar is NOT saved here: updateCustomerProfile() never
+// forwarded avatar_url to the server (it only kept it in localStorage), so a new
+// picture looked applied until the page was reloaded or anyone else opened it.
+async function persist() { await updateCustomerProfile({ photos: profile.value.photos || [] }) }
 function pickAvatar() { avatarInput.value?.click() }
 async function onAvatarFile(e) {
   const file = e.target.files?.[0]; if (!file) return
   editErr.value = ''; avatarBusy.value = true
-  const res = await uploadImage(file, 'avatars'); avatarBusy.value = false
+  // The dedicated endpoint that actually writes users.image and returns the
+  // stored URL — the same one the account page uses.
+  const res = await uploadCustomerAvatar(file); avatarBusy.value = false
   if (avatarInput.value) avatarInput.value.value = ''
   if (res.error) { editErr.value = res.error; return }
-  profile.value.avatar = res.url; await persist()
+  profile.value.avatar = res.url
 }
 function pickPhotos() { galInput.value?.click() }
 async function onPhotoFiles(e) {
