@@ -96,7 +96,12 @@ async function save(publish) {
   saving.value = true
   const res = await savePost(form.value, ownerId.value)
   saving.value = false
-  if (res.error) { formErr.value = /column|owner_user_id|schema cache/i.test(res.error) ? 'Run the blog_posts owner migration (SQL) first, then save.' : res.error; return }
+  // Show what the server actually said. This used to swallow any error mentioning
+  // a "column" and replace it with "run the blog_posts owner migration" — a leftover
+  // from the Supabase build (that table and PostgREST's schema-cache errors are both
+  // gone). It hid the real cause of every save failure behind a migration that does
+  // not exist here.
+  if (res.error) { formErr.value = res.error; return }
   await load(); view.value = 'list'
 }
 
@@ -131,7 +136,7 @@ async function remove(p) {
         <button class="btn btn-primary" @click="requirePremium('blog') && newPost()"><Plus :size="16" /> New post<span v-if="!isPremium" class="prem-lock">Premium</span></button>
       </div>
 
-      <div v-if="loadErr" class="blogadm-warn">{{ loadErr }} — run the <code>blog_posts</code> owner migration if you haven’t.</div>
+      <div v-if="loadErr" class="blogadm-warn">{{ loadErr }}</div>
       <div v-if="loading" class="blogadm-empty">Loading…</div>
       <div v-else-if="!posts.length" class="blogadm-empty"><FileText :size="34" /><p>No posts yet. Write your first article — it’ll appear on your website’s blog.</p></div>
 
