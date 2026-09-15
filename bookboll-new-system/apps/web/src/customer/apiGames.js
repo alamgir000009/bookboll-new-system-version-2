@@ -179,6 +179,11 @@ export async function createGame(game) {
     game: res.data.game,
     charge: res.data.charge || null,
     loyaltyApplied: Number(res.data.charge?.loyaltyRedeem) || 0,
+    // When there is money to pay the event is created but NOT published, and the
+    // host has to finish at Stripe first. The caller must send them there rather
+    // than showing a share link for an event that isn't live yet.
+    requiresPayment: !!res.data.requires_payment,
+    checkoutUrl: res.data.checkout_url || '',
   }
 }
 
@@ -416,6 +421,8 @@ export async function createTournament(t) {
     tournament: res.data.tournament,
     charge: res.data.charge || null,
     loyaltyApplied: Number(res.data.charge?.loyaltyRedeem) || 0,
+    requiresPayment: !!res.data.requires_payment,
+    checkoutUrl: res.data.checkout_url || '',
   }
 }
 

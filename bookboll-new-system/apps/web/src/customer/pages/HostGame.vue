@@ -955,6 +955,10 @@ async function publishGame() {
   saving.value = false
   if (res.error) { err.value = res.error; return }
   saveCustomerPhone(selectedCountry.value?.id, f.value.host_whatsapp || f.value.host_phone)
+  // Money is owed: the event exists but is not live, and the share link only
+  // appears once Stripe confirms. Keep the draft so nothing is lost if the host
+  // backs out of checkout — the return handler clears it.
+  if (res.requiresPayment && res.checkoutUrl) { window.location.href = res.checkoutUrl; return }
   clearHostDraft()   // published — drop the autosaved draft
   published.value = { id: res.game.id, type: type.value }   // show the share modal
 }
@@ -986,6 +990,7 @@ async function publishTournament() {
   saving.value = false
   if (res.error) { err.value = res.error; return }
   saveCustomerPhone(selectedCountry.value?.id, f.value.host_whatsapp || f.value.host_phone)
+  if (res.requiresPayment && res.checkoutUrl) { window.location.href = res.checkoutUrl; return }
   clearHostDraft()   // published — drop the autosaved draft
   published.value = { id: res.tournament.id, type: 'tournament' }   // show the share modal
 }
@@ -1027,6 +1032,23 @@ onMounted(async () => {
   if (route.query.stripe !== 'done' || !isCustomer.value) return
   await refreshStripe()
   router.replace({ path: route.path, query: { ...route.query, stripe: undefined } })
+})
+
+// Back from paying for the courts. `published` carries the event Stripe just paid
+// for, so the share modal opens exactly as it does for a free event; `payment=
+// cancelled` means the event and its court holds were released and the host has
+// to start again — their draft is still here.
+onMounted(() => {
+  if (route.query.published) {
+    clearHostDraft()
+    published.value = { id: String(route.query.published), type: String(route.query.type || 'game') }
+    router.replace({ path: route.path, query: {} })
+    return
+  }
+  if (route.query.payment === 'cancelled') {
+    err.value = 'Payment was not completed, so the event was not published and the courts were released. You can pick your slots again below.'
+    router.replace({ path: route.path, query: {} })
+  }
 })
 onBeforeUnmount(() => { if (holdTicker) clearInterval(holdTicker) })
 // The soonest any currently-picked court is released (0 = nothing held / holds not live).
