@@ -33,13 +33,42 @@ export async function loadStripeConnect() {
 }
 
 /**
+ * The countries a host may open a Stripe account in.
+ *
+ * Which ones work depends on Bookboll's own Stripe account, not on where the host
+ * lives, so the list comes from the server — it has asked Stripe. `default` is our
+ * best guess for this host (their profile country, else their phone's dial code)
+ * and is null when we genuinely don't know; `locked` is set once an account exists,
+ * because Stripe fixes a connected account's country for good at creation.
+ */
+export async function loadStripeCountries() {
+  const res = await apiFetch('/customer/stripe/payouts/countries')
+  if (!res.success) return { error: formatErr(res, 'Could not load the country list.'), countries: [] }
+  return {
+    countries: res.data?.countries || [],
+    default: res.data?.default || '',
+    locked: res.data?.locked || '',
+    // Where the server thinks this host is, and whether Stripe will open an
+    // account there. When it won't, their own Stripe keys are the way in — the
+    // picker is no help to someone who can't verify in any of its countries.
+    detected: res.data?.detected || '',
+    detectedName: res.data?.detected_name || '',
+    detectedSupported: res.data?.detected_supported,
+  }
+}
+
+/**
  * Start Stripe's hosted onboarding. Returns the URL to send the host to — they
  * come back to `returnUrl`, where we re-check the account with Stripe.
+ *
+ * `country` decides the whole onboarding — which ID and bank details Stripe asks
+ * for — and cannot be changed later, so it is always sent explicitly rather than
+ * left for Stripe to infer from Bookboll's own account.
  */
-export async function startStripeConnect({ returnUrl, refreshUrl }) {
+export async function startStripeConnect({ returnUrl, refreshUrl, country }) {
   const res = await apiFetch('/customer/stripe/payouts/connect', {
     method: 'POST',
-    body: { return_url: returnUrl, refresh_url: refreshUrl },
+    body: { return_url: returnUrl, refresh_url: refreshUrl, country: country || null },
   })
   if (!res.success || !res.data?.url) return { error: formatErr(res, 'Could not start Stripe onboarding.') }
   return { url: res.data.url, account: res.data.account }

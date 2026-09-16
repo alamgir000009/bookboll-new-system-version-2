@@ -15,7 +15,7 @@ import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../.
 import { hostDraft, saveHostDraft, clearHostDraft } from '../../customer/hostDraft.js'
 import { loadCommunity } from '../../customer/community.js'
 import { getPrefillPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
-import { loadStripeConnect, startStripeConnect, syncStripeConnect, saveStripeKeys, disconnectStripe, isStripeConnected } from '../../customer/hostPayouts.js'
+import { loadStripeConnect, loadStripeCountries, startStripeConnect, syncStripeConnect, saveStripeKeys, disconnectStripe, isStripeConnected } from '../../customer/hostPayouts.js'
 import { TEAM_OPTIONS, roundsFor, matchesInRound, totalGames, roundName, fmtTime, consecutiveSlots, normTime, addMinutes } from '../../customer/bracket.js'
 import PhoneInput from '../components/PhoneInput.vue'
 import LiabilityWaiver from '../components/LiabilityWaiver.vue'
@@ -404,12 +404,49 @@ const keyForm = ref({ secret: '', publishable: '' })
 async function loadStripe() { stripeAcct.value = isCustomer.value ? await loadStripeConnect() : null }
 watch(() => customer.value?.id, loadStripe, { immediate: true })
 
+// Stripe opens the account IN A COUNTRY and fixes it there forever — it decides
+// which ID and bank details the host is asked for. Which countries are possible
+// depends on Bookboll's own Stripe account, so the server supplies the list.
+const stripeCountries = ref([])
+const stripeCountry = ref('')
+const stripeCountriesLoaded = ref(false)
+// Where the host appears to be, when Stripe won't open an account there. Their
+// own Stripe keys are then the only route, so we say so instead of leaving them
+// to work it out from a dropdown of countries they have nothing to do with.
+const stripeHomeUnsupported = ref('')
+
+async function loadStripeCountryList() {
+  if (!isCustomer.value || stripeCountriesLoaded.value) return
+  const r = await loadStripeCountries()
+  stripeCountriesLoaded.value = true
+  if (r.error) { stripeErr.value = r.error; return }
+  stripeCountries.value = r.countries
+  // Prefill with our best guess, but the host always gets the final say — plenty
+  // of people bank somewhere other than where they live.
+  stripeCountry.value = r.locked || r.default || ''
+  stripeHomeUnsupported.value = (r.detected && r.detectedSupported === false) ? (r.detectedName || r.detected) : ''
+  // Nothing in the list can work for them, so open on the tab that can.
+  if (stripeHomeUnsupported.value && !stripeAcct.value && !stripeCountry.value) payoutTab.value = 'keys'
+}
+// Fetched as soon as we have a customer: the answer decides which payout tab to
+// open, so waiting for them to click "Connect" would be too late.
+watch(() => customer.value?.id, () => { loadStripeCountryList() }, { immediate: true })
+
 async function connectStripe() {
   if (!isCustomer.value && !(await ensureSignedIn())) return
+  await loadStripeCountryList()
+  if (!stripeCountry.value) {
+    stripeErr.value = 'Choose the country your bank account is in first.'
+    return
+  }
   stripeBusy.value = true
   stripeErr.value = ''
   const base = window.location.origin + route.path + '?community=' + (route.query.community || '')
-  const r = await startStripeConnect({ returnUrl: base + '&stripe=done', refreshUrl: base + '&stripe=retry' })
+  const r = await startStripeConnect({
+    returnUrl: base + '&stripe=done',
+    refreshUrl: base + '&stripe=retry',
+    country: stripeCountry.value,
+  })
   stripeBusy.value = false
   if (r.error) { stripeErr.value = r.error; return }
   // Onboarding happens on Stripe, so keep their progress before leaving.
@@ -1317,7 +1354,13 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
             <!-- Onboarding started but Stripe won't let them charge yet -->
             <template v-else-if="stripeAcct && stripeAcct.mode === 'connect'">
-              <span>Your Stripe account isn't finished yet, so this event falls back to pay on arrival.</span>
+              <span>
+                Your Stripe account isn't finished yet, so this event falls back to pay on arrival.
+                <template v-if="stripeAcct.country">
+                  It was opened in <b>{{ stripeAcct.country }}</b> — Stripe fixes that, so disconnect and
+                  start again if you need a different country.
+                </template>
+              </span>
               <div class="hg-sc-links">
                 <button type="button" class="hg-tk-btn" :disabled="stripeBusy" @click="connectStripe">
                   <Loader v-if="stripeBusy" :size="14" class="hg-spin" /> Finish Stripe setup
@@ -1329,28 +1372,50 @@ function goToPublished() { const p = publishedPath.value; published.value = null
             <!-- Nothing set up yet: two ways to get paid -->
             <template v-else>
               <span>Get paid for tickets — pick how the money reaches you. Until then this event falls back to pay on arrival.</span>
+              <div v-if="stripeHomeUnsupported" class="hg-sc-warn">
+                <Info :size="13" />
+                <span>
+                  Stripe won't let us open an account in <b>{{ stripeHomeUnsupported }}</b>. If you already
+                  have a Stripe account anywhere — your own, or a company abroad — use your keys below and
+                  you're set. Opening a new account only works if you can verify an ID and bank account in
+                  one of the countries listed.
+                </span>
+              </div>
               <div class="hg-sc-tabs">
-                <button type="button" :class="{ on: payoutTab === 'connect' }" @click="payoutTab = 'connect'">Connect with Stripe</button>
-                <button type="button" :class="{ on: payoutTab === 'keys' }" @click="payoutTab = 'keys'">Use my own Stripe keys</button>
+                <button type="button" :class="{ on: payoutTab === 'connect' }" @click="payoutTab = 'connect'">Open a new Stripe account</button>
+                <button type="button" :class="{ on: payoutTab === 'keys' }" @click="payoutTab = 'keys'">I already have Stripe</button>
               </div>
 
               <div v-if="payoutTab === 'connect'" class="hg-sc-pane">
                 <p class="hg-sc-p">
-                  We'll open a Stripe account in your name — Stripe handles the form and your
+                  We'll open a <b>new</b> Stripe account in your name — Stripe handles the form and your
                   details never touch Bookboll. Bookboll's {{ seatPct }}% comes off each ticket
                   automatically, so there's nothing to pay upfront.
                 </p>
-                <button type="button" class="hg-tk-btn" :disabled="stripeBusy" @click="connectStripe">
+                <label class="hg-sc-lbl">Which country will you be paid in?</label>
+                <select v-model="stripeCountry" class="hg-in" :disabled="stripeBusy || !stripeCountries.length">
+                  <option value="">Choose a country…</option>
+                  <option v-for="c in stripeCountries" :key="c.code" :value="c.code">{{ c.name }}</option>
+                </select>
+                <p class="hg-sc-note">
+                  Pick the country where <b>your ID and bank account</b> are — Stripe will ask for both,
+                  and <b>can't change this later</b>. Somewhere you can't verify won't get past Stripe's form.
+                  <span v-if="stripeCountriesLoaded && !stripeCountries.length">
+                    We couldn't load the list just now; try again in a moment.
+                  </span>
+                </p>
+                <button type="button" class="hg-tk-btn" :disabled="stripeBusy || !stripeCountry" @click="connectStripe">
                   <Loader v-if="stripeBusy" :size="14" class="hg-spin" /> {{ stripeBusy ? 'Opening Stripe…' : 'Connect with Stripe' }}
                 </button>
               </div>
 
               <div v-else class="hg-sc-pane">
                 <p class="hg-sc-p">
-                  Already run Stripe? Paste your keys and joiners are charged straight on your
-                  own account. We check them with Stripe before saving, and the secret key is
-                  encrypted. Bookboll's {{ seatPct }}% is <b>not</b> taken from these tickets —
-                  it'll be billed to you separately.
+                  Paste the keys from a Stripe account you already have — <b>any country</b>, including one
+                  we can't open new accounts in. Nothing to verify and nothing to set up: joiners are
+                  charged straight on your own account. We check the keys with Stripe before saving, and
+                  the secret key is encrypted. Bookboll's {{ seatPct }}% is <b>not</b> taken from these
+                  tickets — it'll be billed to you separately.
                 </p>
                 <label class="hg-sc-lbl">Secret key</label>
                 <input v-model="keyForm.secret" type="password" class="hg-in" placeholder="sk_live_… or sk_test_…" autocomplete="off" />
@@ -1981,6 +2046,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-sc-p { margin: 0 0 4px; font-size: 12.5px; line-height: 1.55; opacity: .8; }
 .hg-sc-lbl { font-size: 12px; font-weight: 600; margin-top: 4px; }
 .hg-sc-opt { font-weight: 400; opacity: .6; }
+.hg-sc-note { margin: 4px 0 2px; font-size: 11.5px; line-height: 1.5; opacity: .68; }
 .hg-sc-err { margin-top: 10px; font-size: 12.5px; color: #dc2626; }
 .hg-tk-acct { font-family: ui-monospace, monospace; font-size: 11.5px; font-weight: 600; color: #15803d; background: #dcfce7; padding: 2px 8px; border-radius: 999px; }
 .hg-tk-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: none; border-radius: 999px; background: #635bff; color: #fff; font-size: 12.5px; font-weight: 800; cursor: pointer; white-space: nowrap; }
