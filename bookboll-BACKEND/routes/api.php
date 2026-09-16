@@ -674,6 +674,7 @@ Route::prefix('customer')->group(function () {
         Route::get('games/mine/hosted', [CustomerGameController::class, 'mineHosted'])->name('customer.games.mine.hosted');
         Route::get('games/mine/joined', [CustomerGameController::class, 'mineJoined'])->name('customer.games.mine.joined');
         Route::get('stripe/payouts', [HostPayoutController::class, 'show'])->name('customer.stripe.payouts.show');
+        Route::get('stripe/payouts/countries', [HostPayoutController::class, 'countries'])->name('customer.stripe.payouts.countries');
         Route::post('stripe/payouts/connect', [HostPayoutController::class, 'connect'])->name('customer.stripe.payouts.connect');
         Route::post('stripe/payouts/sync', [HostPayoutController::class, 'sync'])->name('customer.stripe.payouts.sync');
         Route::post('stripe/payouts/keys', [HostPayoutController::class, 'saveKeys'])->name('customer.stripe.payouts.keys');

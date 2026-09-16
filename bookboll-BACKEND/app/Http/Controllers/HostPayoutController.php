@@ -15,15 +15,29 @@ class HostPayoutController extends Controller
         return $this->payouts->status(auth()->user());
     }
 
+    /** The countries a host may open a Stripe account in, and the best default. */
+    public function countries()
+    {
+        return $this->payouts->connectCountries(auth()->user());
+    }
+
     /** Begin Stripe Express onboarding and hand back the hosted link. */
     public function connect(Request $request)
     {
         $data = $request->validate([
             'return_url'  => 'required|url|max:2048',
             'refresh_url' => 'required|url|max:2048',
+            // ISO-2. Checked against Stripe's own supported list in the service —
+            // the shape is all that can be judged here.
+            'country'     => 'nullable|string|size:2|alpha',
         ]);
 
-        return $this->payouts->startConnect(auth()->user(), $data['return_url'], $data['refresh_url']);
+        return $this->payouts->startConnect(
+            auth()->user(),
+            $data['return_url'],
+            $data['refresh_url'],
+            $data['country'] ?? null
+        );
     }
 
     /** Re-read the connected account from Stripe after onboarding. */

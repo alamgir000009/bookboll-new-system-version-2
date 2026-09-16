@@ -4,7 +4,10 @@ namespace App\Services;
 
 use App\Models\HostPayoutAccount;
 use App\Models\User;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Nnjeim\World\Models\Country;
 use Stripe\StripeClient;
 
 /**
@@ -23,6 +26,12 @@ use Stripe\StripeClient;
  *
  * Either way the host's Stripe account has to say `charges_enabled` before we let
  * them sell anything — a connected account exists long before it may take money.
+ *
+ * An Express account is created IN A COUNTRY, and that country decides the whole
+ * onboarding: which ID, which bank details, which currency it can be paid out in.
+ * Stripe fixes it at creation and it can never be changed afterwards, so it has to
+ * be right the first time. Left unset, Stripe falls back to the PLATFORM account's
+ * own country, which handed every host — wherever they live — a US onboarding form.
  */
 class HostPayoutService
 {
@@ -40,7 +49,7 @@ class HostPayoutService
      * Start (or resume) Express onboarding. Stripe hosts the form, so we hand back
      * a one-time link and the host finishes it there.
      */
-    public function startConnect(User $host, string $returnUrl, string $refreshUrl)
+    public function startConnect(User $host, string $returnUrl, string $refreshUrl, ?string $wantedCountry = null)
     {
         $client = $this->platformClient();
 
@@ -57,11 +66,43 @@ class HostPayoutService
 
         try {
             if (! $account?->stripe_account_id) {
+                $country = $this->resolveConnectCountry($host, $wantedCountry);
+
+                if (! $country) {
+                    // Distinguish "we don't know where you are" from "we know, and
+                    // Stripe won't open an account there" — they need different
+                    // things from the host.
+                    $asked = strtoupper(trim((string) $wantedCountry));
+
+                    if ($asked !== '') {
+                        $name = Country::where('iso2', $asked)->value('name') ?: $asked;
+
+                        return sendError(
+                            "Stripe cannot open a payout account in {$name} for us. Pick another country, "
+                            .'or connect your own Stripe account with your API keys instead.',
+                            ['country' => ["{$name} is not available."]],
+                            422
+                        );
+                    }
+
+                    return sendError(
+                        'Please choose the country your bank account is in so Stripe can set up the right onboarding.',
+                        ['country' => ['Choose a country.']],
+                        422
+                    );
+                }
+
                 $created = $client->accounts->create([
-                    'type'          => 'express',
-                    'email'         => $host->email,
-                    'business_type' => 'individual',
-                    'capabilities'  => [
+                    'type'    => 'express',
+                    // Without this Stripe uses the PLATFORM's country and every host
+                    // is onboarded as if they banked there.
+                    'country' => $country,
+                    'email'   => $host->email,
+                    // `business_type` is deliberately NOT set: it is not valid in
+                    // every country (the UAE, for one, rejects 'individual'), and
+                    // Stripe's own onboarding asks for it with the right options
+                    // for wherever the host actually is.
+                    'capabilities' => [
                         'card_payments' => ['requested' => true],
                         'transfers'     => ['requested' => true],
                     ],
@@ -87,6 +128,22 @@ class HostPayoutService
                 'refresh_url' => $refreshUrl,
                 'type'        => 'account_onboarding',
             ]);
+        } catch (\Stripe\Exception\InvalidRequestException $e) {
+            // Stripe refuses a country plainly and says why — a US platform cannot
+            // open a Qatari account, for instance. Passing that message through is
+            // far more use to the host than "try again", and we drop the country
+            // from the picker so the next host is never offered it.
+            Log::warning('Stripe refused a connected account', [
+                'user'    => $host->id,
+                'country' => $country ?? null,
+                'error'   => $e->getMessage(),
+            ]);
+
+            if (! empty($country)) {
+                $this->rememberRefusedCountry($country);
+            }
+
+            return sendError($this->explainRefusal($e->getMessage(), $country ?? ''), ['country' => [$e->getMessage()]], 422);
         } catch (\Throwable $e) {
             Log::error('Stripe Connect onboarding failed', ['user' => $host->id, 'error' => $e->getMessage()]);
 
@@ -241,6 +298,276 @@ class HostPayoutService
             'destination'    => $account->stripe_account_id,
             'applicationFee' => true,
         ] : null;
+    }
+
+    /**
+     * The countries a host may open a Stripe account in, for the picker.
+     *
+     * Read from Stripe itself (`country_specs`) rather than a list we maintain by
+     * hand, so it can never drift out of date — Stripe adds countries regularly and
+     * a stale list would either hide a country that works or offer one that fails
+     * half-way through onboarding. Cached for a day; the list moves rarely.
+     */
+    public function connectCountries(User $host)
+    {
+        $account = HostPayoutAccount::where('user_id', $host->id)->first();
+
+        $supported = $this->supportedCountries();
+
+        if ($supported === []) {
+            return sendError('Could not reach Stripe for the country list. Please try again.', [], 502);
+        }
+
+        $names = Country::whereIn('iso2', $supported)
+            ->pluck('name', 'iso2')
+            ->map(fn ($n) => (string) $n)
+            ->all();
+
+        $countries = collect($supported)
+            ->map(fn (string $code) => ['code' => $code, 'name' => $names[$code] ?? $code])
+            ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
+            ->values()
+            ->all();
+
+        $guess = $this->guessCountry($host);
+
+        return sendSuccess('Stripe countries', [
+            'countries' => $countries,
+            'default'   => $this->resolveConnectCountry($host, null),
+            // Where we think they are, and whether Stripe will open an account
+            // there — so the page can say why the picker may be no use to them.
+            'detected'  => $guess,
+            'detected_name' => $guess ? (Country::where('iso2', $guess)->value('name') ?: $guess) : null,
+            'detected_supported' => $guess ? in_array($guess, $supported, true) : null,
+            // Stripe fixes an account's country at creation, so once one exists the
+            // choice is gone — the host has to disconnect to start over elsewhere.
+            'locked'    => $account?->stripe_account_id ? ($account->country ?: null) : null,
+        ]);
+    }
+
+    /**
+     * Can this host actually sell tickets through their own Stripe right now?
+     *
+     * The only honest source is the account Stripe has verified — never a flag the
+     * client sent us. Waiving Bookboll's seats fee on the strength of a request
+     * field let anyone host for free by posting `ticket_mode=stripe`.
+     */
+    public function hasReadyAccount(User $host): bool
+    {
+        return (bool) HostPayoutAccount::where('user_id', $host->id)->first()?->isReady();
+    }
+
+    /**
+     * Where we think this host is, whether or not Stripe will open an account
+     * there. The picker needs this to explain itself: a host in Pakistan should be
+     * told Stripe cannot open a Pakistani account and pointed at their own keys,
+     * not shown a bare list of forty-four countries they have no connection to.
+     */
+    public function guessCountry(User $host): ?string
+    {
+        if ($host->country_id) {
+            $iso = strtoupper((string) Country::find($host->country_id)?->iso2);
+
+            if ($iso !== '') {
+                return $iso;
+            }
+        }
+
+        return $this->countryFromPhone($host->phone);
+    }
+
+    /**
+     * ISO-2 codes this platform can actually open a connected account in.
+     *
+     * Not the same as "countries Stripe supports": which ones work depends on the
+     * PLATFORM's own country and what Stripe has approved it for. A US platform is
+     * refused in South Africa, Pakistan and Qatar, even though Stripe lists all
+     * three — so offering Stripe's full list means a host completes the form and
+     * only then gets "You cannot request the `card_payments` capability".
+     *
+     * The answer lives on the country row, seeded by migration, so every
+     * environment agrees without anyone having to run a command first.
+     * `stripe:sync-connect-countries` re-verifies it against Stripe.
+     *
+     * @return array<int,string>
+     */
+    public function supportedCountries(): array
+    {
+        $flagged = Country::where('stripe_connect_supported', true)
+            ->orderBy('iso2')
+            ->pluck('iso2')
+            ->map(fn ($c) => strtoupper((string) $c))
+            ->filter()
+            ->values()
+            ->all();
+
+        if ($flagged !== []) {
+            return $flagged;
+        }
+
+        // Nothing flagged at all — the migration has not run, or a world re-seed
+        // cleared it. Fall back to everything Stripe lists so hosting still works,
+        // and say so, because some of those countries will be refused.
+        Log::warning('No countries flagged for Stripe Connect; falling back to Stripe\'s full list. Run stripe:sync-connect-countries --apply.');
+
+        return $this->stripeListedCountries();
+    }
+
+    /** Every country Stripe operates in — the outer bound, not what works for us. */
+    protected function stripeListedCountries(): array
+    {
+        return Cache::remember('stripe.connect.country_specs', now()->addDay(), function () {
+            $client = $this->platformClient();
+
+            if (! $client) {
+                return [];
+            }
+
+            try {
+                $codes = [];
+
+                // 100 per page and there are more than that — page through them all
+                // rather than silently cutting the list off at the first page.
+                foreach ($client->countrySpecs->all(['limit' => 100])->autoPagingIterator() as $spec) {
+                    $codes[] = strtoupper((string) $spec->id);
+                }
+
+                sort($codes);
+
+                return array_values(array_unique(array_filter($codes)));
+            } catch (\Throwable $e) {
+                Log::error('Could not load Stripe country specs', ['error' => $e->getMessage()]);
+
+                return [];
+            }
+        });
+    }
+
+    /**
+     * Record what Stripe accepted. Anything not in the list is marked unsupported,
+     * so a country Stripe has stopped accepting disappears from the picker too.
+     */
+    public function storeSupportedCountries(array $codes): void
+    {
+        $codes = array_values(array_unique(array_filter(array_map(
+            fn ($c) => strtoupper(trim((string) $c)),
+            $codes
+        ))));
+
+        if ($codes === []) {
+            return;   // never blank the whole table on an empty result
+        }
+
+        DB::transaction(function () use ($codes) {
+            Country::query()->update(['stripe_connect_supported' => false]);
+
+            Country::whereIn('iso2', $codes)->update([
+                'stripe_connect_supported'  => true,
+                'stripe_connect_checked_at' => now(),
+            ]);
+        });
+    }
+
+    /** Stripe turned this country down — take it off the list for everyone else. */
+    protected function rememberRefusedCountry(string $code): void
+    {
+        $code = strtoupper(trim($code));
+
+        if ($code === '') {
+            return;
+        }
+
+        Country::where('iso2', $code)->update([
+            'stripe_connect_supported'  => false,
+            'stripe_connect_checked_at' => now(),
+        ]);
+    }
+
+    /**
+     * Which country to open the host's account in.
+     *
+     * What the host picked wins. Failing that we work it out from what we already
+     * know about them — their profile country, then their phone's dial code — and
+     * if none of that lands we return null and ask, rather than quietly defaulting
+     * to the platform's country and giving them the wrong onboarding.
+     */
+    protected function resolveConnectCountry(User $host, ?string $wanted): ?string
+    {
+        $supported = $this->supportedCountries();
+
+        $ok = function (?string $code) use ($supported): ?string {
+            $code = strtoupper(trim((string) $code));
+
+            return $code !== '' && in_array($code, $supported, true) ? $code : null;
+        };
+
+        if ($picked = $ok($wanted)) {
+            return $picked;
+        }
+
+        if ($host->country_id && ($fromProfile = $ok(Country::find($host->country_id)?->iso2))) {
+            return $fromProfile;
+        }
+
+        return $ok($this->countryFromPhone($host->phone));
+    }
+
+    /**
+     * The country a phone number belongs to, by dial code. Longest code first so
+     * +1868 (Trinidad) is not read as +1 (US), and a shared code like +1 or +44
+     * is left undecided rather than guessed — the host picks in that case.
+     */
+    protected function countryFromPhone(?string $phone): ?string
+    {
+        $digits = preg_replace('/\D+/', '', (string) $phone);
+
+        if ($digits === '' || $digits === null) {
+            return null;
+        }
+
+        $byCode = Cache::remember('world.phone_codes', now()->addDay(), function () {
+            return Country::whereNotNull('phone_code')
+                ->get(['iso2', 'phone_code'])
+                ->groupBy(fn ($c) => preg_replace('/\D+/', '', (string) $c->phone_code))
+                ->map(fn ($g) => $g->pluck('iso2')->filter()->values()->all())
+                ->filter(fn ($codes, $dial) => $dial !== '')
+                ->all();
+        });
+
+        for ($len = 4; $len >= 1; $len--) {
+            $prefix = substr($digits, 0, $len);
+            $match  = $byCode[$prefix] ?? null;
+
+            // Exactly one country on this dial code — anything else is a guess.
+            if (is_array($match) && count($match) === 1) {
+                return strtoupper($match[0]);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Turn Stripe's refusal into something a host can act on. The underlying
+     * message is still returned alongside, so nothing is hidden.
+     */
+    protected function explainRefusal(string $stripeMessage, string $country): string
+    {
+        $name = $country !== ''
+            ? (Country::where('iso2', $country)->value('name') ?: $country)
+            : 'that country';
+
+        if (str_contains($stripeMessage, 'card_payments') || str_contains($stripeMessage, 'service agreement')) {
+            return "Stripe cannot open a payout account in {$name} for us yet. Pick another country, "
+                .'or connect your own Stripe account with your API keys instead.';
+        }
+
+        if (str_contains($stripeMessage, 'cannot be created by platforms')) {
+            return "Stripe does not allow us to open accounts in {$name}. Pick another country, "
+                .'or connect your own Stripe account with your API keys instead.';
+        }
+
+        return "Stripe could not open a payout account in {$name}: ".$stripeMessage;
     }
 
     /** Whether Bookboll's own Stripe keys are live ones. */

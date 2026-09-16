@@ -58,7 +58,23 @@ class CustomerGameService
     /** Marks a Stripe checkout as belonging to the hosting flow. */
     public const CHECKOUT_SOURCE = 'customer_game';
 
-    public function __construct(protected CustomerBookingQuoteService $quotes) {}
+    public function __construct(
+        protected CustomerBookingQuoteService $quotes,
+        protected HostPayoutService $payouts
+    ) {}
+
+    /**
+     * Whether this host really is selling tickets on their own Stripe.
+     *
+     * `ticket_mode` arrives from the client, and saying 'stripe' waives Bookboll's
+     * seats fee entirely — so on its own it was a way to host for nothing. The
+     * waiver now needs an account Stripe has actually verified.
+     */
+    protected function sellsOwnTickets(User $host, array $data): bool
+    {
+        return ($data['ticket_mode'] ?? '') === 'stripe'
+            && $this->payouts->hasReadyAccount($host);
+    }
 
     /**
      * What the wizard needs before it can show prices: whether the features are on,
@@ -612,7 +628,7 @@ class CustomerGameService
 
         $seats      = max(0, (int) ($data['max_players'] ?? 0));
         $seatsValue = round((float) ($data['price_per_person'] ?? 0), 2) * $seats;
-        $serviceFee = ($data['ticket_mode'] ?? '') === 'stripe'
+        $serviceFee = $this->sellsOwnTickets($host, $data)
             ? 0
             : round($seatsValue * $this->seatFeePct($listing, ! empty($data['community_id'])) / 100);
 
@@ -1941,7 +1957,7 @@ class CustomerGameService
         }
 
         $seatsValue = round((float) ($data['price_per_person'] ?? 0), 2) * $teams;
-        $serviceFee = ($data['ticket_mode'] ?? '') === 'stripe'
+        $serviceFee = $this->sellsOwnTickets($host, $data)
             ? 0
             : round($seatsValue * $this->seatFeePct($listings->first(), ! empty($data['community_id'])) / 100);
 
