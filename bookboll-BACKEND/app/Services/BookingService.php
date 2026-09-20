@@ -1052,6 +1052,13 @@ class BookingService
         $bookingStart = $data['start_time'];
         $bookingEnd   = $data['end_time'];
 
+        // Staff are exempt, so this only ever fires for a customer surface. An
+        // edit is exempt too: the lead time governs when a slot may be taken,
+        // not how late staff may correct a booking that already exists.
+        if ($editingId === null && ($minAdvanceError = minAdvanceBookingError($listing, $bookingDate, $bookingStart))) {
+            $errors['start_time'] = $minAdvanceError;
+        }
+
         $specialDay = $this->specialDayModel::where('date', $bookingDate)
             ->where('venue_id', $data['venue_id'])
             ->whereNull('listing_id')
