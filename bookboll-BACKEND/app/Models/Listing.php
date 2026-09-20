@@ -28,6 +28,7 @@ class Listing extends Model
         'description',
         'slot_duration',
         'online_payment',
+        'min_advance_minutes',
         'loyalty_points',
         'calendar_color',
         'payment_options',
@@ -83,6 +84,7 @@ class Listing extends Model
         'booking_hold_minutes'    => 'integer',
         'extension_max_slots'     => 'integer',
         'submitted_at'            => 'datetime',
+        'min_advance_minutes'    => 'integer',
     ];
 
     protected $appends = ['location_id', 'booking_color', 'visibility'];
@@ -329,6 +331,32 @@ class Listing extends Model
             : (bool) $this->show_on_customer;
     }
 
+    /**
+     * Minimum lead time before a slot may be booked, in minutes. Zero means a
+     * slot can be booked right up to its start.
+     *
+     * Always zero on a staff surface: the admin console and admin mobile app
+     * take walk-ins and phone bookings for slots starting within minutes.
+     */
+    public function minAdvanceMinutes(): int
+    {
+        if (isRequestFromAdminSurface()) {
+            return 0;
+        }
+
+        return max(0, (int) $this->min_advance_minutes);
+    }
+
+    /**
+     * The earliest moment a slot may start, or null when no lead time applies.
+     */
+    public function minAdvanceCutoff(): ?Carbon
+    {
+        $minutes = $this->minAdvanceMinutes();
+
+        return $minutes > 0 ? Carbon::now()->addMinutes($minutes) : null;
+    }
+
     public function getOpenDaysAttribute()
     {
         return $this->schedules->where('is_open', true)->pluck('day');
@@ -464,6 +492,7 @@ class Listing extends Model
             'slot_duration',
             'buffer_time',
             'online_payment',
+            'min_advance_minutes',
             'loyalty_points',
             'calendar_color',
             'payment_options',

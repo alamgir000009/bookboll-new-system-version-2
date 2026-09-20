@@ -250,6 +250,7 @@ class ListingService
             'max_multiple_bookings'              => 'nullable|integer|min:1|required_if:allow_multiple_bookings,true|lte:max_bookings_per_slot',
             'capacity'                           => 'required|integer|min:1',
             'slot_duration'                      => 'required|numeric|min:0',
+            'min_advance_minutes'                => 'nullable|integer|min:0|max:525600',
             'loyalty_points'                     => 'nullable|integer|min:0',
             'calendar_color'                     => 'nullable|string|regex:/^#[a-fA-F0-9]{6}$/',
             'online_payment'                     => 'required|boolean',
@@ -573,6 +574,7 @@ class ListingService
             'description'             => $data['description'] ?? null,
             'payment_options'         => $data['payment_options'] ?? [],
             'max_bookings_per_slot'   => $data['max_bookings_per_slot'] ?? 1,
+            'min_advance_minutes'     => (int) ($data['min_advance_minutes'] ?? 0),
             'calendar_color'          => $data['calendar_color'] ?? '#0000FF',
             'max_multiple_bookings'   => $data['max_multiple_bookings'] ?? null,
             'allow_multiple_bookings' => $data['allow_multiple_bookings'] ? 1 : 0,
@@ -1681,6 +1683,12 @@ class ListingService
 
         $listingResources = $this->listingResourceRequirements($listing);
 
+        // Null for staff surfaces and for listings without a lead time. The
+        // loop's Carbon carries an implicit "today", so `$loopOrigin` lets a
+        // slot that has rolled past midnight be dated on the right day.
+        $minAdvanceCutoff = $listing->minAdvanceCutoff();
+        $loopOrigin       = $start->copy()->startOfDay();
+
         while ($start->lt($end)) {
             $slotStart     = $start->format('H:i');
             $slotEndCarbon = $start->copy()->addMinutes($slotMinutes);
@@ -1746,13 +1754,22 @@ class ListingService
             $isPastSlot = false;
             if ($date) {
                 $dateCarbon = $date instanceof Carbon ? $date : Carbon::parse($date);
-                if ($dateCarbon->isToday()) {
-                    $currentTime   = Carbon::now();
-                    $slotStartTime = Carbon::parse($dateCarbon->format('Y-m-d') . ' ' . $slotStart);
 
-                    if ($slotStartTime->lt($currentTime)) {
-                        $isPastSlot = true;
-                    }
+                // A slot that has rolled past midnight belongs to the next day.
+                $dayOffset     = (int) $loopOrigin->diffInDays($start->copy()->startOfDay());
+                $slotStartTime = $dateCarbon->copy()
+                    ->startOfDay()
+                    ->addDays($dayOffset)
+                    ->setTimeFromTimeString($slotStart);
+
+                if ($dateCarbon->isToday() && $slotStartTime->lt(Carbon::now())) {
+                    $isPastSlot = true;
+                }
+
+                // The lead time can reach into later days too: a 48-hour rule
+                // hides tomorrow's slots, not just the rest of today.
+                if (! $isPastSlot && $minAdvanceCutoff && $slotStartTime->lt($minAdvanceCutoff)) {
+                    $isPastSlot = true;
                 }
             }
 
@@ -1900,6 +1917,13 @@ class ListingService
                 }
 
                 if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($currentDate)) {
+                    $currentDate->addDay();
+                    continue;
+                }
+
+                // Inside the listing's lead time, so it is not offered at all
+                // rather than offered and then refused at checkout.
+                if (minAdvanceBookingError($listing, $currentDate, $startTime)) {
                     $currentDate->addDay();
                     continue;
                 }
@@ -2115,6 +2139,10 @@ class ListingService
 
             if (! $listing->isVisibleToRequestSurface() || ! $listing->venue || $listing->venue->status !== 'active') {
                 return sendError('Listing is not available for booking');
+            }
+
+            if ($minAdvanceError = minAdvanceBookingError($listing, $date, $startTime)) {
+                return sendError($minAdvanceError);
             }
 
             $maxBookingsPerSlot = (int) $listing->max_bookings_per_slot;
@@ -2434,6 +2462,13 @@ class ListingService
                 return sendSuccess('Slot availability checked', [
                     'available' => false,
                     'reason'    => 'Listing is not available',
+                ]);
+            }
+
+            if ($minAdvanceError = minAdvanceBookingError($listing, $date, $startTime)) {
+                return sendSuccess('Slot availability checked', [
+                    'available' => false,
+                    'reason'    => $minAdvanceError,
                 ]);
             }
 

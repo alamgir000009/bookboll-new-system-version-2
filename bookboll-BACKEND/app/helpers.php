@@ -1217,6 +1217,65 @@ if (! function_exists('isDateAvailableForBooking')) {
     }
 }
 
+if (! function_exists('formatLeadTime')) {
+    /**
+     * A lead time in minutes as something readable: "45 minutes", "2 hours",
+     * "1 hour 30 minutes", "3 days".
+     */
+    function formatLeadTime(int $minutes): string
+    {
+        if ($minutes < 60) {
+            return $minutes . ' ' . \Illuminate\Support\Str::plural('minute', $minutes);
+        }
+
+        if ($minutes % 1440 === 0) {
+            $days = intdiv($minutes, 1440);
+            return $days . ' ' . \Illuminate\Support\Str::plural('day', $days);
+        }
+
+        $hours            = intdiv($minutes, 60);
+        $remainingMinutes = $minutes % 60;
+
+        $label = $hours . ' ' . \Illuminate\Support\Str::plural('hour', $hours);
+
+        if ($remainingMinutes > 0) {
+            $label .= ' ' . $remainingMinutes . ' ' . \Illuminate\Support\Str::plural('minute', $remainingMinutes);
+        }
+
+        return $label;
+    }
+}
+
+if (! function_exists('minAdvanceBookingError')) {
+    /**
+     * Null when the slot satisfies the listing's minimum lead time — which is
+     * always the case on a staff surface, where walk-ins are booked minutes
+     * before they start. Otherwise the message to show the customer.
+     */
+    function minAdvanceBookingError($listing, $date, $startTime): ?string
+    {
+        $cutoff = $listing->minAdvanceCutoff();
+
+        if (! $cutoff) {
+            return null;
+        }
+
+        $dateString = $date instanceof \Carbon\Carbon
+            ? $date->toDateString()
+            : \Carbon\Carbon::parse($date)->toDateString();
+
+        $slotStart = \Carbon\Carbon::parse($dateString . ' ' . \Carbon\Carbon::parse($startTime)->format('H:i'));
+
+        if ($slotStart->gte($cutoff)) {
+            return null;
+        }
+
+        return 'This slot must be booked at least '
+            . formatLeadTime($listing->minAdvanceMinutes())
+            . ' in advance.';
+    }
+}
+
 if (! function_exists('processBookingCancellation')) {
     /**
      * Apply cancellation side-effects: gift card, loyalty, promocode, history.
