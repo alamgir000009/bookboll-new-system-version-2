@@ -66,7 +66,7 @@ const f = ref({
   play_format: '', courts_count: 1, team_size: 2,          // optional live rounds (game day engine)
   // hangout-only: optional seat cap, own-spot (no venue), hidden exact location
   limit_seats: false,
-  spot_mode: 'venue',          // 'venue' = book a court · 'own' = host's own place
+  spot_mode: '',               // '' = not picked yet (hangouts choose on their own screen) · 'venue' = book a court · 'own' = host's own place
   loc_name: '', loc_address: '', own_date: '', own_start: '',
   hide_location: false,
   host_name: '', host_phone: '', host_whatsapp: '',
@@ -307,11 +307,24 @@ const steps = computed(() => type.value === 'tournament'
   : ['Basics', 'Location & Schedule', 'Contact'])
 const lastStep = computed(() => steps.value.length)
 
+// ── Hangout: WHERE it's hosted is a screen of its own ─────────────────────────
+// A hangout runs either at a Bookboll venue (browse → open a court → book a slot) or
+// at the host's own spot (no booking at all — just a name, date and time). Those are
+// two different flows, so step 2 opens on a choice screen and only then shows the
+// matching one; the old tab strip sat above the venue cards and read as a filter.
+// Empty spot_mode = nothing chosen yet. Games/tournaments never see this screen.
+const spotChoiceOn = computed(() => type.value === 'event' && hangoutLocationEnabled.value !== false)
+const needsSpotChoice = computed(() => spotChoiceOn.value && step.value === 2 && !f.value.spot_mode)
+function chooseSpot(mode) { f.value.spot_mode = mode; err.value = '' }
+// Own-spot hangouts switched off platform-side while one was being set up → there's no
+// choice left to make and no own-spot form to show; fall back to the venue flow.
+watch(hangoutLocationEnabled, (on) => { if (on === false && f.value.spot_mode === 'own') f.value.spot_mode = 'venue' })
+
 // Steps that browse venue/court cards (or the tournament bracket) get a wider canvas;
-// plain form steps stay a comfortable centered column.
+// plain form steps — and the hosting-mode choice — stay a comfortable centered column.
 const isWideStep = computed(() =>
   (type.value === 'tournament' && step.value === 3) ||
-  (isGameLike.value && step.value === 2 && !(type.value === 'event' && f.value.spot_mode === 'own'))
+  (isGameLike.value && step.value === 2 && !needsSpotChoice.value && !(type.value === 'event' && f.value.spot_mode === 'own'))
 )
 
 // A clear title + helper line for every step, so each screen reads as a designed page.
@@ -329,6 +342,7 @@ const stepHead = computed(() => {
     ? { title: 'Hangout basics', sub: 'Name it, set who can join and how long it runs.' }
     : { title: 'Game basics', sub: 'Name it, set the price, and add a few photos.' }
   if (S === 2) {
+    if (needsSpotChoice.value) return { title: 'Where will you host it?', sub: 'Book a Bookboll venue, or run it at a spot of your own. You can switch back on this step.' }
     if (T === 'event' && f.value.spot_mode === 'own') return { title: 'Where & when', sub: 'Use your own spot — set the place, date and time.' }
     return { title: 'Pick a venue & time', sub: `Browse venues in ${city}, open one to choose your date & time, then come back to finish.` }
   }
@@ -893,6 +907,7 @@ function validateStep() {
   }
   if (isGameLike.value) {
     if (step.value === 2) {
+      if (needsSpotChoice.value) return (err.value = "Choose where you'll host it — a Bookboll venue or your own spot."), false
       if (ownSpot.value) {
         if (!f.value.loc_name.trim()) return (err.value = 'Give your spot a name (shown publicly).'), false
         if (!f.value.own_date) return (err.value = 'Pick a date for your hangout.'), false
@@ -916,7 +931,12 @@ function validateStep() {
 function next() { if (validateStep()) step.value++ }
 // Backing all the way out to the type chooser is an explicit "start over" —
 // drop the autosaved draft so it doesn't resurrect on the next visit.
-function back() { if (step.value > 1) step.value--; else { type.value = ''; clearHostDraft() } }
+function back() {
+  // Hangout step 2: the venue browser and the own-spot form each sit BEHIND the
+  // "where will you host it?" screen — back out to that choice first, not to Basics.
+  if (spotChoiceOn.value && step.value === 2 && f.value.spot_mode) { f.value.spot_mode = ''; err.value = ''; return }
+  if (step.value > 1) step.value--; else { type.value = ''; clearHostDraft() }
+}
 // A saved draft resumes the wizard PAST the type chooser — say so, with a way out,
 // so skipping the chooser never reads as the chooser being gone.
 const resumedDraft = ref(false)
@@ -1529,41 +1549,66 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
       <!-- STEP 2 (game/hangout) — book a venue OR (hangout) use your own spot -->
       <template v-if="isGameLike && step === 2">
-        <!-- hangout: book a venue vs use your own place -->
-        <div v-if="type === 'event' && hangoutLocationEnabled" class="hg-spotmode">
-          <button type="button" :class="{ on: f.spot_mode === 'venue' }" @click="f.spot_mode = 'venue'"><Building2 :size="15" /> Book a venue</button>
-          <button type="button" :class="{ on: f.spot_mode === 'own' }" @click="f.spot_mode = 'own'"><MapPin :size="15" /> My own spot</button>
-        </div>
-
-        <!-- hangout · own spot (no venue booking) -->
-        <div v-if="type === 'event' && f.spot_mode === 'own'" class="hg-card">
-          <label class="hg-l">Spot name * <span class="hg-opt">shown publicly</span></label>
-          <input v-model="f.loc_name" class="hg-in" placeholder="e.g. JBR Beach · Marina / My rooftop" />
-          <label class="hg-l">Exact address / details <span class="hg-opt">optional</span></label>
-          <input v-model="f.loc_address" class="hg-in" placeholder="Building, street, map pin, parking…" />
-          <div class="hg-row">
-            <div><label class="hg-l">Date *</label><input v-model="f.own_date" type="date" :min="today" class="hg-in" /></div>
-            <div><label class="hg-l">Start time *</label><input v-model="f.own_start" type="time" class="hg-in" /></div>
-          </div>
-          <label class="hg-l">How long does it run?</label>
-          <select v-model.number="gameHours" class="hg-in">
-            <option v-for="d in GAME_DURATIONS" :key="d.value" :value="d.value">{{ d.label }}</option>
-          </select>
-          <div v-if="f.own_start" class="hg-note"><Clock :size="14" /> Runs ~{{ fmtTime(normTime(f.own_start)) }}–{{ fmtTime(addMinutes(normTime(f.own_start), gameHours * 60)) }} ({{ durLabel(gameHours) }}).</div>
-
-          <div class="hg-prize-toggle" style="margin-top:14px">
-            <div class="hg-prize-tl">
-              <div class="hg-prize-tt"><EyeOff :size="16" /> Hide the exact spot?</div>
-              <div class="hg-prize-td">Only people you accept see the address; everyone else sees just the name.</div>
+        <!-- hangout: WHERE it's hosted, on a screen of its own -->
+        <div v-if="needsSpotChoice" class="hg-choose hg-spotchoose">
+          <button type="button" class="hg-choice" @click="chooseSpot('venue')">
+            <div class="hg-choice-ico venue"><Building2 :size="30" /></div>
+            <div class="hg-choice-t">Book a Bookboll venue</div>
+            <div class="hg-choice-d">Browse venues in {{ selectedCity?.name || 'your city' }}, open one and pick your date &amp; time. We hold the slot while you finish.</div>
+            <div class="hg-choice-tags">
+              <span><MapPin :size="12" /> A real venue, shown publicly</span>
+              <span><Clock :size="12" /> Your slot is reserved</span>
             </div>
-            <button type="button" class="hg-switch" :class="{ on: f.hide_location }" @click="f.hide_location = !f.hide_location" :aria-pressed="f.hide_location"><span class="hg-switch-k"></span></button>
-          </div>
-          <div class="hg-note"><Info :size="14" /> Your <b>spot name</b> is always shown publicly{{ f.hide_location ? '; the exact address stays private until you accept someone.' : '.' }}</div>
+          </button>
+          <button type="button" class="hg-choice" @click="chooseSpot('own')">
+            <div class="hg-choice-ico own"><MapPin :size="30" /></div>
+            <div class="hg-choice-t">Use my own spot</div>
+            <div class="hg-choice-d">Your place, a park, the beach — anywhere. Name the spot and set the date, start time and how long it runs yourself.</div>
+            <div class="hg-choice-tags">
+              <span><Check :size="12" /> No venue booking, nothing to pay for a court</span>
+              <span><EyeOff :size="12" /> The exact address can stay private</span>
+            </div>
+          </button>
         </div>
 
-        <!-- venue browse (games always · hangout "Book a venue") -->
         <template v-else>
-          <VenueBrowse :courts="cityCourts" :selected-id="gCourt" :currency="currency" :city-name="selectedCity?.name" @select="openCourtPage" />
+          <!-- which path you're on, with a way back to the choice -->
+          <div v-if="spotChoiceOn" class="hg-modebar">
+            <span class="hg-modebar-t">
+              <component :is="ownSpot ? MapPin : Building2" :size="15" />
+              {{ ownSpot ? 'At your own spot' : 'Booking a Bookboll venue' }}
+            </span>
+            <button type="button" class="hg-modebar-x" @click="chooseSpot('')">Change</button>
+          </div>
+
+          <!-- hangout · own spot (no venue booking) -->
+          <div v-if="ownSpot" class="hg-card">
+            <label class="hg-l">Spot name * <span class="hg-opt">shown publicly</span></label>
+            <input v-model="f.loc_name" class="hg-in" placeholder="e.g. JBR Beach · Marina / My rooftop" />
+            <label class="hg-l">Exact address / details <span class="hg-opt">optional</span></label>
+            <input v-model="f.loc_address" class="hg-in" placeholder="Building, street, map pin, parking…" />
+            <div class="hg-row">
+              <div><label class="hg-l">Date *</label><input v-model="f.own_date" type="date" :min="today" class="hg-in" /></div>
+              <div><label class="hg-l">Start time *</label><input v-model="f.own_start" type="time" class="hg-in" /></div>
+            </div>
+            <label class="hg-l">How long does it run?</label>
+            <select v-model.number="gameHours" class="hg-in">
+              <option v-for="d in GAME_DURATIONS" :key="d.value" :value="d.value">{{ d.label }}</option>
+            </select>
+            <div v-if="f.own_start" class="hg-note"><Clock :size="14" /> Runs ~{{ fmtTime(normTime(f.own_start)) }}–{{ fmtTime(addMinutes(normTime(f.own_start), gameHours * 60)) }} ({{ durLabel(gameHours) }}).</div>
+
+            <div class="hg-prize-toggle" style="margin-top:14px">
+              <div class="hg-prize-tl">
+                <div class="hg-prize-tt"><EyeOff :size="16" /> Hide the exact spot?</div>
+                <div class="hg-prize-td">Only people you accept see the address; everyone else sees just the name.</div>
+              </div>
+              <button type="button" class="hg-switch" :class="{ on: f.hide_location }" @click="f.hide_location = !f.hide_location" :aria-pressed="f.hide_location"><span class="hg-switch-k"></span></button>
+            </div>
+            <div class="hg-note"><Info :size="14" /> Your <b>spot name</b> is always shown publicly{{ f.hide_location ? '; the exact address stays private until you accept someone.' : '.' }}</div>
+          </div>
+
+          <!-- venue browse (games always · hangout "Book a Bookboll venue") -->
+          <VenueBrowse v-else :courts="cityCourts" :selected-id="gCourt" :currency="currency" :city-name="selectedCity?.name" @select="openCourtPage" />
         </template>
       </template>
 
@@ -1877,8 +1922,8 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
       <div v-if="!(type === 'tournament' && step === 3 && schedulingMatch)" class="hg-actions">
         <button class="hg-back" @click="back"><ArrowLeft :size="16" /> Back</button>
-        <button v-if="step < lastStep" class="hg-next" @click="next">Continue <ArrowRight :size="16" /></button>
-        <button v-else class="hg-submit" :disabled="saving" @click="publish">{{ saving ? 'Publishing…' : (dueNowNet > 0 ? `Pay ${hostCharge.cur} ${dueNowNet.toLocaleString()} & publish` : (type === 'tournament' ? 'Publish tournament' : type === 'event' ? 'Publish hangout' : 'Publish game')) }}</button>
+        <button v-if="step < lastStep && !needsSpotChoice" class="hg-next" @click="next">Continue <ArrowRight :size="16" /></button>
+        <button v-else-if="step >= lastStep" class="hg-submit" :disabled="saving" @click="publish">{{ saving ? 'Publishing…' : (dueNowNet > 0 ? `Pay ${hostCharge.cur} ${dueNowNet.toLocaleString()} & publish` : (type === 'tournament' ? 'Publish tournament' : type === 'event' ? 'Publish hangout' : 'Publish game')) }}</button>
       </div>
     </template>
 
@@ -1995,9 +2040,18 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-badge.game { background: #dbeafe; color: #1d4ed8; }
 .hg-badge.tournament { background: #ffe4e6; color: #be123c; }
 .hg-badge.event { background: #fef3c7; color: #b45309; }
-.hg-spotmode { display: inline-flex; gap: 6px; background: #f1f5f9; border-radius: 12px; padding: 4px; margin-bottom: 14px; }
-.hg-spotmode button { display: inline-flex; align-items: center; gap: 6px; border: none; background: none; color: var(--text-muted, #64748b); font-weight: 800; font-size: 13.5px; padding: 9px 16px; border-radius: 9px; cursor: pointer; }
-.hg-spotmode button.on { background: var(--surface, #ffffff); color: #0f172a; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+/* Hangout "where will you host it?" — the venue flow and the own-spot flow each get
+   a screen of their own, chosen on cards in the same language as the type chooser. */
+.hg-spotchoose { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); margin-top: 2px; }
+.hg-choice-ico.venue { background: linear-gradient(135deg,#0f766e,#0d5f58); }
+.hg-choice-ico.own { background: linear-gradient(135deg,#7c3aed,#6d28d9); }
+.hg-choice-tags { display: flex; flex-direction: column; gap: 6px; margin-top: 13px; }
+.hg-choice-tags span { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--text-muted, #64748b); }
+/* Chosen path, with the way back to the choice */
+.hg-modebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--bg, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 9px 10px 9px 14px; margin-bottom: 14px; }
+.hg-modebar-t { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 800; color: #0f172a; }
+.hg-modebar-x { border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #0f172a; font-weight: 800; font-size: 12.5px; padding: 6px 13px; border-radius: 9px; cursor: pointer; }
+.hg-modebar-x:hover { border-color: var(--brand-accent); }
 
 .hg-card { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 16px 18px; margin-bottom: 14px; }
 .hg-h3 { font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 14px; }
