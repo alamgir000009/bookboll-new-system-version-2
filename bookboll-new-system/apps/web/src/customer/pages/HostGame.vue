@@ -1223,12 +1223,12 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           <div class="hg-choice-t">A Hangout</div>
           <div class="hg-choice-d">A casual get-together — book a venue or use your own spot. Set who can join; no sport or skill needed.</div>
         </button>
-        <button class="hg-choice" :disabled="tournamentsEnabled === false" @click="chooseType('tournament')">
+        <!-- <button class="hg-choice" :disabled="tournamentsEnabled === false" @click="chooseType('tournament')">
           <div class="hg-choice-ico tourn"><Trophy :size="30" /></div>
           <div class="hg-choice-t">A Tournament</div>
           <div class="hg-choice-d">A knockout bracket. Choose how many teams — we build the rounds & games and book a slot for each.</div>
           <div v-if="tournamentsEnabled === false" class="hg-choice-soon">Needs a quick admin setup</div>
-        </button>
+        </button> -->
       </div>
 
       <div class="hg-how">
