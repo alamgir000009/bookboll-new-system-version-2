@@ -103,16 +103,39 @@ export function cheapestAvailableForDay(_listing, date, month) {
   return min === Infinity ? null : min
 }
 
-export async function holdSlots(listing, date, slots) {
+/**
+ * Hold every slot in `slots` for this device.
+ *
+ * Past a handful of live holds the API asks for a human check before taking another
+ * one — a lock costs nothing and blocks the slot for everyone else, so sweeping a
+ * calendar into locks is the cheapest way to make a venue unbookable. When that
+ * happens the call comes back `{ ok: false, needsVerification: true, siteKey }` and
+ * the caller shows a challenge and retries with `{ token }`. One solved token clears
+ * the whole session server-side, so it is sent once and not needed again.
+ */
+export async function holdSlots(listing, date, slots, { token = '' } = {}) {
   const list = (slots || []).map(s => ({ start_time: hm(s.start_time), end_time: hm(s.end_time) }))
   if (!list.length) return { ok: true }
   let earliest = null
   for (const s of list) {
     const res = await apiFetch('/lock-slot', {
       method: 'POST',
-      body: { listing_id: listing.id, date, start_time: s.start_time, end_time: s.end_time },
+      body: {
+        listing_id: listing.id, date, start_time: s.start_time, end_time: s.end_time,
+        ...(token ? { 'g-recaptcha-response': token } : {}),
+      },
     })
-    if (!res.success) return { ok: false, start_time: s.start_time, reason: res.message }
+    if (!res.success) {
+      const e = res.errors || {}
+      if (e.requires_verification) {
+        return {
+          ok: false, needsVerification: true, siteKey: e.site_key || '',
+          held: Number(e.slots_held) || 0, threshold: Number(e.threshold) || 0,
+          start_time: s.start_time, reason: res.message,
+        }
+      }
+      return { ok: false, start_time: s.start_time, reason: res.message }
+    }
     const until = res.data?.locked_until
     if (until) {
       const t = new Date(until).getTime()

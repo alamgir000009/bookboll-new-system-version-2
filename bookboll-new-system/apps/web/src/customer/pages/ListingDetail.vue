@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
+import { renderRecaptcha, resetRecaptcha } from '../../lib/recaptcha.js'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { selectedCountry, customer, isCustomer } from '../../lib/customerSession.js'
 import { ensureSignedIn } from '../../lib/authGate.js'
@@ -131,14 +132,17 @@ async function dropHolds() {
 // so the customer's picks are locked in while they keep choosing — and the countdown runs
 // live from the first pick. Returns { ok }; ok:false means a slot was just taken.
 let syncing = false
-async function syncHolds() {
+async function syncHolds({ token = '' } = {}) {
   if (selectMode.value) return { ok: true }   // host-game picker doesn't reserve
   const dates = Object.keys(selectedByDate.value).filter(d => (selectedByDate.value[d] || []).length)
   if (!dates.length) { await dropHolds(); clearCheckoutSession(); return { ok: true } }
   syncing = true
   let earliest = null, bad = null
   for (const d of dates) {
-    const held = await holdSlots(l.value, d, selectedByDate.value[d])
+    const held = await holdSlots(l.value, d, selectedByDate.value[d], { token })
+    // Too many live holds for one device — the API wants a human check before it
+    // reserves another. Hand it straight back so the caller can put one on screen.
+    if (held.needsVerification) { syncing = false; return { ok: false, needsVerification: true, siteKey: held.siteKey, threshold: held.threshold, held: held.held } }
     if (!held.ok) { bad = { date: d, start_time: held.start_time }; break }
     if (held.expiresAt) { const t = new Date(held.expiresAt).getTime(); earliest = earliest ? Math.min(earliest, t) : t }
   }
@@ -146,6 +150,68 @@ async function syncHolds() {
   if (bad) return { ok: false, ...bad }
   if (earliest) { startHoldTimer(earliest); writeCheckoutSession(earliest) }   // real holds → live countdown + resumable session (degraded → neither)
   return { ok: true }
+}
+
+// ── Security check for heavy hold counts ─────────────────────────────────────
+// A lock costs nothing and takes the slot off everyone else, so past a handful of
+// live holds the API asks for one human check before reserving another. One solved
+// token clears the session, so a customer booking many slots sees this once.
+const verify = ref(null)        // { siteKey, threshold, held, rollback } while the check is open
+const verifyBox = ref(null)     // where reCAPTCHA draws itself
+const verifyErr = ref('')
+const verifyBusy = ref(false)
+let verifyWidget = null         // 0 is a valid widget id — compare against null, never truthiness
+
+async function openVerify(challenge, { rollback = null, onPass = null } = {}) {
+  verifyErr.value = ''
+  verify.value = { ...challenge, rollback, onPass }
+  await nextTick()
+  try {
+    verifyWidget = await renderRecaptcha(verifyBox.value, challenge.siteKey, {
+      onToken: submitVerify,
+      onExpire: () => { verifyErr.value = 'That check expired — please tick the box again.' },
+      onError: () => { verifyErr.value = 'The security check could not load. Refresh and try again.' },
+    })
+  } catch (e) {
+    verifyErr.value = e?.message || 'The security check could not load.'
+  }
+}
+
+// Solved: re-run the hold with the token. A token is single-use, so a failure here
+// needs a fresh widget rather than a retry of the same one.
+async function submitVerify(token) {
+  verifyBusy.value = true
+  const res = await syncHolds({ token })
+  verifyBusy.value = false
+  if (res.ok) {
+    const resume = verify.value?.onPass
+    closeVerify()
+    resume?.()
+    return
+  }
+  resetRecaptcha(verifyWidget)
+  if (res.needsVerification) { verifyErr.value = 'That check did not go through — please try once more.'; return }
+  // A different problem (a slot taken meanwhile): drop the pick and say so.
+  cancelVerify()
+  err.value = 'One of your times was just taken — please pick another slot.'
+  loadDay()
+}
+
+// Backing out un-picks whatever triggered the check, so the selection matches what
+// is actually held.
+function cancelVerify() {
+  verify.value?.rollback?.()
+  closeVerify()
+  syncHolds()
+}
+
+function closeVerify() {
+  // grecaptcha has no remove(); the widget dies with the modal's DOM, and resetting
+  // first keeps a stale token from being reused if it is reopened.
+  resetRecaptcha(verifyWidget)
+  verifyWidget = null
+  verify.value = null
+  verifyErr.value = ''
 }
 
 // A short "when" label for the floating resume card (first day + time, "+N days" if multiple).
@@ -495,6 +561,7 @@ async function goCheckout() {
   saving.value = true
   const res = await syncHolds()
   saving.value = false
+  if (res.needsVerification) { openVerify(res, { onPass: goCheckout }); return }   // nothing to undo — pass, then carry on
   if (!res.ok) { err.value = 'One of your times was just taken — please pick another slot.'; loadDay(); return }
   step.value = 2
   loadLoyalty()
@@ -529,19 +596,27 @@ async function toggleSlot(s) {
     setDay(date.value, arr.filter((_, idx) => idx !== i))   // deselect → reconcile releases it
     await syncHolds()
   } else {
-    setDay(date.value, [...arr, { start_time: s.start_time, end_time: s.end_time, price: s.price }])
+    const day = date.value
+    setDay(day, [...arr, { start_time: s.start_time, end_time: s.end_time, price: s.price }])
     const res = await syncHolds()   // reserve it immediately so no one else can grab it
-    if (!res.ok) {                  // someone just took it between render and tap
-      setDay(date.value, selected.value.filter(x => x.start_time !== s.start_time))
+    if (res.needsVerification) {    // too many live holds — one human check, then carry on
+      openVerify(res, { rollback: () => setDay(day, (selectedByDate.value[day] || []).filter(x => x.start_time !== s.start_time)) })
+    } else if (!res.ok) {           // someone just took it between render and tap
+      setDay(day, selected.value.filter(x => x.start_time !== s.start_time))
       err.value = 'That time was just taken — please choose another.'
       loadDay()
     }
   }
 }
 async function addExtension(o) {
-  setDay(date.value, [...selected.value, { start_time: o.slot.start_time, end_time: o.slot.end_time, price: o.slot.price }])
+  const day = date.value
+  setDay(day, [...selected.value, { start_time: o.slot.start_time, end_time: o.slot.end_time, price: o.slot.price }])
   const res = await syncHolds()
-  if (!res.ok) { setDay(date.value, selected.value.filter(x => x.start_time !== o.slot.start_time)); err.value = 'That time was just taken — please choose another.'; loadDay() }
+  if (res.needsVerification) {
+    openVerify(res, { rollback: () => setDay(day, (selectedByDate.value[day] || []).filter(x => x.start_time !== o.slot.start_time)) })
+    return
+  }
+  if (!res.ok) { setDay(day, selected.value.filter(x => x.start_time !== o.slot.start_time)); err.value = 'That time was just taken — please choose another.'; loadDay() }
 }
 function clearDay(day) { const c = { ...selectedByDate.value }; delete c[day]; selectedByDate.value = c; syncHolds() }
 function removeBlock(day, block) {
@@ -957,10 +1032,42 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
       </template>
     </div>
     <Lightbox v-if="lightbox" :images="gallery" :start="activePhoto" :alt="l?.name || 'Listing'" @close="lightbox = false" />
+
+    <!-- Security check: this device is holding more slots at once than a booking
+         needs, and a held slot is off the board for everyone else. One check clears
+         the rest of the session. -->
+    <div v-if="verify" class="ld-vf-back" @click.self="cancelVerify">
+      <div class="ld-vf" role="dialog" aria-modal="true" aria-labelledby="ld-vf-t">
+        <button type="button" class="ld-vf-x" aria-label="Close" @click="cancelVerify"><X :size="18" /></button>
+        <div class="ld-vf-ico"><ShieldCheck :size="22" /></div>
+        <h3 id="ld-vf-t" class="ld-vf-t">Quick check before we hold more</h3>
+        <p class="ld-vf-d">
+          You're holding <b>{{ verify.held }} slot{{ verify.held === 1 ? '' : 's' }}</b> right now, and every held
+          slot is unavailable to everyone else until you book or it expires. Tick the box below and we'll
+          keep reserving — you won't be asked again this session.
+        </p>
+        <div ref="verifyBox" class="ld-vf-box"></div>
+        <div v-if="verifyBusy" class="ld-vf-busy">Checking…</div>
+        <div v-if="verifyErr" class="ld-vf-err">{{ verifyErr }}</div>
+        <button type="button" class="ld-vf-cancel" @click="cancelVerify">Cancel</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* Security check for heavy hold counts */
+.ld-vf-back { position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(15, 23, 42, .55); }
+.ld-vf { position: relative; width: min(420px, 100%); background: var(--surface, #ffffff); border-radius: 18px; padding: 26px 24px 20px; text-align: center; box-shadow: 0 24px 60px rgba(0, 0, 0, .28); }
+.ld-vf-x { position: absolute; top: 12px; right: 12px; border: none; background: none; color: var(--text-muted, #64748b); cursor: pointer; padding: 4px; line-height: 0; }
+.ld-vf-ico { width: 48px; height: 48px; margin: 0 auto 12px; border-radius: 14px; display: flex; align-items: center; justify-content: center; color: #0f766e; background: #ccfbf1; }
+.ld-vf-t { font-size: 18px; font-weight: 900; color: #0f172a; margin: 0; }
+.ld-vf-d { font-size: 13.5px; line-height: 1.55; color: var(--text-muted, #64748b); margin: 8px 0 16px; }
+.ld-vf-d b { color: #0f172a; }
+.ld-vf-box { display: flex; justify-content: center; min-height: 68px; }
+.ld-vf-busy { font-size: 12.5px; font-weight: 700; color: var(--text-muted, #64748b); margin-top: 10px; }
+.ld-vf-err { font-size: 12.5px; font-weight: 700; color: #b91c1c; background: #fee2e2; border-radius: 9px; padding: 8px 10px; margin-top: 10px; }
+.ld-vf-cancel { margin-top: 14px; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #0f172a; font-weight: 800; font-size: 13px; padding: 9px 18px; border-radius: 10px; cursor: pointer; }
 .cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; max-width: 100%; }
 .cback-btn { background: none; border: none; cursor: pointer; padding: 0; }
 .cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
