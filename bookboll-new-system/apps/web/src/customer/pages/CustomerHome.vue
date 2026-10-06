@@ -178,7 +178,7 @@ watch(() => customer.value?.id, async () => { loyalty.value = isCustomer.value ?
       </ServiceRow>
 
       <!-- Games -->
-      <ServiceRow v-if="brandShows('events')" title="Events" :icon="Ticket" subtitle="Games, casual events & tournaments — or host your own & set the price" viewAll="/games">
+      <ServiceRow v-if="brandShows('events')" title="Events" :icon="Ticket" subtitle="Games, casual events — or host your own & set the price" viewAll="/games">
         <template v-if="gamesEnabled !== false">
           <GameCard v-for="g in games.slice(0, 10)" :key="g.id" :game="g" />
           <router-link to="/host-game" class="host-card">

@@ -89,7 +89,7 @@ const grouped = computed(() => {
 
     <template v-else>
     <div class="g-head">
-      <div class="ph"><h1><Ticket :size="24" /> Events in {{ selectedCity?.name }}</h1><p>Join a game, hangout or tournament near you — or host your own and set the price.</p></div>
+      <div class="ph"><h1><Ticket :size="24" /> Events in {{ selectedCity?.name }}</h1><p>Join a game or hangout near you — or host your own and set the price.</p></div>
       <router-link to="/host-game" class="g-host-btn"><Plus :size="18" /> Host an event</router-link>
     </div>
 
@@ -97,7 +97,7 @@ const grouped = computed(() => {
       <button :class="{ on: tab === 'all' }" @click="tab = 'all'">All</button>
       <button :class="{ on: tab === 'game' }" @click="tab = 'game'">Games</button>
       <button :class="{ on: tab === 'event' }" @click="tab = 'event'">Hangouts</button>
-      <button :class="{ on: tab === 'tournament' }" @click="tab = 'tournament'">Tournaments</button>
+      <!-- <button :class="{ on: tab === 'tournament' }" @click="tab = 'tournament'">Tournaments</button> -->
     </div>
 
     <!-- Search + quick filters -->

@@ -21,7 +21,7 @@ import PhoneInput from '../components/PhoneInput.vue'
 import LiabilityWaiver from '../components/LiabilityWaiver.vue'
 import VenueBrowse from '../components/VenueBrowse.vue'
 import CustomFormBuilder from '../../components/CustomFormBuilder.vue'
-import { ArrowLeft, ArrowRight, Trophy, Gamepad2, Info, Sparkles, Check, MapPin, Clock, Users, UsersRound, Loader, Calendar, Building2, X, Plus, Pencil, Gift, EyeOff, ImagePlus, Copy, Share2, ShieldCheck, CreditCard, Banknote, Zap, RefreshCw, Hourglass, Ticket } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, Trophy, Gamepad2, Info, Sparkles, Check, MapPin, Clock, UsersRound, Loader, Calendar, Building2, X, Plus, Pencil, Gift, EyeOff, ImagePlus, Copy, Share2, ShieldCheck, CreditCard, Banknote, Zap, RefreshCw, Hourglass, Ticket } from 'lucide-vue-next'
 import { subcategoriesFor } from '../../lib/venueCategories.js'
 import { uploadImage } from '../../lib/imageUpload.js'
 import { durationLabel, SLOT_DURATIONS, toMinutes, endMinutes } from '../../lib/slots.js'
@@ -64,8 +64,7 @@ const f = ref({
   prize_on: false, prize_places: [{ amount: '' }],   // optional prize pot, split by place (1st, 2nd…)
   lock_minutes_before: 0,    // roster lock: 0 = at start time, else minutes before start
   play_format: '', courts_count: 1, team_size: 2,          // optional live rounds (game day engine)
-  // hangout-only: optional seat cap, own-spot (no venue), hidden exact location
-  limit_seats: false,
+  // hangout-only: own-spot (no venue), hidden exact location
   spot_mode: '',               // '' = not picked yet (hangouts choose on their own screen) · 'venue' = book a court · 'own' = host's own place
   loc_name: '', loc_address: '', own_date: '', own_start: '',
   hide_location: false,
@@ -525,8 +524,8 @@ const hostCharge = computed(() => {
     // Pay the court the way the provider allows — the same options and deposit a
     // regular booking of this court would offer.
     const courtNow = splitCourt(courtTotal, payMethod.value, payPlan.value).now
-    // Seats = the cap (games always; hangouts only when "limit seats" is on, else unlimited → 0 → no fee).
-    const seats = type.value === 'event' ? (f.value.limit_seats ? (Number(f.value.max_players) || 0) : 0) : (Number(f.value.max_players) || 0)
+    // Seats = the cap — games and hangouts both set one.
+    const seats = Number(f.value.max_players) || 0
     const serviceFee = effectiveTicketMode.value === 'stripe' ? 0 : seatFeeAt((Number(f.value.price_per_person) || 0) * seats, seatPct.value)
     return { cur, courtTotal, courtNow, courtArrival: courtTotal - courtNow, serviceFee, dueNow: courtNow + serviceFee, dueArrival: courtTotal - courtNow, bookbollOwned: payMethod.value === 'online', payMethod: payMethod.value }
   }
@@ -978,7 +977,7 @@ function continueDraft() {
 async function publishGame() {
   saving.value = true
   const own = ownSpot.value
-  const seats = type.value === 'event' ? (f.value.limit_seats ? (Number(f.value.max_players) || 2) : 0) : (Number(f.value.max_players) || 10)
+  const seats = Number(f.value.max_players) || 10
   const res = await createGame({
     host_customer_id: isCustomer.value ? customer.value.id : null,
     host_name: f.value.host_name, host_phone: f.value.host_phone, host_whatsapp: f.value.host_whatsapp || f.value.host_phone,
@@ -1326,8 +1325,8 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           </div>
         </div>
         <div class="hg-row">
-          <div v-if="type === 'game'"><label class="hg-l">Max players</label><input v-model.number="f.max_players" type="number" min="2" class="hg-in" /></div>
-          <div v-if="type === 'game'" class="hg-wl">
+          <div v-if="isGameLike"><label class="hg-l">{{ type === 'event' ? 'Max people' : 'Max players' }}</label><input v-model.number="f.max_players" type="number" min="2" class="hg-in" /></div>
+          <div v-if="isGameLike" class="hg-wl">
             <div class="hg-prize-tl">
               <div class="hg-prize-tt"><Hourglass :size="15" /> Waitlist when full?</div>
               <div class="hg-prize-td">People can queue — they get in automatically when a spot frees.</div>
@@ -1478,25 +1477,6 @@ function goToPublished() { const p = publishedPath.value; published.value = null
             </button>
           </div>
         </div>
-
-        <!-- Hangout: optional seat limit (off = open to everyone) -->
-        <template v-if="type === 'event'">
-          <div class="hg-prize-toggle">
-            <div class="hg-prize-tl">
-              <div class="hg-prize-tt"><Users :size="16" /> Limit how many can join?</div>
-              <div class="hg-prize-td">Off = open to everyone, no cap.</div>
-            </div>
-            <button type="button" class="hg-switch" :class="{ on: f.limit_seats }" @click="f.limit_seats = !f.limit_seats" :aria-pressed="f.limit_seats"><span class="hg-switch-k"></span></button>
-          </div>
-          <div v-if="f.limit_seats"><label class="hg-l">Max people</label><input v-model.number="f.max_players" type="number" min="2" class="hg-in" /></div>
-          <div v-if="f.limit_seats" class="hg-wl">
-            <div class="hg-prize-tl">
-              <div class="hg-prize-tt"><Hourglass :size="15" /> Waitlist when full?</div>
-              <div class="hg-prize-td">People can queue — they get in automatically when a spot frees.</div>
-            </div>
-            <button type="button" class="hg-switch" :class="{ on: f.allow_waitlist }" @click="f.allow_waitlist = !f.allow_waitlist" :aria-pressed="f.allow_waitlist"><span class="hg-switch-k"></span></button>
-          </div>
-        </template>
 
         <template v-if="type !== 'event'">
         <div class="hg-prize-toggle">
@@ -1842,7 +1822,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           <template v-if="isGameLike && gameRange">
             <div v-if="ownSpot" class="hg-review-row"><span>Where</span><b>{{ f.loc_name }}<span v-if="f.hide_location"> · exact spot hidden</span></b></div>
             <div class="hg-review-row"><span>When</span><b>{{ ownSpot ? f.own_date : gDate }} · {{ fmtTime(gameRange.start) }}–{{ fmtTime(gameRange.end) }}<span v-if="ownSpot" class="hg-review-dur"> ({{ durLabel(gameHours) }})</span></b></div>
-            <div class="hg-review-row"><span>{{ type === 'event' ? 'People' : 'Players' }}</span><b>{{ type === 'event' && !f.limit_seats ? 'No limit' : 'up to ' + f.max_players }}</b></div>
+            <div class="hg-review-row"><span>{{ type === 'event' ? 'People' : 'Players' }}</span><b>up to {{ f.max_players }}</b></div>
             <div class="hg-review-row"><span>Joining</span><b>{{ f.approval_mode === 'instant' ? 'Instant — no approval' : 'You approve requests' }}</b></div>
             <div v-if="Number(f.price_per_person) > 0" class="hg-review-row"><span>Tickets</span><b>{{ effectiveTicketMode === 'stripe' ? 'Online via Stripe' : 'Pay on arrival' }}</b></div>
           </template>
