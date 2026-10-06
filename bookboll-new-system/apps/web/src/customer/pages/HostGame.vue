@@ -9,7 +9,7 @@ import { ensureSignedIn } from '../../lib/authGate.js'
 import { useSeo } from '../../lib/seo.js'
 useSeo({ title: 'Host a game, hangout or tournament', description: 'Set up your own pickup game, social hangout or tournament, pick a venue and invite players — host free on Bookboll.', path: '/host-game' })
 import { loadLocations, loadFacility, loadFacilities, loadListing } from '../../customer/data.js'
-import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit, createTournament, courtPaymentPlan, splitCourt, PAY_METHOD_LABEL } from '../../customer/apiGames.js'
+import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, ownSpotMinFee, ownSpotMinFeeCurrency, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit, createTournament, courtPaymentPlan, splitCourt, PAY_METHOD_LABEL } from '../../customer/apiGames.js'
 import { PLAY_FORMATS } from '../../customer/matchmaking.js'
 import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../../customer/apiBooking.js'
 import { hostDraft, saveHostDraft, clearHostDraft } from '../../customer/hostDraft.js'
@@ -518,8 +518,19 @@ const instantJoinHint = computed(() => {
 const hostCharge = computed(() => {
   const cur = currency.value
   if (isGameLike.value) {
-    // Hangout at the host's own spot: no court, no service fee — free to publish.
-    if (ownSpot.value) return { cur, courtTotal: 0, courtNow: 0, courtArrival: 0, serviceFee: 0, dueNow: 0, dueArrival: 0, bookbollOwned: false }
+    // Hangout at the host's own spot: no court, so everything due is Bookboll's.
+    // Selling seats → the usual seats percentage. FREE → there is no seats value to
+    // take a percentage of, so it pays the flat publish fee instead (in USD, the one
+    // currency the platform sets it in). Mirrors priceOwnSpot() on the server.
+    if (ownSpot.value) {
+      const seatsValue = (Number(f.value.price_per_person) || 0) * (Number(f.value.max_players) || 0)
+      if (seatsValue <= 0) {
+        const min = Number(ownSpotMinFee.value) || 0
+        return { cur: ownSpotMinFeeCurrency.value, courtTotal: 0, courtNow: 0, courtArrival: 0, serviceFee: min, dueNow: min, dueArrival: 0, bookbollOwned: false, ownSpotMin: true }
+      }
+      const fee = effectiveTicketMode.value === 'stripe' ? 0 : seatFeeAt(seatsValue, seatPct.value)
+      return { cur, courtTotal: 0, courtNow: 0, courtArrival: 0, serviceFee: fee, dueNow: fee, dueArrival: 0, bookbollOwned: false }
+    }
     const courtTotal = gSel.value.reduce((n, s) => n + (Number(s.price) || 0), 0)
     // Pay the court the way the provider allows — the same options and deposit a
     // regular booking of this court would offer.
@@ -566,7 +577,10 @@ const loyaltyCountryId = computed(() => selectedCountry.value?.id || null)
 const loyaltyMax = computed(() => loyaltyCfg.value
   ? maxRedeemable({ points: loyaltyBalance.value, platformFee: hostCharge.value.dueNow, orderTotal: hostCharge.value.dueNow, cfg: loyaltyCfg.value })
   : { points: 0, amount: 0 })
-const loyaltyEligible = computed(() => !isWhiteLabel.value && isCustomer.value && hostCharge.value.dueNow > 0 && loyaltyMax.value.amount > 0)
+// Points are held in the host's own currency, and the own-spot publish fee is in
+// USD with no rate to convert between them — the server refuses points against it,
+// so the wizard must not offer them either.
+const loyaltyEligible = computed(() => !isWhiteLabel.value && isCustomer.value && !hostCharge.value.ownSpotMin && hostCharge.value.dueNow > 0 && loyaltyMax.value.amount > 0)
 const loyaltyAmount = computed(() => (loyaltyEligible.value && useLoyalty.value) ? loyaltyMax.value.amount : 0)
 const loyaltyPoints = computed(() => (loyaltyEligible.value && useLoyalty.value) ? loyaltyMax.value.points : 0)
 const dueNowNet = computed(() => Math.max(0, +(hostCharge.value.dueNow - loyaltyAmount.value).toFixed(2)))
@@ -1350,15 +1364,29 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           </div>
           <div><label class="hg-l">{{ type === 'tournament' ? 'Entry fee per team' : 'Price per person' }} ({{ currency }})</label><input v-model="f.price_per_person" type="number" min="0" class="hg-in" placeholder="0" /></div>
         </div>
-        <div v-if="!(Number(f.price_per_person) > 0)" class="hg-note"><Info :size="14" /> {{ type === 'tournament' ? 'Teams' : type === 'event' ? 'People' : 'Players' }} pay you {{ type === 'tournament' ? 'their entry fee' : type === 'event' ? 'directly' : 'their seat price' }} on arrival — that part isn't handled by Bookboll.</div>
+        <div v-if="!(Number(f.price_per_person) > 0)" class="hg-note" :class="{ 'hg-feenote': ownSpot }">
+          <Info :size="14" />
+          <!-- Free AND at the host's own spot: no court and no seats means nothing for
+               Bookboll to take a cut of, so this one pays a flat fee to publish. -->
+          <span v-if="ownSpot">
+            A free event at your own spot pays a one-off
+            <b>{{ ownSpotMinFeeCurrency }} {{ Number(ownSpotMinFee).toFixed(2) }}</b> fee to publish —
+            it keeps the Events feed from filling up with throwaway posts. Charge a price per person
+            instead and you pay the usual {{ seatPct }}% of seats, with nothing flat on top.
+          </span>
+          <span v-else>
+            {{ type === 'tournament' ? 'Teams' : type === 'event' ? 'People' : 'Players' }} pay you {{ type === 'tournament' ? 'their entry fee' : type === 'event' ? 'directly' : 'their seat price' }} on arrival — that part isn't handled by Bookboll.
+          </span>
+        </div>
 
         <!-- Priced: what Bookboll's cut costs PER HEAD, right where the price is set -->
         <div v-else class="hg-note hg-feenote">
           <Info :size="14" />
-          <!-- Own-spot hangout: no venue, no service fee — nothing reaches Bookboll -->
+          <!-- Own spot, priced: no court to pay for, but Bookboll's seats cut still applies -->
           <span v-if="ownSpot">
-            At your own spot there's <b>no Bookboll fee</b> — people pay you
-            <b>{{ currency }} {{ Number(f.price_per_person).toLocaleString() }}</b> each, directly.
+            No venue to pay for. Bookboll's fee is
+            <b>{{ seatPct }}% — {{ currency }} {{ feePerHead.toLocaleString() }} per {{ feeUnit }}</b><template v-if="effectiveTicketMode === 'stripe'">, split from each Stripe ticket automatically — nothing upfront</template><template v-else-if="feeCount">: <b>{{ currency }} {{ feeTotal.toLocaleString() }}</b> for {{ feeCount }} {{ feeCount === 1 ? feeUnit : feeUnits }}, paid when you publish</template><template v-else>, paid when you publish</template>.
+            {{ feeUnitsCap }} pay you {{ currency }} {{ Number(f.price_per_person).toLocaleString() }} each, directly.
           </span>
           <!-- Stripe tickets: the fee comes out of each ticket instead of upfront -->
           <span v-else-if="effectiveTicketMode === 'stripe'">
@@ -1588,8 +1616,9 @@ function goToPublished() { const p = publishedPath.value; published.value = null
             <div class="hg-choice-t">Use my own spot</div>
             <div class="hg-choice-d">Your place, a park, the beach — anywhere. Name the spot and set the date, start time and how long it runs yourself.</div>
             <div class="hg-choice-tags">
-              <span><Check :size="12" /> No venue booking, nothing to pay for a court</span>
+              <span><Check :size="12" /> No court to book — your place, your time</span>
               <span><EyeOff :size="12" /> The exact address can stay private</span>
+              <span class="hg-choice-fee"><CreditCard :size="12" /> Free events pay a {{ ownSpotMinFeeCurrency }} {{ ownSpotMinFee }} fee to publish</span>
             </div>
           </button>
         </div>
@@ -1628,6 +1657,18 @@ function goToPublished() { const p = publishedPath.value; published.value = null
               <button type="button" class="hg-switch" :class="{ on: f.hide_location }" @click="f.hide_location = !f.hide_location" :aria-pressed="f.hide_location"><span class="hg-switch-k"></span></button>
             </div>
             <div class="hg-note"><Info :size="14" /> Your <b>spot name</b> is always shown publicly{{ f.hide_location ? '; the exact address stays private until you accept someone.' : '.' }}</div>
+            <!-- No court and no seats means nothing for Bookboll to take a cut of, so a
+                 free own-spot event pays a flat fee instead. Said here too: the price was
+                 set a step ago, and finding this out at checkout is a nasty surprise. -->
+            <div v-if="!(Number(f.price_per_person) > 0)" class="hg-note hg-feenote">
+              <CreditCard :size="14" />
+              <span>
+                This event is free, so there's no court and no seat money for Bookboll to take a share of —
+                publishing it costs a one-off <b>{{ ownSpotMinFeeCurrency }} {{ Number(ownSpotMinFee).toFixed(2) }}</b>,
+                paid at the last step. Go back and set a price per person and you pay the usual
+                {{ seatPct }}% of seats instead.
+              </span>
+            </div>
           </div>
 
           <!-- venue browse (games always · hangout "Book a Bookboll venue") -->
@@ -1899,7 +1940,8 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           <div class="hg-pay-h">What you'll pay now</div>
           <div v-if="hostCharge.courtNow > 0" class="hg-pay-row"><span><template v-if="hostCharge.courtArrival > 0">Venue deposit (secures the venue{{ type === 'tournament' ? 's' : '' }}) <span class="hg-pay-nr">non-refundable</span></template><template v-else>Venue — full online</template></span><b>{{ hostCharge.cur }} {{ hostCharge.courtNow.toLocaleString() }}</b></div>
           <div v-else-if="!ownSpot && hostCharge.courtTotal > 0" class="hg-pay-row"><span>Venue — paid on arrival</span><b class="hg-pay-free">{{ hostCharge.cur }} 0</b></div>
-          <div v-if="effectiveTicketMode === 'stripe'" class="hg-pay-row"><span>Service fee · split from each Stripe ticket automatically</span><b class="hg-pay-free">{{ hostCharge.cur }} 0</b></div>
+          <div v-if="hostCharge.ownSpotMin" class="hg-pay-row"><span>Publish fee · free event at your own spot <span class="hg-pay-nr">non-refundable</span></span><b>{{ hostCharge.cur }} {{ hostCharge.serviceFee.toFixed(2) }}</b></div>
+          <div v-else-if="effectiveTicketMode === 'stripe'" class="hg-pay-row"><span>Service fee · split from each Stripe ticket automatically</span><b class="hg-pay-free">{{ hostCharge.cur }} 0</b></div>
           <div v-else class="hg-pay-row"><span>Service fee · {{ seatPct }}% of {{ type === 'tournament' ? 'team entries' : 'seats' }} <span class="hg-pay-nr">non-refundable</span></span><b>{{ hostCharge.cur }} {{ hostCharge.serviceFee.toLocaleString() }}</b></div>
           <div class="hg-pay-row hg-pay-total"><span>Total due now</span><b>{{ hostCharge.cur }} {{ hostCharge.dueNow.toLocaleString() }}</b></div>
 
@@ -1928,7 +1970,8 @@ function goToPublished() { const p = publishedPath.value; published.value = null
                otherwise the silent arrival fallback charges an upfront fee they thought
                they'd skipped. -->
           <div v-if="f.ticket_mode === 'stripe' && !stripeConnected && Number(f.price_per_person) > 0" class="hg-pay-warn hg-pay-warn-stripe"><Info :size="14" /> You chose <b>online tickets</b> but haven't connected Stripe, so this event will publish as <b>pay on arrival</b> — including the upfront service fee above. Go back to step 1 and connect Stripe to skip that fee.</div>
-          <div v-if="effectiveTicketMode === 'stripe'" class="hg-pay-warn"><Info :size="14" /> {{ type === 'event' ? 'People' : 'Players' }} pay <b>online via your Stripe</b> when you accept them — Bookboll's {{ seatPct }}% is deducted from each ticket and payouts follow your Stripe schedule. Any venue deposit stays <b>non-refundable</b>.</div>
+          <div v-if="hostCharge.ownSpotMin" class="hg-pay-warn"><Info :size="14" /> Your event is free and at your own spot, so there's no court and no seat money for Bookboll to take a share of — this one-off <b>{{ hostCharge.cur }} {{ hostCharge.serviceFee.toFixed(2) }}</b> is what it costs to publish it. It's <b>non-refundable</b>, including if you cancel the event. Set a price per person instead and you pay the usual {{ seatPct }}% of seats, with no flat fee.</div>
+          <div v-else-if="effectiveTicketMode === 'stripe'" class="hg-pay-warn"><Info :size="14" /> {{ type === 'event' ? 'People' : 'Players' }} pay <b>online via your Stripe</b> when you accept them — Bookboll's {{ seatPct }}% is deducted from each ticket and payouts follow your Stripe schedule. Any venue deposit stays <b>non-refundable</b>.</div>
           <div v-else class="hg-pay-warn"><Info :size="14" /> The service fee is <b>non-refundable</b>. If not enough {{ type === 'tournament' ? 'teams' : type === 'event' ? 'people' : 'players' }} join and you cancel, it isn't returned — you host at your own risk. {{ type === 'tournament' ? 'Teams' : type === 'event' ? 'People' : 'Players' }} pay you {{ type === 'tournament' ? 'their entry fee' : type === 'event' ? 'directly' : 'their seat price' }} on arrival.</div>
         </div>
         </aside>
@@ -2070,6 +2113,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-choice-ico.own { background: linear-gradient(135deg,#7c3aed,#6d28d9); }
 .hg-choice-tags { display: flex; flex-direction: column; gap: 6px; margin-top: 13px; }
 .hg-choice-tags span { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--text-muted, #64748b); }
+.hg-choice-fee { color: #b45309; }
 /* Chosen path, with the way back to the choice */
 .hg-modebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--bg, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 9px 10px 9px 14px; margin-bottom: 14px; }
 .hg-modebar-t { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 800; color: #0f172a; }
@@ -2097,11 +2141,11 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-in:focus { border-color: var(--brand-accent); }
 .hg-ta { resize: vertical; font-family: inherit; }
 .hg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.hg-note { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--text-light, #94a3b8); margin-top: 8px; line-height: 1.4; }
+.hg-note { position: relative; padding-left: 20px; font-size: 12.5px; color: var(--text-light, #94a3b8); margin-top: 8px; line-height: 1.4; }
+.hg-note > svg { position: absolute; left: 0; top: 2px; }
 /* Fee preview: it quotes real money, so it sits a shade darker than a plain hint */
 .hg-feenote { color: var(--text-muted, #64748b); font-size: 13px; line-height: 1.5; }
 .hg-feenote b { color: #0f172a; font-weight: 800; }
-.hg-feenote > svg { flex-shrink: 0; margin-top: 2px; }
 
 /* How-players-pay ticket-mode cards (paid games/hangouts) */
 .hg-tickets { margin-top: 14px; }
@@ -2353,7 +2397,8 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-pay { margin-top: 14px; border: 1.5px solid #99f6e4; border-radius: 12px; padding: 14px 16px; background: color-mix(in srgb, var(--brand) 8%, white); }
 .hg-pay-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--brand); margin-bottom: 8px; }
 .hg-pay-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: #334155; padding: 5px 0; }
-.hg-pay-row b { color: #0f172a; font-weight: 800; }
+/* The amount never breaks across lines — "USD" above "5.00" read as two numbers. */
+.hg-pay-row b { color: #0f172a; font-weight: 800; white-space: nowrap; }
 .hg-paypick { margin-bottom: 14px; }
 .hg-paypick-opt { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; margin-top: 8px; cursor: pointer; }
 .hg-paypick-opt.on { border-color: var(--brand, #0f766e); background: color-mix(in srgb, var(--brand, #0f766e) 6%, transparent); }
@@ -2368,7 +2413,8 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-pay-sub { font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-light, #94a3b8); margin: 10px 0 2px; padding-top: 9px; border-top: 1px dashed #99f6e4; }
 .hg-pay-g { color: var(--text-light, #94a3b8); font-weight: 600; }
 .hg-pay-arrtotal { font-size: 12px; color: var(--text-light, #94a3b8); text-align: right; margin-top: 3px; }
-.hg-pay-warn { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 12px; margin-top: 10px; line-height: 1.45; }
+.hg-pay-warn { position: relative; font-size: 12.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 12px 10px 31px; margin-top: 10px; line-height: 1.45; }
+.hg-pay-warn > svg { position: absolute; left: 11px; top: 11px; }
 .hg-pay-warn b { color: #0f172a; }
 .hg-pay-warn-stripe { color: #4338ca; background: #eef2ff; border-color: #c7d2fe; }
 .hg-pay-warn-stripe b { color: #312e81; }

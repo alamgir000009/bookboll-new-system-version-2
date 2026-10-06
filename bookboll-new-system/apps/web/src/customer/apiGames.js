@@ -18,6 +18,19 @@ export const gamesEnabled = ref(null)
 export const tournamentsEnabled = ref(null)
 export const hangoutLocationEnabled = ref(null)
 
+/**
+ * What a FREE event at the host's own spot pays to publish.
+ *
+ * An own-spot event books no court and a free one sells no seats, so there is no
+ * percentage for the platform to take — publishing was free, which made the Events
+ * feed free to spam. The server charges this flat fee instead, in its own currency
+ * (USD): there is no venue to take a currency from and no FX rate to convert with.
+ * Mirrored here only so the wizard can SAY so before the host picks that option.
+ */
+export const OWN_SPOT_MIN_FEE = 5
+export const ownSpotMinFee = ref(OWN_SPOT_MIN_FEE)
+export const ownSpotMinFeeCurrency = ref('USD')
+
 function formatErr(res, fallback) {
   const errors = res?.errors
   if (errors && typeof errors === 'object') {
@@ -46,6 +59,8 @@ export async function gameConfig(listingId = null, community = false) {
   gamesEnabled.value = data.games_enabled !== false
   tournamentsEnabled.value = data.tournaments_enabled !== false
   hangoutLocationEnabled.value = data.hangout_enabled !== false
+  ownSpotMinFee.value = Number(data.own_spot_min_fee ?? OWN_SPOT_MIN_FEE)
+  ownSpotMinFeeCurrency.value = String(data.own_spot_min_fee_currency || 'USD')
 
   _config[key] = {
     courtCommissionPct: Number(data.court_commission_pct ?? 15),
