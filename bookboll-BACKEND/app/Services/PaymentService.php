@@ -500,7 +500,9 @@ class PaymentService
                             $qq->where(function ($x) {
                                 $x->whereNull('source_type')->orWhere('source_type', 'booking');
                             })->whereHas('booking', fn($b) => $b->where('origin', 'customer_game'));
-                        });
+                        // An own-spot event books no court, so its fee row has no
+                        // booking to read an origin from — it says so itself.
+                        })->orWhere('source_type', 'hosted_game');
                     } elseif ($src === 'venue') {
                         $q->orWhere(function ($qq) {
                             $qq->where(function ($x) {

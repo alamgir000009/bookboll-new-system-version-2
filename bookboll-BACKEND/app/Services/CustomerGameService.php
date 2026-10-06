@@ -40,7 +40,10 @@ use PaymentType;
  * confirms the charge (settleHostCheckout). An abandoned checkout takes the game
  * and its court reservation with it (discardUnpaidGame).
  *
- * A hangout at the host's own spot books no court and costs nothing.
+ * A hangout at the host's own spot books no court, so there is no venue money at
+ * all. A PRICED one still pays the usual seats percentage; a FREE one pays a flat
+ * publish fee instead (OWN_SPOT_MIN_FEE) — without it, publishing an event Bookboll
+ * earns nothing from was free, and the Events feed was free to spam.
  *
  * All money is priced here from the listing and the platform's rates — the client
  * sends what the host picked, never an amount.
@@ -51,6 +54,19 @@ class CustomerGameService
     private const COURT_COMMISSION_PCT = 15;
 
     private const SEAT_FEE_PCT = 10;
+
+    /**
+     * What a FREE event at the host's own spot pays to publish.
+     *
+     * No court and no seats means no percentage to take, so this is the only thing
+     * standing between the Events feed and an endless free-to-post queue. Charged in
+     * USD on purpose: there is no venue here to take a currency from, and converting
+     * into the host's own currency would need an FX rate the platform does not keep.
+     * Override with the `own_spot_min_fee` setting (same currency).
+     */
+    private const OWN_SPOT_MIN_FEE = 5.00;
+
+    private const OWN_SPOT_MIN_FEE_CURRENCY = 'USD';
 
     /** Points awarded for hosting, once per game. */
     private const HOST_BONUS = 50;
@@ -92,6 +108,10 @@ class CustomerGameService
             'hangout_enabled'     => true,
             'court_commission_pct' => $this->courtCommissionPct($listing),
             'seat_fee_pct'         => $this->seatFeePct($listing, $community),
+            // What a FREE event at the host's own spot pays to publish, so the wizard
+            // can say so before the host picks that option rather than at checkout.
+            'own_spot_min_fee'          => $this->ownSpotMinFee(),
+            'own_spot_min_fee_currency' => self::OWN_SPOT_MIN_FEE_CURRENCY,
             'bookboll_owned'       => $listing ? ! $this->venueFor($listing)?->owner_user_id : false,
             // What the provider takes on this court, so the host is offered the
             // same choice a customer booking it would get.
@@ -162,13 +182,20 @@ class CustomerGameService
             ? Community::where('uuid', $data['community_id'])->first()
             : null;
 
-        // Is there anything to collect? A free court, an own-spot hangout or a bill
-        // fully covered by points all publish straight away; anything else has to
-        // go through Stripe before the event is real.
-        $needsPayment = ! $ownSpot && $charge['dueNow'] > 0;
+        // Is there anything to collect? A free court or a bill fully covered by points
+        // publishes straight away; anything else has to go through Stripe before the
+        // event is real. An own-spot event used to be excluded here — it could never
+        // owe anything — but a free one now pays the publish fee, so it goes through
+        // the same gate as everything else.
+        $needsPayment = $charge['dueNow'] > 0;
+
+        // The money currency and the EVENT's currency are not always the same: a free
+        // own-spot event is billed in USD, while its seat prices (and anything it shows
+        // players) belong to the host's own country.
+        $gameCurrency = $ownSpot ? ($this->hostCurrency($host, $data) ?: $currency) : $currency;
 
         try {
-            return DB::transaction(function () use ($host, $listing, $venue, $ownSpot, $data, $charge, $currency, $community, $needsPayment) {
+            return DB::transaction(function () use ($host, $listing, $venue, $ownSpot, $data, $charge, $currency, $gameCurrency, $community, $needsPayment) {
                 if (! $ownSpot) {
                     // The check above happened outside any transaction, so two hosts
                     // could both pass it and both insert. Take the listing's booking
@@ -200,7 +227,7 @@ class CustomerGameService
                     'start_time'              => $data['start_time'],
                     'end_time'                => $data['end_time'],
                     'price_per_person'        => round((float) ($data['price_per_person'] ?? 0), 2),
-                    'currency'                => $currency,
+                    'currency'                => $gameCurrency,
                     'max_players'             => (int) ($data['max_players'] ?? 0),
                     'skill_level'             => $data['skill_level'] ?? 'all',
                     'description'             => $data['description'] ?? '',
@@ -228,10 +255,14 @@ class CustomerGameService
 
                 if ($booking) {
                     $this->recordHostPayments($host, $booking, $charge, $currency, true, ! $needsPayment);
+                } elseif ($ownSpot) {
+                    // No booking to hang the ledger row on, so the fee gets its own row
+                    // keyed to the game.
+                    $this->recordOwnSpotFee($host, $game, $charge, $currency, ! $needsPayment);
                 }
 
                 if ($needsPayment) {
-                    $checkout = $this->startHostCheckout($host, $game, [$booking->id], $charge, $currency);
+                    $checkout = $this->startHostCheckout($host, $game, $booking ? [$booking->id] : [], $charge, $currency);
 
                     return sendSuccess('Complete payment to publish', [
                         'game'             => $this->mapGame($game),
@@ -614,7 +645,7 @@ class CustomerGameService
         $currency = $this->venueCurrency($venue);
 
         if (! $listing) {
-            return $this->charge($currency, 0, 0, 0, false, 0);
+            return $this->priceOwnSpot($host, $data);
         }
 
         $courtTotal = $this->courtPrice($listing, $data);
@@ -639,6 +670,75 @@ class CustomerGameService
         $charge['paymentMethods'] = $plan['methods'];
 
         return $charge;
+    }
+
+    /**
+     * The bill for an event at the host's own spot. There is no court, so every
+     * figure here is Bookboll's own money.
+     *
+     * Selling seats → the normal seats percentage, in the host's own currency, the
+     * same as it would be at a venue. (Hosts on their own verified Stripe pay it per
+     * ticket instead, so nothing is due here.)
+     *
+     * Free → there is no seats value to take a percentage of. That used to publish
+     * for nothing; it now pays a flat fee in USD. Loyalty points are deliberately NOT
+     * accepted against that one: points are held in the host's local currency and
+     * there is no rate to convert them at.
+     *
+     * @return array<string, mixed>
+     */
+    protected function priceOwnSpot(User $host, array $data): array
+    {
+        $seats      = max(0, (int) ($data['max_players'] ?? 0));
+        $seatsValue = round((float) ($data['price_per_person'] ?? 0), 2) * $seats;
+
+        if ($seatsValue <= 0) {
+            return $this->charge(self::OWN_SPOT_MIN_FEE_CURRENCY, 0, 0, $this->ownSpotMinFee(), false, 0);
+        }
+
+        $currency = $this->hostCurrency($host, $data);
+
+        $serviceFee = $this->sellsOwnTickets($host, $data)
+            ? 0
+            : round($seatsValue * $this->seatFeePct(null, ! empty($data['community_id']), $this->hostCountryId($host, $data)) / 100);
+
+        $loyalty = $this->loyaltyAllowed($host, (float) ($data['loyalty_redeem'] ?? 0), $serviceFee);
+
+        return $this->charge($currency, 0, 0, $serviceFee, false, $loyalty);
+    }
+
+    /** The flat publish fee for a free own-spot event, admin-tunable. */
+    protected function ownSpotMinFee(): float
+    {
+        $setting = $this->setting('own_spot_min_fee');
+
+        return is_numeric($setting) ? round(max(0, (float) $setting), 2) : self::OWN_SPOT_MIN_FEE;
+    }
+
+    /** Which country an own-spot event belongs to — it has no venue to ask. */
+    protected function hostCountryId(User $host, array $data): ?int
+    {
+        $id = $data['country_id'] ?? $host->country_id;
+
+        return $id ? (int) $id : null;
+    }
+
+    /**
+     * The currency an own-spot event prices its seats in: the host's own country.
+     * Empty when we cannot tell — charging in a guessed currency is worse than not
+     * charging, exactly as venueCurrency() refuses to guess.
+     */
+    protected function hostCurrency(User $host, array $data): string
+    {
+        $countryId = $this->hostCountryId($host, $data);
+
+        if (! $countryId) {
+            return '';
+        }
+
+        $code = Country::with('currency')->find($countryId)?->currency?->code;
+
+        return strtoupper((string) ($code ?: ''));
     }
 
     /** @return array<string, mixed> */
@@ -728,8 +828,11 @@ class CustomerGameService
         return $rate ?? self::COURT_COMMISSION_PCT;
     }
 
-    /** Community rate → the venue's country event rate → platform default. */
-    protected function seatFeePct(?Listing $listing, bool $community = false): float
+    /**
+     * Community rate → the country's event rate → platform default. The country comes
+     * from the venue, or — for an own-spot event, which has none — from $countryId.
+     */
+    protected function seatFeePct(?Listing $listing, bool $community = false, ?int $countryId = null): float
     {
         if ($community) {
             $setting = $this->setting('community_commission');
@@ -739,7 +842,7 @@ class CustomerGameService
             }
         }
 
-        $rate = $this->countryRate($listing ? $this->venueFor($listing)?->country_id : null, 'event');
+        $rate = $this->countryRate($listing ? $this->venueFor($listing)?->country_id : $countryId, 'event');
 
         if ($rate !== null) {
             return $rate;
@@ -939,6 +1042,49 @@ class CustomerGameService
     }
 
     /**
+     * The ledger row for an own-spot event's fee. Every other hosted payment hangs off
+     * a court booking; this one has none, so it is keyed to the game by payment_id and
+     * settled (or cancelled) by that key.
+     */
+    protected function recordOwnSpotFee(
+        User $host,
+        HostedGame $game,
+        array $charge,
+        string $currency,
+        bool $settled
+    ): void {
+        $amount = round(max(0, $charge['serviceFee'] - $charge['loyaltyRedeem']), 2);
+
+        if ($amount <= 0) {
+            return;
+        }
+
+        Payment::create([
+            'payment_id'  => $this->ownSpotFeeKey($game),
+            'user_id'     => $host->id,
+            'booking_id'  => null,
+            'source_type' => 'hosted_game',
+            'type'        => 'commission',
+            'method'      => 'online',
+            'amount'      => $amount,
+            'currency'    => $currency,
+            'recipient'   => '@bookboll',
+            'status'      => $settled ? 'paid' : 'pending',
+            'date'        => now()->toDateString(),
+            'paid_at'     => $settled ? now() : null,
+            'notes'       => (float) $game->price_per_person > 0
+                ? 'Seats service fee — own spot (non-refundable)'
+                : 'Publish fee — free event at the host\'s own spot (non-refundable)',
+        ]);
+    }
+
+    /** Stable payment_id for an own-spot fee, so settle and discard can find it. */
+    protected function ownSpotFeeKey(HostedGame $game): string
+    {
+        return 'game-fee-'.$game->uuid;
+    }
+
+    /**
      * Send the host to Stripe for what they owe now, on the same checkout the rest
      * of the platform uses. The game already exists but is unpublished, and its
      * courts are reserved but unpaid — this session is what turns both real.
@@ -961,9 +1107,12 @@ class CustomerGameService
 
         if ($currency === '') {
             // Charging in a guessed currency is worse than not charging: the host
-            // would be billed in one currency and the venue paid in another.
+            // would be billed in one currency and the venue paid in another. An
+            // own-spot event lands here when its country has no currency set.
             throw new \RuntimeException(
-                'This venue has no currency set, so we cannot take payment for it yet. Please contact support.'
+                $game->listing_id
+                    ? 'This venue has no currency set, so we cannot take payment for it yet. Please contact support.'
+                    : 'Your country has no currency set, so we cannot take payment yet. Please contact support.'
             );
         }
 
@@ -985,7 +1134,10 @@ class CustomerGameService
             $charge['courtNow'] > 0
                 ? ($charge['bookbollOwned'] ? 'Court' : 'Court deposit').': '.$currency.' '.number_format($charge['courtNow'], 2)
                 : null,
-            $charge['serviceFee'] > 0 ? 'Seats service fee: '.$currency.' '.number_format($charge['serviceFee'], 2) : null,
+            $charge['serviceFee'] > 0
+                ? ((! $game->listing_id && (float) $game->price_per_person <= 0) ? 'Publish fee' : 'Seats service fee')
+                    .': '.$currency.' '.number_format($charge['serviceFee'], 2)
+                : null,
             $charge['loyaltyRedeem'] > 0 ? 'Points applied: -'.$currency.' '.number_format($charge['loyaltyRedeem'], 2) : null,
             $charge['courtArrival'] > 0 ? 'Due at the venue on arrival: '.$currency.' '.number_format($charge['courtArrival'], 2) : null,
         ]);
@@ -1084,6 +1236,12 @@ class CustomerGameService
             $this->settleHostBooking($booking, $chargeId, $paymentIntentId);
         }
 
+        // An own-spot event has no booking, so its fee row is not covered by the loop
+        // above — settle it by the key it was written under.
+        Payment::where('payment_id', $this->ownSpotFeeKey($game))
+            ->where('status', PaymentStatus::PENDING)
+            ->update(['status' => PaymentStatus::PAID, 'paid_at' => now()]);
+
         $charge = is_array($game->charge) ? $game->charge : [];
         $host   = User::where('uuid', $game->host_customer_id)->first();
 
@@ -1123,9 +1281,16 @@ class CustomerGameService
 
         $bookingIds = $this->bookingIdsFor($game);
 
+        $cancelNote = DB::raw("CONCAT(COALESCE(notes,''), ' — cancelled: unpaid hosted event')");
+
         Payment::whereIn('booking_id', $bookingIds)
             ->where('status', PaymentStatus::PENDING)
-            ->update(['status' => PaymentStatus::CANCELLED, 'notes' => DB::raw("CONCAT(COALESCE(notes,''), ' — cancelled: unpaid hosted event')")]);
+            ->update(['status' => PaymentStatus::CANCELLED, 'notes' => $cancelNote]);
+
+        // Own-spot events have no booking — their fee row is keyed to the game.
+        Payment::where('payment_id', $this->ownSpotFeeKey($game))
+            ->where('status', PaymentStatus::PENDING)
+            ->update(['status' => PaymentStatus::CANCELLED, 'notes' => $cancelNote]);
 
         foreach ($bookingIds as $bookingId) {
             $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();

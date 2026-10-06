@@ -444,7 +444,12 @@ class StripeService
         $source         = $session->metadata['source'] ?? 'customer';
         $hostedGameUuid = $session->metadata['hosted_game_uuid'] ?? null;
 
-        if (empty($bookingIds)) {
+        // A hosted event at the host's OWN SPOT books no court, so having no bookings
+        // is correct for it — its fulfilment is keyed to the game, not to a booking.
+        // Bailing out here would take the host's money and never publish the event.
+        $hostedGameOnly = $source === CustomerGameService::CHECKOUT_SOURCE && $hostedGameUuid;
+
+        if (empty($bookingIds) && ! $hostedGameOnly) {
             return [
                 'processed'         => false,
                 'already_processed' => false,
