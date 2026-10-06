@@ -539,6 +539,21 @@ const hostCharge = computed(() => {
   return { cur, courtTotal, courtNow, courtArrival: courtTotal - courtNow, serviceFee, dueNow: courtNow + serviceFee, dueArrival: courtTotal - courtNow }
 })
 
+// ── Bookboll's cut, shown AS the host types the price ────────────────────────
+// The service fee used to appear only on the last screen ("What you'll pay now"), so a
+// host setting a price found out what it costs them at the very end. These reuse the
+// same percentage and rounding as hostCharge, so the preview and the bill can't disagree.
+const feeUnit = computed(() => type.value === 'tournament' ? 'team' : type.value === 'event' ? 'person' : 'player')
+const feeUnits = computed(() => feeUnit.value + 's')
+// How many heads the fee is charged on: the roster cap (games/hangouts) or the bracket
+// size (tournaments — not chosen until step 2, so 0 there means "not known yet").
+const feeCount = computed(() => type.value === 'tournament' ? (Number(numTeams.value) || 0) : (Number(f.value.max_players) || 0))
+const feePerHead = computed(() => seatFeeAt(Number(f.value.price_per_person) || 0, seatPct.value))
+const feeTotal = computed(() => seatFeeAt((Number(f.value.price_per_person) || 0) * feeCount.value, seatPct.value))
+const feeNet = computed(() => Math.max(0, (Number(f.value.price_per_person) || 0) - feePerHead.value))
+// "Players" / "Teams" / "People" — the same word the note opens its last sentence with.
+const feeUnitsCap = computed(() => feeUnits.value[0].toUpperCase() + feeUnits.value.slice(1))
+
 // ── Host loyalty redemption (Bookboll marketplace only) ──────────────────────
 // The HOST is paying Bookboll now (court deposit/full + seats service fee — all
 // Bookboll's money). Points are redeemed ENTIRELY from that Bookboll-owned "due now",
@@ -1337,8 +1352,36 @@ function goToPublished() { const p = publishedPath.value; published.value = null
         </div>
         <div v-if="!(Number(f.price_per_person) > 0)" class="hg-note"><Info :size="14" /> {{ type === 'tournament' ? 'Teams' : type === 'event' ? 'People' : 'Players' }} pay you {{ type === 'tournament' ? 'their entry fee' : type === 'event' ? 'directly' : 'their seat price' }} on arrival — that part isn't handled by Bookboll.</div>
 
+        <!-- Priced: what Bookboll's cut costs PER HEAD, right where the price is set -->
+        <div v-else class="hg-note hg-feenote">
+          <Info :size="14" />
+          <!-- Own-spot hangout: no venue, no service fee — nothing reaches Bookboll -->
+          <span v-if="ownSpot">
+            At your own spot there's <b>no Bookboll fee</b> — people pay you
+            <b>{{ currency }} {{ Number(f.price_per_person).toLocaleString() }}</b> each, directly.
+          </span>
+          <!-- Stripe tickets: the fee comes out of each ticket instead of upfront -->
+          <span v-else-if="effectiveTicketMode === 'stripe'">
+            Bookboll's fee is <b>{{ seatPct }}% — {{ currency }} {{ feePerHead.toLocaleString() }} per {{ feeUnit }}</b>,
+            split from each Stripe ticket automatically. Nothing upfront: a {{ feeUnit }} pays
+            {{ currency }} {{ Number(f.price_per_person).toLocaleString() }} and
+            <b>{{ currency }} {{ feeNet.toLocaleString() }}</b> reaches your Stripe.
+          </span>
+          <!-- Pay on arrival: the fee is charged upfront, on the full roster -->
+          <span v-else>
+            Bookboll's fee is <b>{{ seatPct }}% — {{ currency }} {{ feePerHead.toLocaleString() }} per {{ feeUnit }}</b>.
+            <template v-if="feeCount">
+              For {{ feeCount }} {{ feeCount === 1 ? feeUnit : feeUnits }} that's
+              <b>{{ currency }} {{ feeTotal.toLocaleString() }}</b>, paid when you publish and non-refundable.
+            </template>
+            <template v-else>You pay it when you publish, and it's non-refundable.</template>
+            {{ feeUnitsCap }} pay you {{ currency }} {{ Number(f.price_per_person).toLocaleString() }} each on arrival.
+            <template v-if="type === 'event' && !f.spot_mode"> Hosting at your own spot instead? Then there's no fee at all.</template>
+          </span>
+        </div>
+
         <!-- Paid events (all types): how joiners pay — on arrival (default) or online via the host's Stripe -->
-        <div v-else class="hg-tickets">
+        <div v-if="Number(f.price_per_person) > 0" class="hg-tickets">
           <label class="hg-l">How do {{ type === 'tournament' ? 'teams' : type === 'event' ? 'people' : 'players' }} pay you?</label>
           <div class="hg-tk-grid">
             <button type="button" class="hg-tk" :class="{ on: f.ticket_mode === 'arrival' }" @click="f.ticket_mode = 'arrival'">
@@ -2055,6 +2098,10 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-ta { resize: vertical; font-family: inherit; }
 .hg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .hg-note { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--text-light, #94a3b8); margin-top: 8px; line-height: 1.4; }
+/* Fee preview: it quotes real money, so it sits a shade darker than a plain hint */
+.hg-feenote { color: var(--text-muted, #64748b); font-size: 13px; line-height: 1.5; }
+.hg-feenote b { color: #0f172a; font-weight: 800; }
+.hg-feenote > svg { flex-shrink: 0; margin-top: 2px; }
 
 /* How-players-pay ticket-mode cards (paid games/hangouts) */
 .hg-tickets { margin-top: 14px; }
