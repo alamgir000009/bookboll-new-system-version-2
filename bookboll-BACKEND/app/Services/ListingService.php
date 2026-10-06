@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Models\Asset;
 use App\Support\AccessScope;
+use App\Support\SlotHoldVerification;
 use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\Resource;
@@ -2190,6 +2191,40 @@ class ListingService
                 return sendError('This slot is no longer available. All courts are taken for this time.');
             }
 
+            // Past a handful of simultaneous holds, taking another one costs one human
+            // check — otherwise a script can sweep a venue's whole calendar into locks
+            // and leave it unbookable without ever paying for anything. Refreshing a
+            // hold the caller already owns is never challenged: the booking page
+            // re-locks its whole selection on every change, and challenging that would
+            // fire on each keystroke. See App\Support\SlotHoldVerification.
+            if (SlotHoldVerification::enabled($request)) {
+                $alreadyHeld = SlotLock::where('listing_id', $listingId)
+                    ->where('session_id', $sessionId)
+                    ->where('date', $date->toDateString())
+                    ->where('start_time', $startTime)
+                    ->where('end_time', $endTime)
+                    ->active()
+                    ->exists();
+
+                if (! $alreadyHeld) {
+                    // Tokens are single-use, so only spend one when we don't already
+                    // hold a pass for this session.
+                    if (! SlotHoldVerification::verified($sessionId)) {
+                        SlotHoldVerification::accept($request, $sessionId);
+                    }
+
+                    $heldCount = SlotHoldVerification::heldCount($sessionId);
+
+                    if ($heldCount >= SlotHoldVerification::threshold()
+                        && ! SlotHoldVerification::verified($sessionId)) {
+                        return sendError(
+                            'Please complete the quick security check to hold more slots.',
+                            SlotHoldVerification::challenge($heldCount)
+                        );
+                    }
+                }
+            }
+
             // ?: not ?? - intval() returns 0 rather than null for a missing or
             // non-numeric setting, which would create locks that expire instantly.
             $lockDuration = (int) Setting::where('key', 'default_bookings_slot_lock_time')->value('value') ?: 5;
@@ -2254,12 +2289,15 @@ class ListingService
                 $singleRequest = Request::create(
                     '/',
                     'POST',
-                    [
-                        'listing_id' => $request->listing_id,
-                        'date'       => $request->date,
-                        'start_time' => $slot['start_time'],
-                        'end_time'   => $slot['end_time'],
-                    ]
+                    array_filter([
+                        'listing_id'            => $request->listing_id,
+                        'date'                  => $request->date,
+                        'start_time'            => $slot['start_time'],
+                        'end_time'              => $slot['end_time'],
+                        // Carried through so a batch lock can answer the security
+                        // check the same way a single one does.
+                        'g-recaptcha-response' => $request->input('g-recaptcha-response'),
+                    ], fn ($v) => $v !== null)
                 );
                 $singleRequest->headers->replace($request->headers->all());
 

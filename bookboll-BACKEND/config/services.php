@@ -46,6 +46,15 @@ return [
         'rest_api_key' => env('ONESIGNAL_REST_API_KEY'),
     ],
 
+    // Google reCAPTCHA v2 — the human check on heavy slot-hold counts.
+    // `enabled` unset defaults to ON wherever the keys are set (and OFF locally),
+    // matching how turnstile below behaves.
+    'recaptcha' => [
+        'site_key'   => env('RECAPTCHA_SITE_KEY'),
+        'secret_key' => env('RECAPTCHA_SECRET_KEY'),
+        'enabled'    => env('RECAPTCHA_ENABLED'),
+    ],
+
     'turnstile' => [
         'site_key' => env('TURNSTILE_SITE_KEY'),
         'secret_key' => env('TURNSTILE_SECRET_KEY'),
