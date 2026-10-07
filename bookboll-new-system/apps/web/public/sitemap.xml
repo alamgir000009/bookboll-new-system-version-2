@@ -80,6 +80,10 @@
     <lastmod>2026-09-14</lastmod>
   </url>
   <url>
+    <loc>https://bookboll.com/facilities/18</loc>
+    <lastmod>2026-09-28</lastmod>
+  </url>
+  <url>
     <loc>https://bookboll.com/listings/1</loc>
     <lastmod>2025-12-20</lastmod>
   </url>
@@ -196,6 +200,10 @@
     <lastmod>2026-09-14</lastmod>
   </url>
   <url>
+    <loc>https://bookboll.com/listings/51</loc>
+    <lastmod>2026-09-28</lastmod>
+  </url>
+  <url>
     <loc>https://bookboll.com/programs/1</loc>
     <lastmod>2026-09-13</lastmod>
   </url>
@@ -208,16 +216,8 @@
     <lastmod>2026-09-14</lastmod>
   </url>
   <url>
-    <loc>https://bookboll.com/games/1</loc>
-    <lastmod>2026-09-15</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/games/5</loc>
-    <lastmod>2026-09-15</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/games/6</loc>
-    <lastmod>2026-09-15</lastmod>
+    <loc>https://bookboll.com/games/12</loc>
+    <lastmod>2026-10-06</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/blog/unlocking-padel-in-qatar-how-to-book-indoor-padel-courts-with-bookboll-at-great-prices</loc>
@@ -235,60 +235,72 @@
     <loc>https://bookboll.com/blog/business-blog-title-is-here</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/venues/lahore</loc>
+    <loc>https://bookboll.com/venues/doha</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/venues/lahore/sports</loc>
+    <loc>https://bookboll.com/venues/doha/sports</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/venues/lahore/atv-riding</loc>
+    <loc>https://bookboll.com/venues/doha/volleyball</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/venues/lahore/3x3-basketball</loc>
+    <loc>https://bookboll.com/venues/doha/atv-riding</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/venues/pakistan</loc>
+    <loc>https://bookboll.com/venues/doha/3x3-basketball</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/venues/pakistan/atv-riding</loc>
+    <loc>https://bookboll.com/venues/doha/pickleball</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/venues/pakistan/3x3-basketball</loc>
+    <loc>https://bookboll.com/venues/qatar</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/lahore</loc>
+    <loc>https://bookboll.com/venues/qatar/volleyball</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/lahore/gym</loc>
+    <loc>https://bookboll.com/venues/qatar/atv-riding</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/lahore/academy</loc>
+    <loc>https://bookboll.com/venues/qatar/3x3-basketball</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/lahore/calisthenics</loc>
+    <loc>https://bookboll.com/venues/qatar/pickleball</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/lahore/football</loc>
+    <loc>https://bookboll.com/memberships/doha</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/lahore/boxing</loc>
+    <loc>https://bookboll.com/memberships/doha/gym</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/pakistan</loc>
+    <loc>https://bookboll.com/memberships/doha/academy</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/pakistan/gym</loc>
+    <loc>https://bookboll.com/memberships/doha/calisthenics</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/pakistan/academy</loc>
+    <loc>https://bookboll.com/memberships/doha/football</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/pakistan/calisthenics</loc>
+    <loc>https://bookboll.com/memberships/doha/boxing</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/pakistan/football</loc>
+    <loc>https://bookboll.com/memberships/qatar</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/memberships/pakistan/boxing</loc>
+    <loc>https://bookboll.com/memberships/qatar/gym</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/memberships/qatar/academy</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/memberships/qatar/calisthenics</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/memberships/qatar/football</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/memberships/qatar/boxing</loc>
   </url>
 </urlset>
