@@ -163,6 +163,13 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
 .fd-h2 { font-size: 19px; font-weight: 800; color: #0f172a; margin: 26px 0 14px; }
 
 .fd-courts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+/* A phone turned sideways is still a phone. Its width jumps to 844-932px, clearing
+   the 760px breakpoint below, and auto-fill then packs 2-3 courts per row on a
+   screen only ~390px tall. Keep the single-column list whenever the viewport is
+   short and landscape — real tablets are ~768px tall and keep the grid. */
+@media (max-height: 540px) and (orientation: landscape) {
+  .fd-courts { grid-template-columns: 1fr; gap: 12px; }
+}
 .ccard { display: block; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; overflow: hidden; text-decoration: none; transition: transform .12s, box-shadow .12s; }
 .ccard:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); }
 /* width:100% is explicit so the cover always spans the fluid card (1-col on phones). */
