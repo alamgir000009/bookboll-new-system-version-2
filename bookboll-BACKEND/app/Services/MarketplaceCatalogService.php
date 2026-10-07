@@ -11,6 +11,7 @@ use App\Models\Post;
 use App\Models\ProviderWallet;
 use App\Models\Setting;
 use App\Models\Venue;
+use App\Support\QatarMarketGeo;
 use Illuminate\Http\Request;
 use Nnjeim\World\Models\City;
 use Nnjeim\World\Models\Country;
@@ -100,8 +101,7 @@ class MarketplaceCatalogService
             return sendSuccess('Brand locations fetched successfully', ['locations' => []]);
         }
 
-        $venues = Venue::query()
-            ->where('status', Venue::ACTIVE)
+        $venues = Venue::where('status', Venue::ACTIVE)
             ->where('owner_user_id', $scope['ownerId'])
             ->with(['city:id,name', 'schedules'])
             ->orderBy('sort_order')
@@ -157,8 +157,7 @@ class MarketplaceCatalogService
     {
         $scope = $this->resolveScope($request);
 
-        $venue = Venue::query()
-            ->with(['city:id,name', 'country:id,name,iso2'])
+        $venue = Venue::with(['city:id,name', 'country:id,name,iso2'])
             ->where('id', $id)
             ->where('status', Venue::ACTIVE)
             ->first();
@@ -208,8 +207,7 @@ class MarketplaceCatalogService
     {
         $scope = $this->resolveScope($request);
 
-        $listing = Listing::query()
-            ->with([
+        $listing = Listing::with([
                 'venue.city:id,name',
                 'venue.country:id,name,iso2',
                 'sportsCategory:id,name',
@@ -314,8 +312,7 @@ class MarketplaceCatalogService
             ->where('status', 'active')
             ->get(['id', 'city_id', 'created_at']);
 
-        $programs = ClassProgram::query()
-            ->where('status', 'active')
+        $programs = ClassProgram::where('status', 'active')
             ->where(fn ($q) => $q->where('show_on_marketplace', true)->orWhereNull('show_on_marketplace'))
             ->where(fn ($q) => $q->where('approval_status', 'approved')->orWhereNull('approval_status'))
             ->where(fn ($q) => $q->whereNull('eligibility_status')->orWhere('eligibility_status', '!=', 'paused'))
@@ -323,14 +320,12 @@ class MarketplaceCatalogService
 
         // Only games a crawler can still act on: open, not removed, not past.
         $today = now()->toDateString();
-        $games = HostedGame::query()
-            ->where(fn ($q) => $q->where('status', 'open')->orWhereNull('status'))
+        $games = HostedGame::where(fn ($q) => $q->where('status', 'open')->orWhereNull('status'))
             ->where(fn ($q) => $q->whereNull('moderation_status')->orWhere('moderation_status', '!=', 'removed'))
             ->where(fn ($q) => $q->whereNull('game_date')->orWhereDate('game_date', '>=', $today))
             ->get(['id', 'game_type', 'game_date', 'created_at']);
 
-        $posts = Post::query()
-            ->where('status', 'published')
+        $posts = Post::where('status', 'published')
             ->get(['slug', 'published_at']);
 
         $cityIds = $venues->pluck('city_id')->filter()->unique();
@@ -379,7 +374,7 @@ class MarketplaceCatalogService
         $loyalty = LoyaltyProgram::defaults();
 
         if (! empty($data['country_id'])) {
-            $row = LoyaltyProgram::query()->where('country_id', $data['country_id'])->first();
+            $row = LoyaltyProgram::where('country_id', $data['country_id'])->first();
             if ($row) {
                 $loyalty = $row->only(array_keys($loyalty));
             } else {
@@ -400,8 +395,7 @@ class MarketplaceCatalogService
 
         if ($slug !== '') {
             $whiteLabel = true;
-            $business = Business::query()
-                ->where(function ($q) use ($slug) {
+            $business = Business::where(function ($q) use ($slug) {
                     $q->whereRaw('LOWER(username) = ?', [$slug])
                         ->orWhereRaw('LOWER(brand_subdomain) = ?', [$slug]);
                 })
@@ -427,48 +421,51 @@ class MarketplaceCatalogService
     protected function resolveCityIds(Request $request): ?array
     {
         $rawId = $request->input('city_id');
-        if ($rawId !== null && $rawId !== '' && ctype_digit((string) $rawId)) {
-            return [(int) $rawId];
-        }
-
         $name = trim((string) $request->input('city', ''));
-        if ($name === '') {
-            return null;
-        }
-
         $iso = strtoupper(trim((string) $request->input('country_iso', '')));
-        $country = null;
-        if ($iso !== '') {
-            $country = Country::query()->where('iso2', $iso)->first();
+        $attemptedCity = ($rawId !== null && $rawId !== '') || $name !== '';
+
+        $ids = null;
+        if ($rawId !== null && $rawId !== '' && ctype_digit((string) $rawId)) {
+            $ids = [(int) $rawId];
+        } elseif ($name !== '') {
+            $country = $iso !== '' ? Country::where('iso2', $iso)->first() : null;
+
+            $query = City::where('name', $name);
+            if ($country) {
+                $query->where('country_id', $country->id);
+            }
+
+            $ids = $query->pluck('id')->all();
+            if (! $ids) {
+                $fuzzy = City::where('name', 'like', $name . '%')->limit(20);
+                if ($country) {
+                    $fuzzy->where('country_id', $country->id);
+                }
+                $ids = $fuzzy->pluck('id')->all();
+            }
         }
 
-        $query = City::query()->where('name', $name);
-        if ($country) {
-            $query->where('country_id', $country->id);
+        // GPS / picker may land on Al Wakrah, Lusail, etc. Qatar is one market.
+        if ($iso === QatarMarketGeo::ISO && $attemptedCity) {
+            $all = QatarMarketGeo::allCityIds();
+            if ($all) {
+                return $all;
+            }
         }
 
-        $ids = $query->pluck('id')->all();
-        if ($ids) {
-            return $ids;
-        }
-
-        $fuzzy = City::query()->where('name', 'like', $name . '%')->limit(20);
-        if ($country) {
-            $fuzzy->where('country_id', $country->id);
-        }
-
-        return $fuzzy->pluck('id')->all();
+        return QatarMarketGeo::expandCityIds($ids);
     }
 
     protected function venueQuery(array $scope)
     {
-        $query = Venue::query()->where('status', Venue::ACTIVE);
+        $query = Venue::where('status', Venue::ACTIVE);
 
         if (is_array($scope['cityIds'])) {
             if ($scope['cityIds'] === []) {
                 $query->whereRaw('1 = 0');
             } else {
-                $query->whereIn('city_id', $scope['cityIds']);
+                QatarMarketGeo::constrainVenues($query, $scope['cityIds']);
             }
         }
 
@@ -489,7 +486,7 @@ class MarketplaceCatalogService
 
     protected function listingQuery(array $scope)
     {
-        $query = Listing::query()->where('status', 'active');
+        $query = Listing::where('status', 'active');
 
         if ($scope['whiteLabel']) {
             $query->where(function ($q) {
@@ -912,7 +909,7 @@ class MarketplaceCatalogService
             return false;
         }
 
-        $wallets = ProviderWallet::query()->where('owner_user_id', $ownerId)->get();
+        $wallets = ProviderWallet::where('owner_user_id', $ownerId)->get();
         if ($wallets->isEmpty()) {
             return false;
         }
