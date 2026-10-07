@@ -3,6 +3,7 @@
  * Preserves shapes expected by CustomerPrograms, ProgramDetail, MyMemberships.
  */
 import { apiFetch } from '../lib/api.js'
+import { selectedCountry } from '../lib/customerSession.js'
 
 function formatErr(res, fallback) {
   const errors = res?.errors
@@ -22,9 +23,13 @@ function withBrand(query = {}, brandOwner = null) {
 }
 
 export async function apiLoadPrograms(cityId, brandOwner = null) {
-  if (!cityId && !brandOwner) return []
+  const iso = selectedCountry.value?.iso_code || ''
+  if (!cityId && !brandOwner && !iso) return []
+  const q = {}
+  if (cityId) q.city_id = cityId
+  if (iso) q.country_iso = iso
   const res = await apiFetch('/marketplace/programs', {
-    query: withBrand(cityId ? { city_id: cityId } : {}, brandOwner),
+    query: withBrand(q, brandOwner),
   })
   if (!res.success) return []
   return res.data?.programs || []

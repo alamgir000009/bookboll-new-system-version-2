@@ -9,6 +9,7 @@
  * shows is what gets charged.
  */
 import { apiFetch } from '../lib/api.js'
+import { selectedCountry } from '../lib/customerSession.js'
 import { ref } from 'vue'
 
 /** Final fallback when the API can't be reached. */
@@ -207,8 +208,12 @@ export async function createGame(game) {
  * cancelled events; the page filters by search, sport and price on top.
  */
 export async function loadGames(cityId) {
-  if (!cityId) return []
-  const res = await apiFetch('/marketplace/games', { query: { city_id: cityId } })
+  const iso = selectedCountry.value?.iso_code || ''
+  if (!cityId && !iso) return []
+  const query = {}
+  if (cityId) query.city_id = cityId
+  if (iso) query.country_iso = iso
+  const res = await apiFetch('/marketplace/games', { query })
   gamesEnabled.value = !!res.success
   if (!res.success) return []
   return res.data?.games || []
