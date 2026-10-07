@@ -18,6 +18,11 @@ class QatarMarketGeo
 
     public static function countryId(): ?int
     {
+        if (app()->runningUnitTests()) {
+            $found = Country::query()->where('iso2', self::ISO)->value('id');
+            return $found !== null ? (int) $found : null;
+        }
+
         static $id = false;
         if ($id === false) {
             $found = Country::query()->where('iso2', self::ISO)->value('id');
@@ -30,6 +35,13 @@ class QatarMarketGeo
     /** @return list<int> */
     public static function allCityIds(): array
     {
+        if (app()->runningUnitTests()) {
+            $countryId = self::countryId();
+            return $countryId
+                ? City::query()->where('country_id', $countryId)->pluck('id')->map(fn ($id) => (int) $id)->all()
+                : [];
+        }
+
         static $ids = null;
         if ($ids !== null) {
             return $ids;

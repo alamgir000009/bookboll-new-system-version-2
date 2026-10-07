@@ -44,8 +44,15 @@ class CustomerProgramService
     {
         $cityId = $request->query('city_id');
         $brandOwner = $request->query('brand_owner') ?: null;
+        $iso = strtoupper(trim((string) $request->query('country_iso', '')));
+        $countryId = $request->query('country_id');
 
-        if (! $cityId && ! $brandOwner) {
+        $qatarId = QatarMarketGeo::countryId();
+        $isQatar = ($iso === QatarMarketGeo::ISO)
+            || ($countryId && (int) $countryId === $qatarId)
+            || ($cityId && $qatarId && QatarMarketGeo::touchesQatar([(int) $cityId]));
+
+        if (! $cityId && ! $brandOwner && ! $isQatar) {
             return sendSuccess('Programs fetched', ['programs' => []]);
         }
 
@@ -73,7 +80,35 @@ class CustomerProgramService
             });
         }
 
-        if ($cityId) {
+        if ($isQatar) {
+            $cityIds = QatarMarketGeo::allCityIds();
+            $venueQuery = Venue::query()->where(function ($q) use ($cityIds, $qatarId) {
+                if ($cityIds) {
+                    $q->whereIn('city_id', $cityIds);
+                }
+                if ($qatarId) {
+                    $q->orWhere('country_id', $qatarId);
+                }
+            });
+
+            $venueIds = (clone $venueQuery)->pluck('id');
+            $ownerIds = (clone $venueQuery)->whereNotNull('owner_user_id')->pluck('owner_user_id');
+
+            $query->where(function ($q) use ($venueIds, $ownerIds) {
+                $has = false;
+                if ($venueIds->isNotEmpty()) {
+                    $q->whereIn('venue_id', $venueIds);
+                    $has = true;
+                }
+                if ($ownerIds->isNotEmpty()) {
+                    $method = $has ? 'orWhereIn' : 'whereIn';
+                    $q->{$method}('mapped_owner_user_id', $ownerIds);
+                    $has = true;
+                }
+                // Seeded/imported rows often lack venue_id — still show them on marketplace.
+                $q->orWhereNull('venue_id');
+            });
+        } elseif ($cityId) {
             $cityId = (int) $cityId;
             $venueIds = Venue::query()->where('city_id', $cityId)->pluck('id');
             $ownerIds = Venue::query()

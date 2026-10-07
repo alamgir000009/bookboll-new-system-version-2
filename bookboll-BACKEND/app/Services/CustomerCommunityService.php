@@ -8,6 +8,7 @@ use App\Models\CommunityPost;
 use App\Models\CustomerMessage;
 use App\Models\StreetCred;
 use App\Models\User;
+use App\Support\QatarMarketGeo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -33,6 +34,8 @@ class CustomerCommunityService
         $cityId = $request->query('city_id');
         $sport  = trim((string) $request->query('sport', ''));
         $q      = trim((string) $request->query('q', ''));
+        $iso    = strtoupper(trim((string) $request->query('country_iso', '')));
+        $countryId = $request->query('country_id');
 
         $query = Community::query()
             ->where(function ($w) {
@@ -40,7 +43,22 @@ class CustomerCommunityService
             })
             ->orderByDesc('created_at');
 
-        if ($cityId) {
+        $qatarId = QatarMarketGeo::countryId();
+        $isQatar = ($iso === QatarMarketGeo::ISO)
+            || ($countryId && (int) $countryId === $qatarId)
+            || ($cityId && $qatarId && QatarMarketGeo::touchesQatar([(int) $cityId]));
+
+        if ($isQatar) {
+            $cityIds = QatarMarketGeo::allCityIds();
+            $query->where(function ($q) use ($cityIds, $qatarId) {
+                if ($cityIds) {
+                    $q->whereIn('city_id', $cityIds);
+                }
+                if ($qatarId) {
+                    $q->orWhere('country_id', $qatarId);
+                }
+            });
+        } elseif ($cityId) {
             $query->where('city_id', $cityId);
         }
 

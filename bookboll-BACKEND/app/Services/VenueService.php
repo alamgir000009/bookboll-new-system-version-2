@@ -4,6 +4,7 @@ namespace App\Services;
 use App\Models\Venue;
 use App\Support\AccessScope;
 use App\Support\HourPeriods;
+use App\Support\QatarMarketGeo;
 use Nnjeim\World\Models\City;
 use Exception;
 use Illuminate\Support\Facades\DB;
@@ -41,7 +42,14 @@ class VenueService
             })
             ->when($countryId, fn ($query) => $query->where('country_id', $countryId))
             ->when($stateId, fn ($query) => $query->where('state_id', $stateId))
-            ->when($cityId, fn ($query) => $query->where('city_id', $cityId))
+            ->when($cityId, function ($query) use ($cityId, $request) {
+                $isCustomer = $request->header('from') != 'admin-web';
+                if ($isCustomer && QatarMarketGeo::touchesQatar([(int) $cityId])) {
+                    QatarMarketGeo::constrainVenues($query, [(int) $cityId]);
+                } else {
+                    $query->where('city_id', $cityId);
+                }
+            })
             ->with(['country:id,name,iso2', 'state:id,name', 'city:id,name'])
             ->orderBy('sort_order', 'ASC');
 

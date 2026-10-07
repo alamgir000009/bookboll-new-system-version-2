@@ -55,7 +55,7 @@ class CustomerGameController extends Controller
     /** Every joinable event in a city — the Events page. */
     public function index(Request $request)
     {
-        return $this->games->list($request->filled('city_id') ? (int) $request->query('city_id') : null);
+        return $this->games->list($request);
     }
 
     /** Tournament games waiting on a result from me. */

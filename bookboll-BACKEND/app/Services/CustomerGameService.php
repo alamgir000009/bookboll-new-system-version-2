@@ -16,6 +16,7 @@ use App\Models\User;
 use Nnjeim\World\Models\Country;
 use App\Models\StripeSession;
 use App\Models\Venue;
+use App\Support\QatarMarketGeo;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
 use BookingStatus;
@@ -460,21 +461,52 @@ class CustomerGameService
      * Community events are listed here on purpose — discovery is how communities
      * grow — and membership is enforced when someone actually tries to join.
      */
-    public function list(?int $cityId)
+    public function list(mixed $requestOrCityId = null)
     {
-        if (! $cityId) {
+        $cityId = null;
+        $iso = '';
+        $countryId = null;
+
+        if ($requestOrCityId instanceof \Illuminate\Http\Request) {
+            $cityId = $requestOrCityId->filled('city_id') ? (int) $requestOrCityId->query('city_id') : null;
+            $iso = strtoupper(trim((string) $requestOrCityId->query('country_iso', '')));
+            $countryId = $requestOrCityId->filled('country_id') ? (int) $requestOrCityId->query('country_id') : null;
+        } elseif ($requestOrCityId !== null) {
+            $cityId = (int) $requestOrCityId;
+        }
+
+        $qatarId = QatarMarketGeo::countryId();
+        $isQatar = ($iso === QatarMarketGeo::ISO)
+            || ($countryId && (int) $countryId === $qatarId)
+            || ($cityId && $qatarId && QatarMarketGeo::touchesQatar([$cityId]));
+
+        if (! $isQatar && ! $cityId) {
             return sendSuccess('Events', ['games' => []]);
         }
 
         $today = now()->toDateString();
 
-        $games = HostedGame::where('city_id', $cityId)
-            ->where('status', 'open')
+        $query = HostedGame::where('status', 'open')
             ->where('moderation_status', '!=', 'removed')
             ->where(function ($w) use ($today) {
                 $w->whereNull('game_date')->orWhere('game_date', '>=', $today);
-            })
-            ->orderBy('game_date')
+            });
+
+        if ($isQatar) {
+            $cityIds = QatarMarketGeo::allCityIds();
+            $query->where(function ($q) use ($cityIds, $qatarId) {
+                if ($cityIds) {
+                    $q->whereIn('city_id', $cityIds);
+                }
+                if ($qatarId) {
+                    $q->orWhere('country_id', $qatarId);
+                }
+            });
+        } else {
+            $query->where('city_id', $cityId);
+        }
+
+        $games = $query->orderBy('game_date')
             ->get()
             ->filter(function (HostedGame $g) use ($today) {
                 $date = $g->game_date ? Carbon::parse($g->game_date)->toDateString() : null;
