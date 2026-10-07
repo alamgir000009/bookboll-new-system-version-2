@@ -757,12 +757,30 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
           :class="{ 'ld-grid-hasbar': (!selectMode && fullQuote.dates.length) || (selectMode && selected.length) }">
           <div class="ld-main">
             <h1>{{ l.name }}</h1>
+
+            <!-- Phones only: where this is, right under the name. The sidebar venue
+                 card carries the same thing on desktop, but on a phone the sidebar
+                 sits below the whole picker — too far down to answer "where is it?" -->
+            <button v-if="loc" type="button" class="ld-locpill" @click="openMaps" :title="data.mapsUrl ? 'Open in Google Maps' : ''">
+              <MapPin :size="17" class="ld-locpill-pin" />
+              <span class="ld-locpill-txt">{{ loc.name }}</span>
+              <Navigation v-if="data.mapsUrl" :size="15" class="ld-locpill-go" />
+            </button>
+
             <div class="ld-tags">
               <span v-if="l.sport_category" class="ld-tag">{{ l.sport_category }}</span>
               <span class="ld-fact"><Users :size="15" /> up to {{ l.capacity || 1 }} players</span>
               <span class="ld-fact"><Clock :size="15" /> {{ slotMins }} min slots</span>
             </div>
             <p v-if="l.description" class="ld-desc">{{ l.description }}</p>
+
+            <!-- Phones only: the second Book now. The docked bar at the bottom of the
+                 screen is the other one; this puts the same action at the end of the
+                 details, where someone finishes reading and is ready to act. Sits
+                 BEFORE .ld-h2 so the intro rule that hides the picker leaves it alone. -->
+            <button v-if="!selectMode && !bookingOpen" type="button" class="ld-book-btn ld-topbook" @click="bookingOpen = true">
+              View available slots <ArrowRight :size="17" />
+            </button>
 
             <button v-if="!selectMode && bookingOpen" type="button" class="ld-backdetails" @click="bookingOpen = false">
               <ArrowLeft :size="14" /> Venue details
@@ -1201,6 +1219,9 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
 .ld-h2 { scroll-margin-top: 84px; }   /* clears any fixed header when scrolled to */
 /* Two-phase mobile controls — inert on desktop (shown/styled only in the phone block). */
 .ld-booknow { display: none; }
+/* Phone-only: the location pill and the in-content Book now. Desktop shows the
+   venue in the sidebar and keeps its CTA there, so neither belongs above 720px. */
+.ld-locpill, .ld-topbook { display: none; }
 .ld-backdetails { display: none; }
 .ld-book-btn:hover:not(:disabled) { background: #0e6b63; }
 .ld-book-btn:disabled { opacity: .5; cursor: not-allowed; }
@@ -1379,6 +1400,20 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
   .ld-intro .ld-grid { padding-bottom: 96px; }               /* clearance for the Book now bar */
   .ld-intro .ld-desc { -webkit-line-clamp: unset; display: block; }  /* intro IS the details screen — show the full description */
 
+  /* Where it is, directly under the name */
+  .ld-locpill {
+    display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+    margin: 10px 0 2px; padding: 11px 13px; border: 1px solid var(--border, #e2e8f0);
+    border-radius: 12px; background: var(--surface, #ffffff); cursor: pointer;
+  }
+  .ld-locpill-pin, .ld-locpill-go { color: var(--brand); flex-shrink: 0; }
+  .ld-locpill-txt {
+    flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 700; color: var(--brand);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;   /* long venue names truncate rather than wrapping the pill */
+  }
+  /* The second Book now, at the end of the details */
+  .ld-topbook { display: flex; margin-top: 18px; }
+
   .ld-booknow {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 85;   /* docked flush at the true bottom — no nav bar on flow pages */
     display: flex; align-items: center; gap: 10px;
@@ -1393,7 +1428,8 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
 
   /* Booking mode: strip the descriptive chrome so picking a time is the whole screen */
   .ld-booking .ld-hero, .ld-booking .ld-thumbs,
-  .ld-booking .ld-tags, .ld-booking .ld-desc { display: none; }
+  .ld-booking .ld-tags, .ld-booking .ld-desc,
+  .ld-booking .ld-locpill { display: none; }   /* the picker screen keeps only the name */
   .ld-booking .ld-main h1 { font-size: 18px; margin-bottom: 4px; }
   .ld-booking .ld-side .ld-sum-h, .ld-booking .ld-side .ld-side-venue { display: none; }
   .ld-backdetails {
