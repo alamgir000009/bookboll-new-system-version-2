@@ -32,6 +32,9 @@ class DatabaseSeeder extends Seeder
             // PaymentTableSeeder::class,
             // SubscriberTableSeeder::class
             WorldSeeder::class,
+            // Point existing venues (and therefore listings) at Doha, Qatar:
+            // php artisan db:seed --class=VenuesDohaQatarSeeder
+            // VenuesDohaQatarSeeder::class,
             // Membership programs/subscribers: pull from Supabase when SUPABASE_* is set.
             // Or run alone: php artisan db:seed --class=ClassMembershipFromSupabaseSeeder
             // ClassMembershipFromSupabaseSeeder::class,
