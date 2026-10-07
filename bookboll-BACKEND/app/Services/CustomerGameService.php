@@ -16,6 +16,14 @@ use App\Models\User;
 use Nnjeim\World\Models\Country;
 use App\Models\StripeSession;
 use App\Models\Venue;
+use App\Notifications\HostedEvents\EventCancelledNotification;
+use App\Notifications\HostedEvents\EventJoinConfirmedNotification;
+use App\Notifications\HostedEvents\EventJoinDeclinedNotification;
+use App\Notifications\HostedEvents\EventJoinRequestedNotification;
+use App\Notifications\HostedEvents\EventParticipantLeftNotification;
+use App\Notifications\HostedEvents\EventRequestReceivedNotification;
+use App\Notifications\HostedEvents\EventUpdatedNotification;
+use App\Notifications\HostedEvents\EventWaitlistedNotification;
 use App\Support\QatarMarketGeo;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
@@ -1617,6 +1625,22 @@ class CustomerGameService
             ]
         );
 
+        // The joiner hears where they stand, the host hears that someone wants in.
+        $this->notifyQuietly($user, match ($status) {
+            'accepted'   => new EventJoinConfirmedNotification($game, 'instant'),
+            'waitlisted' => new EventWaitlistedNotification($game),
+            default      => new EventJoinRequestedNotification($game),
+        });
+
+        if ($status !== 'waitlisted') {
+            $this->notifyQuietly($this->hostUser($game), new EventRequestReceivedNotification(
+                $game,
+                $request->joiner_name ?: ($user->name ?: ''),
+                $status === 'accepted',
+                (string) ($data['joiner_message'] ?? '')
+            ));
+        }
+
         return sendSuccess('Request sent', ['request' => $this->mapRequest($request->fresh())]);
     }
 
@@ -1680,6 +1704,10 @@ class CustomerGameService
 
         GameJoinRequest::whereIn('id', $take->pluck('id'))->update(['status' => 'accepted']);
 
+        foreach ($take as $row) {
+            $this->notifyQuietly($this->joinerUser($row), new EventJoinConfirmedNotification($game));
+        }
+
         return sendSuccess('Requests accepted', [
             'accepted' => $take->count(),
             'leftover' => $pending->count() - $take->count(),
@@ -1713,13 +1741,75 @@ class CustomerGameService
             }
         }
 
+        $wasAccepted = $request->status === 'accepted';
+
         $request->update(['status' => $status]);
+
+        $this->notifyQuietly(
+            $this->joinerUser($request),
+            $status === 'accepted'
+                ? new EventJoinConfirmedNotification($game)
+                : new EventJoinDeclinedNotification($game, $wasAccepted)
+        );
 
         if ($status !== 'accepted') {
             $this->promoteFromWaitlist($game);
         }
 
         return sendSuccess('Request updated', ['request' => $this->mapRequest($request->fresh())]);
+    }
+
+    // ── Email ────────────────────────────────────────────────────────────────
+    // Events ran silent: a host learned their event had filled only by opening the
+    // app, and a cancelled event reached its players when they turned up. These
+    // send on the moments where one person is waiting on another to act.
+    //
+    // Every send is wrapped — a bounced address or a dead SMTP host must never turn
+    // "you're in" into a failed request. Same rule the booking notifications follow.
+
+    /** The host's User row, or null if the account has gone. */
+    protected function hostUser(HostedGame $game): ?User
+    {
+        return $game->host_customer_id ? User::where('uuid', $game->host_customer_id)->first() : null;
+    }
+
+    protected function joinerUser(GameJoinRequest $request): ?User
+    {
+        return $request->joiner_customer_id ? User::where('uuid', $request->joiner_customer_id)->first() : null;
+    }
+
+    /** Send, and never let the sending be the reason the caller fails. */
+    protected function notifyQuietly(?User $user, $notification): void
+    {
+        if (! $user) {
+            return;
+        }
+
+        try {
+            $user->notify($notification);
+        } catch (\Throwable $e) {
+            Log::error('Hosted event notification failed: '.$e->getMessage(), [
+                'notification' => $notification::class,
+                'user_id'      => $user->id,
+                'exception'    => $e,
+            ]);
+        }
+    }
+
+    /**
+     * Tell everyone with a stake in this event — holding a spot, waiting on the
+     * host, or queued on the waitlist. One wrapped send each, so one bad address
+     * does not stop the rest of the room being told.
+     */
+    protected function notifyParticipants(HostedGame $game, callable $make): void
+    {
+        $rows = GameJoinRequest::where('game_id', $game->id)
+            ->whereIn('status', ['accepted', 'pending', 'waitlisted'])
+            ->get();
+
+        foreach ($rows as $row) {
+            $this->notifyQuietly($this->joinerUser($row), $make($row));
+        }
     }
 
     /** A joiner drops out. Their spot goes to whoever waited longest. */
@@ -1748,9 +1838,29 @@ class CustomerGameService
             }
         }
 
+        $hadSpot = $request->status === 'accepted';
+        $joiner  = $this->joinerUser($request);
+        $name    = $request->joiner_name ?: ($joiner?->name ?: '');
+
         $request->delete();
 
         if ($game) {
+            if ($isOwner) {
+                // They walked: the host's roster just changed and they may need to
+                // find someone else.
+                $accepted  = GameJoinRequest::where('game_id', $game->id)->where('status', 'accepted')->count();
+                $cap       = (int) $game->max_players;
+                $spotsLeft = $cap > 0 ? max(0, $cap - $accepted) : 0;
+
+                $this->notifyQuietly(
+                    $this->hostUser($game),
+                    new EventParticipantLeftNotification($game, $name, $hadSpot, $spotsLeft)
+                );
+            } else {
+                // The host dropped them — they are the ones who need telling.
+                $this->notifyQuietly($joiner, new EventJoinDeclinedNotification($game, $hadSpot));
+            }
+
             $this->promoteFromWaitlist($game);
         }
 
@@ -1780,7 +1890,21 @@ class CustomerGameService
             ->orderBy('created_at')
             ->first();
 
-        $next?->update(['status' => $game->approval_mode === 'instant' ? 'accepted' : 'pending']);
+        if (! $next) {
+            return;
+        }
+
+        $promotedTo = $game->approval_mode === 'instant' ? 'accepted' : 'pending';
+        $next->update(['status' => $promotedTo]);
+
+        // Waiting is the whole point of a waitlist — the person has to be told the
+        // moment it turns into something, or the spot goes unused.
+        $this->notifyQuietly(
+            $this->joinerUser($next),
+            $promotedTo === 'accepted'
+                ? new EventJoinConfirmedNotification($game, 'waitlist')
+                : new EventJoinRequestedNotification($game)
+        );
     }
 
     /** Host edits the details people can safely be told about after publishing. */
@@ -1805,7 +1929,31 @@ class CustomerGameService
             }
         }
 
+        // Only a move in time or place is worth an email — a reworded description
+        // would just train people to ignore these.
+        $watched = [
+            'game_date'            => 'date',
+            'start_time'           => 'start time',
+            'end_time'             => 'end time',
+            'listing_id'           => 'location',
+            'location_id'          => 'location',
+            'custom_location_name' => 'location',
+        ];
+
+        $changed = [];
+
+        foreach ($watched as $field => $label) {
+            if (array_key_exists($field, $patch) && (string) $game->getAttribute($field) !== (string) $patch[$field]) {
+                $changed[$label] = $label;
+            }
+        }
+
         $game->update($patch);
+
+        if ($changed && $game->status !== 'cancelled') {
+            $fresh = $game->fresh();
+            $this->notifyParticipants($fresh, fn () => new EventUpdatedNotification($fresh, array_values($changed)));
+        }
 
         return sendSuccess('Event updated', ['game' => $this->mapGame($game->fresh())]);
     }
@@ -1828,6 +1976,9 @@ class CustomerGameService
         if ($game->booking_id) {
             Booking::where('id', $game->booking_id)->update(['status' => 'cancelled']);
         }
+
+        // Without this the first anyone hears of a cancellation is turning up to it.
+        $this->notifyParticipants($game, fn () => new EventCancelledNotification($game));
 
         return sendSuccess('Event cancelled', ['ok' => true]);
     }
