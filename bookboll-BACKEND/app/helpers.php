@@ -7,7 +7,6 @@ use App\Models\SlotLock;
 use App\Models\User;
 use App\Notifications\BookingConfirmedUserNotification;
 use App\Notifications\BookingCreatedAdminNotification;
-use App\Notifications\BookingCreatedUserNotification;
 use App\Services\AuditLogService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\DB;
@@ -759,9 +758,17 @@ if (! function_exists('unlockListingSlot')) {
 
 if (! function_exists('createBookingInvoiceWithNotification')) {
     /**
-     * @param bool $notify Pass false to generate the invoice without emailing
-     *                     anyone — used for bookings that are still waiting on
-     *                     a Stripe payment.
+     * Generate the booking's invoice, and raise the admin's record of the booking.
+     *
+     * The customer "Your Booking is Created!" email was REMOVED: a paid booking
+     * auto-confirms moments later and sends "Your Booking Has Been Confirmed!",
+     * so the pair arrived seconds apart saying much the same thing. The invoice is
+     * still generated and stored against the booking either way — customers fetch
+     * it from their booking rather than from an attachment.
+     *
+     * @param bool $notify Pass false to generate the invoice without notifying
+     *                     anyone — used for bookings still waiting on a Stripe
+     *                     payment.
      */
     function createBookingInvoiceWithNotification($booking, $user, bool $notify = true)
     {
@@ -771,7 +778,7 @@ if (! function_exists('createBookingInvoiceWithNotification')) {
 
             $invoicePath = generateAndStoreInvoicePdf($booking, $invoiceNumber);
 
-            $invoice = $user->invoices()->create([
+            $user->invoices()->create([
                 'user_id'        => $user->id,
                 'status'         => 'generated',
                 'path'           => $invoicePath,
@@ -781,18 +788,6 @@ if (! function_exists('createBookingInvoiceWithNotification')) {
 
             if (! $notify) {
                 return;
-            }
-
-            $booking->load('venue:id,name,maps_url');
-
-            try {
-                $user->notify(new BookingCreatedUserNotification($booking, $invoice->path));
-            } catch (\Exception $e) {
-                Log::error("Booking created user notification failed: " . $e->getMessage(), [
-                    'booking_id' => $booking->id,
-                    'user_id'    => $user->id,
-                    'exception'  => $e,
-                ]);
             }
 
             $admins = User::whereHas("roles", function ($query) {
