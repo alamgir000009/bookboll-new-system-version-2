@@ -22,6 +22,29 @@ const gallery = computed(() => data.value?.photos?.length ? data.value.photos : 
 const heroPhoto = computed(() => gallery.value[activePhoto.value] || gallery.value[0] || '')
 const lightbox = ref(false)   // full-screen photo viewer
 
+// ── Court card photos ────────────────────────────────────────────────────────
+// A listing carries a `photos` array (2-3 is common) but the card only ever showed
+// `photo`, the cover — the rest were in the payload and never seen. The strip below
+// is a native scroll-snap carousel: swipe works without JS, so this only has to
+// track which frame is showing for the dots.
+function cardPhotos(l) {
+  const many = Array.isArray(l?.photos) ? l.photos.filter(Boolean) : []
+  if (many.length) return many
+  return l?.photo ? [l.photo] : []
+}
+const cardFrame = ref({})   // listing id → index currently snapped into view
+function onCardScroll(l, e) {
+  const el = e.currentTarget
+  const i = Math.round(el.scrollLeft / Math.max(1, el.clientWidth))
+  if (cardFrame.value[l.id] !== i) cardFrame.value = { ...cardFrame.value, [l.id]: i }
+}
+// Dots are a jump control, not just an indicator — but they live inside the card's
+// <router-link>, so the tap must be stopped from navigating to the listing.
+function goCardFrame(l, i, e) {
+  const track = e.currentTarget.closest('.ccard-media')?.querySelector('.ccard-track')
+  if (track) track.scrollTo({ left: i * track.clientWidth, behavior: 'smooth' })
+}
+
 async function load() {
   loading.value = true
   activePhoto.value = 0
@@ -99,8 +122,23 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
       <div v-if="!data.listings.length" class="cempty"><Building2 :size="34" /><span>No bookable courts listed yet.</span></div>
       <div v-else class="fd-courts">
         <router-link v-for="l in data.listings" :key="l.id" :to="`/listings/${l.id}`" class="ccard">
-          <div class="ccard-img" :style="l.photo ? { backgroundImage: `url(${l.photo})` } : {}">
-            <div v-if="!l.photo" class="ccard-img-fallback"><Building2 :size="28" /></div>
+          <div class="ccard-media">
+            <div v-if="cardPhotos(l).length" class="ccard-track" @scroll.passive="onCardScroll(l, $event)">
+              <div v-for="(src, i) in cardPhotos(l)" :key="i" class="ccard-img" :style="{ backgroundImage: `url(${src})` }"></div>
+            </div>
+            <div v-else class="ccard-img">
+              <div class="ccard-img-fallback"><Building2 :size="28" /></div>
+            </div>
+            <!-- One photo needs no controls; the count and dots only earn their space
+                 once there is something to move between. -->
+            <template v-if="cardPhotos(l).length > 1">
+              <span class="ccard-count">{{ (cardFrame[l.id] || 0) + 1 }}/{{ cardPhotos(l).length }}</span>
+              <div class="ccard-dots">
+                <button v-for="(src, i) in cardPhotos(l)" :key="i" type="button" class="ccard-dot"
+                        :class="{ on: (cardFrame[l.id] || 0) === i }" :aria-label="`Photo ${i + 1}`"
+                        @click.prevent.stop="goCardFrame(l, i, $event)"></button>
+              </div>
+            </template>
           </div>
           <div class="ccard-body">
             <div class="ccard-name">{{ l.name }}</div>
@@ -173,8 +211,18 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
 .ccard { display: block; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; overflow: hidden; text-decoration: none; transition: transform .12s, box-shadow .12s; }
 .ccard:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); }
 /* width:100% is explicit so the cover always spans the fluid card (1-col on phones). */
-.ccard-img { width: 100%; height: 130px; background-size: cover; background-position: center; background-color: var(--border, #e2e8f0); position: relative; }
+/* Photo strip. The frames are a scroll-snap row, so the swipe is the browser's —
+   no drag handling to fight the card's own <router-link>. */
+.ccard-media { position: relative; width: 100%; height: 130px; background: var(--border, #e2e8f0); overflow: hidden; }
+.ccard-track { display: flex; width: 100%; height: 100%; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.ccard-track::-webkit-scrollbar { display: none; }
+.ccard-img { flex: 0 0 100%; width: 100%; height: 100%; scroll-snap-align: start; background-size: cover; background-position: center; background-color: var(--border, #e2e8f0); position: relative; }
 .ccard-img-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-light, #94a3b8); }
+/* Count + dots sit over the photo, so they read on light and dark shots alike. */
+.ccard-count { position: absolute; top: 8px; right: 8px; z-index: 2; font-size: 11px; font-weight: 800; color: #fff; background: rgba(15, 23, 42, .62); padding: 2px 8px; border-radius: 999px; }
+.ccard-dots { position: absolute; left: 0; right: 0; bottom: 7px; z-index: 2; display: flex; justify-content: center; gap: 5px; }
+.ccard-dot { width: 6px; height: 6px; padding: 0; border: none; border-radius: 50%; background: rgba(255, 255, 255, .55); cursor: pointer; transition: width .15s, background .15s; }
+.ccard-dot.on { width: 16px; border-radius: 999px; background: #fff; }
 .ccard-body { padding: 12px 14px 13px; }
 .ccard-name { font-size: 15.5px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ccard-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
@@ -225,7 +273,10 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
      than a photo of a court. Ratio, not a fixed height, so it stays 16:9 on every
      phone width. (Landscape is >760px, so it keeps the shorter fixed height above
      and never grows taller than the screen.) */
-  .ccard-img { height: auto; aspect-ratio: 16 / 9; }
+  .ccard-media { height: auto; aspect-ratio: 16 / 9; }
+  /* Bigger dots on a touch screen — 6px is under any reasonable tap target. */
+  .ccard-dot { width: 7px; height: 7px; }
+  .ccard-dot.on { width: 18px; }
   .ccard-body { padding: 10px 12px 11px; }
 
   /* Hide the non-actionable "Ready to play?" filler panel (no CTA, holds no action) */
