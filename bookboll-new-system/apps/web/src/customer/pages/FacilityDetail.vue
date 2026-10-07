@@ -221,7 +221,11 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
 
   /* Single-column court list, denser cards → more tappable courts per screen */
   .fd-courts { grid-template-columns: 1fr; gap: 12px; }
-  .ccard-img { height: 108px; }
+  /* 108px against a full-width card was about 3.6:1 — a letterbox strip rather
+     than a photo of a court. Ratio, not a fixed height, so it stays 16:9 on every
+     phone width. (Landscape is >760px, so it keeps the shorter fixed height above
+     and never grows taller than the screen.) */
+  .ccard-img { height: auto; aspect-ratio: 16 / 9; }
   .ccard-body { padding: 10px 12px 11px; }
 
   /* Hide the non-actionable "Ready to play?" filler panel (no CTA, holds no action) */
