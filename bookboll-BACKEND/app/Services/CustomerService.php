@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Mail\UserWelcomeEmail;
 use App\Models\Booking;
+use App\Models\BusinessCustomer;
 use App\Models\CustomerLoyalty;
 use App\Models\Listing;
 use App\Models\LoyaltyPoint;
@@ -34,9 +35,7 @@ class CustomerService
         $status           = $request->status ?? null;
         $tags             = $request->tag ?? null;
 
-        $customers = $this->customerModel::whereHas('roles', function ($query) {
-            $query->where('Name', 'customer');
-        })
+        $customers = $this->scopedCustomerQuery($request)
             ->withCount(['bookings'])
             ->with(['tags'])
             ->when($search, function ($query, $search) {
@@ -83,11 +82,9 @@ class CustomerService
         $perPage = $request->records_per_page ?? 15;
         $search  = trim($request->search ?? '');
 
-        $query = User::active()
-            ->select('id', 'name', 'email', 'phone')
-            ->whereHas('roles', function ($q) {
-                $q->where('name', 'customer');
-            });
+        $query = $this->scopedCustomerQuery($request)
+            ->active()
+            ->select('users.id', 'users.name', 'users.email', 'users.phone');
 
         if (! empty($search)) {
             $query->where(function ($q) use ($search) {
@@ -104,7 +101,7 @@ class CustomerService
 
     public function updateTags($request, $id)
     {
-        $customer = $this->customerModel::findOrFail($id);
+        $customer = $this->scopedCustomerQuery($request)->findOrFail($id);
 
         $request->validate([
             'tags'   => 'required|array',
@@ -120,7 +117,7 @@ class CustomerService
 
     public function updateStatus($request, $id)
     {
-        $customer = $this->customerModel::findOrFail($id);
+        $customer = $this->scopedCustomerQuery($request)->findOrFail($id);
 
         $request->validate(['status' => 'required|in:active,blocked']);
 
@@ -193,9 +190,12 @@ class CustomerService
                 }
 
                 $user = $this->customerModel->create([
-                    'name'          => $formData['name'],
+                    // name and phone validate as nullable, so the keys are simply
+                    // absent when omitted -- reading them unguarded threw
+                    // "Undefined array key" and the catch below turned it into a 400.
+                    'name'          => $formData['name'] ?? null,
                     'email'         => $formData['email'],
-                    'phone'         => $formData['phone'],
+                    'phone'         => $formData['phone'] ?? null,
                     'password'      => $formData['password'],
                     'gender'        => $formData['gender'] ?? null,
                     'address'       => $formData['address'] ?? null,
@@ -220,6 +220,10 @@ class CustomerService
                     ]);
                 }
             }
+
+            // Both branches above have settled on $user by here, and we are still in
+            // the transaction, so the link lives or dies with the customer row.
+            $this->linkToCallerBusiness($request, $user);
 
             if (isset($formData['language']) || isset($formData['currency']) || isset($formData['notifications']) || isset($formData['favorite_sports'])) {
                 $preferences = $user->preferences ?? Preference::create(['user_id' => $user->id]);
@@ -272,9 +276,7 @@ class CustomerService
         $tags      = $request->tag ?? null;
         $exportAll = $request->export_all == 1 || $request->export_all === '1';
 
-        $query = $this->customerModel::whereHas('roles', function ($query) {
-            $query->where('Name', 'customer');
-        })
+        $query = $this->scopedCustomerQuery($request)
             ->withCount(['bookings'])
             ->with(['tags'])
             ->when($search, function ($query, $search) {
@@ -329,9 +331,7 @@ class CustomerService
      */
     public function getAdminProfile(string $id)
     {
-        $customer = $this->customerModel::whereHas('roles', function ($query) {
-                $query->where('name', 'customer');
-            })
+        $customer = $this->scopedCustomerQuery()
             ->with(['tags:id,name,color'])
             ->find($id);
 
@@ -436,9 +436,7 @@ class CustomerService
      */
     public function getAdminBookings(Request $request, string $id)
     {
-        $exists = $this->customerModel::whereHas('roles', function ($query) {
-                $query->where('name', 'customer');
-            })
+        $exists = $this->scopedCustomerQuery($request)
             ->whereKey($id)
             ->exists();
 
@@ -473,9 +471,15 @@ class CustomerService
         try {
             DB::beginTransaction();
 
-            $customer = $this->customerModel::whereHas('roles', function ($query) {
-                $query->where('name', 'customer');
-            })->findOrFail($id);
+            $customer = $this->scopedCustomerQuery()->find($id);
+
+            // Out of the caller's business, or not a customer at all. findOrFail here
+            // fell into the generic catch below, which answered 500 and echoed the
+            // model class back to the client.
+            if (! $customer) {
+                DB::rollBack();
+                return sendError('Customer not found', [], 404);
+            }
 
             $userRoles        = $customer->getRoleNames();
             $hasMultipleRoles = $userRoles->count() > 1;
@@ -707,6 +711,7 @@ class CustomerService
             ]);
 
             $user->assignRole('customer');
+            $this->linkToCallerBusiness($request, $user);
             $this->syncCrmTags($user, $data['tags'] ?? '');
             $this->replaceLoyaltyRows($user->id, $data['loyalty'] ?? []);
 
@@ -872,18 +877,27 @@ class CustomerService
      */
     protected function scopedCustomerQuery(?Request $request = null)
     {
-        $user  = $request?->user() ?? auth()->user();
-        $query = $this->customerQuery();
+        return AccessScope::applyCustomerScope(
+            $this->customerQuery(),
+            $request?->user() ?? auth()->user()
+        );
+    }
 
-        $ids = AccessScope::customerIdsInScope($user);
-        if ($ids === null) {
-            return $query;   // unrestricted
-        }
-        if (! $ids) {
-            return $query->whereRaw('1 = 0');   // in scope: nobody
-        }
-
-        return $query->whereIn('users.id', $ids);
+    /**
+     * Record that this customer belongs to the caller's business.
+     *
+     * Without this a client added by hand has no booking and no subscription, so the
+     * scope above cannot see them and the business loses the customer it just created.
+     * A platform or global admin has no business of their own, so nothing is linked —
+     * BusinessCustomer::link() ignores a null owner.
+     */
+    protected function linkToCallerBusiness($request, User $customer): void
+    {
+        BusinessCustomer::link(
+            AccessScope::ownerUserId($request?->user() ?? auth()->user()),
+            (int) $customer->id,
+            BusinessCustomer::SOURCE_ADDED
+        );
     }
 
     protected function validateDashboard(Request $request, $ignoreId = null, bool $partial = false)

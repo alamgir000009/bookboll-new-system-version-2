@@ -2,9 +2,7 @@
 
 namespace App\Support;
 
-use App\Models\Booking;
 use App\Models\ClassProgram;
-use App\Models\ClassSubscription;
 use App\Models\User;
 use App\Models\Venue;
 use Illuminate\Support\Facades\DB;
@@ -132,51 +130,140 @@ class AccessScope
             return [];
         }
 
-        $venueIds = self::allowedVenueIds($user);
-        if ($venueIds === null) {
+        if (self::allowedVenueIds($user) === null) {
             return null;   // super admin / platform owner — the whole marketplace
         }
 
+        return self::applyCustomerScope(User::query(), $user)
+            ->pluck('users.id')->map(fn ($i) => (int) $i)->unique()->values()->all();
+    }
+
+    /**
+     * Narrow a `users` query to the customers $user may see — the PREDICATE form of
+     * the rule above, and now the single place that rule is defined.
+     * customerIdsInScope() is derived from this, so the Customers list, the export,
+     * the CRM lookups and the marketing composer cannot drift apart.
+     *
+     * Expressed as whereExists rather than whereIn(ids) so a paginated list does not
+     * have to materialise every customer id of a large business in PHP first.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder  $query
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public static function applyCustomerScope($query, ?User $user)
+    {
+        if (! $user) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        $venueIds = self::allowedVenueIds($user);
+        if ($venueIds === null) {
+            return $query;   // unrestricted
+        }
+
+        $ownerIds   = self::scopeOwnerIds($user);
+        $programIds = self::scopedProgramIds($user, $venueIds);
+
+        return $query->where(function ($q) use ($venueIds, $programIds, $ownerIds) {
+            // Nothing is in scope yet; each branch below widens it. Without this seed
+            // a caller owning no venue and no programme would match every customer.
+            $q->whereRaw('1 = 0');
+
+            // ── Explicitly linked to the business ──
+            // The authoritative link: a client the business typed in has no booking
+            // and no subscription, so only this branch can see them.
+            if ($ownerIds) {
+                $q->orWhereExists(function ($sub) use ($ownerIds) {
+                    $sub->selectRaw('1')->from('business_customer')
+                        ->whereColumn('business_customer.user_id', 'users.id')
+                        ->whereIn('business_customer.owner_user_id', $ownerIds);
+                });
+
+                // Belt and braces beside the pivot: users.created_by records who typed
+                // the row in (TracksCreator). Covers anything created before the pivot
+                // existed, or by a path that forgets to link.
+                $q->orWhereExists(function ($sub) use ($ownerIds) {
+                    $sub->selectRaw('1')->from('users as creators')
+                        ->whereColumn('creators.id', 'users.created_by')
+                        ->where(function ($c) use ($ownerIds) {
+                            $c->whereIn('creators.id', $ownerIds)
+                                ->orWhereIn('creators.owner_user_id', $ownerIds);
+                        });
+                });
+            }
+
+            // ── Booked at a venue in scope ──
+            if ($venueIds) {
+                $q->orWhereExists(function ($sub) use ($venueIds) {
+                    $sub->selectRaw('1')->from('bookings')
+                        ->whereColumn('bookings.user_id', 'users.id')
+                        ->whereIn('bookings.venue_id', $venueIds);
+                });
+            }
+
+            // ── Subscribed to a programme in scope ──
+            // Matched on email: the only link class_subscriptions carries.
+            if ($programIds) {
+                $q->orWhereExists(function ($sub) use ($programIds) {
+                    $sub->selectRaw('1')->from('class_subscriptions')
+                        ->whereIn('class_subscriptions.program_id', $programIds)
+                        ->whereNotNull('class_subscriptions.customer_email')
+                        ->where('class_subscriptions.customer_email', '!=', '')
+                        ->whereRaw('LOWER(class_subscriptions.customer_email) = LOWER(users.email)');
+                });
+            }
+        });
+    }
+
+    /**
+     * Programmes belonging to this caller's business (or, platform-side, jurisdiction).
+     *
+     * A programme whose venue was removed still belongs to its owner, so the owner
+     * fallback keeps it in scope; venue alone would silently drop those members.
+     *
+     * @param  int[]  $venueIds
+     * @return int[]
+     */
+    /**
+     * The businesses this caller administers, as owner user ids.
+     *
+     * One entry for a provider (their own business); for a platform role, every
+     * provider in their jurisdiction. Empty for a global admin, who is never
+     * narrowed by it.
+     *
+     * @return int[]
+     */
+    protected static function scopeOwnerIds(?User $user): array
+    {
         $ownerId = self::ownerUserId($user);
 
-        // ── Booked at a venue in scope ──
-        $ids = $venueIds
-            ? Booking::whereIn('venue_id', $venueIds)->whereNotNull('user_id')->distinct()->pluck('user_id')
-            : collect();
+        return $ownerId !== null
+            ? [$ownerId]
+            : array_map('intval', self::jurisdictionOwnerIds($user));
+    }
 
-        // ── Subscribed to a programme in scope ──
-        // A programme whose venue was removed still belongs to its owner, so the owner
-        // fallback keeps it in scope; venue alone would silently drop those members.
-        $programs = ClassProgram::query()
-            ->where(function ($q) use ($venueIds, $ownerId, $user) {
+    protected static function scopedProgramIds(?User $user, array $venueIds): array
+    {
+        $ownerIds = self::scopeOwnerIds($user);
+
+        // No venues AND no owners means no programmes in scope. Without this guard
+        // the where() below adds no constraint at all and matches EVERY programme,
+        // which then pulled every subscriber's email into scope.
+        if (! $venueIds && ! $ownerIds) {
+            return [];
+        }
+
+        return ClassProgram::query()
+            ->where(function ($q) use ($venueIds, $ownerIds) {
                 if ($venueIds) {
                     $q->whereIn('venue_id', $venueIds);
                 }
-                if ($ownerId !== null) {
-                    $q->orWhere('mapped_owner_user_id', $ownerId)
-                        ->orWhere('owner_user_id', (string) $ownerId);
-                } else {
-                    foreach (self::jurisdictionOwnerIds($user) as $oid) {
-                        $q->orWhere('mapped_owner_user_id', $oid)->orWhere('owner_user_id', (string) $oid);
-                    }
+                foreach ($ownerIds as $oid) {
+                    $q->orWhere('mapped_owner_user_id', (int) $oid)
+                        ->orWhere('owner_user_id', (string) $oid);
                 }
             })
-            ->pluck('id');
-
-        if ($programs->isNotEmpty()) {
-            $emails = ClassSubscription::whereIn('program_id', $programs)
-                ->whereNotNull('customer_email')->where('customer_email', '!=', '')
-                ->distinct()->pluck('customer_email')
-                ->map(fn ($e) => mb_strtolower(trim($e)))->filter()->unique();
-
-            if ($emails->isNotEmpty()) {
-                $ids = $ids->merge(
-                    User::whereIn(DB::raw('LOWER(email)'), $emails->all())->pluck('id')
-                );
-            }
-        }
-
-        return $ids->map(fn ($i) => (int) $i)->unique()->values()->all();
+            ->pluck('id')->map(fn ($i) => (int) $i)->all();
     }
 
     /**

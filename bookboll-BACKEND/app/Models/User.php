@@ -229,7 +229,7 @@ class User extends Authenticatable
     {
         $points      = LoyaltyPoint::balance($this->id) ?? 0;
         $currentTier = $this->loyaltyTier;
-        $nextTier    = $currentTier->getNextTier();
+        $nextTier    = $currentTier?->getNextTier();
 
         if (! $nextTier) {
             return 100;
@@ -248,13 +248,23 @@ class User extends Authenticatable
 
     public function getNextTierAttribute()
     {
-        return $this->loyaltyTier->getNextTier();
+        return $this->loyaltyTier?->getNextTier();
     }
 
     public function getLoyaltyTierAttribute()
     {
+        // loyalty_tier_id is NOT NULL DEFAULT 1 and carries no foreign key, so every
+        // row created without an explicit tier points at id 1 whether or not that
+        // tier exists. Falling through to the computed tier keeps a dangling id from
+        // returning null here — next_tier and loyalty_progress are appended on every
+        // User, so a null made each of them throw and 500'd every admin endpoint
+        // that serialises a customer.
         if ($this->loyalty_tier_id) {
-            return $this->loyaltyTier()->first();
+            $tier = $this->loyaltyTier()->first();
+
+            if ($tier) {
+                return $tier;
+            }
         }
 
         return $this->calculateLoyaltyTier(LoyaltyPoint::balance($this->id) ?? 0);
