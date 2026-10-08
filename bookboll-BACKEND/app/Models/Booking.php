@@ -8,6 +8,7 @@ use App\Traits\TracksCreator;
 use BookingStatus;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use PaymentMethod;
 use PaymentStatus;
 use PaymentType;
@@ -32,6 +33,7 @@ class Booking extends Model
         'start_time',
         'booking_id',
         'total_price',
+        'currency',
         'refunded_at',
         'promocode_id',
         'cancelled_by',
@@ -253,11 +255,48 @@ class Booking extends Model
         return true;
     }
 
+    /**
+     * The currency a venue charges in: its own override, then its country's, then
+     * the platform default. Only ever read when a booking is created.
+     */
+    public static function currencyForVenue($venueId): string
+    {
+        $venue = $venueId
+            ? Venue::select(['id', 'country_id', 'city_id', 'currency_override'])->find($venueId)
+            : null;
+
+        if ($venue && ! blank($venue->currency_override)) {
+            return (string) $venue->currency_override;
+        }
+
+        $countryId = $venue?->country_id
+            ?: ($venue?->city_id ? \Nnjeim\World\Models\City::whereKey($venue->city_id)->value('country_id') : null);
+
+        if ($countryId && class_exists(\Nnjeim\World\Models\Country::class)) {
+            $code = \Nnjeim\World\Models\Country::with('currency')->find($countryId)?->currency?->code;
+
+            if (! blank($code)) {
+                return (string) $code;
+            }
+        }
+
+        // Last resort, and the only one: an amount with no currency at all is worse
+        // than one wearing the platform's own.
+        return (string) (DB::table('settings')->where('key', 'platform_default_currency')->value('value') ?: 'QAR');
+    }
+
     protected static function booted()
     {
         static::creating(function ($booking) {
             if (auth()->check()) {
                 $booking->created_by = $booking->created_by ?? auth()->id();
+            }
+
+            // Stamp the currency once, here, rather than in each of the five places
+            // that create a booking. Stored, not derived on read: a venue that later
+            // changes currency must not relabel money already taken in another.
+            if (blank($booking->currency)) {
+                $booking->currency = self::currencyForVenue($booking->venue_id);
             }
         });
 
