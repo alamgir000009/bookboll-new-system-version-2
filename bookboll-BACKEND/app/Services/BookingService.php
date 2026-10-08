@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Support\AccessScope;
+use App\Support\Capabilities;
 use App\Support\HourPeriods;
 use App\Models\AddOn;
 use App\Models\AuditLog;
@@ -227,11 +228,36 @@ class BookingService
             return sendError('Booking is already cancelled.');
         }
 
-        $currentUser         = auth()->user();
-        $isBookingOwner      = (int) $currentUser->id === (int) $booking->user_id;
-        $isAdmin             = $currentUser->hasAnyRole(['super_admin', 'admin', 'country_admin', 'platform_staff']);
-        $isStaff             = $currentUser->hasAnyRole(['senior_employee', 'junior_employee', 'guard']);
-        $hasCancelPermission = $isAdmin || $isStaff;
+        $currentUser    = auth()->user();
+        $isBookingOwner = (int) $currentUser->id === (int) $booking->user_id;
+
+        // ── Is this booking even theirs to touch? ──
+        // cancel() had NO venue scoping, so staff-side authority applied across the
+        // whole marketplace. Now a non-global caller must administer the venue.
+        $venueId = (int) ($booking->venue_id ?? 0);
+        $inScope = $venueId > 0
+            ? AccessScope::canTouchVenue($currentUser, $venueId)
+            : AccessScope::isGlobal($currentUser);
+
+        // ── Staff-side authority ──
+        // manage_bookings is the capability the route already declares. The old role
+        // list predated it and named only the LEGACY provider rows, so a `guard`
+        // could cancel while provider_admin — the business owner — could not.
+        //
+        // `guard` holds no manage_bookings but keeps the cancel it has today, since
+        // gate staff use it for no-shows; it is now limited to their own venue.
+        $hasCancelPermission = $inScope && (
+            $currentUser->hasCapability(Capabilities::MANAGE_BOOKINGS)
+            || $currentUser->hasRole('guard')
+        );
+
+        // ── The tier that may also cancel a COMPLETED booking ──
+        // Platform roles as before, plus the business owner: they are the
+        // administrator of their own venue.
+        $isAdmin = $hasCancelPermission && (
+            AccessScope::isPlatform($currentUser) || $currentUser->hasRole('provider_admin')
+        );
+        $isStaff = $hasCancelPermission && ! $isAdmin;
 
         if (! $isBookingOwner && ! $hasCancelPermission) {
             return sendError('You are not allowed to cancel this booking. Only the booking creator or staff can cancel.');
