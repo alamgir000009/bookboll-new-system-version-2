@@ -41,6 +41,30 @@
 
     .activities-table {
         @apply min-w-full;
+        /* Pin the table box types. Anything that flips one of these to block
+           detaches tbody from the header's column layout, which drops every
+           cell into one column. !important so this also beats an inline
+           style applied at runtime by script. */
+        display: table !important;
+    }
+
+    .activities-table thead {
+        display: table-header-group !important;
+    }
+
+    .activities-table tbody {
+        display: table-row-group !important;
+    }
+
+    .activities-table tr {
+        display: table-row !important;
+    }
+
+    .activities-table th,
+    .activities-table td {
+        display: table-cell !important;
+        float: none !important;
+        position: static !important;
     }
 
     .activities-table thead {
