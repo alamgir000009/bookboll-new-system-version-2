@@ -9,6 +9,7 @@ use App\Models\Payment;
 use App\Models\Venue;
 use Barryvdh\DomPDF\Facade\Pdf;
 use BookingPaymentMethod;
+use Illuminate\Validation\Rule;
 use BookingPaymentStatus;
 use BookingStatus;
 use CompnayInfo;
@@ -1340,15 +1341,128 @@ class PaymentService
         }
     }
 
+    /**
+     * The two answers that are not "we took the money".
+     *
+     * cash_on_arrival  — the customer pays at the venue. The arrangement is recorded
+     *                    and the pending rows stay pending, because the money really
+     *                    is still owed.
+     * payment_skipped  — the booking is waived. The pending rows are CANCELLED so it
+     *                    stops showing as in debt, and the booking reads as skipped.
+     *
+     * Runs inside the caller's transaction.
+     *
+     * @param  \Illuminate\Support\Collection  $bookingIds  main booking + any due ones
+     */
+    protected function recordUncollectedPayment($mainBooking, $bookingIds, string $method, $user)
+    {
+        $skipped = $method === BookingPaymentMethod::PAYMENT_SKIPPED;
+        $touched = 0;
+
+        foreach ($bookingIds as $bookingId) {
+            $booking = $this->bookingModel::lockForUpdate()->findOrFail($bookingId);
+
+            $pending = $booking->payments()->where('status', PaymentStatus::PENDING)->get();
+
+            if ($pending->isEmpty()) {
+                continue;
+            }
+
+            $touched++;
+
+            if ($skipped) {
+                foreach ($pending as $payment) {
+                    $payment->update([
+                        'status' => PaymentStatus::CANCELLED,
+                        'notes'  => trim(($payment->notes ?? '') . ' — payment skipped'),
+                    ]);
+                }
+            }
+
+            $booking->update([
+                'payment_method'        => $method,
+                'payment_status'        => $skipped
+                    ? BookingPaymentStatus::PAYMENT_SKIPPED
+                    : BookingPaymentStatus::PENDING,
+                // Neither answer means the money arrived.
+                'full_payment_received' => false,
+            ]);
+        }
+
+        if (! $touched) {
+            DB::rollBack();
+
+            return sendError('No pending payments found for the selected bookings.');
+        }
+
+        $label = str_replace('_', ' ', $method);
+
+        $mainBooking->history()->create([
+            'user_id'     => $user->id,
+            'action'      => $skipped ? 'payment_skipped' : 'payment_on_arrival',
+            'description' => $skipped
+                ? 'Payment waived — marked as ' . $label . '.'
+                : 'Payment to be collected on arrival (' . $label . ').',
+        ]);
+
+        DB::commit();
+
+        $booking = $mainBooking->fresh([
+            'addOns', 'history', 'payments', 'invoices', 'promocode', 'latestInvoice',
+            'venue:id,name', 'listing:id,name', 'resourcesAllocated',
+            'history.user:id,name', 'user:id,name,email,phone',
+        ]);
+
+        return sendSuccess(
+            $skipped ? 'Payment skipped for this booking.' : 'Payment will be collected on arrival.',
+            compact('booking')
+        );
+    }
+
+    /**
+     * Settle a booking's outstanding payments the way the front desk actually
+     * handled them.
+     *
+     * `payment_status` is a misnomer kept for the clients already sending it: the
+     * values are BookingPaymentMethod — HOW the money was handled, not a status.
+     *
+     * It used to accept five, while GET bookings/payment-methods offered seven. The
+     * three it refused — online_payment, cash_on_arrival, payment_skipped — came
+     * back as "The selected payment status is invalid", so a method the picker had
+     * just listed could not be submitted.
+     *
+     * They are not all the same kind of answer, which is why widening the rule is
+     * not enough on its own:
+     *   • MONEY TAKEN  (cash/cheque/card/wire/online) — settle the pending rows.
+     *   • NOT TAKEN    (cash_on_arrival)              — record the arrangement and
+     *     leave the money owed; marking it paid would invent a payment.
+     *   • NOT OWED     (payment_skipped)              — waive it: cancel the rows so
+     *     the booking stops reading as in debt.
+     */
     public function markBookingAsPaid($request)
     {
         $validated = $request->validate([
             'booking_id'                     => 'required|exists:bookings,id',
-            'payment_status'                 => 'required|in:paid_cash,paid_wire,paid_wire_transfer,paid_cheque,paid_credit_card',
+            // Exactly what GET bookings/payment-methods offers, derived from the same
+            // constant rather than hand-listed — that drift is what made a method the
+            // picker had just shown come back as "invalid". paid_wire is a legacy
+            // alias with no constant and no enum slot; it is normalised below.
+            'payment_status'                 => ['required', Rule::in(array_merge(
+                array_diff(BookingPaymentMethod::list(), [BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL]),
+                ['paid_wire']
+            ))],
             'selected_due_bookings'          => 'nullable|array',
             'selected_due_bookings.*.id'     => 'exists:bookings,id',
             'selected_due_bookings.*.amount' => 'numeric|min:0',
         ]);
+
+        // bookings.payment_method is an ENUM without a 'paid_wire' member, so this
+        // alias validated and then failed on the UPDATE with a truncation error —
+        // "Failed to update booking payments" and no clue why. Fold it into the
+        // value the column actually holds.
+        if ($validated['payment_status'] === 'paid_wire') {
+            $validated['payment_status'] = BookingPaymentMethod::PAID_WIRE_TRANSFER;
+        }
 
         try {
             DB::beginTransaction();
@@ -1373,7 +1487,19 @@ class PaymentService
                 'paid_wire'          => PaymentMethod::WIRE_TRANSFER,
                 'paid_wire_transfer' => PaymentMethod::WIRE_TRANSFER,
                 'paid_credit_card'   => PaymentMethod::CREDIT_CARD,
+                'online_payment'     => PaymentMethod::ONLINE,
             ];
+
+            // No money changed hands for these two, so they must not walk the
+            // settle-the-pending-rows path below.
+            if (! isset($paymentMethodMap[$validated['payment_status']])) {
+                return $this->recordUncollectedPayment(
+                    $mainBookingForValidation,
+                    $allBookingIdsForUncollected = collect([$mainBookingId])->merge($dueBookingsData->pluck('id'))->unique(),
+                    $validated['payment_status'],
+                    $user
+                );
+            }
 
             $paymentMethod = $paymentMethodMap[$validated['payment_status']];
             $paymentMethodName = str_replace('paid_', '', str_replace('_', ' ', $validated['payment_status']));
