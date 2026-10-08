@@ -174,7 +174,7 @@
                                         'page' => $activities->currentPage(),
                                     ]);
                                 @endphp
-                                <tr class="group cursor-pointer" onclick="if (!event.target.closest('a,button') && window.Livewire) { Livewire.navigate('{{ $detailUrl }}'); }">
+                                <tr wire:key="activity-{{ $activity->id }}" class="group cursor-pointer" onclick="if (!event.target.closest('a,button') && window.Livewire) { Livewire.navigate('{{ $detailUrl }}'); }">
                                     <td>
                                         <span class="activities-id">#{{ $activity->id }}</span>
                                     </td>
@@ -226,7 +226,7 @@
                                     </td>
                                 </tr>
                             @empty
-                                <tr>
+                                <tr wire:key="activities-empty">
                                     <td colspan="8">
                                         <div class="activities-empty">
                                             <span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-sidebar/10 text-sidebar">
