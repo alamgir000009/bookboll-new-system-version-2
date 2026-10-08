@@ -3778,7 +3778,19 @@ class BookingService
 
             $userRoles = $user->getRoleNames()->toArray();
 
-            $fullAccessRoles = ['super_admin', 'admin', 'senior_employee'];
+            // Roles that may record money as ALREADY taken (paid cash/cheque/card/wire)
+            // rather than only "skip" or "pay on arrival".
+            //
+            // provider_admin — the business OWNER — belongs here: they are the admin of
+            // their own business, and leaving them on the restricted pair meant an owner
+            // could not record a payment they had just taken at their own venue. The
+            // legacy senior_employee row already had this, so the owner ranked below one
+            // of their own staff tiers.
+            //
+            // The front-desk tiers (facility_admin, provider_supervisor, staff, …) stay
+            // restricted ON PURPOSE even though they hold ACCEPT_PAYMENTS: marking a
+            // booking as already paid is a cash-handling control, not a convenience.
+            $fullAccessRoles = ['super_admin', 'admin', 'senior_employee', 'provider_admin'];
             $hasFullAccess   = ! empty(array_intersect($userRoles, $fullAccessRoles));
 
             if ($hasFullAccess) {
