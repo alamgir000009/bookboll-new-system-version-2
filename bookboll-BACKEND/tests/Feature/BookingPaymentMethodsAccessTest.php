@@ -116,3 +116,47 @@ it('offers the owner every method the booking validator accepts', function () {
         expect($accepted)->toContain($method);
     }
 });
+
+/* ─────────── the API's own gate on accepting a payment ─────────── */
+
+it('lets the roles that hold accept_payments reach mark-booking-paid', function () {
+    // The admin app refused the business owner client-side while the API would have
+    // allowed them. This pins the API side of that agreement: reaching the route is
+    // what matters, so anything other than 403 counts.
+    foreach ([
+        'provider_admin', 'facility_admin', 'provider_supervisor', 'staff',
+        'senior_employee', 'country_admin', 'platform_staff',
+    ] as $role) {
+        roleWithCapabilities($role);
+
+        $user = User::factory()->create([
+            'email'           => 'pay-' . $role . '@test.local',
+            'status'          => User::ACTIVE,
+            'loyalty_tier_id' => $this->bronze,
+        ]);
+        $user->assignRole($role);
+
+        $status = $this->actingAs($user->fresh())
+            ->postJson('/api/admin/payments/mark-booking-paid', [])
+            ->getStatusCode();
+
+        expect($status)->not->toBe(403, "role {$role} was refused by the capability gate");
+    }
+});
+
+it('still refuses roles without accept_payments', function () {
+    foreach (['provider_viewer', 'junior_employee', 'guard'] as $role) {
+        roleWithCapabilities($role);
+
+        $user = User::factory()->create([
+            'email'           => 'nopay-' . $role . '@test.local',
+            'status'          => User::ACTIVE,
+            'loyalty_tier_id' => $this->bronze,
+        ]);
+        $user->assignRole($role);
+
+        $this->actingAs($user->fresh())
+            ->postJson('/api/admin/payments/mark-booking-paid', [])
+            ->assertForbidden();
+    }
+});

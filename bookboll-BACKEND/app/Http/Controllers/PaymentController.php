@@ -8,6 +8,7 @@ use App\Models\PaymentMethod as PaymentMethodModel;
 use App\Services\BookingService;
 use App\Services\PaymentService;
 use App\Services\StripeService;
+use App\Support\Capabilities;
 use Maatwebsite\Excel\Facades\Excel;
 use Exception;
 use Illuminate\Http\Request;
@@ -22,6 +23,28 @@ class PaymentController extends Controller
         protected StripeService $stripeService,
         protected BookingService $bookingService,
     ) {}
+
+    /**
+     * Refuse a caller who may not handle payments, or null to continue.
+     *
+     * Every route below is already declared `capability:accept_payments`. These
+     * methods used to RE-CHECK for super_admin/admin only, which silently overrode
+     * that gate and refused the whole provider ladder — a business owner holding
+     * accept_payments got 403 taking payment at their own venue, and the admin
+     * mobile app surfaced it as "You are not authorized to accept payments".
+     *
+     * Checking the capability keeps the guard without contradicting the route.
+     */
+    protected function denyWithoutPaymentAccess()
+    {
+        $user = auth()->user();
+
+        if ($user && $user->hasCapability(Capabilities::ACCEPT_PAYMENTS)) {
+            return null;
+        }
+
+        return sendError('You do not have permission to manage payments.', [], 403);
+    }
 
     public function index(Request $request)
     {
@@ -45,10 +68,8 @@ class PaymentController extends Controller
 
     public function export(Request $request)
     {
-        $user = auth()->user();
-
-        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
-            return sendError('Unauthorized. Only super admin or admin can export payments.', [], 403);
+        if ($deny = $this->denyWithoutPaymentAccess()) {
+            return $deny;
         }
 
         $payments = $this->paymentService->getPaymentsForExport($request);
@@ -59,10 +80,8 @@ class PaymentController extends Controller
 
     public function downloadInvoice($id)
     {
-        $user = auth()->user();
-
-        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
-            return sendError('Unauthorized. Only super admin or admin can download payment invoices.', [], 403);
+        if ($deny = $this->denyWithoutPaymentAccess()) {
+            return $deny;
         }
 
         return $this->paymentService->downloadInvoice($id);
@@ -192,10 +211,8 @@ class PaymentController extends Controller
 
     public function generatePaymentLink(Request $request)
     {
-        $user = auth()->user();
-
-        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
-            return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
+        if ($deny = $this->denyWithoutPaymentAccess()) {
+            return $deny;
         }
 
         return $this->paymentService->generatePaymentLink($request);
@@ -203,10 +220,8 @@ class PaymentController extends Controller
 
     public function confirmPayment(Request $request)
     {
-        $user = auth()->user();
-
-        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
-            return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
+        if ($deny = $this->denyWithoutPaymentAccess()) {
+            return $deny;
         }
 
         return $this->paymentService->confirmPayment($request);
@@ -402,10 +417,8 @@ class PaymentController extends Controller
 
     public function markBookingAsPaid(Request $request)
     {
-        $user = auth()->user();
-
-        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
-            return sendError('Unauthorized. Only super admin or admin can manage payments.', [], 403);
+        if ($deny = $this->denyWithoutPaymentAccess()) {
+            return $deny;
         }
 
         return $this->paymentService->markBookingAsPaid($request);
@@ -413,10 +426,8 @@ class PaymentController extends Controller
 
     public function markPaymentAsReceived(Request $request, $id)
     {
-        $user = auth()->user();
-
-        if (!$user->hasAnyRole(['super_admin', 'admin'])) {
-            return sendError('Unauthorized. You do not have permission to mark payments as received.', [], 403);
+        if ($deny = $this->denyWithoutPaymentAccess()) {
+            return $deny;
         }
 
         return $this->paymentService->markPaymentAsReceived($request, $id);
