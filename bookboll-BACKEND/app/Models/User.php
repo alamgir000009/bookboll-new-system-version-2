@@ -467,6 +467,7 @@ class User extends Authenticatable
             'gender',
             'address',
             'provider',
+            'stripe_id',
             'provider_id',
             'nationality',
             'date_of_birth',

@@ -90,14 +90,24 @@ class ResetStripeAccountLinks extends Command
 
         $this->newLine();
 
-        // stripe_id is not among User's logged attributes, and a builder update fires
-        // no model events either — so the summary entry below is the only record of
-        // this. Keep the ids so the entry can say exactly which were dropped.
-        $clearedIds = User::whereNotNull('stripe_id')->where('stripe_id', '!=', '')
-            ->pluck('stripe_id', 'id')->all();
+        // One at a time through the model, NOT a builder mass update: an
+        // `update()` on a query compiles to a single UPDATE, instantiates nothing,
+        // and so fires no model events — Spatie would never see six customers lose
+        // their billing id. (User::activityLogAttributes() lists stripe_id for the
+        // same reason; without it the diff would be empty and dontSubmitEmptyLogs()
+        // would throw the entry away.)
+        $clearedIds = [];
+        $cleared    = 0;
 
-        $cleared = User::whereNotNull('stripe_id')->where('stripe_id', '!=', '')
-            ->update(['stripe_id' => null]);
+        User::whereNotNull('stripe_id')->where('stripe_id', '!=', '')
+            ->cursor()
+            ->each(function (User $user) use (&$clearedIds, &$cleared) {
+                $clearedIds[$user->id] = $user->stripe_id;
+                $user->stripe_id = null;
+                $user->save();
+                $cleared++;
+            });
+
         $this->info(sprintf('  cleared %d users.stripe_id — fresh customers are created on next checkout', $cleared));
 
         $removed = 0;
