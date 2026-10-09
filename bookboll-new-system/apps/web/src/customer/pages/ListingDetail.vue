@@ -8,7 +8,7 @@ import { useSeo, productLd } from '../../lib/seo.js'
 import { facilityPath } from '../../lib/cityPages.js'
 import { hostDraft } from '../../customer/hostDraft.js'
 import { loadListing } from '../../customer/data.js'
-import { quoteBooking, isPerPerson, extensionsEnabled, extensionSlotPrice, extensionMaxSlots, addonAmount, paymentPlan, paymentSplit, effectivePaymentOptions } from '../../customer/booking.js'
+import { quoteBooking, isPerPerson, extensionsEnabled, extensionSlotPrice, extensionMaxSlots, addonAmount, paymentPlan, paymentSplit, depositTag, effectivePaymentOptions } from '../../customer/booking.js'
 import { loadDayAvailability, buildDaySlots, dayScheduleInfo, createCustomerBookingsMulti, holdSlots, holdMinutes, releaseHolds, holdToken, loadMonthAvailability, cheapestAvailableForDay, PAY_MAP } from '../../customer/apiBooking.js'
 import { validatePromo } from '../../lib/promocodes.js'
 import { loadLoyaltyConfig } from '../../lib/loyalty.js'
@@ -304,7 +304,10 @@ const surface = computed(() => (isWhiteLabel.value ? 'site' : 'marketplace'))
 const providerHasPayout = computed(() => !!data.value?.providerHasPayout)
 const payMethod = ref('deposit')
 const plan = computed(() => paymentPlan(loc.value, effectivePaymentOptions(data.value?.paymentOptions, { surface: surface.value, providerHasPayout: providerHasPayout.value })))
-const paySplit = computed(() => paymentSplit(payMethod.value, payableTotal.value, plan.value.depositPct, plan.value.depositAmount))
+// A fixed deposit is charged once per booking, and the server books one slot per booking.
+const bookingCount = computed(() => fullQuote.value.totalSlots || 1)
+const paySplit = computed(() => paymentSplit(payMethod.value, payableTotal.value, plan.value.depositPct, plan.value.depositAmount, bookingCount.value))
+const depositLabel = computed(() => depositTag(plan.value.depositPct, plan.value.depositAmount, bookingCount.value))
 watch(plan, (p) => { if (!p.methods.includes(payMethod.value)) payMethod.value = p.methods[0] }, { immediate: true })
 const PAY_LABEL = { deposit: 'Deposit + on arrival', cash: 'Pay on arrival', online: 'Pay online' }
 const PAY_NOTE = { deposit: 'Deposit secures your booking; pay the balance at the venue.', cash: 'No prepayment — pay when you arrive.', online: 'Pay securely online.' }
@@ -577,7 +580,7 @@ async function confirm() {
   if (phone.value.trim()) cust = { ...cust, phone: phone.value.trim() }   // book with the entered number
   const appliedPromo = promo.value   // capture before the form resets
   const discount = promoDiscount.value
-  const snap = { perDay: fullQuote.value.perDay, gross: fullQuote.value.total, discount, total: payableTotal.value, method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount }
+  const snap = { perDay: fullQuote.value.perDay, gross: fullQuote.value.total, discount, total: payableTotal.value, method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount, bookingCount: bookingCount.value }
   // The promo CODE (not the client-side discount) goes to the server — Laravel
   // re-validates it and applies the discount itself, so the charged amount always
   // matches what it computed, and usage_count is incremented there.
@@ -637,7 +640,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             <div v-for="(b, i) in day.blocks" :key="i" class="ld-success-line"><Clock :size="14" /> {{ fmtTime(b.start) }} – {{ fmtTime(b.end) }}</div>
           </template>
           <div class="ld-success-total">
-            <template v-if="success.method === 'deposit'">Deposit <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount).online).toLocaleString() }}</strong> paid <span class="ld-plan-nr">non-refundable</span> · <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount).arrival).toLocaleString() }}</strong> at the venue</template>
+            <template v-if="success.method === 'deposit'">Deposit <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount, success.bookingCount).online).toLocaleString() }}</strong> paid <span class="ld-plan-nr">non-refundable</span> · <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount, success.bookingCount).arrival).toLocaleString() }}</strong> at the venue</template>
             <template v-else-if="success.method === 'online'">Paid online <strong>{{ success.currency }} {{ Number(success.total).toLocaleString() }}</strong></template>
             <template v-else>Pay <strong>{{ success.currency }} {{ Number(success.total).toLocaleString() }}</strong> at the venue</template>
           </div>
@@ -933,7 +936,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
               <template v-if="paySplit.method === 'deposit'">
                 <div class="ld-plan-row now">
                   <div class="ld-plan-info">
-                    <div class="ld-plan-lbl">Pay now <span class="ld-plan-tag">deposit · {{ plan.depositPct }}%</span> <span class="ld-plan-nr">non-refundable</span></div>
+                    <div class="ld-plan-lbl">Pay now <span class="ld-plan-tag">{{ depositLabel }}</span> <span class="ld-plan-nr">non-refundable</span></div>
                     <div class="ld-plan-sub">Charged today to secure your booking · non-refundable</div>
                   </div>
                   <strong class="ld-plan-amt">{{ cur }} {{ Number(chargeNow).toLocaleString() }}</strong>

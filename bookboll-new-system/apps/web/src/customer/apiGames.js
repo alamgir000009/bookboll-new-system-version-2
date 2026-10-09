@@ -123,7 +123,9 @@ export function splitCourt(total, method, plan = {}) {
   if (method === 'cash') return { now: 0, arrival: amount }
   const flat = Number(plan.depositAmount) || 0
   const pct = Number(plan.depositPercentage) || 0
-  const deposit = Math.max(0, Math.min(flat > 0 ? flat : Math.floor(amount * (pct > 0 ? pct : 20) / 100), amount))
+  // No house default: an unconfigured deposit charges nothing server-side, so quoting
+  // a made-up percentage here would show the host a figure nothing collects.
+  const deposit = Math.max(0, Math.min(flat > 0 ? flat : Math.floor(amount * pct / 100), amount))
   return { now: deposit, arrival: amount - deposit }
 }
 

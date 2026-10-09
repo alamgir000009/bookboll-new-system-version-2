@@ -77,9 +77,10 @@ export function addonAmount(addon, qty) {
  */
 export function effectivePaymentOptions(po, { surface = 'marketplace', providerHasPayout = false } = {}) {
   if (surface !== 'site') return po
-  // No saved options row yet → the provider-site defaults (10% deposit + cash;
-  // full-online needs a payout method anyway).
-  if (!po) return { deposit_enabled: true, online_payment_enabled: false, cash_on_arrival: true, deposit_percentage: 10, deposit_amount: 0 }
+  // No saved options row yet → pay on arrival. A deposit is NOT assumed: the server
+  // charges from the listing's own payment_options, so a made-up percentage here
+  // would quote a figure nothing collects.
+  if (!po) return { deposit_enabled: false, online_payment_enabled: false, cash_on_arrival: true, deposit_percentage: 0, deposit_amount: 0 }
   return {
     deposit_enabled: !!po.site_deposit_enabled,
     online_payment_enabled: !!po.site_online_enabled && !!providerHasPayout,
@@ -94,30 +95,58 @@ export function paymentPlan(location, paymentOptions) {
   const o = paymentOptions
   const depositPct = Number(o?.deposit_percentage) || 0
   const depositAmount = Number(o?.deposit_amount) || 0
+  // A deposit needs a figure to charge — a fixed amount OR a percentage. There is no
+  // house default: PaymentService computes the deposit from the listing's own
+  // payment_options, so offering one that is merely "enabled" would promise a number
+  // at checkout and then collect nothing.
+  const hasDeposit = depositAmount > 0 || depositPct > 0
   if (o) {
     // Whatever the admin enabled — any combination; the customer picks if >1.
     const methods = []
     if (o.online_payment_enabled) methods.push('online')
-    if (o.deposit_enabled) methods.push('deposit')
+    if (o.deposit_enabled && hasDeposit) methods.push('deposit')
     if (o.cash_on_arrival) methods.push('cash')
     if (methods.length) return { bookbollOwned, methods, depositPct, depositAmount }
   }
-  // No options row yet → sensible default from ownership.
+  // Nothing usable configured → ownership decides. A provider listing takes the money
+  // on arrival rather than inventing a deposit it cannot charge.
   return bookbollOwned
     ? { bookbollOwned, methods: ['online'], depositPct: 0, depositAmount: 0 }
-    : { bookbollOwned, methods: ['deposit'], depositPct: depositPct || 20, depositAmount }
+    : { bookbollOwned, methods: ['cash'], depositPct: 0, depositAmount: 0 }
 }
 // Split a total into what's paid online now vs on arrival, for a chosen method.
-// Deposit = fixed amount if set, else percentage (defaults to 20% if neither set).
-export function paymentSplit(method, total, depositPct = 0, depositAmount = 0) {
+// Deposit = fixed amount if set, else percentage of the total. Neither set = no
+// deposit; paymentPlan does not offer the method in that case.
+//
+// Mirrors PaymentService::createCheckoutSession exactly, because this is the number
+// shown next to the Pay button and Stripe must charge the same thing:
+//  - a FIXED amount is charged PER BOOKING, and the server makes one booking per
+//    slot (`booking_count` = count of slots), so it scales with `bookingCount`;
+//  - a PERCENTAGE is taken off the whole total once, and floor()ed, not rounded.
+export function paymentSplit(method, total, depositPct = 0, depositAmount = 0, bookingCount = 1) {
   total = Number(total) || 0
   if (method === 'online') return { method: 'online', online: total, arrival: 0, deposit: 0, total }
   if (method === 'cash')   return { method: 'cash', online: 0, arrival: total, deposit: 0, total }
   const amt = Number(depositAmount) || 0
   const pct = Number(depositPct) || 0
-  let deposit = amt > 0 ? amt : Math.round(total * (pct > 0 ? pct : 20) / 100)
+  const n = Math.max(1, Number(bookingCount) || 1)
+  let deposit = amt > 0 ? amt * n : Math.floor(total * pct / 100)
   deposit = Math.max(0, Math.min(deposit, total))
   return { method: 'deposit', online: deposit, arrival: total - deposit, deposit, total }
+}
+
+// Badge text for the deposit line, following the SAME rule as paymentSplit above.
+// A fixed-amount deposit has no percentage to quote (the listing sends
+// `percentage: "0"` with it), so claiming "0%" next to a QAR 25 charge is wrong —
+// the amount is already shown on the row, so the tag just reads "deposit".
+export function depositTag(depositPct = 0, depositAmount = 0, bookingCount = 1) {
+  const amt = Number(depositAmount) || 0
+  if (amt > 0) {
+    const n = Math.max(1, Number(bookingCount) || 1)
+    return n > 1 ? `deposit \u00b7 ${n} \u00d7 ${amt}` : 'deposit'
+  }
+  const pct = Number(depositPct) || 0
+  return pct > 0 ? `deposit \u00b7 ${pct}%` : 'deposit'
 }
 // Pure pricing only — this file computes quotes and payment splits and takes no money.
 // The actual charge happens server-side: customer/apiBooking.js posts to
