@@ -18,6 +18,8 @@ use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\Coupon as StripeCoupon;
 use Stripe\Stripe;
 use Stripe\Subscription as StripeSubscription;
+use App\Support\StripeCatalog;
+use Stripe\StripeClient;
 
 /**
  * The two things a PROVIDER actually pays Bookboll for:
@@ -174,6 +176,56 @@ class ProviderPlanService
         ]);
     }
 
+    /**
+     * The Premium line item.
+     *
+     * One Product ("Bookboll Premium") with one Price per interval, reused by every
+     * business — not a fresh Product per checkout, which is what inline price_data
+     * produced. See App\Support\StripeCatalog for why that matters on a
+     * subscription.
+     *
+     * If the catalogue cannot be reached we fall back to the old inline shape: it
+     * charges exactly the same amount, so a Stripe hiccup costs tidy bookkeeping,
+     * never a sale.
+     *
+     * @return array<string,mixed>
+     */
+    protected function premiumLineItem(float $amount, bool $yearly): array
+    {
+        $interval = $yearly ? 'year' : 'month';
+        $cents    = (int) round($amount * 100);
+
+        $priceId = StripeCatalog::recurringPrice(
+            new StripeClient((string) config('services.stripe.secret')),
+            'premium',
+            'Bookboll Premium',
+            $cents,
+            PremiumPlan::CURRENCY,
+            $interval,
+            1,
+            ['plan' => 'premium']
+        );
+
+        if ($priceId) {
+            return ['quantity' => 1, 'price' => $priceId];
+        }
+
+        return [
+            'quantity'   => 1,
+            'price_data' => [
+                'currency'     => PremiumPlan::CURRENCY,
+                'unit_amount'  => $cents,
+                'recurring'    => ['interval' => $interval],
+                'product_data' => [
+                    'name'        => 'Bookboll Premium — '.($yearly ? 'Yearly' : 'Monthly'),
+                    'description' => $yearly
+                        ? 'Billed once a year. Includes blog, marketing, exports, promo codes, banners, widgets and white-label.'
+                        : 'Billed monthly. Includes blog, marketing, exports, promo codes, banners, widgets and white-label.',
+                ],
+            ],
+        ];
+    }
+
     /** @param array{ok:bool,code:Promocode,discount:float}|null $promo */
     protected function planSessionPayload(Business $business, User $owner, string $billing, ?array $promo, string $returnPath): array
     {
@@ -202,20 +254,7 @@ class ProviderPlanService
                 'metadata'          => $metadata,
                 'trial_period_days' => $trial,
             ],
-            'line_items' => [[
-                'quantity'   => 1,
-                'price_data' => [
-                    'currency'     => PremiumPlan::CURRENCY,
-                    'unit_amount'  => $amount * 100,
-                    'recurring'    => ['interval' => $yearly ? 'year' : 'month'],
-                    'product_data' => [
-                        'name'        => 'Bookboll Premium — '.($yearly ? 'Yearly' : 'Monthly'),
-                        'description' => $yearly
-                            ? 'Billed once a year. Includes blog, marketing, exports, promo codes, banners, widgets and white-label.'
-                            : 'Billed monthly. Includes blog, marketing, exports, promo codes, banners, widgets and white-label.',
-                    ],
-                ],
-            ]],
+            'line_items' => [$this->premiumLineItem($amount, $yearly)],
         ];
 
         // A promo discounts the first billing period — a one-shot coupon, so the

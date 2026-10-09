@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Log;
 use Stripe\Checkout\Session as StripeCheckoutSession;
 use Stripe\Coupon as StripeCoupon;
 use Stripe\Stripe;
+use App\Support\StripeCatalog;
+use Stripe\StripeClient;
 
 /**
  * Stripe-backed membership billing.
@@ -36,6 +38,54 @@ class MembershipBillingService
     ];
 
     public function __construct(protected CustomerProgramService $programs) {}
+
+    /**
+     * The recurring line for a programme membership.
+     *
+     * One Product PER PROGRAMME, reused by everyone who joins it — not one per
+     * subscriber, which is what inline price_data produced. A programme is a real
+     * sellable thing with its own name, currency and interval, belonging to one
+     * merchant, so it earns its own Product; a single platform-wide Product would
+     * collapse every merchant's revenue into one line.
+     *
+     * Re-priced programmes mint a NEW Price under the SAME Product (Stripe Prices
+     * are immutable), so existing members keep paying what they joined at until
+     * they are deliberately migrated.
+     *
+     * Falls back to the old inline shape if the catalogue cannot be reached —
+     * the amount charged is identical either way.
+     *
+     * @return array<string,mixed>
+     */
+    protected function programLineItem($program, float $amount, string $currency, string $unit, int $count): array
+    {
+        $cents = (int) round($amount * 100);
+
+        $priceId = StripeCatalog::recurringPrice(
+            new StripeClient((string) config('services.stripe.secret')),
+            'program:'.$program->uuid,
+            (string) $program->name,
+            $cents,
+            $currency,
+            $unit,
+            $count,
+            ['program_uuid' => (string) $program->uuid]
+        );
+
+        if ($priceId) {
+            return ['quantity' => 1, 'price' => $priceId];
+        }
+
+        return [
+            'quantity'   => 1,
+            'price_data' => [
+                'currency'     => $currency,
+                'unit_amount'  => $cents,
+                'recurring'    => ['interval' => $unit, 'interval_count' => $count],
+                'product_data' => ['name' => (string) $program->name],
+            ],
+        ];
+    }
 
     /** Build the Checkout session for a membership sign-up. */
     public function createCheckoutSession(User $user, ClassProgram $program, array $payload): array
@@ -153,15 +203,7 @@ class MembershipBillingService
                     'user_id'           => (string) $user->id,
                 ],
             ],
-            'line_items' => [[
-                'quantity'   => 1,
-                'price_data' => [
-                    'currency'    => $currency,
-                    'unit_amount' => (int) round($amount * 100),
-                    'recurring'   => ['interval' => $unit, 'interval_count' => $count],
-                    'product_data' => ['name' => (string) $program->name],
-                ],
-            ]],
+            'line_items' => [$this->programLineItem($program, $amount, $currency, $unit, $count)],
         ];
 
         if ($trialDays > 0) {
