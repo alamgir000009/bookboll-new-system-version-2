@@ -705,6 +705,8 @@ Route::prefix('customer')->group(function () {
         Route::post('programs/{uuid}/enroll', [CustomerProgramController::class, 'enroll'])->name('customer.programs.enroll');
         Route::get('programs/checkout/{sessionId}', [CustomerProgramController::class, 'checkoutState'])->name('customer.programs.checkout-state');
         Route::post('programs/subscriptions/{uuid}/cancel', [CustomerProgramController::class, 'cancel'])->name('customer.programs.cancel');
+        // Undo a cancellation that has not taken effect yet (cancel_pending).
+        Route::post('programs/subscriptions/{uuid}/resume', [CustomerProgramController::class, 'resume'])->name('customer.programs.resume');
     });
 
 });

@@ -72,6 +72,12 @@ class CustomerProgramController extends Controller
         return $this->programs->cancel(auth()->user(), $uuid);
     }
 
+    /** Undo a cancellation that has not taken effect yet. */
+    public function resume(string $uuid)
+    {
+        return $this->programs->resume(auth()->user(), $uuid);
+    }
+
     public function checkoutState(string $sessionId)
     {
         return $this->billing->checkoutState(auth()->user(), $sessionId);

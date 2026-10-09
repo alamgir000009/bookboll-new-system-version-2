@@ -547,6 +547,117 @@ class MembershipBillingService
     }
 
     /**
+     * Undo a cancellation that has been SCHEDULED but not yet taken effect —
+     * the member changed their mind before the period they paid for ran out.
+     *
+     * Only the winding-down state is reversible. A cancellation that already
+     * completed is terminal at Stripe (a `canceled` subscription cannot be
+     * revived), and a trial cancel completes immediately, so both have to go
+     * through a fresh sign-up instead. The caller enforces that; this is the
+     * Stripe half.
+     *
+     * The joining fee is the subtle part. cancel() DELETED the pending invoice
+     * item so a cancelled member would not be billed it later — resuming has to
+     * put it back, or the member keeps the membership and never pays the fee
+     * they agreed to. It is only re-queued when the trial has still not ended
+     * and nothing has been charged yet, which is exactly when the original
+     * queueJoiningFee() would have run.
+     */
+    public function resume(ClassSubscription $sub): array
+    {
+        if (! $sub->stripe_subscription_id) {
+            $sub->update(['cancelled_at' => null, 'cancel_reason' => null]);
+
+            return ['ok' => true];
+        }
+
+        $secret = trim((string) config('services.stripe.secret'));
+        if ($secret === '') {
+            return ['error' => 'Payments are not configured.'];
+        }
+
+        Stripe::setApiKey($secret);
+
+        try {
+            $stripeSub = \Stripe\Subscription::update(
+                $sub->stripe_subscription_id,
+                ['cancel_at_period_end' => false]
+            );
+        } catch (\Throwable $e) {
+            // Already gone means the period ran out (or it was cancelled at
+            // Stripe directly) while the member was deciding. There is nothing
+            // to resume, and saying so is better than a generic failure.
+            if ($this->stripeSubscriptionIsGone($e)) {
+                $sub->update(['status' => 'cancelled', 'cancelled_at' => $sub->cancelled_at ?: now()]);
+
+                return ['error' => 'This membership has already ended. Please join again.'];
+            }
+
+            Log::error('Membership resume failed', ['sub' => $sub->id, 'error' => $e->getMessage()]);
+
+            return ['error' => 'Could not resume right now. Please try again.'];
+        }
+
+        $trialEnd = ($stripeSub->trial_end ?? null) ? now()->setTimestamp($stripeSub->trial_end) : null;
+        if ($trialEnd && $trialEnd->isFuture() && ! $sub->first_charge_at && (float) $sub->joining_fee > 0) {
+            $this->requeueJoiningFee($sub);
+        }
+
+        $sub->update([
+            'cancelled_at'   => null,
+            'cancel_reason'  => null,
+            'stripe_status'  => (string) ($stripeSub->status ?? $sub->stripe_status),
+            'trial_status'   => ($stripeSub->status ?? '') === 'trialing' ? 'in_trial' : $sub->trial_status,
+            'next_billing_at' => $this->periodEnd($stripeSub) ?: $sub->next_billing_at,
+        ]);
+
+        return ['ok' => true];
+    }
+
+    /**
+     * Re-queue the joining fee, but only if cancel() really did remove it.
+     *
+     * dropPendingJoiningFee() swallows its own errors by design, so the delete
+     * may have failed and left the item in place. Creating a second one would
+     * bill the member the fee twice — so count what is actually pending for
+     * this subscription first and do nothing if a fee is already waiting.
+     */
+    protected function requeueJoiningFee(ClassSubscription $sub): void
+    {
+        if (! $sub->stripe_customer_id) {
+            return;
+        }
+
+        try {
+            $items = \Stripe\InvoiceItem::all([
+                'customer' => $sub->stripe_customer_id,
+                'pending'  => true,
+                'limit'    => 100,
+            ]);
+
+            foreach ($items->autoPagingIterator() as $item) {
+                $itemSub = $item->subscription ?? null;
+                if (is_object($itemSub)) {
+                    $itemSub = $itemSub->id ?? null;
+                }
+                if ($itemSub && $itemSub === $sub->stripe_subscription_id) {
+                    return; // a fee is already pending — leave it alone
+                }
+            }
+        } catch (\Throwable $e) {
+            // Can't prove it is absent, so don't risk a duplicate charge.
+            Log::error('Could not check pending joining fee on resume', [
+                'sub'   => $sub->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return;
+        }
+
+        $this->queueJoiningFee($sub, $sub->stripe_subscription_id);
+    }
+
+    /**
      * Remove a joining fee that was queued but never invoiced.
      *
      * queueJoiningFee() parks the fee on the Stripe CUSTOMER as a pending invoice

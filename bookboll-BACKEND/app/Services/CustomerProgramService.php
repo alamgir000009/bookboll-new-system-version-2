@@ -516,6 +516,58 @@ class CustomerProgramService
         return sendSuccess('Cancelled', ['ok' => true]);
     }
 
+    /**
+     * The member changes their mind: keep a membership that was set to stop at
+     * the end of the current period.
+     *
+     * Only the SCHEDULED state can be undone — `cancelled_at` set while the
+     * status is still live, which is the same condition `cancel_pending`
+     * reports to the apps. Two cases deliberately cannot be resumed:
+     *
+     *   • status 'cancelled' — already over. A cancelled Stripe subscription is
+     *     terminal, so there is nothing to re-open; they have to join again.
+     *   • a cancelled trial — cancel() ends those immediately for exactly that
+     *     reason, so they land in the case above.
+     *
+     * Saying "already ended, please join again" is the honest answer in both,
+     * and far better than appearing to succeed and leaving them with no
+     * membership and no charge.
+     */
+    public function resume(User $user, string $subUuid)
+    {
+        $email = strtolower(trim((string) ($user->email ?: '')));
+        $sub = ClassSubscription::where('uuid', $subUuid)->first();
+        if (! $sub) {
+            return sendError('Subscription not found.', [], 404);
+        }
+
+        $owns = $sub->customer_id === $user->uuid
+            || ($email && strtolower((string) $sub->customer_email) === $email);
+        if (! $owns) {
+            return sendError('Not allowed.', [], 403);
+        }
+
+        if ($sub->status === 'cancelled') {
+            return sendError('This membership has already ended. Please join again.');
+        }
+        if (! $sub->cancelled_at) {
+            return sendError('This membership is not scheduled to cancel.');
+        }
+
+        if ($sub->stripe_subscription_id) {
+            $res = app(MembershipBillingService::class)->resume($sub);
+
+            return isset($res['error'])
+                ? sendError($res['error'])
+                : sendSuccess('Membership resumed', ['ok' => true]);
+        }
+
+        // Free / non-Stripe membership: the schedule lives only in our columns.
+        $sub->update(['cancelled_at' => null, 'cancel_reason' => null]);
+
+        return sendSuccess('Membership resumed', ['ok' => true]);
+    }
+
     public function passes(User $user)
     {
         $email = strtolower(trim((string) ($user->email ?: '')));
