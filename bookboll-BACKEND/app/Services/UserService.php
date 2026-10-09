@@ -541,9 +541,17 @@ class UserService
     public function customerLogin($request)
     {
         try {
-            $user = $this->userModel->whereRelation('roles', 'name', 'customer')->whereEmail($request->email)->first();
+            // Resolved by email alone, not filtered to the customer role. A business
+            // owner booking for the first time holds provider roles and no customer
+            // role; the old role-scoped lookup returned null for them, so a correct
+            // password still answered "Invalid credentials". The customer side is
+            // granted below, once the password has proved ownership.
+            $user = $this->userModel->whereEmail($request->email)->first();
 
-            if ($user && ! $user->password) {
+            // Kept scoped to accounts that already hold the customer role: this is a
+            // public endpoint, and widening it would let anyone trigger reset mail for
+            // a passwordless provider or admin account.
+            if ($user && ! $user->password && $user->hasRole('customer')) {
                 $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
                 DB::table('password_reset_tokens')->updateOrInsert(
@@ -561,12 +569,46 @@ class UserService
                 return sendSuccess('Your pasword was reset please change your password', ['reset_password' => true]);
             }
 
-            if (! $user || ! password_verify($request->password, $user->password)) {
+            if (! $user || ! $user->password || ! password_verify($request->password, $user->password)) {
                 return sendError('Invalid credentials');
             }
 
             if ($user->status == User::BLOCKED) {
                 return sendError('Your account is blocked by admin. Please contact for further details.');
+            }
+
+            // A customer account the holder deleted themselves stays deleted here.
+            // Coming back is register()'s job, where the revival is explicit; letting
+            // a login quietly undo a deletion would be a surprise. Same answer the
+            // role-scoped lookup used to give, so this is not a behaviour change.
+            if ($this->customerAccountWasDeleted($user)) {
+                return sendError('Invalid credentials');
+            }
+
+            // A live account signing in to book for the first time - most often a
+            // business owner. The password above is the same proof of ownership
+            // register() demands before it grants this role, so grant it and let
+            // them through with everything else they already had intact.
+            if (! $user->hasRole('customer')) {
+                DB::transaction(function () use ($user) {
+                    $user->assignRole('customer');
+
+                    if (! $user->preferences) {
+                        Preference::create([
+                            'user_id'         => $user->id,
+                            'notifications'   => [
+                                'booking_emails'   => true,
+                                'sms_reminders'    => false,
+                                'marketing_emails' => true,
+                            ],
+                            'favorite_sports' => [],
+                            'language'        => 'english',
+                            'currency'        => 'QAR',
+                        ]);
+                    }
+                });
+
+                $user->refresh();
             }
 
             $this->ensurePublicUuid($user);
