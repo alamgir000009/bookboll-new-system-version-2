@@ -83,7 +83,11 @@ const router = createRouter({
     customer('/programs', CustomerPrograms),
     customer('/programs/:id', ProgramDetail),
     customer('/blog', BlogIndex),
-    customer('/blog/:slug', BlogPost),
+    customer('/post/:slug', BlogPost),
+    // Posts used to live under /blog/<slug>; the live site serves them at /post/<slug>.
+    // Keep the old shape as a redirect so already-shared/indexed links don't 404.
+    { path: '/blog/:slug', redirect: (to) => `/post/${to.params.slug}` },
+    { path: '/ar/blog/:slug', redirect: (to) => `/ar/post/${to.params.slug}` },
     customer('/rewards', Rewards),
     customer('/account', Account),
     customer('/my-games', MyGames),

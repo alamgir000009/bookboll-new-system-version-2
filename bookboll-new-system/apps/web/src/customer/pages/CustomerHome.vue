@@ -242,7 +242,7 @@ watch(() => customer.value?.id, async () => { loyalty.value = isCustomer.value ?
           <router-link to="/blog" class="bh-viewall">View all <ArrowRight :size="15" /></router-link>
         </div>
         <div class="bh-grid">
-          <router-link v-for="p in blogPosts" :key="p.id" :to="`/blog/${p.slug}`" class="bh-card">
+          <router-link v-for="p in blogPosts" :key="p.id" :to="`/post/${p.slug}`" class="bh-card">
             <div class="bh-cover" :style="p.cover_image ? { backgroundImage: `url(${p.cover_image})` } : {}">
               <span v-if="!p.cover_image" class="bh-cover-ph"><Newspaper :size="24" /></span>
             </div>

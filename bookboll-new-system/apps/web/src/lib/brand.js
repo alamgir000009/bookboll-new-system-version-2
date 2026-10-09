@@ -221,7 +221,7 @@ export function moduleForPath(path) {
   if (p.startsWith('/facilities') || p.startsWith('/listings/')) return 'venues'
   if (p.startsWith('/games') || p.startsWith('/tournaments') || p.startsWith('/host-game')) return 'events'
   if (p.startsWith('/programs')) return 'programs'
-  if (p.startsWith('/blog')) return 'blog'
+  if (p.startsWith('/blog') || p.startsWith('/post')) return 'blog'
   return null
 }
 

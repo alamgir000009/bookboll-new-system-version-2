@@ -31,7 +31,7 @@ useSeo(() => ({
     <div v-else-if="!posts.length" class="blog-empty"><Newspaper :size="34" /><p>No posts yet — check back soon.</p></div>
 
     <div v-else class="blog-grid">
-      <router-link v-for="p in posts" :key="p.id" :to="`/blog/${p.slug}`" class="bcard">
+      <router-link v-for="p in posts" :key="p.id" :to="`/post/${p.slug}`" class="bcard">
         <div class="bcard-cover" :style="p.cover_image ? { backgroundImage: `url(${p.cover_image})` } : {}">
           <span v-if="!p.cover_image" class="bcard-cover-ph"><Newspaper :size="26" /></span>
         </div>

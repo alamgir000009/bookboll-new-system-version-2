@@ -131,7 +131,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
           <router-link to="/blog" class="bz-more head">All posts <ArrowRight :size="14" /></router-link>
         </div>
         <div class="bz-blog">
-          <router-link v-for="p in blogPosts" :key="p.id" :to="`/blog/${p.slug}`" class="bz-post">
+          <router-link v-for="p in blogPosts" :key="p.id" :to="`/post/${p.slug}`" class="bz-post">
             <div class="bz-post-cover" :style="p.cover_image ? { backgroundImage: `url(${p.cover_image})` } : {}">
               <Newspaper v-if="!p.cover_image" :size="22" />
             </div>

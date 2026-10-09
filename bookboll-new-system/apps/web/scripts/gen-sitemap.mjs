@@ -80,7 +80,7 @@ async function collect() {
   programs.forEach(r => add(`/programs/${r.id}`, r.created_at))
   // Already filtered server-side to games still joinable (open, not removed, not past).
   games.forEach(r => add(r.game_type === 'tournament' ? `/tournaments/${r.id}` : `/games/${r.id}`, r.created_at))
-  posts.forEach(r => add(`/blog/${r.slug}`, r.published_at))
+  posts.forEach(r => add(`/post/${r.slug}`, r.published_at))
 
   // City/country × (category|sport) landing pages, from active venues only.
   const cityById = Object.fromEntries(cities.map(c => [c.id, c]))

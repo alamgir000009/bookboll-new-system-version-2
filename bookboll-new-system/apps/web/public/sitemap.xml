@@ -56,10 +56,6 @@
     <lastmod>2026-02-23</lastmod>
   </url>
   <url>
-    <loc>https://bookboll.com/facilities/11</loc>
-    <lastmod>2026-04-02</lastmod>
-  </url>
-  <url>
     <loc>https://bookboll.com/facilities/12</loc>
     <lastmod>2026-04-18</lastmod>
   </url>
@@ -69,19 +65,11 @@
   </url>
   <url>
     <loc>https://bookboll.com/facilities/14</loc>
-    <lastmod>2026-09-13</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/facilities/15</loc>
-    <lastmod>2026-09-13</lastmod>
+    <lastmod>2026-09-16</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/facilities/16</loc>
-    <lastmod>2026-09-14</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/facilities/18</loc>
-    <lastmod>2026-09-28</lastmod>
+    <lastmod>2026-10-06</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/listings/1</loc>
@@ -180,6 +168,10 @@
     <lastmod>2026-09-06</lastmod>
   </url>
   <url>
+    <loc>https://bookboll.com/listings/44</loc>
+    <lastmod>2026-09-06</lastmod>
+  </url>
+  <url>
     <loc>https://bookboll.com/listings/45</loc>
     <lastmod>2026-09-06</lastmod>
   </url>
@@ -189,118 +181,37 @@
   </url>
   <url>
     <loc>https://bookboll.com/listings/47</loc>
-    <lastmod>2026-09-13</lastmod>
+    <lastmod>2026-09-16</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/listings/48</loc>
-    <lastmod>2026-09-13</lastmod>
+    <lastmod>2026-09-16</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/listings/49</loc>
-    <lastmod>2026-09-14</lastmod>
+    <lastmod>2026-09-19</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/listings/51</loc>
-    <lastmod>2026-09-28</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/programs/1</loc>
-    <lastmod>2026-09-13</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/programs/2</loc>
-    <lastmod>2026-09-14</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/programs/3</loc>
-    <lastmod>2026-09-14</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/games/12</loc>
     <lastmod>2026-10-06</lastmod>
   </url>
   <url>
-    <loc>https://bookboll.com/blog/unlocking-padel-in-qatar-how-to-book-indoor-padel-courts-with-bookboll-at-great-prices</loc>
+    <loc>https://bookboll.com/listings/52</loc>
+    <lastmod>2026-10-06</lastmod>
   </url>
   <url>
-    <loc>https://bookboll.com/blog/discover-how-to-book-sports-facilities-in-qatar-at-our-new-locations-with-bookboll-com</loc>
+    <loc>https://bookboll.com/post/unlocking-padel-in-qatar-how-to-book-indoor-padel-courts-with-bookboll-at-great-prices</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/blog/where-and-how-to-book-badminton-courts-in-qatar</loc>
+    <loc>https://bookboll.com/post/discover-how-to-book-sports-facilities-in-qatar-at-our-new-locations-with-bookboll-com</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/blog/how-where-to-book-football-pitches-in-qatar</loc>
+    <loc>https://bookboll.com/post/where-and-how-to-book-badminton-courts-in-qatar</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/blog/business-blog-title-is-here</loc>
+    <loc>https://bookboll.com/post/how-where-to-book-football-pitches-in-qatar</loc>
   </url>
   <url>
-    <loc>https://bookboll.com/venues/doha</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/doha/sports</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/doha/volleyball</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/doha/atv-riding</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/doha/3x3-basketball</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/doha/pickleball</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/qatar</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/qatar/volleyball</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/qatar/atv-riding</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/qatar/3x3-basketball</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/venues/qatar/pickleball</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/doha</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/doha/gym</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/doha/academy</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/doha/calisthenics</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/doha/football</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/doha/boxing</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/qatar</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/qatar/gym</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/qatar/academy</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/qatar/calisthenics</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/qatar/football</loc>
-  </url>
-  <url>
-    <loc>https://bookboll.com/memberships/qatar/boxing</loc>
+    <loc>https://bookboll.com/post/how-where-to-book-podcast-studio-in-qatar</loc>
   </url>
 </urlset>
