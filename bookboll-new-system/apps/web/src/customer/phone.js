@@ -106,6 +106,70 @@ export function flagForIso(iso) {
   return String.fromCodePoint(...[...s].map(c => 0x1f1e6 + c.charCodeAt(0) - 65))
 }
 
+// Expected NATIONAL digit counts (trunk "0" excluded) as [min, max] — what makes a
+// number COMPLETE, so checkout can tell "+974 5" from a real Qatari number. Pinned
+// for the markets Bookboll sells in plus the main expat-source countries; anything
+// not listed falls back to GENERIC_LEN, which still catches a half-typed number
+// without rejecting an unfamiliar valid one.
+const NATIONAL_LEN = {
+  QA: [8, 8], AE: [8, 9], SA: [9, 9], KW: [8, 8], BH: [8, 8], OM: [8, 8],
+  EG: [8, 10], JO: [9, 9], LB: [7, 8], IQ: [10, 10], TR: [10, 10],
+  PK: [10, 10], IN: [10, 10], BD: [10, 10], LK: [9, 9], NP: [10, 10],
+  PH: [10, 10], ID: [9, 12], MY: [9, 10], SG: [8, 8],
+  GB: [9, 10], IE: [9, 9], US: [10, 10], CA: [10, 10], AU: [9, 9],
+}
+const GENERIC_LEN = [6, 15]   // E.164 tops out at 15 digits including the dial code
+
+export function nationalLenFor(iso) { return NATIONAL_LEN[(iso || '').toUpperCase()] || GENERIC_LEN }
+
+const digitsOf = (s) => String(s || '').replace(/\D/g, '')
+
+/**
+ * Strip the national trunk "0" people type out of habit ("050 123 4567" on +971),
+ * but ONLY for a country whose length we have pinned AND only when dropping it is
+ * what makes the number the right length. An unpinned country is left untouched,
+ * because there a leading 0 may be part of the number (Italian landlines).
+ */
+export function normalizeNational(national, iso) {
+  const d = digitsOf(national)
+  const len = NATIONAL_LEN[(iso || '').toUpperCase()]
+  if (!len) return d
+  const [min, max] = len
+  if (d.startsWith('0') && d.length > min) {
+    const stripped = d.slice(1)
+    if (stripped.length >= min && stripped.length <= max) return stripped
+  }
+  return d
+}
+
+/**
+ * Why this number can't be used, or '' when it is good. Checkout needs a number the
+ * venue can actually ring, so an empty or half-typed field is rejected here rather
+ * than at the API, which only asks for `nullable|string|min:5`.
+ */
+export function phoneProblem(full, fallbackDial = '') {
+  const { dial, national } = splitPhone(full, fallbackDial)
+  if (!digitsOf(national)) return 'Please enter your phone number.'
+  if (!dial) return 'Please choose your country code.'
+  const iso = isoForDial(dial)
+  const [min, max] = nationalLenFor(iso)
+  const d = normalizeNational(national, iso)
+  if (d.length < min) {
+    return min === max
+      ? `A ${dial} number has ${min} digits — ${d.length} so far.`
+      : `That number is too short — ${dial} needs at least ${min} digits.`
+  }
+  if (d.length > max) {
+    return min === max
+      ? `A ${dial} number has ${min} digits — that is ${d.length}.`
+      : `That number is too long for ${dial}.`
+  }
+  return ''
+}
+
+/** True when `full` is a complete, dialable number. */
+export function isPhoneComplete(full, fallbackDial = '') { return !phoneProblem(full, fallbackDial) }
+
 // Split a stored "<dial> <national>" into parts. Falls back to `fallbackDial` when no
 // dial is detected (e.g. a bare local number, or a brand-new field).
 export function splitPhone(full, fallbackDial = '') {
@@ -120,9 +184,11 @@ export function splitPhone(full, fallbackDial = '') {
 }
 
 // Combine a dial + national into one stored string. Empty national → empty (so an
-// untouched field with only a dial code doesn't masquerade as a real number).
+// untouched field with only a dial code doesn't masquerade as a real number). The
+// national part is normalised (digits only, trunk 0 dropped) so what reaches the API
+// is dialable regardless of how the shopper spaced it out.
 export function joinPhone(dial, national) {
-  const n = (national || '').trim()
+  const n = normalizeNational(national, isoForDial(dial))
   if (!n) return ''
   return `${dial || ''} ${n}`.trim()
 }

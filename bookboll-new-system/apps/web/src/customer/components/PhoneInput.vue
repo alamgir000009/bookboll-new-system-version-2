@@ -15,8 +15,9 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   defaultIso: { type: String, default: '' },
   placeholder: { type: String, default: 'Phone number' },
+  invalid: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'blur'])
 
 const init = splitPhone(props.modelValue, dialForIso(props.defaultIso))
 const iso = ref(init.dial ? (isoForDial(init.dial) || (props.defaultIso || '').toUpperCase()) : (props.defaultIso || '').toUpperCase())
@@ -47,7 +48,7 @@ watch(() => props.defaultIso, (v) => { if (!national.value && v) iso.value = v.t
 </script>
 
 <template>
-  <div class="pin" :class="{ open }">
+  <div class="pin" :class="{ open, bad: invalid }">
     <button type="button" class="pin-dial" @click="open = !open" :aria-expanded="open">
       <span class="pin-flag">{{ flagForIso(iso) }}</span>
       <span class="pin-code">{{ dial || '+' }}</span>
@@ -55,7 +56,7 @@ watch(() => props.defaultIso, (v) => { if (!national.value && v) iso.value = v.t
     </button>
     <span class="pin-div"></span>
     <Phone :size="15" class="pin-ico" />
-    <input class="pin-num" :value="national" @input="onNational" :placeholder="placeholder" inputmode="tel" autocomplete="tel-national" />
+    <input class="pin-num" :value="national" @input="onNational" @blur="emit('blur')" :placeholder="placeholder" inputmode="tel" autocomplete="tel-national" />
 
     <div v-if="open" class="pin-pop">
       <div class="pin-search"><Search :size="14" /><input v-model="search" placeholder="Search country or code" autofocus /></div>
@@ -75,6 +76,8 @@ watch(() => props.defaultIso, (v) => { if (!national.value && v) iso.value = v.t
 <style scoped>
 .pin { position: relative; display: flex; align-items: center; gap: 0; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; background: var(--surface, #ffffff); height: 46px; box-sizing: border-box; }
 .pin.open, .pin:focus-within { border-color: var(--brand-accent); }
+.pin.bad { border-color: #dc2626; }
+.pin.bad:focus-within { border-color: #dc2626; }
 .pin-dial { display: flex; align-items: center; gap: 5px; height: 100%; padding: 0 10px 0 12px; border: none; background: none; cursor: pointer; border-radius: 10px 0 0 10px; font-size: 14.5px; font-weight: 700; color: #0f172a; white-space: nowrap; }
 .pin-flag { font-size: 16px; line-height: 1; }
 .pin-code { font-variant-numeric: tabular-nums; }

@@ -15,6 +15,7 @@ import { loadLoyaltyConfig } from '../../lib/loyalty.js'
 import { loadCustomerLoyalty, clearCustomerLoyaltyCache } from '../../lib/customerSession.js'
 import { isWhiteLabel } from '../../lib/brand.js'
 import { getPrefillPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
+import { phoneProblem, dialForIso } from '../../customer/phone.js'
 import { fmt12, dayPeriod, toMinutes, endMinutes } from '../../lib/slots.js'
 import DateField from '../components/DateField.vue'
 import PhoneInput from '../components/PhoneInput.vue'
@@ -86,6 +87,12 @@ const err = ref('')
 const success = ref(null)
 const guest = ref({ name: '', email: '', phone: '' })
 const phone = ref('')   // checkout phone (per-country; prefilled + saved). Used for guest & signed-in.
+// The venue rings this number, so checkout requires a COMPLETE one — the API only
+// asks for `nullable|string|min:5`, which "+974 5" satisfies. Surface the problem
+// once the shopper has left the field or tried to pay, not while they're typing.
+const phoneTouched = ref(false)
+const phoneErr = computed(() => phoneProblem(phone.value, dialForIso(selectedCountry.value?.iso_code)))
+const showPhoneErr = computed(() => phoneTouched.value && !!phoneErr.value)
 const step = ref(1)   // 1 = choose date & time, 2 = checkout
 
 // ── Slot hold countdown ("reserved for 9:58…") ───────────────────────────────
@@ -564,6 +571,12 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
 async function confirm() {
   err.value = ''
   if (!fullQuote.value.dates.length) { err.value = 'Please pick at least one time slot.'; return }
+  if (phoneErr.value) {
+    phoneTouched.value = true
+    err.value = phoneErr.value
+    document.querySelector('.ld-phone .pin-num')?.focus()
+    return
+  }
   saving.value = true
   // A Bookboll account is mandatory: openCheckout() gates step 2 behind
   // ensureSignedIn(), so reaching here signed out means the session expired
@@ -577,7 +590,7 @@ async function confirm() {
   const base = customer.value
   if (!base) { err.value = 'Please sign in to complete your booking.'; saving.value = false; return }
   let cust = base
-  if (phone.value.trim()) cust = { ...cust, phone: phone.value.trim() }   // book with the entered number
+  cust = { ...cust, phone: phone.value.trim() }   // book with the entered number (validated above)
   const appliedPromo = promo.value   // capture before the form resets
   const discount = promoDiscount.value
   const snap = { perDay: fullQuote.value.perDay, gross: fullQuote.value.total, discount, total: payableTotal.value, method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount, bookingCount: bookingCount.value }
@@ -892,7 +905,9 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
                 <div class="ld-who-mail">{{ customer.email }}</div>
               </div>
             </div>
-            <PhoneInput v-model="phone" :default-iso="selectedCountry?.iso_code" placeholder="Phone number" class="ld-phone" />
+            <PhoneInput v-model="phone" :default-iso="selectedCountry?.iso_code" placeholder="Phone number"
+                        class="ld-phone" :invalid="showPhoneErr" @blur="phoneTouched = true" />
+            <div v-if="showPhoneErr" class="ld-phone-err">{{ phoneErr }}</div>
 
             <h2 class="ld-h2">Payment method</h2>
             <div class="ld-pay">
@@ -1086,6 +1101,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
 .ld-side-hint { font-size: 13.5px; color: var(--text-muted, #64748b); background: #f8fafc; border-radius: 12px; padding: 14px; text-align: center; margin: 16px 0; display: flex; align-items: center; justify-content: center; gap: 7px; }
 .ld-side-fields { display: flex; flex-direction: column; gap: 9px; margin-bottom: 10px; }
 .ld-phone { margin-bottom: 14px; }
+.ld-phone-err { margin: -10px 0 14px; font-size: 13px; font-weight: 600; color: #dc2626; }
 .ld-field { display: flex; align-items: center; gap: 9px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 0 12px; color: var(--text-light, #94a3b8); }
 .ld-field input { flex: 1; border: none; outline: none; padding: 11px 0; font-size: 14.5px; color: #0f172a; background: transparent; }
 .ld-breakdown { margin: 6px 0 14px; }
