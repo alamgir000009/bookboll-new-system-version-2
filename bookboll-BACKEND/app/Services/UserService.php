@@ -55,7 +55,30 @@ class UserService
                     return sendError('Your account is blocked by admin. Please contact for further details.');
                 }
 
+                // Proof of ownership before this email's existing account is touched.
+                //
+                // This endpoint is public, and it ends by minting a Sanctum token for
+                // whatever account it resolved. Without this check, anyone who knew a
+                // provider's email could register as a "customer" with a password of
+                // their own choosing and be handed a token carrying that provider's
+                // roles — the victim's password untouched, so nothing looked wrong.
+                // BusinessService::register has always proved ownership this way; this
+                // is the same rule in the other direction.
+                $ownershipProven = Hash::check($formData['password'], (string) $user->password);
+
+                $ownershipError = 'An account already exists with this email. Enter that '
+                    . "account's password to continue, or sign up with a different email.";
+
                 if ($this->customerAccountWasDeleted($user)) {
+                    // A self-deleted customer signing up again gets a fresh start —
+                    // but only when the account holds nothing else. One that still
+                    // carries roles is live (a provider, say) and has to be proved.
+                    if (! $user->getRoleNames()->isEmpty() && ! $ownershipProven) {
+                        DB::rollBack();
+
+                        return sendError($ownershipError, ['email' => [$ownershipError]], 422);
+                    }
+
                     $restoreData = $user->getRoleNames()->isEmpty()
                         ? [
                             'name'     => $formData['name'],
@@ -66,6 +89,15 @@ class UserService
 
                     $this->restoreCustomerAccount($user, $restoreData);
                 } elseif (! $user->hasRole('customer')) {
+                    // A live account adding the customer side — most often a business
+                    // owner making their first booking. Correct password: they gain
+                    // the role and keep everything they had.
+                    if (! $ownershipProven) {
+                        DB::rollBack();
+
+                        return sendError($ownershipError, ['email' => [$ownershipError]], 422);
+                    }
+
                     $user->assignRole('customer');
 
                     if (! $user->preferences) {
