@@ -496,7 +496,15 @@ class MarketplaceCatalogService
 
     protected function listingQuery(array $scope)
     {
-        $query = Listing::where('status', 'active');
+        // Who may BOOK it, before any question of where it is placed. The
+        // catalogue feeds the apex marketplace, white-label provider sites
+        // (wildcard subdomain or custom domain) and the customer mobile app —
+        // all customer surfaces — so the `from:` header resolves this to
+        // show_on_customer for every real caller, and for a request with no
+        // header at all (crawlers, the sitemap). `status` cannot stand in for
+        // it: Listing::booted() derives status as active when EITHER flag is
+        // set, so a staff-only listing is still 'active'.
+        $query = Listing::where('status', 'active')->visibleToRequestSurface();
 
         if ($scope['whiteLabel']) {
             $query->where(function ($q) {
@@ -521,6 +529,11 @@ class MarketplaceCatalogService
 
     protected function listingVisible(Listing $listing, bool $whiteLabel): bool
     {
+        // Same gate as listingQuery(), for a listing already loaded.
+        if (! $listing->isVisibleToRequestSurface()) {
+            return false;
+        }
+
         if ($whiteLabel) {
             return $listing->show_on_provider_site !== false;
         }

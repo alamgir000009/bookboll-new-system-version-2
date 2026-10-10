@@ -119,6 +119,11 @@ class MarketplaceGeoService
         $venueIds = $venueRows->pluck('id');
         $listings = Listing::query()
             ->where('status', 'active')
+            // Customer surface: a staff-only court must not raise a city's
+            // sport counts or spawn directory pages for a crawler. `status`
+            // alone would let it through — it is derived as active when EITHER
+            // visibility flag is set.
+            ->visibleToRequestSurface()
             ->whereIn('venue_id', $venueIds)
             ->where(function ($q) {
                 $q->where('show_on_marketplace', true)
