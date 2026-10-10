@@ -16,6 +16,7 @@ use App\Models\User;
 use Nnjeim\World\Models\Country;
 use App\Models\StripeSession;
 use App\Models\Venue;
+use App\Support\TenantOrigins;
 use App\Notifications\HostedEvents\EventCancelledNotification;
 use App\Notifications\HostedEvents\EventJoinConfirmedNotification;
 use App\Notifications\HostedEvents\EventJoinDeclinedNotification;
@@ -1209,6 +1210,8 @@ class CustomerGameService
                 'service_fee'      => (string) $charge['serviceFee'],
                 'loyalty_redeem'   => (string) $charge['loyaltyRedeem'],
                 'due_now'          => (string) $amount,
+                // The storefront the host started on — see PaymentController::storefrontUrl().
+                'return_origin'    => (string) TenantOrigins::storefrontOriginFromRequest(request()),
             ],
             'line_items' => [[
                 'price_data' => [

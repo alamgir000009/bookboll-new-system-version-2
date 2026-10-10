@@ -96,7 +96,7 @@ class ProviderOwnershipSeeder extends Seeder
             $this->command?->warn('  email    : ' . self::EMAIL);
             $this->command?->warn('  password : ' . self::PASSWORD);
         }
-        $this->command?->info('White-label storefront: http://localhost:5173/?b=' . $business->username);
+        $this->command?->info('White-label storefront: https://bookboll.com/?b=' . $business->username);
     }
 
     protected bool $createdNewAccount = false;

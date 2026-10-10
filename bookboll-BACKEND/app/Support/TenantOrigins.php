@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Business;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -108,6 +109,75 @@ final class TenantOrigins
         }
 
         return self::isAllowedHost($host) ? "https://{$host}" : null;
+    }
+
+    /**
+     * The customer-facing storefront a browser request came from, as a canonical
+     * "scheme://host" — or null when there isn't one we may send a customer back to.
+     *
+     * Used to remember where a Stripe Checkout started, so the customer returns to the
+     * merchant site they were actually booking on instead of the marketplace.
+     *
+     * Deliberately NARROWER than isAllowedHost(): that list also contains the provider
+     * consoles (admin./business.bookboll.com), and a console is never a storefront. An
+     * admin generating a pay-link for a customer to open later would otherwise record
+     * the dashboard as the place to return to, and the customer would be dropped into
+     * an admin app they cannot sign in to.
+     */
+    public static function storefrontOrigin(?string $url): ?string
+    {
+        $origin = self::canonicalizeOrigin(self::originOf($url));
+
+        return ($origin !== null && ! self::isConsoleOrigin($origin)) ? $origin : null;
+    }
+
+    /** The storefront behind the current browser request: Origin, then Referer. */
+    public static function storefrontOriginFromRequest(Request $request): ?string
+    {
+        return self::storefrontOrigin($request->header('Origin'))
+            ?? self::storefrontOrigin($request->header('Referer'));
+    }
+
+    /**
+     * Reduce any URL to its bare "scheme://host[:port]". canonicalizeOrigin() refuses a
+     * URL carrying a path (by design — it is fed an origin parameter there), but a
+     * Referer always has one, so it has to be trimmed before the check rather than after.
+     */
+    private static function originOf(?string $url): ?string
+    {
+        if (! is_string($url) || trim($url) === '') {
+            return null;
+        }
+
+        $parsed = parse_url(trim($url));
+
+        if ($parsed === false || ! isset($parsed['scheme'], $parsed['host'])) {
+            return null;
+        }
+
+        return $parsed['scheme'].'://'.$parsed['host'].(isset($parsed['port']) ? ':'.$parsed['port'] : '');
+    }
+
+    /**
+     * Origins (not just hosts) are compared, because in local development every
+     * front-end is on loopback and only the PORT tells the dashboard apart from the
+     * storefront.
+     */
+    private static function isConsoleOrigin(string $origin): bool
+    {
+        $consoles = [];
+
+        foreach (config('api-restriction.console_origins', []) as $host) {
+            $consoles[] = 'https://'.strtolower(trim((string) $host));
+        }
+
+        // The configured dashboard URL, so a non-production deployment is covered too.
+        $adminOrigin = self::originOf((string) config('app.admin_url'));
+        if ($adminOrigin !== null) {
+            $consoles[] = strtolower($adminOrigin);
+        }
+
+        return in_array(strtolower($origin), $consoles, true);
     }
 
     /**

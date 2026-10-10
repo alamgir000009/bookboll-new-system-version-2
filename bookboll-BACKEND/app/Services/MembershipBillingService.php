@@ -8,6 +8,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\LoyaltyProgram;
 use App\Models\Payment;
 use App\Models\User;
+use App\Support\TenantOrigins;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Stripe\Checkout\Session as StripeCheckoutSession;
@@ -764,10 +765,20 @@ class MembershipBillingService
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    /** Storefront URL the customer returns to after Checkout (FRONTEND_URL). */
+    /**
+     * Storefront URL the customer returns to after Checkout.
+     *
+     * The site they are subscribing on, not the marketplace: a member joining a program
+     * from a merchant's white-label storefront must come back to that storefront, where
+     * the program page and their session actually are. FRONTEND_URL is the fallback for
+     * callers with no browser origin.
+     */
     protected function storefront(string $path): string
     {
-        return rtrim((string) config('app.frontend_url'), '/').$path;
+        $base = TenantOrigins::storefrontOriginFromRequest(request())
+            ?? (string) config('app.frontend_url');
+
+        return rtrim($base, '/').$path;
     }
 
     protected function subscriptionFor(?string $uuid): ?ClassSubscription

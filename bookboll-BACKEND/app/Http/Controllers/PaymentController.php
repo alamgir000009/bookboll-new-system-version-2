@@ -9,6 +9,7 @@ use App\Services\BookingService;
 use App\Services\PaymentService;
 use App\Services\StripeService;
 use App\Support\Capabilities;
+use App\Support\TenantOrigins;
 use Maatwebsite\Excel\Facades\Excel;
 use Exception;
 use Illuminate\Http\Request;
@@ -300,6 +301,7 @@ class PaymentController extends Controller
         $sessionId = request()->get('session_id');
         $source = 'customer';
         $paymentLinkUrl = null;
+        $state = null;
 
         if ($sessionId) {
             try {
@@ -336,9 +338,29 @@ class PaymentController extends Controller
             ]);
         }
 
-        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+        return redirect($this->storefrontUrl($state, '/payment/cancel'));
+    }
 
-        return redirect(rtrim($frontendUrl, '/') . '/payment/cancel');
+    /**
+     * Where to send a customer after Stripe: the storefront they actually started the
+     * checkout on, recorded in the session metadata when it was created.
+     *
+     * Without this everyone lands on FRONTEND_URL — the marketplace — so a customer who
+     * booked on a merchant's white-label site (alamgir.bookboll.com, or their own
+     * domain) is dropped off that merchant's brand the moment they pay or cancel.
+     *
+     * The recorded origin is re-validated on the way back rather than trusted: metadata
+     * travels through Stripe, and a custom domain may have been disconnected while the
+     * customer was on the checkout page. An unknown origin falls back to the marketplace,
+     * which is also what old sessions created before this existed will do.
+     */
+    protected function storefrontUrl(?array $state, string $path): string
+    {
+        $recorded = $state['session']->metadata['return_origin'] ?? null;
+        $base = TenantOrigins::storefrontOrigin($recorded)
+            ?? config('app.frontend_url', 'https://bookboll.com');
+
+        return rtrim($base, '/') . $path;
     }
 
     protected function renderPaymentReturnSuccess(array $state)
@@ -363,10 +385,7 @@ class PaymentController extends Controller
             return view('payment-success', compact('bookings'));
         }
 
-        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-        $redirectUrl = rtrim($frontendUrl, '/') . '/thank-you?booking_ids=' . implode(',', $bookingIds);
-
-        return redirect($redirectUrl);
+        return redirect($this->storefrontUrl($state, '/thank-you?booking_ids=' . implode(',', $bookingIds)));
     }
 
     protected function renderPaymentReturnCancelled(array $state)
@@ -384,17 +403,13 @@ class PaymentController extends Controller
             return view('payment-cancel', ['error' => $message]);
         }
 
-        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
-
-        return redirect(rtrim($frontendUrl, '/') . '/payment/cancel');
+        return redirect($this->storefrontUrl($state, '/payment/cancel'));
     }
 
     /** Where a host lands after Stripe, on the hosting page of the storefront. */
     protected function hostReturnUrl(array $state, array $query): string
     {
-        $frontendUrl = rtrim(config('app.frontend_url', 'http://localhost:5173'), '/');
-
-        return $frontendUrl.'/host-game?'.http_build_query(array_filter($query));
+        return $this->storefrontUrl($state, '/host-game?'.http_build_query(array_filter($query)));
     }
 
     protected function renderPaymentReturnFailure(string $source = 'customer')
@@ -405,7 +420,9 @@ class PaymentController extends Controller
             ]);
         }
 
-        $frontendUrl = config('app.frontend_url', 'http://localhost:5173');
+        // No session could be read, so the originating storefront is unknown — the
+        // marketplace is the only address left.
+        $frontendUrl = config('app.frontend_url', 'https://bookboll.com');
 
         return redirect(rtrim($frontendUrl, '/') . '/payment/cancel');
     }

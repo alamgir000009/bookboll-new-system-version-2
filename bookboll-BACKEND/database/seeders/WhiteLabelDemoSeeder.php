@@ -21,7 +21,7 @@ use Illuminate\Database\Seeder;
  *
  *     php artisan db:seed --class=WhiteLabelDemoSeeder
  *
- * Then open the storefront at:  http://localhost:5173/?b=padelrepublic
+ * Then open the storefront at:  https://bookboll.com/?b=padelrepublic
  * (In production a brand resolves by subdomain; `?b=` works on localhost only.)
  */
 class WhiteLabelDemoSeeder extends Seeder
@@ -100,6 +100,6 @@ class WhiteLabelDemoSeeder extends Seeder
         $this->command?->info("  owner: {$owner->name} (#{$owner->id})");
         $this->command?->info("  venue: {$venue->name} · {$listings} listing(s)");
         $this->command?->info('  program: ' . ($program?->name ?: 'none'));
-        $this->command?->info('  open: http://localhost:5173/?b=' . self::SLUG);
+        $this->command?->info('  open: https://bookboll.com/?b=' . self::SLUG);
     }
 }

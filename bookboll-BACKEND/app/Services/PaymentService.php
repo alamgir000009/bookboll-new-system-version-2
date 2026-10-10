@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Support\AccessScope;
+use App\Support\TenantOrigins;
 use App\Models\Listing;
 use App\Models\Payment;
 use App\Models\Venue;
@@ -1815,6 +1816,9 @@ class PaymentService
                     'quantity' => (string) $totalSlots,
                     'promocode' => $validated['promocode'] ?? '',
                     'source' => 'customer',
+                    // The storefront this booking was made on, so Stripe's return lands
+                    // the customer back on the merchant's own site and not the marketplace.
+                    'return_origin' => (string) TenantOrigins::storefrontOriginFromRequest(request()),
                 ],
                 'line_items' => [[
                     'price_data' => [

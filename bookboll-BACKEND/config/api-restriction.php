@@ -38,6 +38,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Console Origins (dashboards, never storefronts)
+    |--------------------------------------------------------------------------
+    |
+    | These hosts are allowed to call the API, but they are the provider dashboard —
+    | not a place a paying customer may be redirected back to. TenantOrigins excludes
+    | them when it records which storefront a Stripe Checkout started from, so an
+    | admin-generated pay-link never sends the customer into the admin app. The
+    | configured ADMIN_URL is excluded automatically on top of this list.
+    |
+    */
+
+    'console_origins' => [
+        'admin.bookboll.com',
+        'www.admin.bookboll.com',
+        'business.bookboll.com',
+        'www.business.bookboll.com',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Provider Custom Domains
     |--------------------------------------------------------------------------
     |
