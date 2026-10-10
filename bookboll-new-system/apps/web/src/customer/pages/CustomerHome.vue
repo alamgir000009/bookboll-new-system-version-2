@@ -190,24 +190,6 @@ watch(() => customer.value?.id, async () => { loyalty.value = isCustomer.value ?
         <div v-else class="empty-card soon"><Ticket :size="28" /><span>Events are coming soon!</span></div>
       </ServiceRow>
 
-      <!-- Programs -->
-      <ServiceRow v-if="brandShows('programs')" title="Memberships" :icon="Dumbbell" subtitle="Gyms, training & memberships you can subscribe to" viewAll="/programs">
-        <ProgramCard v-for="p in programs.slice(0, 10)" :key="p.id" :program="{ ...p, cityName: selectedCity?.name }" />
-        <router-link v-if="programs.length" to="/for-business" class="recruit-end">
-          <div class="recruit-end-ico"><Plus :size="22" /></div>
-          <div class="recruit-end-t">List your programs</div>
-          <div class="recruit-end-d">Run a membership program? Fill it up.</div>
-        </router-link>
-        <div v-else class="sr-recruit">
-          <Dumbbell :size="38" />
-          <span>No memberships in {{ selectedCity?.name }} yet.</span>
-          <router-link to="/for-business" class="sr-recruit-cta"><Plus :size="16" /> List your programs</router-link>
-        </div>
-      </ServiceRow>
-
-      <!-- Provider recruitment — main marketplace only (self-hidden on white-label sites). -->
-      <RecruitBanner category="business" />
-
       <!-- Communities (apex marketplace only) -->
       <ServiceRow v-if="!isWhiteLabel" title="Communities" :icon="UsersRound" subtitle="Find your people — join a club, follow its updates and play in its meetups" viewAll="/communities">
         <router-link v-for="cm in communities.slice(0, 10)" :key="cm.id" :to="`/communities/${cm.id}`" class="comm-card">
@@ -229,6 +211,24 @@ watch(() => customer.value?.id, async () => { loyalty.value = isCustomer.value ?
           <div class="host-title">Start a community</div>
           <div class="host-sub">Your club, your people — post updates, chat and host meetups</div>
         </router-link>
+      </ServiceRow>
+
+      <!-- Provider recruitment — main marketplace only (self-hidden on white-label sites). -->
+      <RecruitBanner category="business" />
+
+      <!-- Programs -->
+      <ServiceRow v-if="brandShows('programs')" title="Memberships" :icon="Dumbbell" subtitle="Gyms, training & memberships you can subscribe to" viewAll="/programs">
+        <ProgramCard v-for="p in programs.slice(0, 10)" :key="p.id" :program="{ ...p, cityName: selectedCity?.name }" />
+        <router-link v-if="programs.length" to="/for-business" class="recruit-end">
+          <div class="recruit-end-ico"><Plus :size="22" /></div>
+          <div class="recruit-end-t">List your programs</div>
+          <div class="recruit-end-d">Run a membership program? Fill it up.</div>
+        </router-link>
+        <div v-else class="sr-recruit">
+          <Dumbbell :size="38" />
+          <span>No memberships in {{ selectedCity?.name }} yet.</span>
+          <router-link to="/for-business" class="sr-recruit-cta"><Plus :size="16" /> List your programs</router-link>
+        </div>
       </ServiceRow>
 
       <!-- From the blog — latest posts (marketplace's on apex, provider's on their site) + View all.
