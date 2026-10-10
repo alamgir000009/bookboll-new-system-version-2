@@ -1,6 +1,7 @@
 <?php
 namespace App\Services;
 
+use App\Exceptions\CustomerAuthException;
 use App\Mail\CustomerForgotPasswordOtpEmail;
 use App\Support\RoleGrantGuard;
 use App\Mail\ForgetPasswordEmail;
@@ -353,8 +354,7 @@ class UserService
             'id_token' => 'required|string',
         ]);
 
-        $client  = new Google_Client(['client_id' => env('GOOGLE_CLIENT_ID')]);
-        $payload = $client->verifyIdToken($request->id_token);
+        $payload = $this->verifyGoogleIdToken($request->id_token);
 
         if (! $payload) {
             throw ValidationException::withMessages([
@@ -363,7 +363,50 @@ class UserService
         }
 
         try {
+            [$user, $token] = $this->issueCustomerSessionFromGoogle($payload);
+        } catch (CustomerAuthException $e) {
+            return sendError($e->getMessage());
+        } catch (Exception $e) {
+            Log::error("Customer Google Login Failed: " . $e->getMessage(), ["exception" => $e]);
+            return sendError("Something went wrong try again later");
+        }
 
+        return sendSuccess("Logged in with google", compact('token', 'user'));
+    }
+
+    /**
+     * Verify a Google ID token against Bookboll's single OAuth client.
+     *
+     * Shared with OAuthBrokerService, which verifies the id_token returned by its code
+     * exchange the same way. Note what is *not* checked here: where the token was
+     * obtained. `aud` is the whole test, which is precisely why one OAuth client can
+     * serve every tenant storefront — the per-domain restriction Google enforces lives
+     * in the browser, not in this verification.
+     */
+    public function verifyGoogleIdToken(string $idToken): ?array
+    {
+        $client  = new Google_Client(['client_id' => config('services.google.client_id')]);
+        $payload = $client->verifyIdToken($idToken);
+
+        return is_array($payload) ? $payload : null;
+    }
+
+    /**
+     * Turn a verified Google payload into a customer and a Sanctum token.
+     *
+     * Two front doors reach this: the mobile apps POST a native id_token to
+     * /customer/google-login, and the web storefronts arrive via OAuthBrokerService
+     * after its server-side code exchange. Both must create the identical account, so
+     * the upsert lives here once rather than being written twice.
+     *
+     * @param  array<string, mixed>  $payload  A payload already verified by Google.
+     * @return array{0: User, 1: string}  The customer and their plain-text token.
+     *
+     * @throws CustomerAuthException  Reason is safe to show the customer.
+     */
+    public function issueCustomerSessionFromGoogle(array $payload): array
+    {
+        try {
             DB::beginTransaction();
 
             $googleId = $payload['sub'];
@@ -374,7 +417,7 @@ class UserService
             $user = User::where('provider_id', $googleId)->orWhere('email', $email)->first();
 
             if ($user && $user->status == User::BLOCKED) {
-                return sendError('Your account is block by admin please contact for further details');
+                throw new CustomerAuthException('Your account is block by admin please contact for further details');
             }
 
             if ($user && $this->customerAccountWasDeleted($user)) {
@@ -430,12 +473,11 @@ class UserService
 
             $user->makeHidden(['roles']);
 
-            return sendSuccess("Logged in with google", compact('token', 'user'));
+            return [$user, $token];
 
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error("Customer Google Login Failed: " . $e->getMessage(), ["exception" => $e]);
-            return sendError("Something went wrong try again later");
+            throw $e;
         }
     }
 

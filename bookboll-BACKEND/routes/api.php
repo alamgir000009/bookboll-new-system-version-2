@@ -47,6 +47,7 @@ use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PromocodeController;
 use App\Http\Controllers\ResourceController;
+use App\Http\Controllers\OAuthBrokerController;
 use App\Http\Controllers\ReviewController;
 use App\Http\Controllers\RolePermissionController;
 use App\Http\Controllers\SettingController;
@@ -609,12 +610,29 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
 });
 
+/*
+ * Google sign-in for every tenant storefront.
+ *
+ * These two are opened in a popup by the storefront and are the ONLY URLs Google
+ * knows about — see App\Services\OAuthBrokerService. Registering a redirect URI per
+ * tenant domain is impossible (no wildcards, ~100 cap, domains created at runtime),
+ * so the handshake happens here and the finished session is handed back to whichever
+ * storefront opened the popup.
+ */
+Route::prefix('auth')->group(function () {
+    Route::get('google/start', [OAuthBrokerController::class, 'start'])->name('oauth.google.start');
+    Route::get('google/callback', [OAuthBrokerController::class, 'callback'])->name('oauth.google.callback');
+});
+
 Route::prefix('customer')->group(function () {
 
     Route::get('reviews', [ReviewController::class, 'index'])->name('customer.reviews.index');
     Route::get('reviews/my', [ReviewController::class, 'myReviews'])->name('customer.reviews.my');
     Route::post('login', [UserController::class, 'customerLogin'])->name('customer.login');
     Route::post('google-login', [UserController::class, 'googleLogin'])->name('customer.google-login');
+    // Collects a session finished by the OAuth broker. google-login above stays for
+    // the mobile apps, which get their id_token from the native Google SDK.
+    Route::post('auth/exchange', [OAuthBrokerController::class, 'exchange'])->name('customer.auth.exchange');
     Route::post('apple-login', [UserController::class, 'appleLogin'])->name('customer.apple-login');
     Route::post('forgot-password', [UserController::class, 'customerForgotPassword'])->name('customer.forgot-password');
     Route::post('reset-password', [UserController::class, 'customerResetPassword'])->name('customer.reset-password');

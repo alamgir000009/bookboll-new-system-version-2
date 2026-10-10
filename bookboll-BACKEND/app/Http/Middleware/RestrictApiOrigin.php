@@ -2,10 +2,9 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\Business;
+use App\Support\TenantOrigins;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -18,6 +17,10 @@ use Symfony\Component\HttpFoundation\Response;
  * actually paid to connect — an exact-match list would 403 the whole white-label
  * feature the moment it were switched on.
  *
+ * The allowlist itself lives in App\Support\TenantOrigins, shared with the OAuth
+ * broker: the set of hosts allowed to call the API and the set allowed to receive a
+ * brokered sign-in must be the same set, or one of them is wrong.
+ *
  * Machine callers are exempt by PATH, not by luck: Meta's webhook and the one-click
  * unsubscribe link carry no usable Origin. Each has its own credential (a signature
  * header, and the recipient's token), so origin adds nothing there and blocking them
@@ -25,8 +28,6 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class RestrictApiOrigin
 {
-    private const CACHE_KEY = 'api-restriction.custom_domains';
-
     public function handle(Request $request, Closure $next): Response
     {
         if (config('api-restriction.disable_in_local', false)) {
@@ -52,7 +53,7 @@ class RestrictApiOrigin
         $host = $this->parseHost($request->header('Origin'))
             ?? $this->parseHost($request->header('Referer'));
 
-        if ($host !== null && $this->isAllowed($host)) {
+        if ($host !== null && TenantOrigins::isAllowedHost($host)) {
             return $next($request);
         }
 
@@ -62,63 +63,10 @@ class RestrictApiOrigin
         ], 403);
     }
 
-    protected function isAllowed(string $host): bool
-    {
-        if (in_array($host, config('api-restriction.allowed_origins', []), true)) {
-            return true;
-        }
-
-        foreach (config('api-restriction.allowed_origin_patterns', []) as $pattern) {
-            if ($this->matchesPattern($host, strtolower($pattern))) {
-                return true;
-            }
-        }
-
-        return config('api-restriction.allow_custom_domains', true)
-            && in_array($host, $this->customDomains(), true);
-    }
-
-    /**
-     * `*` matches exactly ONE label, so `*.bookboll.com` allows
-     * `padelrepublic.bookboll.com` but not `evil.attacker.bookboll.com.example.net`
-     * — a plain "ends with" test would allow the latter.
-     */
-    protected function matchesPattern(string $host, string $pattern): bool
-    {
-        $regex = '/^'.str_replace('\*', '[a-z0-9]([a-z0-9-]*[a-z0-9])?', preg_quote($pattern, '/')).'$/i';
-
-        return (bool) preg_match($regex, $host);
-    }
-
-    /**
-     * Domains providers have paid to connect. Cached because this runs on every API
-     * request; SiteSettingsService and ProviderPlanService clear it the moment a
-     * domain is connected or removed, so a new domain works immediately.
-     *
-     * @return array<int, string>
-     */
-    protected function customDomains(): array
-    {
-        return Cache::remember(
-            self::CACHE_KEY,
-            (int) config('api-restriction.custom_domain_cache_ttl', 300),
-            fn () => Business::query()
-                ->whereNotNull('brand_custom_domain')
-                ->where('brand_custom_domain', '!=', '')
-                ->whereNotNull('brand_domain_paid_at')   // paid for, so genuinely theirs
-                ->pluck('brand_custom_domain')
-                ->map(fn ($d) => strtolower(trim($d)))
-                ->filter()
-                ->unique()
-                ->values()
-                ->all()
-        );
-    }
-
     /** Called wherever a custom domain is connected, verified or removed. */
     public static function forgetCustomDomains(): void
     {
-        Cache::forget(self::CACHE_KEY);
+        TenantOrigins::forget();
     }
 
     private function parseHost(?string $url): ?string

@@ -52,6 +52,17 @@ return [
         'enabled' => env('TURNSTILE_ENABLED'),
     ],
 
+    'google' => [
+        // One OAuth client serves every tenant storefront. The browser never sees it:
+        // the broker (App\Services\OAuthBrokerService) runs the whole code exchange
+        // server-side, which is what lets *.bookboll.com and paid custom domains sign
+        // in with Google without each one being registered here. Google only ever
+        // needs the single redirect URI below.
+        'client_id'     => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect'      => env('GOOGLE_REDIRECT_URI', rtrim((string) env('APP_URL'), '/').'/api/auth/google/callback'),
+    ],
+
     'apple' => [
         'client_id' => env('APPLE_CLIENT_ID', 'com.bookboll.app'),
     ],
