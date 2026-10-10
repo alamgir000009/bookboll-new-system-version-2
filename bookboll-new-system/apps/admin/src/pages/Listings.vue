@@ -774,6 +774,16 @@ const openSection = ref('basic')
 
 const slotPreview = computed(() => previewSlots(form.value.slot_duration, form.value.buffer_time))
 
+/* SLOT_DURATIONS is a 15-minute ladder from 15 min to 8 hours. A saved value can
+   sit outside it — a legacy listing whose hours were converted, say — and the
+   <select> would then show nothing at all, which reads as "no duration set".
+   Carry the real value as an extra option so it stays visible and editable. */
+const slotDurationOptions = computed(() => {
+  const n = Number(form.value.slot_duration)
+  if (!n || n <= 0 || SLOT_DURATIONS.some(o => o.value === n)) return SLOT_DURATIONS
+  return [...SLOT_DURATIONS, { value: n, label: durationLabel(n) }].sort((a, b) => a.value - b.value)
+})
+
 // ── Custom start times: choose WHICH of the automatic (duration + buffer) slots
 // to offer. customStartTimes holds the chosen subset; empty = offer them all. This
 // guarantees every custom time respects the slot length, buffer & weekly schedule. ──
@@ -2939,7 +2949,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               </div>
               <div class="form-group"><label class="form-label">Slot Duration <span class="req">*</span><InfoTip text="How long one bookable slot lasts. Customers book in blocks of this length (e.g. 1 hour). Options go in 15-minute steps." /></label>
                 <select v-model.number="form.slot_duration">
-                  <option v-for="d in SLOT_DURATIONS" :key="d.value" :value="d.value">{{ d.label }}</option>
+                  <option v-for="d in slotDurationOptions" :key="d.value" :value="d.value">{{ d.label }}</option>
                 </select>
               </div>
               <div class="form-group">
