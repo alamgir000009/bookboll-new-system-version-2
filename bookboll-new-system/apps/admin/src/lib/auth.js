@@ -137,6 +137,80 @@ export async function signIn(email, password) {
   return true
 }
 
+/**
+ * Step 1 of forgot-password: ask for a six-digit code by email.
+ *
+ * Always reports success when the request went through, because the API answers the
+ * same way whether or not the address belongs to an admin — telling an anonymous
+ * caller which addresses are privileged is exactly what a targeted phishing campaign
+ * needs. The caller should say "if that address is an admin account…", not "sent".
+ *
+ * @returns {Promise<{ ok?: true, error?: string }>}
+ */
+export async function requestAdminPasswordReset(email) {
+  const clean = (email || '').trim().toLowerCase()
+  if (!clean) return { error: 'Enter your email address.' }
+
+  const res = await apiFetch('/admin/forgot-password', {
+    method: 'POST',
+    body: { email: clean },
+    token: '',   // signed out by definition; never send a stale bearer
+  })
+
+  if (!res.success) return { error: resetError(res, 'Could not send the code. Please try again.') }
+  return { ok: true }
+}
+
+/**
+ * Step 2: exchange the code for a new password.
+ *
+ * Resetting revokes every existing session server-side, this tab included, so the
+ * caller must send the admin back to the sign-in form rather than assume they are on.
+ *
+ * @returns {Promise<{ ok?: true, error?: string }>}
+ */
+export async function resetAdminPassword({ email, otp, password, passwordConfirmation }) {
+  const clean = (email || '').trim().toLowerCase()
+  const code = (otp || '').trim()
+
+  if (!clean) return { error: 'Enter your email address.' }
+  if (!/^\d{6}$/.test(code)) return { error: 'Enter the 6-digit code from your email.' }
+  if ((password || '').length < 8) return { error: 'Password must be at least 8 characters.' }
+  if (password !== passwordConfirmation) return { error: 'Passwords do not match.' }
+
+  const res = await apiFetch('/admin/reset-password', {
+    method: 'POST',
+    body: { email: clean, otp: code, password, password_confirmation: passwordConfirmation },
+    token: '',
+  })
+
+  if (!res.success) return { error: resetError(res, 'Could not reset your password. Please try again.') }
+
+  // The password changed, so whatever this tab was holding is dead anyway.
+  clearSession()
+  return { ok: true }
+}
+
+/** First field error if the API sent one, else its message. */
+function resetError(res, fallback) {
+  // Laravel's throttle middleware answers a bare "Too Many Attempts.", which tells an
+  // admin nothing about what to do next.
+  if (res?.status === 429) {
+    return res?.message && res.message !== 'Too Many Attempts.'
+      ? res.message
+      : 'Too many attempts. Please wait a few minutes and try again.'
+  }
+
+  const errors = res?.errors
+  if (errors && typeof errors === 'object') {
+    for (const v of Object.values(errors)) {
+      const msg = Array.isArray(v) ? v[0] : v
+      if (msg) return String(msg)
+    }
+  }
+  return res?.message || fallback
+}
+
 export async function signOut() {
   const token = getAdminToken()
   if (token) {
