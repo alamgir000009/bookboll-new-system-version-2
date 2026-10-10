@@ -22,8 +22,11 @@ function withBrand(query = {}, brandOwner = null) {
   return q
 }
 
-export async function apiLoadPrograms(cityId, brandOwner = null) {
-  const iso = selectedCountry.value?.iso_code || ''
+export async function apiLoadPrograms(cityId, brandOwner = null, isoOverride = '') {
+  // A city landing page is ABOUT a city, so it states that city's own country. Without
+  // the override this falls back to the visitor's picker, which on /classes/lahore
+  // meant asking for a Pakistani city inside Qatar.
+  const iso = isoOverride || selectedCountry.value?.iso_code || ''
   if (!cityId && !brandOwner && !iso) return []
   const q = {}
   if (cityId) q.city_id = cityId

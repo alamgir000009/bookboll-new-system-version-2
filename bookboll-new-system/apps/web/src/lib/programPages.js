@@ -57,7 +57,7 @@ export async function loadPlacePrograms(slug, segment = null) {
 
   const city = await resolveCity(slug)
   if (city) {
-    const all = await loadPrograms(city.id)
+    const all = await loadPrograms(city.id, { iso: city.countryIso })
     const place = { type: 'city', id: city.id, name: city.name, slug: city.slug, currencyCode: city.currencyCode, countryName: city.countryName, countrySlug: city.countryName ? slugify(city.countryName) : '' }
     return { place, segment, categories: summarizeCategories(all), types: summarizeTypes(all), cities: [], ...applySegment(all, segment) }
   }
@@ -66,7 +66,7 @@ export async function loadPlacePrograms(slug, segment = null) {
   if (country) {
     const res = await apiFetch('/marketplace/cities', { query: { country_id: country.id, limit: 500 } })
     const ccities = res.success ? (res.data?.cities || []) : []
-    const perCity = await Promise.all((ccities || []).map(async c => ({ c, list: await loadPrograms(c.id) })))
+    const perCity = await Promise.all((ccities || []).map(async c => ({ c, list: await loadPrograms(c.id, { iso: country.iso }) })))
     const all = perCity.flatMap(x => x.list)
     const cities = perCity.filter(x => x.list.length).map(x => ({ name: x.c.name, slug: slugifyCity(x.c.name), count: x.list.length })).sort((a, b) => b.count - a.count)
     const place = { type: 'country', id: country.id, name: country.name, slug: country.slug, currencyCode: country.currencyCode }

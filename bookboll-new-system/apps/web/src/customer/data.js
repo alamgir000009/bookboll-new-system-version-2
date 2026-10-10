@@ -123,8 +123,8 @@ export async function loadServedRegions(brandSlug) {
 }
 
 // ── Programs / classes in a city ───────────────────────────────────────────────
-export async function loadPrograms(cityId) {
-  return apiLoadPrograms(cityId, brandOwnerId)
+export async function loadPrograms(cityId, { iso = '' } = {}) {
+  return apiLoadPrograms(cityId, brandOwnerId, iso)
 }
 
 // Weekly opening hours — served with program detail from Laravel venues.
