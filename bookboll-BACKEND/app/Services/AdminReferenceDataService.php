@@ -185,11 +185,16 @@ class AdminReferenceDataService
             $query->whereIn('id', $countryIds ?: [0]);
         }
 
+        // `countries.status` is a tinyint (1/0) from the world package, but every other
+        // endpoint hands the dashboard the string 'active'/'inactive' — see
+        // GeographyService::mapCountry(). Emitting the raw column here made the two
+        // shapes disagree, and a consumer testing `status === 'active'` silently
+        // discarded every country.
         return $query->orderBy('name')->get()->map(fn (Country $c) => [
             'id'            => $c->id,
             'name'          => $c->name,
             'iso_code'      => $c->iso2,
-            'status'        => $c->status,
+            'status'        => (int) ($c->status ?? 1) === 1 ? 'active' : 'inactive',
             'currency_code' => $c->currency?->code ?: '',
         ])->values();
     }
