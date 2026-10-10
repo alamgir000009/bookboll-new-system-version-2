@@ -372,8 +372,16 @@ class BusinessService
             ->map(fn(User $u) => $this->userService->formatTeamUser($u))
             ->values();
 
+        // The owner's own venues, so the dashboard's scope picker has something to
+        // offer. Without this the provider side rendered an empty list and no
+        // member could be pinned to a venue.
+        $venues = \App\Models\Venue::where('owner_user_id', $owner->id)
+            ->orderBy('name')
+            ->get(['id', 'name', 'owner_user_id']);
+
         return sendSuccess('Team fetched successfully', [
-            'users' => $members,
+            'users'  => $members,
+            'venues' => $venues,
         ]);
     }
 

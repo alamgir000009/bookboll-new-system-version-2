@@ -3,6 +3,7 @@ namespace App\Services;
 
 use App\Exceptions\CustomerAuthException;
 use App\Mail\CustomerForgotPasswordOtpEmail;
+use App\Support\AccessScope;
 use App\Support\RoleGrantGuard;
 use App\Mail\ForgetPasswordEmail;
 use App\Mail\UserRejectionEmail;
@@ -882,7 +883,11 @@ class UserService
         $paginated->getCollection()->transform(fn (User $u) => $this->formatTeamUser($u));
 
         $roles  = Role::get(['id', 'name']);
-        $venues = Venue::get(['id', 'name']);
+        // owner_user_id is what the dashboard filters the scope picker by: it only
+        // offers venues belonging to the business the member is being added to.
+        // Selecting just id+name meant that filter matched nothing and the picker
+        // always read "No locations yet".
+        $venues = Venue::orderBy('name')->get(['id', 'name', 'owner_user_id', 'country_id', 'city_id']);
 
         return sendSuccess('Users fetched successfully', [
             'users'  => $paginated,
@@ -896,7 +901,7 @@ class UserService
     /** Shape expected by the Vue Team page (maps Laravel user → admin_users-like row). */
     public function formatTeamUser(User $user): array
     {
-        $user->loadMissing(['ownedBusiness']);
+        $user->loadMissing(['ownedBusiness', 'venues']);
         $roles = $user->getRoleNames()->values()->all();
         $role  = $roles[0] ?? null;
 
@@ -930,7 +935,13 @@ class UserService
             'business_status'       => $business?->status,
             'business_id'           => $business?->id,
             'custom_permissions'    => null,
-            'assigned_location_ids' => [],
+            // The venues this person is pinned to. Was hardcoded [], so the
+            // dashboard's scope picker always opened empty and every existing
+            // assignment — including the ones carried over from the old system —
+            // looked like "no venues". Read through AccessScope so BOTH sources
+            // are reflected: the json column the dashboard writes and the
+            // user_venue pivot older members still hold.
+            'assigned_location_ids' => AccessScope::pinnedVenueIds($user),
             'assigned_listing_ids'  => [],
             'assigned_program_ids'  => [],
             'plan'                  => 'free',
@@ -964,6 +975,10 @@ class UserService
             'assigned_country_ids.*' => 'integer',
             'owner_user_id'          => 'nullable|integer|exists:users,id',
             'venues'                 => 'nullable|array',
+            // The dashboard's name for the same pins — accepted here too so a new
+            // team member can be scoped at creation, not only on a later edit.
+            'assigned_location_ids'   => 'sometimes|nullable|array',
+            'assigned_location_ids.*' => 'numeric|exists:venues,id',
             'venues.*'               => 'numeric|exists:venues,id',
             'business_name'          => 'nullable|string|max:150',
             'username'               => 'nullable|string|min:3|max:30',
@@ -1037,8 +1052,19 @@ class UserService
                 ]);
             }
 
+            if (array_key_exists('assigned_location_ids', $formData)) {
+                $formData['venues'] = array_values(array_unique(array_map(
+                    'intval', (array) ($formData['assigned_location_ids'] ?? [])
+                )));
+            }
+
             if (! empty($formData['venues'])) {
                 $user->venues()->sync($formData['venues']);
+                // Mirror into the json column the dashboard reads, so both pin
+                // sources always agree.
+                $user->forceFill([
+                    'assigned_location_ids' => array_values(array_map('intval', $formData['venues'])),
+                ])->save();
             }
 
             if ($formData['role'] === 'provider_admin') {
@@ -1228,6 +1254,12 @@ class UserService
             'owner_user_id'          => 'nullable|integer|exists:users,id',
             'venues'                 => 'sometimes|nullable|array',
             'venues.*'               => 'numeric|exists:venues,id',
+            // The dashboard's name for the same thing. Both are accepted and both
+            // are written, because a pin can arrive through either and
+            // AccessScope::pinnedVenueIds() reads both — leaving one stale means a
+            // venue you "removed" is still enforced.
+            'assigned_location_ids'   => 'sometimes|nullable|array',
+            'assigned_location_ids.*' => 'numeric|exists:venues,id',
             'business_name'          => 'nullable|string|max:150',
         ]);
 
@@ -1272,6 +1304,14 @@ class UserService
                 }
             }
 
+            // Pins arrive as `venues` (API) or `assigned_location_ids` (dashboard).
+            // Whichever came, write BOTH so they can never disagree.
+            if (array_key_exists('assigned_location_ids', $formData)) {
+                $formData['venues'] = array_values(array_unique(array_map(
+                    'intval', (array) ($formData['assigned_location_ids'] ?? [])
+                )));
+            }
+
             if (isset($formData['venues'])) {
                 $currentRole         = $user->roles->first();
                 $roleName            = $currentRole ? $currentRole->name : null;
@@ -1282,6 +1322,12 @@ class UserService
                 }
 
                 $user->venues()->sync($formData['venues'] ?? []);
+
+                // Mirror into the json column the dashboard reads, so removing a
+                // venue in the UI actually removes it everywhere.
+                $user->forceFill([
+                    'assigned_location_ids' => array_values(array_map('intval', $formData['venues'] ?? [])),
+                ])->save();
             }
 
             if (! empty($formData['business_name']) && $user->ownedBusiness) {
