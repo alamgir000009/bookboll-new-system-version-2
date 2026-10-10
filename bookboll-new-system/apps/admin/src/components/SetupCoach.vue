@@ -10,7 +10,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { loadOverview, setupChangedAt } from '../lib/overview.js'
 import { useCurrentUser } from '../lib/currentUser.js'
-import { brandPreviewUrl, brandPreviewById, providerSlug } from '../lib/brand.js'
+import { brandPreviewUrl, brandSiteUrl, providerSlug } from '../lib/brand.js'
 import { pushToast } from '../lib/toast.js'
 import { askConfirm } from '../lib/confirm.js'
 import { Rocket, Building2, LayoutGrid, GraduationCap, Palette, Check, X, Copy, ExternalLink, PartyPopper, ChevronLeft, ChevronRight } from 'lucide-vue-next'
@@ -110,7 +110,12 @@ const siteUrl = computed(() => { const s = providerSlug(currentUser.value); retu
 async function copySite() {
   try { await navigator.clipboard.writeText(siteUrl.value); pushToast('Website link copied', 'success') } catch { /* ignore */ }
 }
-function openSite() { if (currentUser.value?.id) window.open(brandPreviewById(currentUser.value.id), '_blank', 'noopener') }
+// Published → the provider's real, shareable address; otherwise the preview by owner id,
+// which still works before publishing and on hosts without wildcard DNS.
+function openSite() {
+  if (!currentUser.value?.id) return
+  window.open(brandSiteUrl({ slug: providerSlug(currentUser.value), ownerId: currentUser.value.id, published: siteLive.value }), '_blank', 'noopener')
+}
 </script>
 
 <template>

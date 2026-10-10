@@ -336,3 +336,25 @@ export function brandPreviewUrl(slug, { preview = false } = {}) {
 export function brandPreviewById(ownerId) {
   return `${appBaseUrl()}/?bid=${encodeURIComponent(ownerId || '')}&preview=1`
 }
+
+/** True where `<slug>.bookboll.com` actually resolves — i.e. anywhere but localhost and
+ *  dev tunnels, whose hosts have no wildcard DNS. The dashboard uses this to decide
+ *  whether it can hand out the provider's real address or must fall back to `?bid=`. */
+export function wildcardDnsAvailable() {
+  if (typeof window === 'undefined') return true
+  const host = window.location.hostname
+  return !isLocalHost(host) && !isDevTunnel(host)
+}
+
+/** The link to hand a provider when they click "open my site".
+ *  Published + wildcard DNS available → their REAL, shareable address (custom domain
+ *  if one is verified, else `<slug>.bookboll.com`). Otherwise the `?bid=` preview,
+ *  which is the only URL that loads before publishing, or on localhost / a dev tunnel
+ *  where `<slug>.bookboll.com` doesn't resolve. */
+export function brandSiteUrl({ slug, ownerId, published = false, customDomain = '' } = {}) {
+  if (published && wildcardDnsAvailable()) {
+    const host = String(customDomain || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '') || brandHost(slug)
+    if (host && !host.startsWith('.')) return `https://${host}`
+  }
+  return brandPreviewById(ownerId)
+}

@@ -12,7 +12,7 @@ import { appBaseUrl } from '../lib/appBase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useToast } from '../lib/toast.js'
 import { uploadImage, imageUploadConfigured } from '../lib/imageUpload.js'
-import { brandHost, brandPreviewById, loadPlatformBrand, applyBrandTheme, platformBrand, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
+import { brandHost, brandPreviewById, brandSiteUrl, wildcardDnsAvailable, loadPlatformBrand, applyBrandTheme, platformBrand, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
 import { usePremium } from '../lib/premium.js'
 import { SUPPORTED_LOCALES } from '../lib/i18n.js'
 import { fetchSettings, updateSettings } from '../lib/settings.js'
@@ -385,14 +385,31 @@ async function save() {
   toast.success('White-label site saved.')
 }
 
+// The address a customer would actually type: the custom domain once it's verified,
+// otherwise the provider's own subdomain.
+const liveUrl = computed(() => `https://${f.brand_domain_status === 'active' && f.brand_custom_domain ? f.brand_custom_domain : liveHost.value}`)
+
 async function copyLink() {
-  try { await navigator.clipboard.writeText(`https://${liveHost.value}`); toast.success('Link copied.') }
+  try { await navigator.clipboard.writeText(liveUrl.value); toast.success('Link copied.') }
   catch { toast.error('Could not copy — select and copy manually.') }
 }
 // The live preview resolves the provider by OWNER ID, so it always shows the right
 // site even before a web address is chosen/saved (and never depends on wildcard DNS).
 const previewById = computed(() => brandPreviewById(ownerId.value))
-function openPreview() { window.open(previewById.value, '_blank') }
+// Once the site is published AND wildcard subdomains resolve (i.e. not localhost /
+// a dev tunnel), opening it should take the provider to their REAL address — handing
+// them a `?bid=` test link there is confusing and not shareable. Everywhere else the
+// preview URL is the only thing that loads, so keep it.
+const canOpenLive = computed(() => !isPlatformMode.value && !!f.brand_enabled && wildcardDnsAvailable())
+const openSiteLabel = computed(() => canOpenLive.value ? 'Open site' : 'Open preview')
+function openPreview() {
+  window.open(brandSiteUrl({
+    slug: f.brand_subdomain || username.value,
+    ownerId: ownerId.value,
+    published: canOpenLive.value,
+    customDomain: f.brand_domain_status === 'active' ? f.brand_custom_domain : '',
+  }), '_blank')
+}
 function openMarketplace() { window.open(siteOrigin.value + '/', '_blank') }
 
 // Custom domain setup moved to its own page (My Website → Custom domain, /website-domain).
@@ -473,7 +490,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
             <Globe2 :size="16" class="wl-addr-ico" />
             <span class="wl-addr-host">{{ liveHost }}</span>
             <button class="wl-icon-btn" title="Copy link" @click="copyLink"><Copy :size="15" /></button>
-            <button class="wl-icon-btn" title="Open preview" @click="openPreview"><ExternalLink :size="15" /></button>
+            <button class="wl-icon-btn" :title="openSiteLabel" @click="openPreview"><ExternalLink :size="15" /></button>
           </div>
 
           <!-- Publishing lives with Save at the top & bottom of the page; the card
@@ -738,7 +755,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
               <button :class="{ on: previewDevice === 'mobile' }" @click="previewDevice = 'mobile'" title="Mobile"><Smartphone :size="14" /></button>
             </div>
             <button class="wl-icon-btn" title="Reload preview" @click="reloadPreview"><RefreshCw :size="15" /></button>
-            <button class="wl-icon-btn" title="Open in new tab" @click="isPlatformMode ? openMarketplace() : openPreview()"><ExternalLink :size="15" /></button>
+            <button class="wl-icon-btn" :title="isPlatformMode ? 'Open site' : openSiteLabel" @click="isPlatformMode ? openMarketplace() : openPreview()"><ExternalLink :size="15" /></button>
           </div>
         </div>
         <div class="wl-frame-wrap" :class="previewDevice">

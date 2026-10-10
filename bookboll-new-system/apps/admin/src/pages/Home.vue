@@ -8,7 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { canAccessPage } from '../lib/permissions.js'
-import { brandPreviewUrl, brandPreviewById, providerSlug } from '../lib/brand.js'
+import { brandPreviewUrl, brandSiteUrl, providerSlug } from '../lib/brand.js'
 import { pushToast } from '../lib/toast.js'
 import { loadOverview } from '../lib/overview.js'
 import { fmt12, fmtRange12 } from '../lib/slots.js'
@@ -37,7 +37,12 @@ async function copySite() {
 }
 // Open the live preview by owner id, so it always shows the provider's site even before
 // their web address is saved or DNS is set up.
-function openSite() { if (currentUser.value?.id) window.open(brandPreviewById(currentUser.value.id), '_blank', 'noopener') }
+// Published → the provider's real, shareable address; otherwise the preview by owner id,
+// which still works before publishing and on hosts without wildcard DNS.
+function openSite() {
+  if (!currentUser.value?.id) return
+  window.open(brandSiteUrl({ slug: providerSlug(currentUser.value), ownerId: currentUser.value.id, published: siteLive.value }), '_blank', 'noopener')
+}
 
 // Guidance cards — filtered by what the current role can actually open.
 const ALL_CARDS = [
