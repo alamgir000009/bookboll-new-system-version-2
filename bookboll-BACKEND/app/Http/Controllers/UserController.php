@@ -79,6 +79,16 @@ class UserController extends Controller
         return $this->userService->deleteUser($id);
     }
 
+    public function adminForgotPassword(Request $request)
+    {
+        return $this->userService->adminForgotPassword($request);
+    }
+
+    public function adminResetPassword(Request $request)
+    {
+        return $this->userService->adminResetPassword($request);
+    }
+
     public function sendResetLinkEmail(Request $request)
     {
         return $this->userService->forgotPassword($request);

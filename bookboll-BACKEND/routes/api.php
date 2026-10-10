@@ -71,6 +71,20 @@ Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail'])->n
 Route::post('reset-password', [UserController::class, 'reset'])->name('reset-password');
 
 Route::post('admin-app/register', [UserController::class, 'registerAdminAppUser'])->name('admin-app.register');
+// Admin DASHBOARD password reset (apps/admin). A six-digit code by email, so there
+// is no reset page to route to and no link whose host could be tampered with.
+//
+// Separate from admin-app/* below, which is the mobile app's and only admits five
+// staff roles — this one admits the twelve the dashboard's own login gate does,
+// business owners included. Throttled because both ends are public and one of them
+// sends mail.
+Route::post('admin/forgot-password', [UserController::class, 'adminForgotPassword'])
+    // Keyed by IP, and a whole office shares one — so the budget has to cover a few
+    // people plus the "did it send?" retries, while still making an inbox hard to bury.
+    ->middleware('throttle:8,10')->name('admin.forgot-password');
+Route::post('admin/reset-password', [UserController::class, 'adminResetPassword'])
+    ->middleware('throttle:10,10')->name('admin.reset-password');
+
 Route::post('admin-app/forgot-password', [UserController::class, 'adminAppForgotPassword'])->name('admin-app.forgot-password');
 Route::post('admin-app/reset-password', [UserController::class, 'adminAppResetPassword'])->name('admin-app.reset-password');
 

@@ -21,6 +21,7 @@ use Carbon\Carbon;
 use Exception;
 use Google_Client;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -1514,6 +1515,172 @@ class UserService
     protected function adminAppStaffRoleQuery($query)
     {
         return $query->whereIn('name', ['super_admin', 'admin', 'senior_employee', 'junior_employee', 'guard']);
+    }
+
+    /**
+     * The roles the admin dashboard lets in.
+     *
+     * Deliberately NOT adminAppStaffRoleQuery()'s list: that one is the mobile app's,
+     * and it covers five roles. The dashboard admits twelve — the same set its own
+     * login gate enforces (apps/admin currentUser.js ALLOWED_PORTAL_ROLES) and the
+     * same set the authenticated `admin` route group lists. Reusing the mobile app's
+     * list here would have told every provider_admin — the business owners, who are
+     * most of the people signing in — that they have no account.
+     *
+     * @return array<int, string>
+     */
+    protected function adminPortalRoles(): array
+    {
+        return array_values(array_unique(array_merge(
+            (array) config('roles.staff_roles', []),
+            (array) config('roles.provider_roles', []),
+        )));
+    }
+
+    /** The one account that may reset through the dashboard, or null. */
+    protected function findAdminPortalUser(string $email): ?User
+    {
+        return $this->userModel
+            ->where('email', $email)
+            ->whereHas('roles', fn ($q) => $q->whereIn('name', $this->adminPortalRoles()))
+            ->first();
+    }
+
+    protected function adminResetAttemptKey(string $email): string
+    {
+        return 'admin-reset.attempts.'.sha1(strtolower($email));
+    }
+
+    /**
+     * Email a six-digit code to an admin who has forgotten their password.
+     *
+     * The answer is the same whether or not the address belongs to an account. That
+     * differs from the mobile app's version, which replies "No admin account found
+     * with this email address" — on a staff portal that is a free oracle for which
+     * addresses are privileged, which is exactly what a targeted phishing campaign
+     * wants. The cost is that a typo looks like success; the code's absence is the
+     * signal, and the UI says so.
+     */
+    public function adminForgotPassword($request)
+    {
+        $data = $request->validate(['email' => 'required|email']);
+        $email = strtolower(trim($data['email']));
+
+        $generic = 'If that address belongs to a Bookboll admin account, a reset code is on its way.';
+
+        try {
+            $user = $this->findAdminPortalUser($email);
+
+            if (! $user) {
+                return sendSuccess($generic);
+            }
+
+            if ($user->status === $this->userModel::BLOCKED) {
+                // A blocked account must not be recoverable by its holder.
+                return sendSuccess($generic);
+            }
+
+            $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+
+            DB::table('password_reset_tokens')->updateOrInsert(
+                ['email' => $user->email],
+                ['token' => Hash::make($otp), 'created_at' => Carbon::now()]
+            );
+
+            // A fresh code gets a fresh budget of guesses.
+            Cache::forget($this->adminResetAttemptKey($user->email));
+
+            Mail::to($user->email)->send(new CustomerForgotPasswordOtpEmail($otp, $user));
+
+            return sendSuccess($generic);
+        } catch (Exception $e) {
+            Log::error('Admin portal forgot password failed: '.$e->getMessage(), ['Exception' => $e]);
+
+            return sendError('We could not send the code right now. Please try again shortly.');
+        }
+    }
+
+    /**
+     * Verify the code and set a new password.
+     *
+     * Two things the mobile app's twin does not do, both of which matter more on a
+     * portal that can refund money and read every customer:
+     *
+     *   • the code is guessable. Six digits is a million combinations, and with no
+     *     ceiling on attempts an attacker gets all of them inside the ten-minute
+     *     window. Five tries, then the code dies.
+     *   • every existing session is revoked. A password reset is what someone does
+     *     when they suspect they have been compromised; leaving the attacker's
+     *     bearer token alive makes the reset theatre.
+     */
+    public function adminResetPassword($request)
+    {
+        $data = $request->validate([
+            'email'    => 'required|email',
+            'otp'      => 'required|string|size:6',
+            'password' => 'required|min:8|confirmed',
+        ]);
+
+        $email = strtolower(trim($data['email']));
+        $invalid = 'That code is not valid or has expired. Please request a new one.';
+
+        try {
+            $user = $this->findAdminPortalUser($email);
+            $record = $user
+                ? DB::table('password_reset_tokens')->where('email', $user->email)->first()
+                : null;
+
+            // Unknown address, no code pending, or a blocked account all answer the
+            // same way — see adminForgotPassword() on why.
+            if (! $user || ! $record || $user->status === $this->userModel::BLOCKED) {
+                return sendError($invalid, [], 422);
+            }
+
+            if (Carbon::parse($record->created_at)->addMinutes(10)->isPast()) {
+                $this->clearAdminResetCode($user->email);
+
+                return sendError('That code has expired. Please request a new one.', [], 422);
+            }
+
+            $attempts = (int) Cache::get($this->adminResetAttemptKey($user->email), 0);
+
+            if ($attempts >= 5) {
+                $this->clearAdminResetCode($user->email);
+
+                return sendError('Too many incorrect codes. Please request a new one.', [], 429);
+            }
+
+            if (! Hash::check($data['otp'], $record->token)) {
+                Cache::put($this->adminResetAttemptKey($user->email), $attempts + 1, now()->addMinutes(15));
+
+                return sendError($invalid, [], 422);
+            }
+
+            DB::beginTransaction();
+
+            $user->password = $data['password'];
+            $user->save();
+
+            // Whoever else was holding this account is now signed out.
+            $user->tokens()->delete();
+
+            DB::commit();
+
+            $this->clearAdminResetCode($user->email);
+
+            return sendSuccess('Your password has been reset. You can sign in with it now.');
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Admin portal reset password failed: '.$e->getMessage(), ['Exception' => $e]);
+
+            return sendError('Something went wrong. Please try again later.');
+        }
+    }
+
+    protected function clearAdminResetCode(string $email): void
+    {
+        DB::table('password_reset_tokens')->where('email', $email)->delete();
+        Cache::forget($this->adminResetAttemptKey($email));
     }
 
     public function adminAppForgotPassword($request)
