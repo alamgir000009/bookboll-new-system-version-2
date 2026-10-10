@@ -4,12 +4,14 @@
  * Who may record a payment as already taken.
  *
  * GET /api/admin/bookings/payment-methods returns either the full set or just
- * "skip / pay on arrival", decided by role in BookingService::getPaymentMethods().
- * The admin mobile app renders exactly what comes back, which is why the same
- * screen shows seven options to one login and two to another.
+ * "skip / pay on arrival". The admin mobile app renders exactly what comes back,
+ * which is why the same screen shows seven options to one login and two to another.
  *
- * The business owner used to fall in the restricted group, ranking below the legacy
- * senior_employee role; these tests pin the split so it cannot drift back.
+ * The split is the accept_payments CAPABILITY. It used to be a hardcoded role list,
+ * which is why the same report kept returning: the owner was missing once, `staff`
+ * was missing while its legacy twin senior_employee was present, and a role created
+ * through Roles & Permissions could never be on the list at all. These pin the rule
+ * by capability so there is nothing left to forget.
  */
 
 use App\Models\LoyaltyTier;
@@ -92,9 +94,78 @@ it('keeps the legacy senior_employee role working', function () use ($full) {
     expect(methodsFor($this, 'senior_employee'))->toBe($full);
 });
 
-it('keeps front-desk tiers on skip / pay-on-arrival only', function () use ($restricted) {
-    // Deliberate: recording money as already received is a cash-handling control.
-    foreach (['facility_admin', 'provider_supervisor', 'staff', 'provider_viewer'] as $role) {
+it('gives every front-desk tier that holds accept_payments the full set', function () use ($full) {
+    // The reported bug: a staff member taking payment at the desk saw only "Payment
+    // Skipped" and "Cash on Arrival", while senior_employee — the same job, the same
+    // capability, just the older role name — saw all seven.
+    foreach (['facility_admin', 'provider_supervisor', 'staff'] as $role) {
+        expect(methodsFor($this, $role))->toBe($full, "role: {$role}");
+    }
+});
+
+it('keeps roles without accept_payments on skip / pay-on-arrival only', function () use ($restricted) {
+    foreach (['provider_viewer', 'junior_employee', 'guard'] as $role) {
+        expect(methodsFor($this, $role))->toBe($restricted, "role: {$role}");
+    }
+});
+
+it('documents that a custom role is stopped by the ROUTE, not by this rule', function () {
+    // A role created through Roles & Permissions can hold accept_payments and this
+    // method would serve it the full set — but it never gets that far. Every
+    // /api/admin/* route is wrapped in checkRoles:<twelve hardcoded names>, so a role
+    // invented later is refused before any capability is consulted.
+    //
+    // That is a separate gate with a much wider blast radius than payment methods, so
+    // it is recorded here rather than changed. If it is ever opened up, this test
+    // fails and the capability check below is already correct.
+    Permission::findOrCreate(Capabilities::ACCEPT_PAYMENTS, 'web');
+    $role = Role::findOrCreate('front_desk_lead', 'web');
+    $role->syncPermissions([Capabilities::ACCEPT_PAYMENTS]);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+    $user = User::factory()->create([
+        'email'           => 'custom-role@test.local',
+        'status'          => User::ACTIVE,
+        'loyalty_tier_id' => $this->bronze,
+    ]);
+    $user->assignRole('front_desk_lead');
+    $user = $user->fresh();
+
+    expect($user->hasCapability(Capabilities::ACCEPT_PAYMENTS))->toBeTrue();
+
+    $this->actingAs($user)
+        ->getJson('/api/admin/bookings/payment-methods')
+        ->assertForbidden();
+});
+
+it('narrows one person back when accept_payments is revoked for them', function () use ($restricted) {
+    // The cash-handling control is still available, now per PERSON rather than per
+    // role: revoke the capability for one staff member and their options narrow
+    // without changing anyone else's.
+    roleWithCapabilities('staff');
+
+    $user = User::factory()->create([
+        'email'              => 'revoked-staff@test.local',
+        'status'             => User::ACTIVE,
+        'loyalty_tier_id'    => $this->bronze,
+        'custom_permissions' => ['revoke' => [Capabilities::ACCEPT_PAYMENTS]],
+    ]);
+    $user->assignRole('staff');
+
+    $methods = collect($this->actingAs($user->fresh())
+        ->getJson('/api/admin/bookings/payment-methods')
+        ->json('data.payment_methods') ?? [])->pluck('value')->sort()->values()->all();
+
+    expect($methods)->toBe($restricted);
+});
+
+it('offers exactly what the payments gate lets through', function () use ($full, $restricted) {
+    // The list and the action must agree. Before, staff could reach mark-booking-paid
+    // but were not offered a single "paid" method to get there with.
+    foreach (['staff', 'facility_admin', 'provider_supervisor', 'senior_employee', 'provider_admin'] as $role) {
+        expect(methodsFor($this, $role))->toBe($full, "role: {$role}");
+    }
+    foreach (['provider_viewer', 'junior_employee', 'guard'] as $role) {
         expect(methodsFor($this, $role))->toBe($restricted, "role: {$role}");
     }
 });

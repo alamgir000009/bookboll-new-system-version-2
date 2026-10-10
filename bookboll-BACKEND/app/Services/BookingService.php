@@ -3802,24 +3802,25 @@ class BookingService
                 return sendError('Unauthorized', [], 401);
             }
 
-            $userRoles = $user->getRoleNames()->toArray();
-
-            // Roles that may record money as ALREADY taken (paid cash/cheque/card/wire)
-            // rather than only "skip" or "pay on arrival".
+            // Who may record money as ALREADY taken (paid cash/cheque/card/wire) rather
+            // than only "skip" or "pay on arrival": whoever holds accept_payments.
             //
-            // provider_admin — the business OWNER — belongs here: they are the admin of
-            // their own business, and leaving them on the restricted pair meant an owner
-            // could not record a payment they had just taken at their own venue. The
-            // legacy senior_employee row already had this, so the owner ranked below one
-            // of their own staff tiers.
+            // This used to be a hardcoded role list, and that is why the problem kept
+            // coming back. Every new role had to be remembered and added: the business
+            // owner was missing once, `staff` was missing while its legacy twin
+            // senior_employee — same capability, same job — was present, and a role
+            // created through Roles & Permissions could never be on the list at all,
+            // because capabilities live in the database and the list did not.
             //
-            // The front-desk tiers (facility_admin, provider_supervisor, staff, …) stay
-            // restricted ON PURPOSE even though they hold ACCEPT_PAYMENTS: marking a
-            // booking as already paid is a cash-handling control, not a convenience.
-            $fullAccessRoles = ['super_admin', 'admin', 'senior_employee', 'provider_admin'];
-            $hasFullAccess   = ! empty(array_intersect($userRoles, $fullAccessRoles));
-
-            if ($hasFullAccess) {
+            // The capability is also what the API itself already enforces: the
+            // payments routes are declared `capability:accept_payments`, and
+            // PaymentController checks the same thing. Gating the LIST by role while
+            // gating the ACTION by capability meant the app hid options the API would
+            // have accepted. One rule now answers both.
+            //
+            // Revoking accept_payments for one person (custom_permissions) narrows
+            // them back to the restricted pair without touching their role.
+            if ($user->hasCapability(Capabilities::ACCEPT_PAYMENTS)) {
                 $paymentMethods = BookingPaymentMethod::list();
                 $paymentMethods = array_values(array_filter($paymentMethods, function ($method) {
                     return $method !== BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL;
