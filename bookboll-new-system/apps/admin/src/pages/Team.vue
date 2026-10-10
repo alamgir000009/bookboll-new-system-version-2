@@ -201,6 +201,11 @@ async function persistAdminUser(payload) {
     country_id: payload.country_id || null,
     assigned_country_ids: payload.assigned_country_ids || null,
     owner_user_id: payload.owner_user_id || null,
+    // Which venues this person may manage. Scoped roles only: for an owner or a
+    // platform role the picker is hidden, and sending [] would strip their access.
+    ...(isScopedRole(payload.role)
+      ? { assigned_location_ids: payload.assigned_location_ids || [] }
+      : {}),
     business_name: payload.business_name || payload.full_name || null,
     username: payload.username || null,
     business_types: payload.business_types || null,
@@ -254,6 +259,10 @@ async function saveAdmin() {
     status: adminForm.value.status,
     phone: isOwner ? adminForm.value.phone : (adminForm.value.phone || null),
     business_name: isOwner ? (adminForm.value.full_name || adminForm.value.email) : null,
+    // The venues ticked in the Access Scope picker. saveAdmin() builds this object
+    // field by field, so anything not named here never reaches the request — which
+    // is why a selection of two venues still submitted an empty list.
+    assigned_location_ids: [...(adminForm.value.assigned_location_ids || [])],
   }
   if (resolvedUsername !== undefined) payload.username = resolvedUsername
   if (adminForm.value.role === 'platform_staff' && !editing.value) {
@@ -312,10 +321,22 @@ function defaultTeamForm() {
 // Super admin: the owner picked in the form. Provider: their own business.
 const editorOwnerId = computed(() =>
   isSuperAdmin.value ? (adminForm.value.owner_user_id || null) : currentOwnerUserId.value)
-const editorLocations = computed(() =>
-  isSuperAdmin.value
-    ? (editorOwnerId.value ? locations.value.filter(l => l.owner_user_id === editorOwnerId.value) : [])
-    : locations.value)
+// Venues on offer in the scope picker, for the company currently selected.
+//
+// Two things this has to get right, both of which produced an empty list:
+//   • "@bookboll" is the PLATFORM, and its option value is '' — Bookboll's own
+//     venues are the ones no business owns (owner_user_id NULL). Returning []
+//     for the empty owner hid all 15 of them.
+//   • The <select> yields a STRING while the API sends a number, so a strict
+//     === between them never matched even for a real business.
+const editorLocations = computed(() => {
+  if (!isSuperAdmin.value) return locations.value
+
+  const owner = editorOwnerId.value
+  if (!owner) return locations.value.filter(l => !l.owner_user_id)
+
+  return locations.value.filter(l => String(l.owner_user_id ?? '') === String(owner))
+})
 const editorLocIdSet = computed(() => new Set(editorLocations.value.map(l => l.id)))
 const editorListings = computed(() => listings.value.filter(l => editorLocIdSet.value.has(l.location_id)))
 const editorPrograms = computed(() => programs.value.filter(p => editorLocIdSet.value.has(p.location_id)))
@@ -381,6 +402,11 @@ async function saveTeam() {
     role: teamForm.value.role,
     phone: teamForm.value.phone || null,
     status: teamForm.value.status,
+    // Venue pins, for the roles that are meant to be scoped. Omitted for the rest
+    // so an unscoped role is never silently narrowed to nothing.
+    ...(isScopedRole(teamForm.value.role)
+      ? { assigned_location_ids: teamForm.value.assigned_location_ids || [] }
+      : {}),
   }
   const res = editing.value
     ? await apiFetch(`/business/team/${editing.value.id}`, { method: 'PUT', body })
@@ -442,7 +468,11 @@ async function load() {
     businesses.value = unwrapPage(bizRes.data?.businesses)
     countries.value = countriesRes.data?.countries || []
     cities.value = []
-    locations.value = []
+    // The venue catalogue rides along with /admin/users. Without it the scope
+    // picker rendered an empty list, so every assignment looked like "no venues"
+    // and none could be made.
+    locations.value = (platformRes.data?.venues || staffRes.data?.venues || [])
+      .map(v => ({ ...v, owner_user_id: v.owner_user_id ?? null }))
     listings.value = []
     programs.value = []
     commissionRates.value = {}
@@ -451,7 +481,9 @@ async function load() {
     if (!ownerId) return
     const teamRes = await apiFetch('/business/team')
     team.value = teamRes.data?.users || []
-    locations.value = []
+    // The owner's venues, for the scope picker.
+    locations.value = (teamRes.data?.venues || [])
+      .map(v => ({ ...v, owner_user_id: v.owner_user_id ?? ownerId }))
     listings.value = []
     programs.value = []
   }
@@ -601,12 +633,27 @@ function scopeSummary(u) {
 const countryName = (id) => countries.value.find(c => c.id === id)?.name
 const ownerTag   = (id) => { const o = allUsers.value.find(u => u.id === id); return o?.username ? `@${o.username}` : o?.full_name || '—' }
 
+// What this person can actually reach, in the order the server resolves it
+// (App\Support\AccessScope). Venue pins come FIRST: they are the narrowest and
+// most specific answer, and reading past them reported "Global" for someone
+// restricted to a single venue.
+const GLOBAL_ROLES = ['super_admin', 'admin']
 function scopeText(u) {
   if (u.role === 'provider_admin') return u.username ? `@${u.username}` : '—'
+
+  const pins = u.assigned_location_ids || []
+  if (pins.length === 1) return locName(pins[0])
+  if (pins.length > 1) return `${pins.length} venues`
+
   if (u.location_id) return locName(u.location_id)
   if (u.owner_user_id) return ownerTag(u.owner_user_id)
   if (u.country_id) return countryName(u.country_id)
-  return 'Global'
+  if (GLOBAL_ROLES.includes(u.role)) return 'Global'
+
+  // No pins, no business, no country and not a global role — the server gives
+  // this person nothing. Saying "Global" hid exactly the accounts that need
+  // fixing, so say what is true.
+  return 'No access'
 }
 
 const statusBadge = (s) => ({ approved: 'badge-success', active: 'badge-success', pending: 'badge-warning', rejected: 'badge-error', suspended: 'badge-error' }[s] || 'badge-neutral')
