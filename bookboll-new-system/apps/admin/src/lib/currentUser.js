@@ -62,6 +62,15 @@ export function mapLaravelUserToAdmin(user, roles = []) {
     business_status: business?.status || null,
     business_id: business?.id ? String(business.id) : null,
     username: business?.username || null,
+    // The site's own state, carried on the business row GET /me already returns.
+    // Without these the shell can only ever offer a PREVIEW link: anything deciding
+    // whether to hand out the real `<slug>.bookboll.com` address reads brand_enabled,
+    // and an undefined flag reads as "not published". PublishNag depends on the same
+    // field, deliberately distinguishing false from absent.
+    brand_enabled: typeof business?.brand_enabled === 'boolean' ? business.brand_enabled : undefined,
+    brand_subdomain: business?.brand_subdomain || null,
+    brand_custom_domain: business?.brand_custom_domain || null,
+    brand_domain_status: business?.brand_domain_status || null,
     // Geography ids stay as Laravel sends them (numbers). Stringifying was a
     // Supabase-UUID habit, and it silently broke jurisdiction filtering: a Set of
     // string country ids never matches the numeric country_id on a city or venue,

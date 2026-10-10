@@ -106,7 +106,15 @@ function pickType(kind) {
 watch(current, () => { choosingType.value = false })
 
 // ── all-done celebration: share link, then Done dismisses forever ──
-const siteUrl = computed(() => { const s = providerSlug(currentUser.value); return s ? brandPreviewUrl(s) : '' })
+// A verified custom domain is the address customers use, so it wins over the subdomain.
+const customDomain = computed(() => currentUser.value?.brand_domain_status === 'active'
+  ? (currentUser.value?.brand_custom_domain || '')
+  : '')
+const siteUrl = computed(() => {
+  if (customDomain.value) return `https://${customDomain.value}`
+  const s = providerSlug(currentUser.value)
+  return s ? brandPreviewUrl(s) : ''
+})
 async function copySite() {
   try { await navigator.clipboard.writeText(siteUrl.value); pushToast('Website link copied', 'success') } catch { /* ignore */ }
 }
@@ -114,7 +122,12 @@ async function copySite() {
 // which still works before publishing and on hosts without wildcard DNS.
 function openSite() {
   if (!currentUser.value?.id) return
-  window.open(brandSiteUrl({ slug: providerSlug(currentUser.value), ownerId: currentUser.value.id, published: siteLive.value }), '_blank', 'noopener')
+  window.open(brandSiteUrl({
+    slug: providerSlug(currentUser.value),
+    ownerId: currentUser.value.id,
+    published: siteLive.value,
+    customDomain: customDomain.value,
+  }), '_blank', 'noopener')
 }
 </script>
 

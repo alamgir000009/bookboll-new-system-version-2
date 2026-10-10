@@ -28,20 +28,31 @@ const isProvider = computed(() => role.value === 'provider_admin' || role.value 
 // The provider's own public storefront link — auto-derived from their web address /
 // username / business name, so it's never empty (every provider has a `<slug>.bookboll.com`).
 const siteSlug = computed(() => providerSlug(currentUser.value))
-const siteUrl = computed(() => siteSlug.value ? brandPreviewUrl(siteSlug.value) : '')
+// A verified custom domain replaces the subdomain as the address customers use, so it
+// is what we show and copy — same precedence as My Website, which would otherwise
+// display a different address for the same site.
+const customDomain = computed(() => currentUser.value?.brand_domain_status === 'active'
+  ? (currentUser.value?.brand_custom_domain || '')
+  : '')
+const siteUrl = computed(() => customDomain.value
+  ? `https://${customDomain.value}`
+  : (siteSlug.value ? brandPreviewUrl(siteSlug.value) : ''))
 
 async function copySite() {
   if (!siteUrl.value) { router.push('/brand'); return }
   try { await navigator.clipboard.writeText(siteUrl.value); pushToast('Website link copied', 'success') }
   catch { pushToast('Could not copy — open it from My Website.', 'error') }
 }
-// Open the live preview by owner id, so it always shows the provider's site even before
-// their web address is saved or DNS is set up.
 // Published → the provider's real, shareable address; otherwise the preview by owner id,
 // which still works before publishing and on hosts without wildcard DNS.
 function openSite() {
   if (!currentUser.value?.id) return
-  window.open(brandSiteUrl({ slug: providerSlug(currentUser.value), ownerId: currentUser.value.id, published: siteLive.value }), '_blank', 'noopener')
+  window.open(brandSiteUrl({
+    slug: siteSlug.value,
+    ownerId: currentUser.value.id,
+    published: siteLive.value,
+    customDomain: customDomain.value,
+  }), '_blank', 'noopener')
 }
 
 // Guidance cards — filtered by what the current role can actually open.
@@ -139,7 +150,7 @@ onMounted(loadLocations)
 </script>
 
 <template>
-  <div class="hm">
+  <div>
     <!-- Greeting -->
     <div class="hm-hero">
       <div>
