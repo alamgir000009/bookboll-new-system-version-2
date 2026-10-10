@@ -256,7 +256,17 @@ const filtered = computed(() => {
 .fac-toggle { display: flex; gap: 3px; background: #f1f5f9; border-radius: 10px; padding: 3px; margin-left: auto; }
 .fac-toggle button { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; color: var(--text-muted, #64748b); font-weight: 700; font-size: 13px; padding: 7px 12px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
 .fac-toggle button.on { background: var(--surface, #ffffff); color: var(--brand); box-shadow: 0 1px 3px rgba(15,23,42,.1); }
-.cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+/* Explicit column counts, not `auto-fill, minmax(...)`.
+   auto-fill derives the count from whatever width the device happens to have, and
+   with two different track minimums (240px here, 150px in the ≤760px block) the
+   ladder was not even monotonic: a 700px viewport fitted THREE 150px tracks while a
+   780px one fitted only TWO 240px tracks. Same page, wider screen, fewer columns —
+   which is why the layout looked different from handset to handset. Counting the
+   columns outright makes every device in a band render identically. */
+.cgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+
+/* Tablets / narrow laptops — 2 up */
+@media (max-width: 1024px) { .cgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .cgrid :deep(.fc) { width: auto; }
 .cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
 .cempty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px; color: var(--text-light, #94a3b8); }
@@ -313,8 +323,9 @@ const filtered = computed(() => {
   .fac-chips::-webkit-scrollbar { display: none; }
   .fac-chips button { min-height: 40px; padding: 9px 14px; font-size: 14px; flex-shrink: 0; white-space: nowrap; }
 
-  /* Browse grid — denser 2-up so more venues fit per screen (price stays visible) */
-  .cgrid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  /* Browse grid — the column COUNT is owned by the 1024px / 640px steps; this only
+     tightens the gutter once the cards are narrow. */
+  .cgrid { gap: 12px; }
 
   /* States — don't over-pad on a narrow viewport */
   .cmsg { padding: 36px 16px; }
@@ -323,5 +334,14 @@ const filtered = computed(() => {
   /* FAQ — section heading must not compete with the page h1 (20px) */
   .fac-faq { margin-top: 34px; }
   .fac-faq h2 { font-size: 17px; margin-bottom: 10px; }
+}
+
+/* ── Phones: one venue per row, on every handset ──────────────────────────────
+   Last in the file on purpose: these rules all have the same specificity, so the
+   narrowest band has to come last to win. 640px is the phone-portrait breakpoint
+   used elsewhere in the app (CityPrograms, HostGame) and clears the widest handset
+   in portrait (~440px) with room to spare. */
+@media (max-width: 640px) {
+  .cgrid { grid-template-columns: minmax(0, 1fr); }
 }
 </style>
