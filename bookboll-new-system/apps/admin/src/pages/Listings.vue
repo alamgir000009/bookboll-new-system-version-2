@@ -730,6 +730,12 @@ const pattern = ref('B')
 const pay = ref(defaultPay())
 const connectedAddons = ref([])        /* [{id?, addon_id, sort_order}] */
 const connectedResources = ref([])     /* [{id?, resource_id, quantity}] */
+/* Add-on / resource ids as the dropdown options carry them (numeric). */
+function toCatalogId(v) {
+  if (v === '' || v == null) return ''
+  const n = Number(v)
+  return Number.isFinite(n) ? n : v
+}
 const providerHasOnline = ref(false)
 // Full online payment now requires the venue owner's digital wallet to be set up,
 // because we split the payment and pay out the provider's share. Bookboll-owned
@@ -1036,8 +1042,11 @@ async function openEditListing(l) {
     pattern.value = cells.value.some(x => x.pricing_group_id) ? 'A' : (cells.value.length ? 'B' : 'A')
     dynamicPricing.value = cells.value.length > 0 || groups.value.length > 0
     pay.value = dash.data.payment ? { ...defaultPay(), ...dash.data.payment } : defaultPay()
-    connectedAddons.value = (dash.data.addons || []).map(x => ({ id: x.id, addon_id: x.addon_id, sort_order: x.sort_order }))
-    connectedResources.value = (dash.data.resources || []).map(x => ({ id: x.id, resource_id: x.resource_id, quantity: x.quantity }))
+    // The dashboard API casts ids to strings; the catalogue endpoints hand back
+    // ints, which is what the PickerSelect options carry. Normalise on the way
+    // in so the picker preselects and the used-elsewhere guard still matches.
+    connectedAddons.value = (dash.data.addons || []).map(x => ({ id: x.id, addon_id: toCatalogId(x.addon_id), sort_order: x.sort_order }))
+    connectedResources.value = (dash.data.resources || []).map(x => ({ id: x.id, resource_id: toCatalogId(x.resource_id), quantity: Number(x.quantity) || 1 }))
   } else {
     hours.value = hoursFromLocation()
     groups.value = []
@@ -1605,8 +1614,9 @@ function removeAddonRow(i) { connectedAddons.value.splice(i, 1) }
 function addResourceRow() { connectedResources.value.push({ resource_id: '', quantity: 1 }) }
 function removeResourceRow(i) { connectedResources.value.splice(i, 1) }
 // An item already chosen in another row is disabled so it can't be picked twice.
-function addonUsedElsewhere(id, i) { return !!id && connectedAddons.value.some((a, idx) => idx !== i && a.addon_id === id) }
-function resourceUsedElsewhere(id, i) { return !!id && connectedResources.value.some((r, idx) => idx !== i && r.resource_id === id) }
+/* Compared by string form: a restored draft can still hold the API's string ids. */
+function addonUsedElsewhere(id, i) { return !!id && connectedAddons.value.some((a, idx) => idx !== i && String(a.addon_id) === String(id)) }
+function resourceUsedElsewhere(id, i) { return !!id && connectedResources.value.some((r, idx) => idx !== i && String(r.resource_id) === String(id)) }
 
 // All add-ons / resources available at this listing's location (the dropdown options).
 const locAddons = computed(() => allAddons.value)

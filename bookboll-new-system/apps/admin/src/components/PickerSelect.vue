@@ -25,7 +25,12 @@ const emit = defineEmits(['update:modelValue', 'create', 'edit', 'delete'])
 
 const open = ref(false)
 const root = ref(null)
-const selected = computed(() => props.options.find(o => o.value === props.modelValue) || null)
+/* Option values are ints from the catalogue endpoints (/admin/resources,
+   /admin/add-ons) but strings from the listing dashboard, which casts ids on
+   the way out. A strict === left already-attached items looking unselected, so
+   match on string form instead. */
+const sameValue = (a, b) => a != null && b != null && String(a) === String(b)
+const selected = computed(() => props.options.find(o => sameValue(o.value, props.modelValue)) || null)
 
 function toggle() { open.value = !open.value }
 function pick(o) { if (o.disabled) return; emit('update:modelValue', o.value); open.value = false }
@@ -50,7 +55,7 @@ onUnmounted(() => { document.removeEventListener('click', onDoc, true); document
         <div
           v-for="o in options" :key="o.value"
           class="psel-opt-row"
-          :class="{ sel: o.value === modelValue, disabled: o.disabled }"
+          :class="{ sel: sameValue(o.value, modelValue), disabled: o.disabled }"
         >
           <button type="button" class="psel-opt" :disabled="o.disabled" @click="pick(o)">
             <span class="psel-opt-main">
@@ -58,7 +63,7 @@ onUnmounted(() => { document.removeEventListener('click', onDoc, true); document
               <span v-if="o.sub" class="psel-opt-sub">{{ o.sub }}</span>
             </span>
             <span v-if="o.right" class="psel-opt-right">{{ o.right }}</span>
-            <Check v-if="o.value === modelValue" :size="15" class="psel-opt-check" />
+            <Check v-if="sameValue(o.value, modelValue)" :size="15" class="psel-opt-check" />
           </button>
           <button v-if="editable" type="button" class="psel-opt-edit" title="Edit" @click.stop="onEdit(o)">
             <Pencil :size="14" />
