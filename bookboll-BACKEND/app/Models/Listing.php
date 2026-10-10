@@ -226,12 +226,17 @@ class Listing extends Model
      */
     public function slotDurationMinutes(): int
     {
-        $n = (int) ($this->slot_duration ?: 60);
+        // The column is a float documented "In hours" (create_listings_table),
+        // and the legacy admin still writes hours into it while the dashboard
+        // writes minutes — so anything up to 12 is read as hours. Kept as a
+        // float until the last step: a legacy half-hour slot is stored as 0.5,
+        // and casting to int first collapsed it to 1 minute.
+        $n = (float) ($this->slot_duration ?: 60);
         if ($n > 0 && $n <= 12) {
-            return $n * 60;
+            return (int) round($n * 60);
         }
 
-        return max(1, $n);
+        return max(1, (int) round($n));
     }
 
     public function reviews()

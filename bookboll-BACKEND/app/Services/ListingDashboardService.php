@@ -804,7 +804,7 @@ class ListingDashboardService
             'sport_category'          => $l->sport_category ?: ($l->sportsCategory?->name ?? ''),
             'category'                => $l->category ?? 'sports',
             'base_price'              => (float) ($l->base_price ?? 0),
-            'slot_duration'           => (int) ($l->slot_duration ?? 60),
+            'slot_duration'           => $l->slotDurationMinutes(),
             'buffer_time'             => (int) ($l->buffer_time ?? 0),
             'start_time_mode'         => $l->start_time_mode ?? 'auto',
             'fixed_start_times'       => $l->fixed_start_times ?? [],
