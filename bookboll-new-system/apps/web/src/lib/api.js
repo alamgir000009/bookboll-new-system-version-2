@@ -7,7 +7,7 @@ import axios from 'axios'
 
 export const CUSTOMER_TOKEN_KEY = 'bb_customer_token'
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '')
+export const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '')
 
 const client = axios.create({
   baseURL: API_BASE,

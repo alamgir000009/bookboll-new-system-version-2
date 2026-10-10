@@ -2,24 +2,26 @@
 /**
  * AuthGate — the global "sign in or create your account" modal (opened by lib/authGate.js
  * ensureSignedIn). Mounted once in CustomerLayout.
- *   • Continue with Google → GIS id_token → POST /customer/google-login
+ *   • Continue with Google → popup through the API's OAuth broker (lib/googleAuth.js)
  *   • Email + password login → POST /customer/login
  *   • Sign up → POST /register
  *   • Forgot / reset password via email OTP
  */
 import { ref, watch, computed } from 'vue'
-import { GoogleSignInButton } from 'vue3-google-signin'
 import { authGateOpen, resolveAuthGate } from '../../lib/authGate.js'
 import {
-  customerLogin, customerRegister, customerGoogleLogin,
+  customerLogin, customerRegister,
   customerForgotPassword, customerResetPassword, selectedCountry,
 } from '../../lib/customerSession.js'
+import { customerGoogleLoginPopup, cancelGoogleLogin } from '../../lib/googleAuth.js'
 import PhoneInput from './PhoneInput.vue'
 import { X, Loader2, Sparkles, ArrowLeft, ShieldCheck } from 'lucide-vue-next'
+import GoogleMark from './GoogleMark.vue'
 
 const step = ref('choose')   // choose | forgot | reset
 const mode = ref('login')    // login | signup
 const busy = ref(false)
+const googleBusy = ref(false)   // separate from busy: the email form stays usable
 const err = ref('')
 const info = ref('')
 const adminReset = ref(false)
@@ -34,13 +36,12 @@ const acceptTerms = ref(false)
 const marketing = computed(() => ({ email: acceptOffers.value, sms: acceptOffers.value, whatsapp: acceptOffers.value }))
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
-const googleReady = computed(() => !!import.meta.env.VITE_GOOGLE_CLIENT_ID)
 const emailValid = computed(() => EMAIL_RE.test((loginForm.value.email || '').trim().toLowerCase()))
 const signupEmailValid = computed(() => EMAIL_RE.test((signupForm.value.email || '').trim().toLowerCase()))
 const phoneDigits = computed(() => (signupForm.value.phone || '').replace(/\D/g, ''))
 
 function reset() {
-  step.value = 'choose'; mode.value = 'login'; busy.value = false; err.value = ''; info.value = ''
+  step.value = 'choose'; mode.value = 'login'; busy.value = false; googleBusy.value = false; err.value = ''; info.value = ''
   adminReset.value = false
   loginForm.value = { email: '', password: '' }
   signupForm.value = { name: '', email: '', phone: '', password: '', password_confirmation: '' }
@@ -50,7 +51,12 @@ function reset() {
 watch(authGateOpen, (open) => { if (open) reset() })
 
 function finishOk() { resolveAuthGate(true) }
-function cancel() { resolveAuthGate(false) }
+function cancel() {
+  // The popup cannot be watched once it reaches Google, so closing the modal is the
+  // only way the customer can call off a sign-in in progress.
+  if (googleBusy.value) cancelGoogleLogin()
+  resolveAuthGate(false)
+}
 
 async function submitLogin() {
   err.value = ''
@@ -90,18 +96,24 @@ async function submitSignup() {
   finishOk()
 }
 
-async function onGoogleSuccess(response) {
+function cancelGoogle() {
+  cancelGoogleLogin()
+  googleBusy.value = false
   err.value = ''
-  busy.value = true
-  const res = await customerGoogleLogin(response?.credential)
-  busy.value = false
-  if (res.error) { err.value = res.error; return }
-  finishOk()
 }
 
-function onGoogleError() {
-  err.value = 'Google sign-in failed. Please try again.'
-  busy.value = false
+async function continueWithGoogle() {
+  if (googleBusy.value) return
+  err.value = ''
+  googleBusy.value = true
+  // Resolves once the popup has finished; the modal stays mounted throughout, so the
+  // ensureSignedIn() promise the caller is awaiting survives.
+  const res = await customerGoogleLoginPopup()
+  googleBusy.value = false
+  // An empty error means they cancelled; they know, so say nothing.
+  if (res.error) { err.value = res.error; return }
+  if (!res.customer) return
+  finishOk()
 }
 
 async function sendForgotOtp() {
@@ -151,19 +163,16 @@ function openForgot() {
         <div class="ag-head">Sign in or create your account</div>
         <p class="ag-sub">You'll need a free Bookboll account to continue. <span class="ag-sub-extra">It only takes a moment.</span></p>
 
-        <div v-if="googleReady" class="ag-gbtn">
-          <GoogleSignInButton
-            type="standard"
-            size="large"
-            theme="outline"
-            text="continue_with"
-            shape="rectangular"
-            :width="360"
-            @success="onGoogleSuccess"
-            @error="onGoogleError"
-          />
+        <div class="ag-gbtn">
+          <button type="button" class="ag-g" :disabled="googleBusy" @click="continueWithGoogle">
+            <Loader2 v-if="googleBusy" :size="18" class="ag-spin" />
+            <GoogleMark v-else :size="18" />
+            <span>{{ googleBusy ? 'Waiting for Google…' : 'Continue with Google' }}</span>
+          </button>
         </div>
-        <p v-else class="ag-hint">Google sign-in is not configured on this site.</p>
+        <button v-if="googleBusy" type="button" class="ag-gcancel" @click="cancelGoogle">
+          Cancel and use email instead
+        </button>
         <div class="ag-or"><span>or with email</span></div>
 
         <div class="ag-tabs">
@@ -261,6 +270,10 @@ function openForgot() {
 .ag-in:focus { border-color: var(--brand, #0f766e); }
 .ag-otp { text-align: center; letter-spacing: 8px; font-size: 22px; font-weight: 800; }
 .ag-gbtn { display: flex; justify-content: center; width: 100%; min-height: 44px; }
+.ag-g { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 44px; padding: 11px 16px; background: var(--surface, #ffffff); border: 1px solid var(--border, #dadce0); border-radius: 10px; color: #3c4043; font-size: 14.5px; font-weight: 600; cursor: pointer; transition: background .15s, box-shadow .15s; }
+.ag-g:hover:not(:disabled) { background: #f8fafc; box-shadow: 0 1px 3px rgba(15,23,42,.1); }
+.ag-g:disabled { opacity: .7; cursor: default; }
+.ag-gcancel { display: block; margin: 8px auto 0; background: none; border: none; color: var(--text-muted, #64748b); font-size: 12.5px; font-weight: 600; cursor: pointer; text-decoration: underline; }
 .ag-hint { font-size: 12.5px; color: var(--text-muted, #64748b); text-align: center; margin: 0 0 4px; }
 .ag-or { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; color: var(--text-light, #94a3b8); font-size: 12px; font-weight: 600; }
 .ag-or::before, .ag-or::after { content: ''; flex: 1; height: 1px; background: var(--border, #e2e8f0); }

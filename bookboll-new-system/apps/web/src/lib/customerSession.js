@@ -251,13 +251,6 @@ export async function customerRegister({ name, email, phone, password, passwordC
   return applyLaravelAuth(res.data.user, res.data.token, { marketing })
 }
 
-export async function customerGoogleLogin(idToken) {
-  if (!idToken) return { error: 'Google sign-in failed. Please try again.' }
-  const res = await apiFetch('/customer/google-login', { method: 'POST', body: { id_token: idToken } })
-  if (!res.success || !res.data?.token) return { error: formatApiError(res, 'Google login failed. Please try again.') }
-  return applyLaravelAuth(res.data.user, res.data.token)
-}
-
 export async function customerForgotPassword(email) {
   const cleanEmail = (email || '').trim().toLowerCase()
   if (!cleanEmail) return { error: 'Please enter your email.' }

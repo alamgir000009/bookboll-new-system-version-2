@@ -1,7 +1,6 @@
 import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createHead } from '@unhead/vue'
-import GoogleSignInPlugin from 'vue3-google-signin'
 import './style.css'
 import App from './App.vue'
 import { installUnsavedGuards } from './lib/unsavedGuard.js'
@@ -10,6 +9,7 @@ import { isScopedEmbed, embedAllows, embedHome } from './lib/embed.js'
 import { ensureDefaultLocation, ensureBrandLocation } from './lib/customerSession.js'
 import { i18n } from './lib/i18n.js'
 import { initAutoTranslate } from './lib/autoTranslate.js'
+import { resumeGoogleLogin } from './lib/googleAuth.js'
 import { adminDashboardUrl, businessHomeUrl, businessSignupUrl } from './lib/crossApp.js'
 
 import CustomerHome from './customer/pages/CustomerHome.vue'
@@ -178,8 +178,9 @@ Promise.allSettled([resolveBrand()])
   .catch(() => {})
   .finally(() => {
     const app = createApp(App)
-    const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
-    if (googleClientId) app.use(GoogleSignInPlugin, { clientId: googleClientId })
     app.use(router).use(i18n).use(createHead()).mount('#app')
     initAutoTranslate()
+    // Only does anything when a Google sign-in had to fall back to a full redirect
+    // because the browser blocked the popup; see lib/googleAuth.js.
+    resumeGoogleLogin().catch(() => {})
   })
