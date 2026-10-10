@@ -484,6 +484,23 @@ html.cust-dark .cust .cd-hero.cd-has-cover { filter: invert(1) hue-rotate(180deg
    composer previews) — same story: counter-invert so uploads show true colours in
    dark mode. Avatars only when they carry a photo (.img) so letter-fallbacks still
    invert with their gradient. */
+/* Blog covers are CSS background-images, so the global img rule above cannot reach
+   them — the post hero and the index cards were showing smart-inverted (a photo in
+   negative). Counter-invert for net-zero inversion and true colours. The index card
+   only when it carries a photo: without one it is a brand gradient placeholder, which
+   should keep inverting to a dark tint like every other placeholder. The post hero is
+   rendered under v-if="post.cover_image", so it always has one. */
+html.cust-dark .cust .bp-cover,
+html.cust-dark .cust .bcard-cover.bcard-has-cover {
+  filter: invert(1) hue-rotate(180deg);
+  /* translateZ promotes the counter-inverted cover to its own composited layer up
+     front. Without it a cover that starts BELOW the fold paints blank: its background
+     image decodes after the filtered layer was first painted, and Chrome does not
+     invalidate that layer when it lands. The cards above the fold were fine, which is
+     what makes this look like a loading problem rather than a compositing one. */
+  transform: translateZ(0);
+}
+
 html.cust-dark .cust .pp-avatar.img,
 html.cust-dark .cust .pp-req-av.img,
 html.cust-dark .cust .pp-photo,
