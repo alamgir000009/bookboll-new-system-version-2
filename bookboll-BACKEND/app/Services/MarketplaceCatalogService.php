@@ -74,6 +74,10 @@ class MarketplaceCatalogService
         $listings = $this->listingQuery($scope)
             ->whereIn('venue_id', $venues->pluck('id'))
             ->with(['sportsCategory:id,name', 'pricingGroups', 'assets'])
+            // Ordered so the photo a venue borrows below is the same one on every
+            // request, rather than whatever the database happened to return first.
+            ->orderBy('sort_order')
+            ->orderBy('name')
             ->get()
             ->groupBy('venue_id');
 
@@ -121,7 +125,8 @@ class MarketplaceCatalogService
 
         $locations = $venues->map(function (Venue $venue) use ($listings) {
             $courts = $listings->get($venue->id) ?? collect();
-            $photos = $this->photos($venue);
+            $photos = $this->photos($venue);                        // what a court may borrow
+            $cardPhotos = $this->venuePhotos($venue, $courts);      // what the venue shows
             $prices = $courts->map(fn (Listing $l) => $this->startingPrice($l))
                 ->filter(fn ($p) => $p !== null && $p > 0);
             $sports = $courts->map(fn (Listing $l) => $this->sportName($l))->filter()->unique()->values();
@@ -129,7 +134,7 @@ class MarketplaceCatalogService
             return [
                 'id'         => $venue->id,
                 'name'       => $venue->name,
-                'photo'      => $photos[0] ?? '',
+                'photo'      => $cardPhotos[0] ?? '',
                 'address'    => $venue->address ?: '',
                 'cityName'   => $venue->city?->name ?: '',
                 'mapsUrl'    => $this->mapsUrl($venue),
@@ -180,7 +185,12 @@ class MarketplaceCatalogService
             ->orderBy('name')
             ->get();
 
+        // Two different questions. $photos is what a court may BORROW when it has no
+        // photo of its own, and must stay the venue's alone — borrowing from the
+        // venue's photo pool would show one court a different court's picture.
+        // $gallery is what the venue itself shows, which may come from the courts.
         $photos = $this->photos($venue);
+        $gallery = $this->venuePhotos($venue, $listings);
         $decorated = $listings->map(function (Listing $listing) use ($venue, $photos) {
             $courtPhotos = $this->photos($listing);
             $start = $this->startingPrice($listing);
@@ -195,8 +205,8 @@ class MarketplaceCatalogService
         return sendSuccess('Venue fetched successfully', [
             'facility' => [
                 'location' => $this->locationPayload($venue),
-                'photo'    => $photos[0] ?? '',
-                'photos'   => $photos,
+                'photo'    => $gallery[0] ?? '',
+                'photos'   => $gallery,
                 'mapsUrl'  => $this->mapsUrl($venue),
                 'listings' => $decorated,
             ],
@@ -574,7 +584,7 @@ class MarketplaceCatalogService
         $prices = $courts->map(fn (Listing $l) => $this->startingPrice($l))->filter(fn ($p) => $p !== null && $p > 0);
         $sports = $courts->map(fn (Listing $l) => $this->sportName($l))->filter()->unique()->values();
         $categories = $courts->map(fn (Listing $l) => $l->category ?: 'sports')->unique()->values();
-        $photos = $this->photos($venue);
+        $photos = $this->venuePhotos($venue, $courts);
 
         return [
             'id'         => $venue->id,
@@ -726,6 +736,42 @@ class MarketplaceCatalogService
         }
 
         return array_values(array_filter(array_map(fn ($p) => $this->publicUrl($p), $out)));
+    }
+
+    /**
+     * The photos to show for a VENUE, falling back to the photos of the courts
+     * inside it.
+     *
+     * Most venue rows carry no photos of their own: providers upload against the
+     * court or pitch they are listing, not against the address. The venue card then
+     * had nothing to show and rendered its monogram instead — on the /facilities
+     * page that is the DEFAULT view, so a city of fully photographed courts looked
+     * like a wall of initials.
+     *
+     * This is the same fallback a listing already makes in the other direction
+     * (listingCard: own photo, else the venue's), just completing the pair.
+     *
+     * @param  iterable<Listing>|null  $courts
+     * @return array<int, string>
+     */
+    protected function venuePhotos(Venue $venue, $courts = null): array
+    {
+        $own = $this->photos($venue);
+
+        if ($own || ! $courts) {
+            return $own;
+        }
+
+        // Keyed to de-duplicate — several courts in one venue are often photographed
+        // together and share a shot — while keeping the courts' own order.
+        $borrowed = [];
+        foreach ($courts as $court) {
+            foreach ($this->photos($court) as $photo) {
+                $borrowed[$photo] = true;
+            }
+        }
+
+        return array_keys($borrowed);
     }
 
     protected function publicUrl(?string $path): string
