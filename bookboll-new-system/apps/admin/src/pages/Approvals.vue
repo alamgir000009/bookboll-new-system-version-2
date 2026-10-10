@@ -6,7 +6,7 @@ import {
   TriangleAlert as AlertTriangle, ArrowRight, RefreshCw, CirclePause as PauseCircle,
   X, GraduationCap, Banknote, Clock, Check, ChevronDown, ChevronUp, Search, Eye,
   ListChecks, Building2, MapPin, User, Phone, Mail, Globe, FileText, Shield, Star,
-  CalendarDays, DollarSign, Copy
+  CalendarDays, DollarSign, Copy, Loader
 } from 'lucide-vue-next'
 import PaginationBar from '../components/PaginationBar.vue'
 import FilterBar from '../components/FilterBar.vue'
@@ -87,7 +87,12 @@ async function load() {
   allProviders.value = [...byId.values()]
   allLocations.value = ref.venues
   allCities.value = ref.cities
-  allCountries.value = ref.countries.filter(c => (c.status || 'active') === 'active')
+  // NOT filtered by status. This list is what every country NAME on the page is
+  // resolved through, and a venue sitting in a country the platform has since
+  // disabled still has to show which country that is — a reviewer approving a
+  // listing cannot be shown a dash where the jurisdiction should be. Only the
+  // filter dropdown narrows to active countries (activeCountries below).
+  allCountries.value = ref.countries
   commissionRates.value = ref.commissionRates || []
 }
 onMounted(load)
@@ -133,6 +138,15 @@ const providerById = (id) => allProviders.value.find(x => sameId(x.id, id)) || n
 const locationById = (id) => allLocations.value.find(x => sameId(x.id, id)) || null
 const cityById = (id) => allCities.value.find(x => sameId(x.id, id)) || null
 const countryById = (id) => allCountries.value.find(x => sameId(x.id, id)) || null
+// Countries worth OFFERING as a filter. Tolerates both shapes of the status field:
+// the API now sends 'active'/'inactive' everywhere, but the underlying column is a
+// tinyint and a stale deploy would otherwise empty this list again.
+const isCountryActive = (c) => {
+  const s = c?.status
+  if (s === undefined || s === null || s === '') return true
+  return s === 'active' || s === 1 || s === true || s === '1'
+}
+const activeCountries = computed(() => allCountries.value.filter(isCountryActive))
 const countryName = (id) => countryById(id)?.name || ''
 // provider_wallets.owner_user_id holds a numeric users.id for some rows and the
 // uuid for others, so match on either (the API resolves a numeric `owner_id`).
@@ -158,6 +172,28 @@ function locationForItem(item) {
   if (item._type === 'listing') return locationById(item.location_id)
   if (item._type === 'program') return locationById(item.location_id)
   return null
+}
+
+/** The country a venue sits in. Venues carry country_id directly; the city is the
+ *  fallback for rows that only ever had one (same order as providerCommission). */
+function locationCountry(venue) {
+  return countryById(venue?.country_id ?? cityById(venue?.city_id)?.country_id)
+}
+
+/**
+ * The provider's country, and whether we had to infer it.
+ *
+ * `users.country_id` is optional at signup — the business signup form labels the
+ * field "(optional)" — so for many providers the only place the platform records a
+ * jurisdiction is the venue they are listing. A reviewer deciding whether to approve
+ * a listing cannot be shown a dash where the market should be, so fall back to the
+ * venue and say so: it is an inference, not what the provider declared.
+ */
+function providerCountry(item) {
+  const declared = countryById(providerById(item?.owner_user_id)?.country_id)
+  if (declared) return { name: declared.name, derived: false }
+  const viaVenue = locationCountry(locationForItem(item))
+  return viaVenue ? { name: viaVenue.name, derived: true } : null
 }
 
 // The business owner a decision should notify: programs carry owner_user_id;
@@ -221,10 +257,12 @@ async function approvePayoutSetup(entry) {
     message: `Bank: ${entry.template?.payout_bank_name || '—'} · ${entry.template?.payout_iban || entry.template?.payout_account_number || 'no account'}. Their payouts go ACTIVE — online membership money starts flowing to this account.`,
     danger: false, confirmText: 'Approve — activate payouts',
   }))) return
-  const res = await approvePayoutKyc(entry.ownerId, { kyc_reviewed_by: currentUser.value?.id || null })
-  if (!res.success) { pushToast(moneyErr(res, 'Could not approve payout method.'), 'error'); return }
-  logAudit({ action: AUDIT.APPROVED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Approved manual payout method for ${entry.business}` })
-  load()
+  await runAction(`payout:${entry.ownerId}`, async () => {
+    const res = await approvePayoutKyc(entry.ownerId, { kyc_reviewed_by: currentUser.value?.id || null })
+    if (!res.success) { pushToast(moneyErr(res, 'Could not approve payout method.'), 'error'); return }
+    logAudit({ action: AUDIT.APPROVED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Approved manual payout method for ${entry.business}` })
+    await load()
+  })
 }
 const payoutRejectModal = ref(null)   // the entry being rejected
 const payoutRejectReason = ref('')
@@ -232,14 +270,16 @@ function openPayoutReject(entry) { payoutRejectModal.value = entry; payoutReject
 async function confirmPayoutReject() {
   const entry = payoutRejectModal.value; if (!entry) return
   const reason = payoutRejectReason.value.trim() || 'Your details could not be verified — please review and resubmit.'
-  const res = await rejectPayoutKyc(entry.ownerId, {
-    reason,
-    kyc_reviewed_by: currentUser.value?.id || null,
+  await runAction('payout-reject', async () => {
+    const res = await rejectPayoutKyc(entry.ownerId, {
+      reason,
+      kyc_reviewed_by: currentUser.value?.id || null,
+    })
+    payoutRejectModal.value = null
+    if (!res.success) { pushToast(moneyErr(res, 'Could not reject payout method.'), 'error'); return }
+    logAudit({ action: AUDIT.REJECTED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Rejected payout setup for ${entry.business}: ${reason}` })
+    await load()
   })
-  payoutRejectModal.value = null
-  if (!res.success) { pushToast(moneyErr(res, 'Could not reject payout method.'), 'error'); return }
-  logAudit({ action: AUDIT.REJECTED, entity_type: 'payout_method', entity_id: entry.ownerId, details: `Rejected payout setup for ${entry.business}: ${reason}` })
-  load()
 }
 
 const totalCount = computed(() =>
@@ -317,6 +357,23 @@ const filteredContent = computed(() => {
 
 const { page: appPage, perPage: appPerPage, totalPages: appTotalPages, paginated: paginatedContent, visiblePages: appVisiblePages, goTo: appGoTo } = usePagination(filteredContent)
 
+// ── In-flight decisions ──────────────────────────────────────────────────────
+// Every decision on this page is a write followed by a full queue reload, so the
+// gap between the click and the screen changing is seconds. The buttons used to
+// stay live through all of it: nothing moved, the preview modal sat there looking
+// ignored, and a second click fired a second approval at a row the server had
+// already published. One key is in flight at a time, and it disables every
+// decision button on the page — the list underneath is about to be replaced.
+const busyKey = ref('')
+const isBusy = (key) => busyKey.value === key
+const itemKey = (item) => `${item?._type || 'item'}:${item?.id}`
+
+async function runAction(key, fn) {
+  if (busyKey.value) return
+  busyKey.value = key
+  try { return await fn() } finally { busyKey.value = '' }
+}
+
 // --- listing actions ---
 async function approveListing(li) {
   const res = await approveContent('listing', li.id)
@@ -362,10 +419,13 @@ async function approveItem(item) {
       : `It goes live on the Bookboll marketplace immediately, and ${providerName(ownerOfItem(item))} gets a notification.`,
     danger: false, confirmText: contentOnly ? 'Approve content' : 'Approve & publish', cancelText: 'Not yet',
   }))) return
-  const ok = item._type === 'listing' ? await approveListing(item) : await approveProgram(item)
-  if (!ok) return
-  pushToast(contentOnly ? `“${item.name}” content approved — now live` : `“${item.name}” approved — it's live on the marketplace`, 'success')
-  if (previewItem.value?.id === item.id) previewModal.value = false
+  await runAction(itemKey(item), async () => {
+    const ok = item._type === 'listing' ? await approveListing(item) : await approveProgram(item)
+    if (!ok) return
+    pushToast(contentOnly ? `“${item.name}” content approved — now live` : `“${item.name}” approved — it's live on the marketplace`, 'success')
+    // Closed only once the server has answered and the queue has reloaded.
+    if (previewItem.value?.id === item.id) previewModal.value = false
+  })
 }
 
 // --- request changes ---
@@ -381,6 +441,9 @@ function openSendBack(item) {
 async function confirmSendBack() {
   const item = sendBackTarget.value
   if (!sendBackNote.value.trim()) return
+  await runAction('sendback', () => sendBack(item))
+}
+async function sendBack(item) {
   const contentOnly = isContentUpdate(item)
   const res = await requestContentChanges(item._type, item.id, {
     admin_note: sendBackNote.value.trim(),
@@ -399,12 +462,15 @@ async function confirmSendBack() {
   })
   sendBackModal.value = false
   if (previewModal.value) previewModal.value = false
-  load()
+  await load()
 }
 
 // --- bulk approve ---
 const bulkModal = ref(false)
 async function confirmBulkApprove() {
+  await runAction('bulk', bulkApprove)
+}
+async function bulkApprove() {
   const items = filteredContent.value
   const res = await bulkApproveContent(items.map(i => ({ type: i._type, id: String(i.id) })))
   if (!res.success) {
@@ -426,7 +492,7 @@ async function confirmBulkApprove() {
   logAudit({ action: AUDIT.APPROVED, entity_type: 'content', details: `Bulk-approved ${items.length} pending item${items.length === 1 ? '' : 's'}` })
   bulkModal.value = false
   pushToast(`${res.data?.count ?? items.length} item(s) approved`, 'success')
-  load()
+  await load()
 }
 
 // ── Withdrawal decisions (same money model as Earnings & Payouts) ─────────────
@@ -779,7 +845,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
       v-model:search="search"
       v-model:country="filterCountry"
       v-model:city="filterCity"
-      :countries="allCountries"
+      :countries="activeCountries"
       :cities="allCities"
       :extra-count="extraFilterCount"
       search-placeholder="Search by name, sport, provider..."
@@ -893,8 +959,11 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 
           <div class="approve-actions">
             <button class="btn btn-secondary btn-sm" @click="openPreview(item)"><Eye :size="14" />View</button>
-            <button class="btn btn-success btn-sm" @click="approveItem(item)"><CheckCircle :size="14" />Approve</button>
-            <button class="btn btn-warning btn-sm" @click="openSendBack(item)"><PauseCircle :size="14" />Request changes</button>
+            <button class="btn btn-success btn-sm" :disabled="!!busyKey" @click="approveItem(item)">
+              <Loader v-if="isBusy(itemKey(item))" :size="14" class="aq-spin" /><CheckCircle v-else :size="14" />
+              {{ isBusy(itemKey(item)) ? 'Approving…' : 'Approve' }}
+            </button>
+            <button class="btn btn-warning btn-sm" :disabled="!!busyKey" @click="openSendBack(item)"><PauseCircle :size="14" />Request changes</button>
           </div>
         </div>
       </div>
@@ -958,8 +1027,11 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
             <a v-if="e.template?.kyc_doc_url" :href="e.template.kyc_doc_url" target="_blank" rel="noopener" class="req-doc"><FileText :size="13" />View verification document</a>
           </div>
           <div class="approve-actions">
-            <button class="btn btn-success btn-sm" @click="approvePayoutSetup(e)"><Check :size="14" />Approve</button>
-            <button class="btn btn-warning btn-sm" @click="openPayoutReject(e)"><X :size="14" />Reject</button>
+            <button class="btn btn-success btn-sm" :disabled="!!busyKey" @click="approvePayoutSetup(e)">
+              <Loader v-if="isBusy(`payout:${e.ownerId}`)" :size="14" class="aq-spin" /><Check v-else :size="14" />
+              {{ isBusy(`payout:${e.ownerId}`) ? 'Approving…' : 'Approve' }}
+            </button>
+            <button class="btn btn-warning btn-sm" :disabled="!!busyKey" @click="openPayoutReject(e)"><X :size="14" />Reject</button>
           </div>
         </div>
       </div>
@@ -1011,12 +1083,20 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
           </div>
           <div class="approve-actions">
             <template v-if="w.status === 'pending'">
-              <button class="btn btn-success btn-sm" :disabled="wdBusy === w.id" @click="approveWithdrawalA(w)"><CheckCircle :size="14" />Approve</button>
-              <button class="btn btn-warning btn-sm" :disabled="wdBusy === w.id" @click="rejectWithdrawalA(w)"><X :size="14" />Reject</button>
+              <button class="btn btn-success btn-sm" :disabled="wdBusy === w.id" @click="approveWithdrawalA(w)">
+                <Loader v-if="wdBusy === w.id" :size="14" class="aq-spin" /><CheckCircle v-else :size="14" />Approve
+              </button>
+              <button class="btn btn-warning btn-sm" :disabled="wdBusy === w.id" @click="rejectWithdrawalA(w)">
+                <Loader v-if="wdBusy === w.id" :size="14" class="aq-spin" /><X v-else :size="14" />Reject
+              </button>
             </template>
             <template v-else>
-              <button class="btn btn-success btn-sm" :disabled="wdBusy === w.id" @click="markWithdrawalPaidA(w)"><Banknote :size="14" />Mark as Paid</button>
-              <button class="btn btn-warning btn-sm" :disabled="wdBusy === w.id" @click="rejectWithdrawalA(w)"><X :size="14" />Reject</button>
+              <button class="btn btn-success btn-sm" :disabled="wdBusy === w.id" @click="markWithdrawalPaidA(w)">
+                <Loader v-if="wdBusy === w.id" :size="14" class="aq-spin" /><Banknote v-else :size="14" />Mark as Paid
+              </button>
+              <button class="btn btn-warning btn-sm" :disabled="wdBusy === w.id" @click="rejectWithdrawalA(w)">
+                <Loader v-if="wdBusy === w.id" :size="14" class="aq-spin" /><X v-else :size="14" />Reject
+              </button>
             </template>
           </div>
         </div>
@@ -1139,7 +1219,13 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
                 </div>
                 <div class="preview-field">
                   <div class="preview-field-label"><Globe :size="10" /> Country</div>
-                  <div class="preview-field-value">{{ countryById(providerById(previewItem.owner_user_id)?.country_id)?.name || '—' }}</div>
+                  <div class="preview-field-value">
+                    <template v-if="providerCountry(previewItem)">
+                      {{ providerCountry(previewItem).name }}
+                      <span v-if="providerCountry(previewItem).derived" class="pv-derived">from venue</span>
+                    </template>
+                    <template v-else>—</template>
+                  </div>
                 </div>
                 <!-- License number and a per-PROVIDER commission rate came from the
                      Supabase admin_users table and have no equivalent here: commission
@@ -1212,7 +1298,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
                 </div>
                 <div class="preview-field">
                   <div class="preview-field-label">Country</div>
-                  <div class="preview-field-value">{{ countryById(cityById(locationForItem(previewItem).city_id)?.country_id)?.name || '—' }}</div>
+                  <div class="preview-field-value">{{ locationCountry(locationForItem(previewItem))?.name || '—' }}</div>
                 </div>
                 <div class="preview-field">
                   <div class="preview-field-label">Phone</div>
@@ -1288,9 +1374,12 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
         </div>
 
         <div class="modal-foot">
-          <button class="btn btn-secondary btn-sm" @click="previewModal=false">Close</button>
-          <button class="btn btn-warning btn-sm" @click="openSendBack(previewItem)"><PauseCircle :size="14" />Request changes</button>
-          <button class="btn btn-success btn-sm" @click="approveItem(previewItem)"><CheckCircle :size="14" />Approve</button>
+          <button class="btn btn-secondary btn-sm" :disabled="!!busyKey" @click="previewModal=false">Close</button>
+          <button class="btn btn-warning btn-sm" :disabled="!!busyKey" @click="openSendBack(previewItem)"><PauseCircle :size="14" />Request changes</button>
+          <button class="btn btn-success btn-sm" :disabled="!!busyKey" @click="approveItem(previewItem)">
+            <Loader v-if="isBusy(itemKey(previewItem))" :size="14" class="aq-spin" /><CheckCircle v-else :size="14" />
+            {{ isBusy(itemKey(previewItem)) ? 'Approving…' : 'Approve' }}
+          </button>
         </div>
       </div>
     </div>
@@ -1308,9 +1397,10 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
           <textarea v-model="sendBackNote" rows="4" placeholder="e.g. Photo quality is low — please upload a higher resolution image."></textarea>
         </div>
         <div class="modal-foot">
-          <button class="btn btn-secondary btn-sm" @click="sendBackModal=false">Cancel</button>
-          <button class="btn btn-warning btn-sm" :disabled="!sendBackNote.trim()" @click="confirmSendBack">
-            <PauseCircle :size="14" />Request changes
+          <button class="btn btn-secondary btn-sm" :disabled="!!busyKey" @click="sendBackModal=false">Cancel</button>
+          <button class="btn btn-warning btn-sm" :disabled="!sendBackNote.trim() || !!busyKey" @click="confirmSendBack">
+            <Loader v-if="isBusy('sendback')" :size="14" class="aq-spin" /><PauseCircle v-else :size="14" />
+            {{ isBusy('sendback') ? 'Sending…' : 'Request changes' }}
           </button>
         </div>
       </div>
@@ -1329,9 +1419,10 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
           </div>
         </div>
         <div class="modal-foot">
-          <button class="btn btn-secondary btn-sm" @click="bulkModal=false">Cancel</button>
-          <button class="btn btn-success btn-sm" @click="confirmBulkApprove">
-            <CheckCircle :size="14" />Approve all {{ filteredContent.length }}
+          <button class="btn btn-secondary btn-sm" :disabled="!!busyKey" @click="bulkModal=false">Cancel</button>
+          <button class="btn btn-success btn-sm" :disabled="!!busyKey" @click="confirmBulkApprove">
+            <Loader v-if="isBusy('bulk')" :size="14" class="aq-spin" /><CheckCircle v-else :size="14" />
+            {{ isBusy('bulk') ? `Approving ${filteredContent.length}…` : `Approve all ${filteredContent.length}` }}
           </button>
         </div>
       </div>
@@ -1350,8 +1441,11 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
           <textarea v-model="payoutRejectReason" rows="4" placeholder="e.g. The IBAN doesn't match the account holder — please re-check and resubmit."></textarea>
         </div>
         <div class="modal-foot">
-          <button class="btn btn-secondary btn-sm" @click="payoutRejectModal=null">Cancel</button>
-          <button class="btn btn-warning btn-sm" @click="confirmPayoutReject"><X :size="14" />Reject &amp; return</button>
+          <button class="btn btn-secondary btn-sm" :disabled="!!busyKey" @click="payoutRejectModal=null">Cancel</button>
+          <button class="btn btn-warning btn-sm" :disabled="!!busyKey" @click="confirmPayoutReject">
+            <Loader v-if="isBusy('payout-reject')" :size="14" class="aq-spin" /><X v-else :size="14" />
+            {{ isBusy('payout-reject') ? 'Returning…' : 'Reject & return' }}
+          </button>
         </div>
       </div>
     </div>
@@ -1399,6 +1493,9 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 /* business-level moderation in the provider tab */
 .pv-biz-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .pv-biz-hint { font-size: 12px; color: var(--text-muted); }
+.aq-spin { animation: aq-spin 1s linear infinite; }
+@keyframes aq-spin { to { transform: rotate(360deg); } }
+.pv-derived { font-size: 10.5px; font-weight: 600; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 6px; margin-left: 6px; white-space: nowrap; }
 
 /* tabs */
 .tab { display: flex; align-items: center; gap: 6px; }
