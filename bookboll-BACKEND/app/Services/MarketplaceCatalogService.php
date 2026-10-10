@@ -454,10 +454,29 @@ class MarketplaceCatalogService
                 }
                 $ids = $fuzzy->pluck('id')->all();
             }
+
+            // Last resort: the same name with the country constraint dropped. The
+            // caller's `country_iso` is the VISITOR's picker, so "Lahore in Qatar" is
+            // a routine mismatch rather than a typo — and resolving it to nothing used
+            // to hand the request to the Qatar fallback below, which answered a Lahore
+            // page with Qatar venues. The city the caller named wins over the country
+            // they happen to be sitting in.
+            if (! $ids && $country) {
+                $ids = City::where('name', $name)->limit(20)->pluck('id')->all();
+            }
         }
 
-        // GPS / picker may land on Al Wakrah, Lusail, etc. Qatar is one market.
-        if ($iso === QatarMarketGeo::ISO && $attemptedCity) {
+        // Qatar is one market, so a city anywhere in QA should show the whole country
+        // — including when the attempt resolves to nothing, because GPS or the picker
+        // can land on a town the world table does not carry, or carry a stale city_id.
+        //
+        // ONLY then, though. `country_iso` follows the VISITOR's location picker, not
+        // the city being asked for: someone browsing from Doha who opens /venues/lahore
+        // sends city_id=<Lahore>&country_iso=QA. This used to fire on the ISO alone,
+        // throw the resolved city away and answer with all 23 Qatar venues — the city
+        // in the URL was decided by the visitor's own location. A city that DID resolve
+        // is handled by expandCityIds() below, which expands only if it is Qatari.
+        if ($iso === QatarMarketGeo::ISO && $attemptedCity && ! $this->citiesExist($ids)) {
             $all = QatarMarketGeo::allCityIds();
             if ($all) {
                 return $all;
@@ -465,6 +484,20 @@ class MarketplaceCatalogService
         }
 
         return QatarMarketGeo::expandCityIds($ids);
+    }
+
+    /**
+     * Did the request's city_id / city name match a real city row?
+     *
+     * A city_id is taken on trust above (no lookup), so this is the only thing that
+     * separates "the visitor asked for a city we know" from "the id is stale or the
+     * name matched nothing".
+     *
+     * @param  list<int>|null  $ids
+     */
+    protected function citiesExist(?array $ids): bool
+    {
+        return $ids ? City::whereIn('id', $ids)->exists() : false;
     }
 
     protected function venueQuery(array $scope)
