@@ -1067,7 +1067,8 @@ async function openEditListing(l) {
     // in so the picker preselects and the used-elsewhere guard still matches.
     connectedAddons.value = (dash.data.addons || []).map(x => ({ id: x.id, addon_id: toCatalogId(x.addon_id), sort_order: x.sort_order }))
     connectedResources.value = (dash.data.resources || []).map(x => ({ id: x.id, resource_id: toCatalogId(x.resource_id), quantity: Number(x.quantity) || 1 }))
-  } else {
+  } else if (dash.success) {
+    // Succeeded but carried no detail — a genuinely empty listing. Defaults are right.
     hours.value = hoursFromLocation()
     groups.value = []
     cells.value = []
@@ -1076,7 +1077,16 @@ async function openEditListing(l) {
     pay.value = defaultPay()
     connectedAddons.value = []
     connectedResources.value = []
-    if (!dash.success) toast.error(listingFirstError(dash, 'Could not load listing details.'))
+  } else {
+    // The fetch FAILED. Do not fall back to defaults here: `pay` drives real money
+    // (the marketplace deposit and the provider's own-site deposit), and quietly
+    // seeding it with defaults means the next Save writes 20% / 10% over whatever
+    // the provider had actually configured — a silent downgrade nobody asked for,
+    // caused by a dropped request. Close the editor and say so instead.
+    toast.error(listingFirstError(dash, 'Could not load listing details. Nothing was changed — please try again.'))
+    clearDirty()
+    view.value = 'list'
+    return
   }
 
   await checkProviderOnline(l.location_id)
