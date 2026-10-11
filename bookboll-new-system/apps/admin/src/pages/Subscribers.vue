@@ -78,6 +78,10 @@ const programs = ref([])
 const locations = ref([])
 const cities = ref([])
 const countries = ref([])
+// Venue payloads carry city_id / country_id as strings, reference-data cities[] and
+// countries[] carry integers — a strict === between them never matches. Same helper
+// as Wallet.vue and Listings.vue.
+const cid = v => (v === null || v === undefined || v === '') ? '' : String(v)
 const providers = ref([])
 const sessions = ref([])
 
@@ -154,9 +158,9 @@ function currencyForLocation(locationId) {
   const loc = locations.value.find(l => l.id === locationId)
   if (!loc) return 'AED'
   if (loc.currency_override) return loc.currency_override
-  const city = cities.value.find(c => c.id === loc.city_id)
+  const city = cities.value.find(c => cid(c.id) === cid(loc.city_id))
   if (!city) return 'AED'
-  return countries.value.find(c => c.id === city.country_id)?.currency_code || 'AED'
+  return countries.value.find(c => cid(c.id) === cid(city.country_id))?.currency_code || 'AED'
 }
 function fmtMoney(n, cur = 'AED') { return `${cur} ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']

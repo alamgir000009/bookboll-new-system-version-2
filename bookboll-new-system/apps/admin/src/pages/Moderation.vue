@@ -58,6 +58,10 @@ const toast = useToast()
 const rows = ref([])
 const cities = ref([])
 const countries = ref([])
+// Venue payloads carry city_id / country_id as strings, reference-data cities[] and
+// countries[] carry integers — a strict === between them never matches. Same helper
+// as Wallet.vue and Listings.vue.
+const cid = v => (v === null || v === undefined || v === '') ? '' : String(v)
 // All venues (id, city_id) — loaded for country_admin / platform_staff so the
 // jurisdiction helper can map each venue to its country.
 const allLocations = ref([])
@@ -122,7 +126,7 @@ async function load() {
     const cSet = jurisdictionCountryIds.value
     if (allowed) games = games.filter(x => x.location_id
       ? allowed.has(x.location_id)
-      : cSet.has(cities.value.find(c => c.id === x.city_id)?.country_id))
+      : cSet.has(cities.value.find(c => cid(c.id) === cid(x.city_id))?.country_id))
   }
 
   const locName = id => allLocations.value.find(l => String(l.id) === String(id))?.name || ''
@@ -133,7 +137,7 @@ async function load() {
       ...x,
       moderation_status: x.moderation_status || 'active',
       locationName: locName(x.location_id),
-      cityName: cities.value.find(c => c.id === x.city_id)?.name || '',
+      cityName: cities.value.find(c => cid(c.id) === cid(x.city_id))?.name || '',
       joinedCount: stats.accepted || 0,
       pendingCount: stats.pending || 0,
     }
@@ -158,7 +162,7 @@ async function load() {
           return {
             ...x,
             moderation_status: x.moderation_status || 'active',
-            cityName: cities.value.find(c => c.id === x.city_id)?.name || '',
+            cityName: cities.value.find(c => cid(c.id) === cid(x.city_id))?.name || '',
             ownerName: x.owner_name || 'Player',
             memberCount: stats.accepted || 0,
           }

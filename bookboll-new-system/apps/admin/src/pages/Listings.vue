@@ -226,7 +226,7 @@ watch(view, v => { if (v !== 'editor') registerDraftSaver(null) })
 const userRole = computed(() => (isSuperAdmin.value || isCountryAdmin.value || actorRole.value === 'platform_staff') ? 'admin' : 'provider')
 // A venue with no owner_user_id is Bookboll-owned → full online payment (all money is Bookboll's).
 const selectedLocBookbollOwned = computed(() => {
-  const loc = locations.value.find(l => l.id === form.value.location_id)
+  const loc = locations.value.find(l => cid(l.id) === cid(form.value.location_id))
   return loc ? !loc.owner_user_id : false
 })
 
@@ -275,8 +275,8 @@ const expanded = ref(new Set())
 const usedGeo = computed(() => {
   // Venue CARDS render even before their first listing — geo options must cover
   // every venue in view, not just venues that already have listings.
-  const cityIds = new Set(locations.value.map(l => l.city_id).filter(Boolean))
-  const countryIds = new Set(cities.value.filter(c => cityIds.has(c.id)).map(c => c.country_id).filter(Boolean))
+  const cityIds = new Set(locations.value.map(l => cid(l.city_id)).filter(Boolean))
+  const countryIds = new Set(cities.value.filter(c => cityIds.has(cid(c.id))).map(c => c.country_id).filter(Boolean))
   return { cityIds, countryIds }
 })
 const countryOptions = computed(() => scopeCountries(countries.value)
@@ -285,7 +285,7 @@ const countryOptions = computed(() => scopeCountries(countries.value)
 const cityOptions = computed(() => {
   const sel = filterCountry.value.map(String)
   const base = scopeCities(cities.value)
-    .filter(c => !usedGeo.value.cityIds.size || usedGeo.value.cityIds.has(c.id))
+    .filter(c => !usedGeo.value.cityIds.size || usedGeo.value.cityIds.has(cid(c.id)))
   const list = sel.length ? base.filter(c => sel.includes(String(c.country_id))) : base
   return list.map(c => ({ value: c.id, label: c.name }))
 })
@@ -341,8 +341,18 @@ function clearListingFilters() {
 // Changing the category resets the type (the available types are category-scoped).
 function setFilterCategory(k) { filterCategory.value = k; filterType.value = 'all' }
 
+/* ── Id equality across two payloads that disagree on type ─────────
+   The venues feed (mapDashboardVenue) emits id / city_id / country_id as STRINGS —
+   the old Postgres vocabulary — while reference-data cities[] and countries[] emit
+   INTEGERS straight off the world models. Every hop from a venue to its city, or a
+   city to its country, therefore compared "80431" === 80431 and silently found
+   nothing: the country was never resolved, so the commission fell back to the 15%
+   constant and the currency to AED, whatever the country's real rate was. This
+   is the same cid() Wallet.vue already uses for the same reason. */
+const cid = v => (v === null || v === undefined || v === '') ? '' : String(v)
+
 function countryOfLocation(loc) {
-  const city = cities.value.find(c => c.id === loc?.city_id)
+  const city = cities.value.find(c => cid(c.id) === cid(loc?.city_id))
   return city?.country_id || null
 }
 
@@ -570,7 +580,7 @@ async function onLocationSaved(loc) {
 // From the schedule grid: the provider clicked a slot that's locked because the
 // location is closed then. Jump straight to that location's own schedule editor.
 function editLocationSchedule() {
-  const loc = locations.value.find(l => l.id === form.value.location_id)
+  const loc = locations.value.find(l => cid(l.id) === cid(form.value.location_id))
   if (!loc) { toast.error('Choose a location for this listing first.'); return }
   openEditLoc(loc)
 }
@@ -584,8 +594,8 @@ function createSpecialDayForListing() {
   router.push({ path: '/special-days', query: q })
 }
 async function removeLoc(id) {
-  const loc = locations.value.find(l => l.id === id)
-  const n = listings.value.filter(l => l.location_id === id).length
+  const loc = locations.value.find(l => cid(l.id) === cid(id))
+  const n = listings.value.filter(l => cid(l.location_id) === cid(id)).length
   if (!(await confirm({
     title: 'Delete location?',
     message: `“${loc?.name || 'This location'}”${n ? ` and its ${n} listing${n > 1 ? 's' : ''}` : ''} will be permanently removed. This cannot be undone.`,
@@ -742,14 +752,14 @@ const providerHasOnline = ref(false)
 // venues (no provider to pay) are exempt.
 const ownerWalletActive = ref(false)
 const locationIsBookbollOwned = computed(() => {
-  const loc = locations.value.find(l => l.id === form.value.location_id)
+  const loc = locations.value.find(l => cid(l.id) === cid(form.value.location_id))
   return !!loc && !loc.owner_user_id
 })
 const onlineAllowed = computed(() => locationIsBookbollOwned.value || ownerWalletActive.value)
 // The country (name + id) of the location chosen in the listing form — used to name
 // the country in the "set up a wallet" prompt and deep-link to it in My Wallet.
 const formCountryId = computed(() => countryIdOfLocation(form.value.location_id))
-const formCountryName = computed(() => countries.value.find(c => c.id === formCountryId.value)?.name || 'this country')
+const formCountryName = computed(() => countries.value.find(c => cid(c.id) === cid(formCountryId.value))?.name || 'this country')
 const formWalletLink = computed(() => formCountryId.value ? `/wallet/bookings?country=${formCountryId.value}` : '/wallet/bookings')
 // "Set up your Bookings wallet" modal — opened when full-online is enabled without a ready bookings wallet.
 const payoutModal = ref(false)
@@ -829,8 +839,8 @@ function defaultForm() {
 
 /* ── Country of a location (through cities) ─────────────────── */
 function countryIdOfLocation(locationId) {
-  const loc = locations.value.find(l => l.id === locationId)
-  const city = cities.value.find(c => c.id === loc?.city_id)
+  const loc = locations.value.find(l => cid(l.id) === cid(locationId))
+  const city = cities.value.find(c => cid(c.id) === cid(loc?.city_id))
   return city?.country_id || null
 }
 
@@ -839,8 +849,8 @@ const effectiveCommissionRate = computed(() => {
   if (form.value.commission_rate !== null && form.value.commission_rate !== '') {
     return Number(form.value.commission_rate)
   }
-  const cid = countryIdOfLocation(form.value.location_id)
-  return commissionRates.value[cid]?.facility ?? 15
+  const countryId = countryIdOfLocation(form.value.location_id)
+  return commissionRates.value[countryId]?.facility ?? 15
 })
 
 /* ── Live money example for Placement & Payment ───────────────
@@ -1095,7 +1105,7 @@ async function checkProviderOnline(locationId) {
   providerAccount.value = null
   ownerWalletActive.value = false
   if (!locationId) return
-  const loc = locations.value.find(l => l.id === locationId)
+  const loc = locations.value.find(l => cid(l.id) === cid(locationId))
   if (!loc?.owner_user_id) return   // Bookboll-owned → exempt via locationIsBookbollOwned
   // An ACTIVE payout method is the prerequisite for full online payment — and it is NOT
   // per-country: any active wallet (in any country) lets the provider take online payments.
@@ -1140,7 +1150,7 @@ function openPayAcctManage() {
 }
 
 async function savePayAcct() {
-  const loc = locations.value.find(l => l.id === form.value.location_id)
+  const loc = locations.value.find(l => cid(l.id) === cid(form.value.location_id))
   const ownerId = loc?.owner_user_id || currentOwnerUserId.value
   const res = payAcctEditing.value && providerAccount.value
     ? await updatePaymentAccount(providerAccount.value.id, { ...payAcctForm.value })
@@ -1300,14 +1310,14 @@ const listingHoursOutOfBounds = computed(() => {
   return warnings
 })
 
-const locationName = (id) => locations.value.find(l => l.id === id)?.name || '—'
+const locationName = (id) => locations.value.find(l => cid(l.id) === cid(id))?.name || '—'
 const providerName = (id) => allBusinessOwners.value.find(p => p.id === id)?.business_name || '—'
 
 function currencyForLocation(locationId) {
-  const loc = locations.value.find(l => l.id === locationId)
+  const loc = locations.value.find(l => cid(l.id) === cid(locationId))
   if (loc?.currency_override) return loc.currency_override
-  const city = cities.value.find(c => c.id === loc?.city_id)
-  const country = countries.value.find(c => c.id === city?.country_id)
+  const city = cities.value.find(c => cid(c.id) === cid(loc?.city_id))
+  const country = countries.value.find(c => cid(c.id) === cid(city?.country_id))
   return country?.currency_code || 'AED'
 }
 
@@ -1786,8 +1796,8 @@ async function save() {
     if (!saveHidden) return
   }
   // Block if the listing's city has the Listings module disabled
-  const listingLoc  = locations.value.find(l => l.id === form.value.location_id)
-  const listingCity = cities.value.find(c => c.id === listingLoc?.city_id)
+  const listingLoc  = locations.value.find(l => cid(l.id) === cid(form.value.location_id))
+  const listingCity = cities.value.find(c => cid(c.id) === cid(listingLoc?.city_id))
   if (listingCity && listingCity.module_listings === false) {
     listingSaveError.value = `Booking listings are disabled for ${listingCity.name}. A Super Admin must enable the "Listings" module for this city in Countries & Cities before listings can be created here.`
     return
@@ -2354,7 +2364,7 @@ async function onListingDrop(e, targetId) {
   dragOverListingId.value = null
   if (!dragListingId.value || dragListingId.value === targetId) { dragListingId.value = null; return }
   const locId = dragListingLocId.value
-  const arr = listings.value.filter(l => l.location_id === locId)
+  const arr = listings.value.filter(l => cid(l.location_id) === cid(locId))
   const others = listings.value.filter(l => l.location_id !== locId)
   const fromIdx = arr.findIndex(l => l.id === dragListingId.value)
   const toIdx = arr.findIndex(l => l.id === targetId)

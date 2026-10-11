@@ -77,6 +77,10 @@ const listings = ref([])
 const locations = ref([])
 const cities = ref([])
 const countries = ref([])
+// Venue payloads carry city_id / country_id as strings, reference-data cities[] and
+// countries[] carry integers — a strict === between them never matches. Same helper
+// as Wallet.vue and Listings.vue.
+const cid = v => (v === null || v === undefined || v === '') ? '' : String(v)
 const search = ref('')
 const filterCountry = ref([])
 const filterCity = ref([])
@@ -124,7 +128,7 @@ const stateOptions = computed(() => [
 
 function countryOfLocation(locationId) {
   const loc = locations.value.find(l => l.id === locationId)
-  const city = cities.value.find(c => c.id === loc?.city_id)
+  const city = cities.value.find(c => cid(c.id) === cid(loc?.city_id))
   return city?.country_id || null
 }
 
@@ -206,9 +210,9 @@ function currencyForLocation(locationId) {
   const loc = locations.value.find(l => l.id === locationId)
   if (!loc) return ''
   if (loc.currency_override) return loc.currency_override
-  const city = cities.value.find(c => c.id === loc.city_id)
+  const city = cities.value.find(c => cid(c.id) === cid(loc.city_id))
   if (!city) return ''
-  const country = countries.value.find(c => c.id === city.country_id)
+  const country = countries.value.find(c => cid(c.id) === cid(city.country_id))
   return country?.currency_code || ''
 }
 const programById = (id) => programs.value.find(p => p.id === id)
@@ -760,7 +764,7 @@ async function saveDraft() {
   }
   // Block if the program's city has the Classes module disabled (same as saveProgram).
   const pgLoc  = locations.value.find(l => l.id === pgForm.value.location_id)
-  const pgCity = cities.value.find(c => c.id === pgLoc?.city_id)
+  const pgCity = cities.value.find(c => cid(c.id) === cid(pgLoc?.city_id))
   if (pgCity && pgCity.module_classes === false) {
     pgModuleError.value = `Membership programs are disabled for ${pgCity.name}. A Super Admin must enable the "Memberships" module for this city in Countries & Cities before programs can be created here.`
     return
@@ -939,7 +943,7 @@ async function saveProgram() {
 
   // Block if the program's city has the Classes module disabled
   const pgLoc  = locations.value.find(l => l.id === pgForm.value.location_id)
-  const pgCity = cities.value.find(c => c.id === pgLoc?.city_id)
+  const pgCity = cities.value.find(c => cid(c.id) === cid(pgLoc?.city_id))
   if (pgCity && pgCity.module_classes === false) {
     pgModuleError.value = `Membership programs are disabled for ${pgCity.name}. A Super Admin must enable the "Memberships" module for this city in Countries & Cities before programs can be created here.`
     return
@@ -1333,18 +1337,22 @@ async function loadFormOwnerWallets() {
 // existing program never touches its stored commission.
 async function applyCountryProgramCommission() {
   if (pgEditing.value) return
-  const cid = countryOfLocation(pgForm.value.location_id)
-  if (!cid) return
+  const countryId = countryOfLocation(pgForm.value.location_id)
+  if (!countryId) return
+  // commissionRates is a plain array from the Laravel reference-data call. The
+  // Supabase query chain this replaced (.select().eq().maybeSingle()) threw on it,
+  // the catch below ate the error, and every new programme quietly kept the
+  // platform default no matter what the Countries page said.
   try {
     const cr = (await loadReferenceData()).commissionRates
-      .select('rate_percent').eq('country_id', cid).eq('listing_type', 'program').maybeSingle()
+      .find(r => cid(r.country_id) === cid(countryId) && r.listing_type === 'program')
     if (cr?.rate_percent != null) pgForm.value.commission_percentage = Number(cr.rate_percent)
   } catch { /* keep the platform default */ }
 }
 watch(() => pgForm.value.location_id, () => { loadFormOwnerWallets(); applyCountryProgramCommission() })
 
 const pgCountryId = computed(() => countryOfLocation(pgForm.value.location_id))
-const pgCountryName = computed(() => countries.value.find(c => c.id === pgCountryId.value)?.name || 'this country')
+const pgCountryName = computed(() => countries.value.find(c => cid(c.id) === cid(pgCountryId.value))?.name || 'this country')
 const pgProviderProgram = computed(() =>
   !!pgForm.value.location_id && !formLocationIsBookbollOwned.value && !!formLocationOwnerId.value)
 // Blocks creation: the owner has no ACTIVE payout method anywhere (Stripe connected or
