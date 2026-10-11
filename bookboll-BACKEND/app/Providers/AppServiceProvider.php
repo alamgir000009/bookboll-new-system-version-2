@@ -2,6 +2,7 @@
 namespace App\Providers;
 
 use App\Observers\ClassSubscriptionObserver;
+use App\Support\GeoSoftDeletes;
 use App\Support\TenantOrigins;
 use App\Observers\BookingObserver;
 use App\Models\ClassSubscription;
@@ -33,6 +34,8 @@ class AppServiceProvider extends ServiceProvider
         if ($secret !== '') {
             config(['cashier.secret' => $secret]);
         }
+
+        GeoSoftDeletes::register();
 
         $this->allowCorsFromProviderDomains();
     }
