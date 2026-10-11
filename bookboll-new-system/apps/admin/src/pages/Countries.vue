@@ -714,11 +714,17 @@ function cityCountLabel(country) {
 .search-icon {
   position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none;
 }
-.search-input {
+/* Scoped by the wrapper on purpose. style.css styles text inputs with
+   `input:not([type="radio"]):not([type="checkbox"])`, and those two :not()s push it to
+   specificity 0-2-1 — above the 0-2-0 that a single scoped class reaches. A bare
+   `.search-input` therefore lost its padding to the global `10px 12px`, dropping the
+   36px left inset so the text printed straight over the magnifier icon.
+   `.search-bar .search-input` is 0-3-0 and wins. */
+.search-bar .search-input {
   width: 100%; padding: 9px 12px 9px 36px; border: 1px solid var(--border);
   border-radius: 10px; font-size: 14px; background: var(--surface, #ffffff);
 }
-.search-input:focus { outline: none; border-color: var(--primary); }
+.search-bar .search-input:focus { outline: none; border-color: var(--primary); }
 
 .legend {
   display: flex; gap: 20px; margin-bottom: 14px; flex-wrap: wrap;
