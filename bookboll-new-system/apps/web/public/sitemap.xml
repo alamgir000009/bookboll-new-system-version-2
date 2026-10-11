@@ -218,10 +218,19 @@
     <loc>https://bookboll.com/venues/doha/football</loc>
   </url>
   <url>
+    <loc>https://bookboll.com/venues/doha/volleyball</loc>
+  </url>
+  <url>
     <loc>https://bookboll.com/venues/doha/badminton</loc>
   </url>
   <url>
     <loc>https://bookboll.com/venues/doha/basketball</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/doha/padel</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/doha/pickleball</loc>
   </url>
   <url>
     <loc>https://bookboll.com/venues/lahore/abseiling</loc>
@@ -236,10 +245,19 @@
     <loc>https://bookboll.com/venues/qatar/football</loc>
   </url>
   <url>
+    <loc>https://bookboll.com/venues/qatar/volleyball</loc>
+  </url>
+  <url>
     <loc>https://bookboll.com/venues/qatar/badminton</loc>
   </url>
   <url>
     <loc>https://bookboll.com/venues/qatar/basketball</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/qatar/padel</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/qatar/pickleball</loc>
   </url>
   <url>
     <loc>https://bookboll.com/venues/pakistan/abseiling</loc>

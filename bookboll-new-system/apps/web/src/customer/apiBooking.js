@@ -171,7 +171,7 @@ async function ensureLaravelCustomer(customer) {
   return { error: reg.message || 'Could not start checkout.' }
 }
 
-function bookingPayload({ listing, location, selectionByDate, addons, players, customer, payment }) {
+function bookingPayload({ listing, location, selectionByDate, addons, players, customer, payment, surface = 'marketplace' }) {
   const dates = Object.keys(selectionByDate || {}).filter(d => (selectionByDate[d] || []).length).sort()
   if (!dates.length) return { error: 'Please pick at least one time slot.' }
 
@@ -197,17 +197,24 @@ function bookingPayload({ listing, location, selectionByDate, addons, players, c
     add_ons: addonIds.length ? addonIds : undefined,
     phone: customer?.phone || undefined,
     promocode: payment?.promocode || null,
+    // Which storefront this came from. The server needs it to know what a deposit
+    // means: Bookboll's platform fee on the marketplace, the provider's own
+    // site_deposit_percentage on their white-label site. ListingDetail.vue has
+    // always passed `surface` in, but createCustomerBookingsMulti dropped it on the
+    // floor — so an own-site booking quoted the provider's deposit and Stripe
+    // charged the marketplace one.
+    surface: surface === 'site' ? 'site' : 'marketplace',
   }
 }
 
 export async function createCustomerBookingsMulti({
   listing, location, selectionByDate, addons = [], players = 1, customer,
-  payment = { method: 'cash' },
+  payment = { method: 'cash' }, surface = 'marketplace',
 }) {
   const auth = await ensureLaravelCustomer(customer)
   if (auth.error) return { error: auth.error }
 
-  const payload = bookingPayload({ listing, location, selectionByDate, addons, players, customer, payment })
+  const payload = bookingPayload({ listing, location, selectionByDate, addons, players, customer, payment, surface })
   if (payload.error) return payload
 
   const method = payload.payment_method
