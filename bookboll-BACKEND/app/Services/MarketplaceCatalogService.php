@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\ClassProgram;
 use App\Models\HostedGame;
 use App\Models\Listing;
+use App\Services\BookingWalletService;
 use App\Models\LoyaltyProgram;
 use App\Models\Post;
 use App\Models\ProviderWallet;
@@ -726,13 +727,37 @@ class MarketplaceCatalogService
             'cash_on_arrival'         => (bool) ($po['cash_on_arrival'] ?? false),
             'deposit_enabled'         => (bool) ($po['deposit_enabled'] ?? ($deposit['enabled'] ?? ! empty($deposit))),
             'deposit_amount'          => (float) ($po['deposit_amount'] ?? ($deposit['amount'] ?? 0)),
-            'deposit_percentage'      => (float) ($po['deposit_percentage'] ?? ($deposit['percentage'] ?? 20)),
+            // LIVE, not the stored snapshot. On the marketplace the deposit is
+            // Bookboll's platform fee, so it has to be the same number
+            // PaymentService::depositToCharge() will bill — otherwise the storefront
+            // quotes one figure and Stripe takes another. The stored value is only a
+            // record of what the rate was when the listing was last saved.
+            'deposit_percentage'      => $this->marketplaceDepositPct($listing, $po, $deposit),
             'online_payment_enabled'  => (bool) ($listing->online_payment || ($po['online_payment_enabled'] ?? false)),
             'site_deposit_enabled'    => (bool) ($po['site_deposit_enabled'] ?? false),
             'site_deposit_percentage' => (float) ($po['site_deposit_percentage'] ?? 10),
             'site_online_enabled'     => (bool) ($po['site_online_enabled'] ?? false),
             'site_cash_enabled'       => (bool) ($po['site_cash_enabled'] ?? false),
         ];
+    }
+
+    /**
+     * The marketplace deposit percentage to quote: the listing's live commission.
+     *
+     * A fixed deposit amount wins over any percentage (booking.js and
+     * PaymentService agree on that), and a listing carrying one reports 0% so the
+     * storefront shows the amount rather than a misleading percentage.
+     *
+     * @param  array<string, mixed>  $po
+     * @param  array<string, mixed>  $deposit
+     */
+    protected function marketplaceDepositPct(Listing $listing, array $po, array $deposit): float
+    {
+        if ((float) ($deposit['amount'] ?? $po['deposit_amount'] ?? 0) > 0) {
+            return 0.0;
+        }
+
+        return app(BookingWalletService::class)->courtCommissionPct($listing);
     }
 
     /**

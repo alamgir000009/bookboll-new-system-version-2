@@ -6,6 +6,7 @@ use App\Models\Booking;
 use App\Support\AccessScope;
 use App\Support\TenantOrigins;
 use App\Models\Listing;
+use App\Services\BookingWalletService;
 use App\Models\Payment;
 use App\Models\Venue;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -1649,6 +1650,56 @@ class PaymentService
         }
     }
 
+    /**
+     * What to take online now for a deposit booking.
+     *
+     * The deposit means different things on the two surfaces, and getting them
+     * crossed charges the customer something other than the figure they were shown:
+     *
+     *   marketplace — the deposit IS Bookboll's platform fee, so it must track the
+     *                 LIVE commission (listing override → country rate → default).
+     *                 It used to read payment_options.deposit.percentage, which the
+     *                 dashboard only writes when a listing is saved. Raising a
+     *                 country's rate therefore changed nothing for listings already
+     *                 live: Pakistan went to 50% while its listings kept collecting
+     *                 the 15% snapshotted months earlier. The Countries page promises
+     *                 the opposite in as many words — "facility bookings use this
+     *                 rate live".
+     *
+     *   site        — the provider's own white-label site. Bookboll takes nothing
+     *                 here, and the deposit is purely the provider's own no-show
+     *                 protection (site_deposit_percentage). The storefront has always
+     *                 QUOTED that number; this method is what finally charges it.
+     *                 Until now the surface never reached the server, so an own-site
+     *                 booking quoted the provider's 10% and billed the marketplace
+     *                 percentage instead.
+     *
+     * A fixed deposit amount is surface-agnostic and still wins: it is charged per
+     * booking, matching paymentSplit() in the storefront's booking.js.
+     */
+    protected function depositToCharge(Listing $listing, float $totalPrice, int $totalBookings, string $surface): float
+    {
+        $po      = is_array($listing->payment_options) ? $listing->payment_options : [];
+        $deposit = is_array($po['deposit'] ?? null) ? $po['deposit'] : [];
+
+        $amount = (float) ($deposit['amount'] ?? $po['deposit_amount'] ?? 0);
+        if ($amount > 0) {
+            return $amount * max(1, $totalBookings);
+        }
+
+        $pct = $surface === 'site'
+            ? (float) ($po['site_deposit_percentage'] ?? 0)
+            : app(BookingWalletService::class)->courtCommissionPct($listing);
+
+        if ($pct <= 0) {
+            return 0.0;
+        }
+
+        // floor(), not round() — booking.js shows the same figure next to the Pay
+        // button and Stripe has to charge exactly what the customer was quoted.
+        return (float) floor($totalPrice * $pct / 100);
+    }
+
     public function createCheckoutSession(array $validated, $user)
     {
         try {
@@ -1690,17 +1741,12 @@ class PaymentService
             $paymentType = 'full';
 
             if ($validated['payment_method'] === 'deposit_remaining_on_arrival') {
-                $depositAmount = 0;
-                if (! empty($listing->payment_options) && isset($listing->payment_options['deposit'])) {
-                    $deposit = $listing->payment_options['deposit'];
-
-                    if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
-                        $depositAmount = $deposit['amount'] * $totalBookings;
-                    } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
-                        $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
-                    }
-                }
-                $paymentAmount = $depositAmount;
+                $paymentAmount = $this->depositToCharge(
+                    $listing,
+                    $totalPrice,
+                    $totalBookings,
+                    (string) ($validated['surface'] ?? 'marketplace')
+                );
                 $paymentType = 'deposit';
             }
 

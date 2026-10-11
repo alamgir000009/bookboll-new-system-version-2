@@ -2005,6 +2005,11 @@ class BookingService
             'blocks.*.end_time'      => 'required|date_format:H:i',
             'blocks.*.quantity'      => 'nullable|numeric|min:1',
             'payment_method'         => 'required|in:' . implode(',', $methods),
+            // Which storefront the booking came from. It decides what a deposit
+            // means: Bookboll's platform fee on the marketplace, the provider's own
+            // no-show deposit on their white-label site. Absent = marketplace, which
+            // is what every existing caller sends.
+            'surface'                => 'nullable|in:marketplace,site',
             'notes'                  => 'nullable|string|max:500',
             'phone'                  => 'nullable|string|min:5',
             'add_ons'                => 'nullable|array',
