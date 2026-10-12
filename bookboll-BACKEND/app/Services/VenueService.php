@@ -852,8 +852,13 @@ class VenueService
             'status'             => 'nullable|in:active,inactive',
             'approval_status'    => 'nullable|in:pending,approved,rejected',
             'eligibility_status' => 'nullable|in:eligible,paused,ineligible',
-            'latitude'           => 'nullable|numeric',
-            'longitude'          => 'nullable|numeric',
+            // Ranges, not just "numeric". The dashboard now lets a provider TYPE the
+            // coordinates instead of only dragging the pin, so a transposed pair
+            // (74.32, 31.48 — Lahore's numbers the wrong way round) or a stray digit
+            // is a real possibility. An impossible point would be stored happily and
+            // then silently poison the storefront's distance badge.
+            'latitude'           => 'nullable|numeric|between:-90,90',
+            'longitude'          => 'nullable|numeric|between:-180,180',
             'timezone_override'  => 'nullable|string|max:64',
             'currency_override'  => 'nullable|string|max:8',
             'min_advance_booking'=> 'nullable|integer|min:0',
