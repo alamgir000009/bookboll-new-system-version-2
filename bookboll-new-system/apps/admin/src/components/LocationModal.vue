@@ -143,7 +143,7 @@ const providerName = (id) => {
   return p?.business_name || p?.full_name || '—'
 }
 
-const canSave = computed(() => !!form.value.name && !!form.value.city_id)
+const canSave = computed(() => !!form.value.name && !!form.value.city_id && !coordsInvalid.value)
 
 /** Track which country_ids already have cities fetched (lazy load). */
 const citiesLoadedFor = new Set()
@@ -359,6 +359,36 @@ function setPoint(lat, lng, reverse = false) {
   else markerInst.setLatLng([lat, lng])
   if (reverse) reverseGeocode(lat, lng)
 }
+/* ── Typing the coordinates in by hand ────────────────────────────────────────
+   The pin is the easy path, but it is not always the available one: a provider
+   may have the figures from a survey, a GPS reading or a colleague, and dropping
+   a pin accurately enough to matter (a court inside a school compound) is fiddly.
+   These two inputs bind to the SAME form fields the map writes, so the map and
+   the boxes stay in step both ways without a watcher — clicking the map fills the
+   numbers in, and committing a number moves the pin. */
+function inRange(v, max) {
+  const n = Number(v)
+  return Number.isFinite(n) && Math.abs(n) <= max
+}
+const coordsInvalid = computed(() => {
+  const blank = (v) => v === null || v === undefined || v === ''
+  const la = form.value.latitude, ln = form.value.longitude
+  if (blank(la) && blank(ln)) return false          // no pin yet is allowed
+  if (blank(la) !== blank(ln)) return true          // half a coordinate is not
+  return !inRange(la, 90) || !inRange(ln, 180)
+})
+/** Commit a typed value: move the pin to it. */
+function applyTypedCoords() {
+  if (coordsInvalid.value) return
+  const lat = Number(form.value.latitude)
+  const lng = Number(form.value.longitude)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+  // No reverse geocode: someone who typed an exact coordinate did not ask for
+  // their address field to be rewritten underneath them.
+  setPoint(lat, lng)
+  if (mapInst) mapInst.setView([lat, lng], Math.max(mapInst.getZoom() || 0, 15))
+}
+
 function initMap() {
   if (!mapEl.value) return
   if (mapInst) { mapInst.invalidateSize(); return }
@@ -642,7 +672,35 @@ async function applyScheduleToSelected() {
             </div>
             <div ref="mapEl" class="bb-map"></div>
             <div v-if="geoStatus === 'error'" class="geo-error" style="margin-top:6px;">Location access denied or unavailable — pin it manually on the map.</div>
-            <div v-if="form.latitude && form.longitude" class="geo-success" style="margin-top:6px;">
+
+            <!-- Editable coordinates, bound to the same fields the map writes: drag
+                 the pin and these fill in; type a value and the pin moves. -->
+            <div class="coord-row">
+              <div class="coord-field">
+                <label class="form-label">Latitude</label>
+                <input
+                  v-model="form.latitude"
+                  type="number" step="any" min="-90" max="90" inputmode="decimal"
+                  placeholder="e.g. 31.4805748"
+                  :class="{ 'input-invalid': coordsInvalid }"
+                  @change="applyTypedCoords" @keyup.enter="applyTypedCoords"
+                />
+              </div>
+              <div class="coord-field">
+                <label class="form-label">Longitude</label>
+                <input
+                  v-model="form.longitude"
+                  type="number" step="any" min="-180" max="180" inputmode="decimal"
+                  placeholder="e.g. 74.3205357"
+                  :class="{ 'input-invalid': coordsInvalid }"
+                  @change="applyTypedCoords" @keyup.enter="applyTypedCoords"
+                />
+              </div>
+            </div>
+            <div v-if="coordsInvalid" class="geo-error" style="margin-top:6px;">
+              Latitude must be between −90 and 90, longitude between −180 and 180 — and both are needed, not one.
+            </div>
+            <div v-else-if="form.latitude && form.longitude" class="geo-success" style="margin-top:6px;">
               <Check :size="13" />Coordinates set: {{ form.latitude }}, {{ form.longitude }}
             </div>
           </div>
@@ -859,6 +917,9 @@ async function applyScheduleToSelected() {
 .map-hint { font-size:12px; color:var(--text-muted); }
 .bb-map { height:240px; width:100%; border-radius:10px; border:1px solid var(--border); overflow:hidden; z-index:0; }
 
+.coord-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+.coord-field { display: flex; flex-direction: column; gap: 5px; }
+@media (max-width: 600px) { .coord-row { grid-template-columns: 1fr; } }
 .maps-link-row { display:flex; gap:8px; }
 .maps-link-row input { flex:1; }
 
