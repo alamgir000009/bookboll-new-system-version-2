@@ -6,7 +6,7 @@ import { loadFacility } from '../../customer/data.js'
 import { useSeo, sportsActivityLocationLd } from '../../lib/seo.js'
 import { cityForId, slugifySport, facilityPath, slugifyCity } from '../../lib/cityPages.js'
 import { isWhiteLabel } from '../../lib/brand.js'
-import { ArrowLeft, MapPin, Building2, Users, ChevronRight, Navigation, Expand } from 'lucide-vue-next'
+import { ArrowLeft, MapPin, Building2, Users, ChevronRight, Navigation, Expand, Images } from 'lucide-vue-next'
 import Lightbox from '../components/Lightbox.vue'
 
 const route = useRoute()
@@ -117,6 +117,12 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
       <button v-if="data.location.address" type="button" class="fd-addr fd-addr-link" @click="openMaps" :title="data.mapsUrl ? 'Open in Google Maps' : ''">
         <MapPin :size="16" /><span>{{ data.location.address }}</span><Navigation v-if="data.mapsUrl" :size="14" class="fd-addr-go" />
       </button>
+      <!-- Phones hide the hero and the thumbnail strip (see the ≤760px block): the
+           venue photo pushed the courts — the only thing anyone came here to tap —
+           below the fold. The photos are still one tap away from here. -->
+      <button v-if="gallery.length" type="button" class="fd-photos-m" @click="lightbox = true">
+        <Images :size="14" />{{ gallery.length }} photo{{ gallery.length === 1 ? '' : 's' }} of this venue
+      </button>
 
       <h2 class="fd-h2">Courts & pitches</h2>
       <div v-if="!data.listings.length" class="cempty"><Building2 :size="34" /><span>No bookable courts listed yet.</span></div>
@@ -199,6 +205,15 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
 .fd-addr-link:hover { color: var(--brand); }
 .fd-addr-go { color: var(--brand); }
 .fd-h2 { font-size: 19px; font-weight: 800; color: #0f172a; margin: 26px 0 14px; }
+/* Phone-only entry point to the lightbox. Styled here, switched on in the two
+   phone bands below (portrait ≤760px, and landscape-on-a-phone); desktop keeps the
+   hero + thumbnail strip and never needs it. */
+.fd-photos-m {
+  display: none; align-items: center; gap: 6px;
+  margin-top: 9px; padding: 0; min-height: 44px;
+  border: none; background: none; cursor: pointer;
+  font: inherit; font-size: 13.5px; font-weight: 700; color: var(--brand);
+}
 
 .fd-courts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
 /* A phone turned sideways is still a phone. Its width jumps to 844-932px, clearing
@@ -207,6 +222,11 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
    short and landscape — real tablets are ~768px tall and keep the grid. */
 @media (max-height: 540px) and (orientation: landscape) {
   .fd-courts { grid-template-columns: 1fr; gap: 12px; }
+  /* Sideways, the viewport is ~390px TALL — the 240px hero would eat nearly two
+     thirds of it. Same call as the portrait block: drop the venue imagery, keep
+     the photos one tap away. */
+  .fd-hero, .fd-thumbs { display: none; }
+  .fd-photos-m { display: inline-flex; min-height: 40px; }
 }
 .ccard { display: block; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; overflow: hidden; text-decoration: none; transition: transform .12s, box-shadow .12s; }
 .ccard:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); }
@@ -252,20 +272,28 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
   /* Trim the pre-hero run-up */
   .cback { margin-bottom: 10px; }
 
-  /* Proper 16:9 photo proportions (not a thin strip), still compact.
-     220px cap clears the ~202px 16:9 height at 360px wide (200px clipped it). */
-  .fd-hero { height: auto; aspect-ratio: 16 / 9; max-height: 220px; border-radius: 14px; }
+  /* ── No venue imagery on a phone ──────────────────────────────────────────
+     The hero plus the thumbnail strip ran to roughly 270px before the venue name
+     even started — on a 390x844 screen that is most of the first viewport spent on
+     a picture of a building, and the courts (the only thing on this page anyone can
+     act on) opened below the fold. Both are hidden here; the photos stay reachable
+     through the "N photos" button, which opens the same lightbox the hero did. */
+  .fd-hero, .fd-thumbs { display: none; }
+
+  /* The venue header is now the top of the page, so it carries the spacing the
+     hero used to provide — compact, but not cramped against the back link. */
+  .fd-name { font-size: 21px; line-height: 1.25; margin: 2px 0 7px; }
 
   /* Long unbroken address tokens must wrap, not push the page sideways */
+  .fd-addr { align-items: flex-start; font-size: 14px; line-height: 1.45; }
   .fd-addr span { min-width: 0; overflow-wrap: anywhere; }
+  .fd-addr svg { flex-shrink: 0; margin-top: 1px; }
 
-  /* Slimmer thumbnail strip (still horizontally scrollable) */
-  .fd-thumbs { margin-top: 8px; }
-  .fd-thumb { width: 64px; height: 48px; }
+  /* Photos, demoted to one line (44px tall, so it is a real tap target) */
+  .fd-photos-m { display: inline-flex; }
 
   /* Tighter heading run-up to the court grid */
-  .fd-name { font-size: 22px; margin: 12px 0 6px; }
-  .fd-h2 { font-size: 17px; margin: 18px 0 10px; }
+  .fd-h2 { font-size: 17px; margin: 14px 0 10px; }
 
   /* Single-column court list, denser cards → more tappable courts per screen */
   .fd-courts { grid-template-columns: 1fr; gap: 12px; }
