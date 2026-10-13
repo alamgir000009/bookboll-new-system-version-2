@@ -7,12 +7,26 @@ use Illuminate\Http\Request;
 
 class BusinessController extends Controller
 {
-    public function __construct(protected BusinessService $businessService)
-    {}
+    public function __construct(
+        protected BusinessService $businessService,
+        protected \App\Services\EmailVerificationService $emailVerification,
+    ) {}
 
     public function register(Request $request)
     {
         return $this->businessService->register($request);
+    }
+
+    /** Signup step 1: email the six-digit code. */
+    public function sendEmailOtp(Request $request)
+    {
+        return $this->emailVerification->sendOtp($request);
+    }
+
+    /** Signup step 1: accept the code and issue the proof registration will present. */
+    public function verifyEmailOtp(Request $request)
+    {
+        return $this->emailVerification->verifyOtp($request);
     }
 
     public function usernameAvailable(Request $request)

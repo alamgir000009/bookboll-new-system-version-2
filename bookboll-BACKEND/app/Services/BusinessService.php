@@ -19,6 +19,7 @@ class BusinessService
         private User $user,
         private Business $business,
         private UserService $userService,
+        private EmailVerificationService $emailVerification,
     ) {}
 
     /**
@@ -140,6 +141,9 @@ class BusinessService
             'email'                 => 'required|email|max:255',
             'password'              => 'required|string|min:8|confirmed',
             'country_id'            => 'nullable|integer|exists:countries,id',
+            // Proof that the signer can read the address they typed, issued by
+            // EmailVerificationService::verifyOtp() before this endpoint is called.
+            'email_verification_token' => 'required|string|max:128',
         ]);
 
         $username = self::normalizeUsername($data['username']);
@@ -166,6 +170,15 @@ class BusinessService
         // customer adding a business. Attach the business to that account rather
         // than refusing, but only once the password proves they own it; this
         // endpoint is public, so accepting the email alone would be takeover.
+        // Checked before the username/password branches below so a stale or forged
+        // token is refused on its own terms, rather than surfacing as some unrelated
+        // validation error further down.
+        if (! $this->emailVerification->tokenIsValid($data['email'], $data['email_verification_token'] ?? null)) {
+            $msg = 'Please confirm your email address before continuing.';
+
+            return sendError($msg, ['email_verification_token' => [$msg]], 422);
+        }
+
         $existing = $this->user::where('email', $data['email'])->first();
 
         if ($existing) {
@@ -204,6 +217,18 @@ class BusinessService
                 $existing->forceFill(['country_id' => (int) $data['country_id']])->save();
             }
 
+            // The OTP above proved this mailbox, which is exactly what the column
+            // records — for a brand-new account and equally for an older one adding a
+            // business, so a provider is never left unconfirmed by which branch they
+            // came down.
+            //
+            // forceFill, not mass assignment: `email_verified_at` is deliberately NOT
+            // in User::$fillable, and must not be — it would then be settable by any
+            // request that reaches a fill(), which is the whole thing this proves.
+            if (! $user->email_verified_at) {
+                $user->forceFill(['email_verified_at' => now()])->save();
+            }
+
             // Additive: an existing customer keeps the customer role and gains this
             // one, so their bookings and rewards are untouched.
             if (! $user->hasRole('provider_admin')) {
@@ -227,6 +252,10 @@ class BusinessService
 
             return sendError('Could not create business account.', [], 500);
         }
+
+        // Only now — a registration that failed on a taken username must not cost the
+        // visitor another round-trip through their inbox.
+        $this->emailVerification->consume($data['email']);
 
         AdminAlerts::toPlatform('provider', 'ok',
             'New provider signed up — '.($business->name ?: $user->name),

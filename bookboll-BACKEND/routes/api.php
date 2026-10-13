@@ -92,6 +92,15 @@ Route::post('admin-app/reset-password', [UserController::class, 'adminAppResetPa
 Route::prefix('business')->name('business.')->group(function () {
     Route::post('register', [BusinessController::class, 'register'])->name('register');
     Route::get('username-available', [BusinessController::class, 'usernameAvailable'])->name('username-available');
+
+    // Email ownership proof, taken BEFORE the account is written (see
+    // EmailVerificationService). Public, and each one sends mail or guesses at a
+    // secret, so both are throttled per IP on top of the service's own per-address
+    // cooldown and attempt budget.
+    Route::post('email/send-otp', [BusinessController::class, 'sendEmailOtp'])
+        ->middleware('throttle:6,10')->name('email.send-otp');
+    Route::post('email/verify-otp', [BusinessController::class, 'verifyEmailOtp'])
+        ->middleware('throttle:15,10')->name('email.verify-otp');
     Route::get('countries', [BusinessController::class, 'countries'])->name('countries');
 });
 
