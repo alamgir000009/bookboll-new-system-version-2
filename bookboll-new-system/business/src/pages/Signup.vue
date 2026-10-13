@@ -3,8 +3,11 @@
  * Signup.vue — provider onboarding wizard.
  *
  * Three simple steps:
- *   1. Business details  → POST /api/business/register (Laravel) creates user +
- *      businesses row + provider_admin + Sanctum token (stored in localStorage).
+ *   1. Business details  → the email is PROVED first (POST /business/email/send-otp,
+ *      then /verify-otp), and only then does POST /api/business/register create the
+ *      user + businesses row + provider_admin + Sanctum token (stored in localStorage).
+ *      Taking the proof before the write means `users.email_verified_at` is true from
+ *      the moment the row exists — there is no unconfirmed-provider state to clean up.
  *   2. Set up website    → PUT /api/business/brand (Laravel) saves brand_* fields.
  *      Skippable — Skip advances without writing; finish later in My Website.
  *   3. Done              → welcome + the live website link → admin login (email prefilled).
@@ -12,11 +15,11 @@
  * Kept deliberately light: only step 1 is required; step 2 pre-fills smart defaults
  * (brand name = business name, subdomain = username, teal theme).
  */
-import { ref, computed, watch, onMounted } from 'vue'
-import { registerBusiness, checkUsername as apiCheckUsername, loadCountries, updateBusinessBrand, firstApiError, getApiToken, clearApiToken } from '../lib/businessAuth.js'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { registerBusiness, checkUsername as apiCheckUsername, loadCountries, updateBusinessBrand, firstApiError, getApiToken, clearApiToken, sendEmailOtp, verifyEmailOtp } from '../lib/businessAuth.js'
 import { uploadImage } from '../lib/imageUpload.js'
 import { brandPreviewUrl, brandHost, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
-import { Eye, EyeOff, Loader, Check, ArrowRight, ArrowLeft, Globe, Upload, X, Rocket, Copy, ExternalLink, RotateCcw, Home, Dumbbell, GraduationCap, Search, Sparkles, Lock } from 'lucide-vue-next'
+import { Eye, EyeOff, Loader, Check, ArrowRight, ArrowLeft, Globe, Upload, X, Rocket, Copy, ExternalLink, RotateCcw, Home, Dumbbell, GraduationCap, Search, Sparkles, Lock, Mail, ShieldCheck } from 'lucide-vue-next'
 import BrandMark from '../components/BrandMark.vue'
 import { adminBrand, adminLogoSquareStyle } from '../lib/adminBrand.js'
 import MultiSelect from '../components/MultiSelect.vue'
@@ -40,6 +43,95 @@ onMounted(async () => {
   const res = await loadCountries()
   countries.value = res.success ? (res.data?.countries || []) : []
 })
+
+// ── Email ownership, proved BEFORE the account is created ────────────────────
+// The code is checked here on step 1 rather than after signing up, so a provider row
+// is never written for an address nobody can read. registerBusiness() then carries the
+// token this produces; without it the API refuses to create anything.
+const otp            = ref('')
+const otpSent        = ref(false)
+const otpSending     = ref(false)
+const otpChecking    = ref(false)
+const emailVerified  = ref(false)
+const emailToken     = ref('')
+const otpErr         = ref('')
+const otpNote        = ref('')
+const resendIn       = ref(0)       // cooldown seconds remaining
+let resendTimer
+
+const emailLooksValid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.value.trim()))
+
+function startResendCountdown(seconds = 60) {
+  clearInterval(resendTimer)
+  resendIn.value = seconds
+  resendTimer = setInterval(() => {
+    if (--resendIn.value <= 0) clearInterval(resendTimer)
+  }, 1000)
+}
+onBeforeUnmount(() => clearInterval(resendTimer))
+
+// Editing the address throws away everything proved about the old one — otherwise a
+// visitor could verify one mailbox and register a different address with the token.
+watch(email, () => {
+  otpSent.value = false
+  emailVerified.value = false
+  emailToken.value = ''
+  otp.value = ''
+  otpErr.value = ''
+  otpNote.value = ''
+})
+
+async function requestOtp() {
+  otpErr.value = ''
+  otpNote.value = ''
+  if (!emailLooksValid.value) { otpErr.value = 'Enter a valid email address first.'; return }
+  otpSending.value = true
+  const res = await sendEmailOtp(email.value.trim())
+  otpSending.value = false
+  if (!res.success) {
+    const wait = Number(res.errors?.retry_after || res.data?.retry_after || 0)
+    if (wait > 0) startResendCountdown(wait)
+    otpErr.value = firstApiError(res, 'Could not send the code — please try again.')
+    return
+  }
+  otpSent.value = true
+  otpNote.value = `Code sent to ${email.value.trim()}`
+  startResendCountdown(Number(res.data?.resend_after) || 60)
+}
+
+async function confirmOtp() {
+  otpErr.value = ''
+  if (otp.value.length !== 6) { otpErr.value = 'Enter the 6-digit code from your email.'; return }
+  otpChecking.value = true
+  const res = await verifyEmailOtp(email.value.trim(), otp.value)
+  otpChecking.value = false
+  if (!res.success) {
+    otpErr.value = firstApiError(res, 'That code is not right.')
+    return
+  }
+  emailToken.value = res.data?.email_verification_token || ''
+  emailVerified.value = !!emailToken.value
+  otpNote.value = ''
+  clearInterval(resendTimer); resendIn.value = 0
+}
+
+/** Digits only, and auto-submit the moment six are in — nobody wants to press Verify. */
+/** Verified locks the field; this is the way back out of it. */
+function changeEmail() {
+  emailVerified.value = false
+  emailToken.value = ''
+  otpSent.value = false
+  otp.value = ''
+  otpErr.value = ''
+  otpNote.value = ''
+  clearInterval(resendTimer); resendIn.value = 0
+}
+
+function onOtpInput(e) {
+  otp.value = (e.target.value || '').replace(/\D/g, '').slice(0, 6)
+  otpErr.value = ''
+  if (otp.value.length === 6) confirmOtp()
+}
 
 // ── Business username = the PERMANENT web address (username.bookboll.com) ─────
 // Picked once here; locked afterwards (wizard step 2 + My Website show it read-only).
@@ -78,6 +170,7 @@ async function createAccount() {
   if (userStatus.value === 'checking') { err1.value = 'Still checking your username — one second, then try again.'; return }
   if (!businessTypes.value.length) { err1.value = 'Select what kind of business you run (you can pick several).'; return }
   if (!email.value.trim())        { err1.value = 'Please enter your email address.'; return }
+  if (!emailVerified.value)       { err1.value = 'Confirm your email address first — we sent you a 6-digit code.'; return }
   if (password.value.length < 8)  { err1.value = 'Password must be at least 8 characters.'; return }
 
   creating.value = true
@@ -90,6 +183,7 @@ async function createAccount() {
     password: password.value,
     password_confirmation: password.value,
     country_id: countryId.value ? Number(countryId.value) : null,
+    email_verification_token: emailToken.value,
   })
   creating.value = false
   if (!res.success) {
@@ -260,9 +354,52 @@ async function goDashboard() {
             <MultiSelect v-model="businessTypes" :options="typeOptions" placeholder="Select business type(s)" :max-display="2" />
           </div>
 
+          <!-- Email + proof. The address is confirmed here, before Continue, so no
+               account is ever created for a mailbox nobody can open. -->
           <div class="auth-field">
             <label class="auth-label">Email</label>
-            <input v-model="email" type="email" class="auth-input" placeholder="you@yourbusiness.com" autocomplete="email" />
+            <div class="ob-mail">
+              <input v-model="email" type="email" class="auth-input ob-mail-in"
+                     :class="{ 'is-verified': emailVerified }"
+                     :readonly="emailVerified" placeholder="you@yourbusiness.com" autocomplete="email" />
+              <span v-if="emailVerified" class="ob-mail-ok"><ShieldCheck :size="15" /> Verified</span>
+              <button v-else type="button" class="ob-mail-btn"
+                      :disabled="!emailLooksValid || otpSending || resendIn > 0"
+                      @click="requestOtp">
+                <Loader v-if="otpSending" :size="14" class="auth-spin" />
+                <Mail v-else :size="14" />
+                {{ otpSending ? 'Sending…' : resendIn > 0 ? `Resend in ${resendIn}s` : otpSent ? 'Resend code' : 'Verify email' }}
+              </button>
+            </div>
+
+            <!-- The code box only appears once something has actually been sent. -->
+            <div v-if="otpSent && !emailVerified" class="ob-otp">
+              <div class="ob-otp-head">
+                <span class="ob-otp-t">Enter the 6-digit code</span>
+                <button type="button" class="ob-otp-edit" @click="otpSent = false; otp = ''">Change email</button>
+              </div>
+              <div class="ob-otp-row">
+                <input :value="otp" @input="onOtpInput" class="auth-input ob-otp-in"
+                       inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+                       placeholder="••••••" spellcheck="false" />
+                <button type="button" class="ob-otp-btn" :disabled="otp.length !== 6 || otpChecking" @click="confirmOtp">
+                  <Loader v-if="otpChecking" :size="14" class="auth-spin" />
+                  <Check v-else :size="14" />
+                  {{ otpChecking ? 'Checking…' : 'Confirm' }}
+                </button>
+              </div>
+              <div class="ob-otp-foot">
+                <span v-if="otpErr" class="ob-bad">{{ otpErr }}</span>
+                <span v-else-if="otpNote" class="ob-ok"><Check :size="13" /> {{ otpNote }} — it expires in 10 minutes</span>
+                <span v-else class="ob-muted">Check your inbox, and your spam folder.</span>
+              </div>
+            </div>
+            <div v-else-if="emailVerified" class="ob-sub-status">
+              <span class="ob-ok"><Check :size="13" /> This address is confirmed</span>
+              <button type="button" class="ob-otp-edit" @click="changeEmail">Use a different email</button>
+            </div>
+            <div v-else-if="otpErr" class="ob-sub-status"><span class="ob-bad">{{ otpErr }}</span></div>
+            <div v-else class="ob-sub-status"><span class="ob-muted">We'll send a 6-digit code to confirm this address.</span></div>
           </div>
 
           <div class="auth-row">
@@ -452,15 +589,23 @@ async function goDashboard() {
 <style scoped>
 .auth-shell {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #0f766e22 100%);
-  padding: 24px;
+  background:
+    radial-gradient(900px 520px at 12% -10%, rgba(20,184,166,.20), transparent 60%),
+    radial-gradient(760px 480px at 100% 110%, rgba(13,148,136,.22), transparent 62%),
+    linear-gradient(135deg, #0b1220 0%, #16233a 58%, #0f766e22 100%);
+  padding: 40px 24px;
 }
+/* 640px rather than 520: step 1 is a seven-field form, and the extra 120px is what
+   lets the paired rows (name/business, country/password) breathe instead of reading
+   as two cramped columns. Step 2 still widens further for the live site preview. */
 .auth-card {
-  width: 100%; max-width: 520px; background: var(--surface, #ffffff); border-radius: 20px;
-  padding: 32px 36px 28px; box-shadow: 0 24px 60px rgba(0,0,0,.35);
-  transition: max-width .2s;
+  width: 100%; max-width: 640px; background: var(--surface, #ffffff); border-radius: 22px;
+  padding: 38px 44px 32px;
+  border: 1px solid rgba(255,255,255,.08);
+  box-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 30px 70px rgba(2,6,23,.45);
+  transition: max-width .22s ease;
 }
-.auth-card.wide { max-width: 960px; }
+.auth-card.wide { max-width: 1020px; }
 .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
 .auth-logo {
   width: 44px; height: 44px; border-radius: 12px;
@@ -486,21 +631,23 @@ async function goDashboard() {
 .ob-line { flex: 1; height: 2px; background: var(--border, #e2e8f0); border-radius: 2px; }
 .ob-line.done { background: #14b8a6; }
 
-.auth-heading { font-size: 22px; font-weight: 800; color: #0f172a; margin: 0 0 4px; }
-.auth-sub { font-size: 14px; color: var(--text-muted, #64748b); margin: 0 0 22px; line-height: 1.5; }
+.auth-heading { font-size: 25px; font-weight: 800; color: #0f172a; margin: 0 0 5px; letter-spacing: -.01em; }
+.auth-sub { font-size: 14.5px; color: var(--text-muted, #64748b); margin: 0 0 24px; line-height: 1.55; }
 
-.auth-form { display: flex; flex-direction: column; gap: 14px; }
-.auth-row  { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.auth-form { display: flex; flex-direction: column; gap: 16px; }
+.auth-row  { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 560px) { .auth-row { grid-template-columns: 1fr; } }
 
 .auth-field { display: flex; flex-direction: column; gap: 6px; }
 .auth-label { font-size: 13px; font-weight: 600; color: #374151; }
 .auth-opt { font-weight: 500; color: var(--text-light, #94a3b8); }
 .auth-input {
-  width: 100%; padding: 10px 14px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px;
-  font-size: 14px; color: #0f172a; background: var(--surface, #ffffff); box-sizing: border-box;
-  transition: border-color .15s, box-shadow .15s;
+  width: 100%; padding: 12px 14px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 11px;
+  font-size: 14.5px; color: #0f172a; background: #fbfdfe; box-sizing: border-box;
+  transition: border-color .15s, box-shadow .15s, background .15s;
 }
+.auth-input:hover:not(:focus):not([readonly]) { border-color: #cbd5e1; }
+.auth-input:focus { background: var(--surface, #ffffff); }
 .auth-input:focus { outline: none; border-color: #14b8a6; box-shadow: 0 0 0 3px rgba(20,184,166,.12); }
 .auth-select { cursor: pointer; }
 
@@ -513,14 +660,67 @@ async function goDashboard() {
 .auth-pw-eye:hover { color: #0f172a; }
 
 .auth-hint { margin-top: 6px; font-size: 12px; line-height: 1.4; color: var(--text-muted, #64748b); }
+
+/* ── Email verification (step 1) ────────────────────────────────────────────── */
+.ob-mail { display: flex; gap: 8px; align-items: stretch; }
+.ob-mail-in { flex: 1; min-width: 0; }
+.ob-mail-in.is-verified { border-color: #5eead4; background: #f0fdfa; color: #0f766e; font-weight: 600; }
+.ob-mail-btn {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 0 15px; border: 1.5px solid #99f6e4; border-radius: 11px;
+  background: #f0fdfa; color: #0f766e; font-size: 13.5px; font-weight: 700; cursor: pointer;
+  transition: background .15s, border-color .15s, opacity .15s;
+}
+.ob-mail-btn:hover:not(:disabled) { background: #ccfbf1; border-color: #5eead4; }
+.ob-mail-btn:disabled { opacity: .55; cursor: not-allowed; }
+.ob-mail-ok {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 0 14px; border-radius: 11px; background: #ecfdf5; border: 1.5px solid #a7f3d0;
+  color: #047857; font-size: 13.5px; font-weight: 800;
+}
+
+/* The code box: a panel, so it reads as one task rather than another loose field. */
+.ob-otp {
+  margin-top: 10px; padding: 14px; border-radius: 13px;
+  border: 1.5px solid #99f6e4; background: linear-gradient(180deg, #f0fdfa, #ffffff);
+}
+.ob-otp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+.ob-otp-t { font-size: 13px; font-weight: 800; color: #0f766e; }
+.ob-otp-edit { border: none; background: none; padding: 0; font-size: 12.5px; font-weight: 700; color: var(--text-muted, #64748b); cursor: pointer; text-decoration: underline; }
+.ob-otp-edit:hover { color: #0f172a; }
+.ob-otp-row { display: flex; gap: 8px; }
+.ob-otp-in {
+  flex: 1; min-width: 0; text-align: center;
+  font-size: 22px; font-weight: 800; letter-spacing: .42em; text-indent: .42em;
+  padding: 11px 14px; background: #fff;
+}
+.ob-otp-btn {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 0 18px; border: none; border-radius: 11px;
+  background: linear-gradient(135deg, #14b8a6, #0f766e); color: #fff;
+  font-size: 14px; font-weight: 700; cursor: pointer; transition: opacity .15s;
+}
+.ob-otp-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ob-otp-foot { margin-top: 9px; font-size: 12.5px; line-height: 1.45; }
+.ob-mail + .ob-sub-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .ob-mail { flex-wrap: wrap; }
+  .ob-mail-btn, .ob-mail-ok { width: 100%; justify-content: center; padding: 11px 15px; }
+  .ob-otp-row { flex-direction: column; }
+  .ob-otp-btn { padding: 12px 18px; justify-content: center; }
+}
 .auth-error { font-size: 13px; color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 12px; margin-top: 14px; }
 
 .auth-btn {
-  padding: 12px 18px; border: none; border-radius: 10px;
+  padding: 13px 18px; border: none; border-radius: 11px;
   background: linear-gradient(135deg, #14b8a6, #0f766e); color: #fff;
   font-size: 15px; font-weight: 700; cursor: pointer; display: flex;
-  align-items: center; justify-content: center; gap: 8px; transition: opacity .15s;
+  align-items: center; justify-content: center; gap: 8px;
+  box-shadow: 0 6px 18px rgba(13,148,136,.28);
+  transition: opacity .15s, transform .12s, box-shadow .15s;
 }
+.auth-btn:active:not(:disabled) { transform: translateY(1px); }
+.auth-btn:disabled { box-shadow: none; }
 .auth-form .auth-btn { width: 100%; margin-top: 4px; }
 .auth-btn:hover:not(:disabled) { opacity: .92; }
 .auth-btn:disabled { opacity: .6; cursor: not-allowed; }

@@ -62,6 +62,7 @@ export function firstApiError(res, fallback = 'Something went wrong.') {
  *   password: string,
  *   password_confirmation: string,
  *   country_id?: number|null,
+ *   email_verification_token: string,   // from verifyEmailOtp() — required
  * }} payload
  */
 export async function registerBusiness(payload) {
@@ -75,6 +76,19 @@ export async function registerBusiness(payload) {
     })
   }
   return res
+}
+
+/**
+ * Signup email proof. The account is only written once the code has been accepted, so
+ * these two run BEFORE registerBusiness() — not after it.
+ */
+export async function sendEmailOtp(email) {
+  return apiFetch('/business/email/send-otp', { method: 'POST', body: { email } })
+}
+
+/** @returns {Promise<{success:boolean,data?:{email_verification_token:string}}>} */
+export async function verifyEmailOtp(email, otp) {
+  return apiFetch('/business/email/verify-otp', { method: 'POST', body: { email, otp } })
 }
 
 export async function checkUsername(username) {
