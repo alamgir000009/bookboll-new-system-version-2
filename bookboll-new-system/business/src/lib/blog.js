@@ -73,6 +73,26 @@ export async function loadPostBySlug(slug, audience = 'marketplace') {
   }
 }
 
+/* ── business.bookboll.com/blog ────────────────────────────────────────────────
+   The business blog (type=business) is its own publication, written for venue
+   owners. It starts out empty, and the page is linked from every page header and
+   is indexable — so until it has posts of its own, fall back to the marketplace
+   blog (type=main) rather than showing an empty page. Publishing a single business
+   post retires the fallback on its own; no code change needed.
+   Posts are published from the dashboard (Blog → For Business), or seeded with
+   `php artisan db:seed --class=BusinessBlogSeeder`.                              */
+
+/** Business-blog index, falling back to the marketplace blog while it has no posts. */
+export async function loadBusinessBlogPosts({ limit = 50 } = {}) {
+  const own = await loadPublishedPosts({ limit, audience: 'business' })
+  return own.length ? own : loadPublishedPosts({ limit, audience: 'marketplace' })
+}
+
+/** One business-blog post. A slug reached from the fallback list lives in type=main. */
+export async function loadBusinessBlogPost(slug) {
+  return (await loadPostBySlug(slug, 'business')) || loadPostBySlug(slug, 'marketplace')
+}
+
 // Count published posts for a scope — drives the storefront Blog-module visibility.
 // Only called for providers (ownerId set); errors (pre-migration) ⇒ 0 ⇒ module hidden.
 function esc(s) {
