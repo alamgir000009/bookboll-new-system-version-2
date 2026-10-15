@@ -15,17 +15,23 @@
  * Kept deliberately light: only step 1 is required; step 2 pre-fills smart defaults
  * (brand name = business name, subdomain = username, teal theme).
  */
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { registerBusiness, checkUsername as apiCheckUsername, loadCountries, updateBusinessBrand, firstApiError, getApiToken, clearApiToken, sendEmailOtp, verifyEmailOtp } from '../lib/businessAuth.js'
 import { uploadImage } from '../lib/imageUpload.js'
 import { brandPreviewUrl, brandHost, DEFAULT_PRIMARY, DEFAULT_ACCENT } from '../lib/brand.js'
-import { Eye, EyeOff, Loader, Check, ArrowRight, ArrowLeft, Globe, Upload, X, Rocket, Copy, ExternalLink, RotateCcw, Home, Dumbbell, GraduationCap, Search, Sparkles, Lock, Mail, ShieldCheck } from 'lucide-vue-next'
+import { BRAND_PALETTES as colourPalettes } from '../lib/brandPalettes.js'
+import { Eye, EyeOff, Loader, Check, ArrowRight, ArrowLeft, Globe, Upload, X, Rocket, Copy, ExternalLink, RotateCcw, Home, Dumbbell, GraduationCap, Sparkles, Mail, ShieldCheck, MapPin, CalendarCheck } from 'lucide-vue-next'
 import BrandMark from '../components/BrandMark.vue'
 import { adminBrand, adminLogoSquareStyle } from '../lib/adminBrand.js'
 import MultiSelect from '../components/MultiSelect.vue'
 import { BUSINESS_TYPES } from '../lib/businessTypes.js'
 import { adminLoginUrl } from '../lib/crossApp.js'
 
+const accountPanel = ref(1)
+const attempted = ref(false)
+const formElement = ref(null)
+const progressStep = computed(() => step.value === 1 ? accountPanel.value : step.value + 1)
+const signupSteps = ['Your business', 'Your account', 'Your website', 'Ready to set up']
 const step = ref(1)   // 1 = business · 2 = website · 3 = done
 
 // ── Step 1: business details ──────────────────────────────────────────────────
@@ -68,11 +74,12 @@ function startResendCountdown(seconds = 60) {
     if (--resendIn.value <= 0) clearInterval(resendTimer)
   }, 1000)
 }
-onBeforeUnmount(() => clearInterval(resendTimer))
+onBeforeUnmount(() => { clearInterval(resendTimer); clearTimeout(userTimer) })
 
 // Editing the address throws away everything proved about the old one — otherwise a
 // visitor could verify one mailbox and register a different address with the token.
 watch(email, () => {
+  clearInterval(resendTimer); resendIn.value = 0
   otpSent.value = false
   emailVerified.value = false
   emailToken.value = ''
@@ -86,8 +93,10 @@ async function requestOtp() {
   otpNote.value = ''
   if (!emailLooksValid.value) { otpErr.value = 'Enter a valid email address first.'; return }
   otpSending.value = true
-  const res = await sendEmailOtp(email.value.trim())
+  const requestedEmail = email.value.trim()
+  const res = await sendEmailOtp(requestedEmail)
   otpSending.value = false
+  if (email.value.trim() !== requestedEmail) return
   if (!res.success) {
     const wait = Number(res.errors?.retry_after || res.data?.retry_after || 0)
     if (wait > 0) startResendCountdown(wait)
@@ -102,9 +111,12 @@ async function requestOtp() {
 async function confirmOtp() {
   otpErr.value = ''
   if (otp.value.length !== 6) { otpErr.value = 'Enter the 6-digit code from your email.'; return }
+  if (otpChecking.value) return
   otpChecking.value = true
-  const res = await verifyEmailOtp(email.value.trim(), otp.value)
+  const requestedEmail = email.value.trim()
+  const res = await verifyEmailOtp(requestedEmail, otp.value)
   otpChecking.value = false
+  if (email.value.trim() !== requestedEmail) return
   if (!res.success) {
     otpErr.value = firstApiError(res, 'That code is not right.')
     return
@@ -156,11 +168,37 @@ async function checkUsername() {
   const slug = username.value
   if (!slug || userStatus.value === 'invalid') return
   const res = await apiCheckUsername(slug)
-  if (!res.success) { userStatus.value = 'ok'; return } // don't block signup if probe fails
+  if (slug !== username.value) return
+  if (!res.success) { userStatus.value = 'unavailable'; return } // registration still performs the authoritative check
   userStatus.value = res.data?.available ? 'ok' : 'taken'
 }
 
+const fieldErrors = computed(() => ({
+  fullName: fullName.value.trim() ? '' : 'Enter your full name.',
+  businessName: businessName.value.trim() ? '' : 'Enter your business name.',
+  username: !username.value.trim() ? 'Choose a web address.' : userStatus.value === 'taken' ? 'This address is taken. Try another.' : userStatus.value === 'invalid' ? 'Use letters, numbers and hyphens, with a letter or number at each end.' : '',
+  businessTypes: businessTypes.value.length ? '' : 'Choose at least one business type.',
+  email: emailLooksValid.value ? '' : 'Enter a valid email address.',
+  password: password.value.length >= 8 ? '' : 'Use at least 8 characters.',
+}))
+function invalid(key) { return attempted.value && !!fieldErrors.value[key] }
+async function focusInvalid() {
+  await nextTick()
+  const el = formElement.value?.querySelector('[aria-invalid="true"]')
+  el?.scrollIntoView({ block: 'center', behavior: 'auto' })
+  el?.focus({ preventScroll: true })
+}
+function continueBusiness() {
+  attempted.value = true
+  if (['businessName','username','businessTypes'].some(key => fieldErrors.value[key])) { focusInvalid(); return }
+  if (userStatus.value === 'checking') { err1.value = 'Checking your web address. Please try again in a moment.'; return }
+  err1.value = ''; attempted.value = false; accountPanel.value = 2
+  nextTick(() => formElement.value?.querySelector('input')?.focus())
+}
 async function createAccount() {
+  if (creating.value) return
+  attempted.value = true
+  if (Object.values(fieldErrors.value).some(Boolean)) { focusInvalid(); return }
   err1.value = ''
   if (!fullName.value.trim())     { err1.value = 'Please enter your full name.'; return }
   if (!businessName.value.trim()) { err1.value = 'Please enter your business name.'; return }
@@ -170,7 +208,7 @@ async function createAccount() {
   if (userStatus.value === 'checking') { err1.value = 'Still checking your username — one second, then try again.'; return }
   if (!businessTypes.value.length) { err1.value = 'Select what kind of business you run (you can pick several).'; return }
   if (!email.value.trim())        { err1.value = 'Please enter your email address.'; return }
-  if (!emailVerified.value)       { err1.value = 'Confirm your email address first — we sent you a 6-digit code.'; return }
+  if (!emailVerified.value)       { err1.value = 'Verify your email address before creating your account.'; return }
   if (password.value.length < 8)  { err1.value = 'Password must be at least 8 characters.'; return }
 
   creating.value = true
@@ -203,8 +241,6 @@ const subdomain   = ref('')   // = the business username; LOCKED (shown read-onl
 const brandColor  = ref(DEFAULT_PRIMARY)   // primary
 const accentColor = ref(DEFAULT_ACCENT)    // accent (gradient + nav highlight)
 const tagline     = ref('')
-const metaTitle   = ref('')
-const metaDesc    = ref('')
 const logoUrl    = ref('')
 const logoBusy   = ref(false)
 const logoInput  = ref(null)
@@ -222,12 +258,7 @@ const previewNav = [
   { icon: GraduationCap, label: 'Memberships' },
 ]
 
-// SEO snippet preview (mirrors Brand.vue): falls back to name + tagline.
-const seoTitle = computed(() => (metaTitle.value || '').trim() || (brandName.value || 'Your business').trim())
-const seoDesc  = computed(() => (metaDesc.value || '').trim() || (tagline.value || '').trim() || 'Book courts, classes and events near you.')
-
 const liveHost   = computed(() => brandHost(subdomain.value || 'yourbusiness'))
-const previewUrl = computed(() => brandPreviewUrl(subdomain.value || 'yourbusiness'))
 
 function pickLogo() { logoInput.value?.click() }
 async function onLogo(e) {
@@ -253,6 +284,11 @@ async function finishWebsite() {
     return
   }
 
+  if (logoBusy.value || saving.value) return
+  if (![brandColor.value, accentColor.value].every(color => /^#[0-9a-f]{6}$/i.test(color))) {
+    err2.value = 'Choose valid colours or reset to Bookboll teal.'
+    return
+  }
   saving.value = true
   const res = await updateBusinessBrand({
     brand_name: brandName.value.trim(),
@@ -260,8 +296,6 @@ async function finishWebsite() {
     brand_logo_url: logoUrl.value.trim() || null,
     brand_primary: brandColor.value || null,
     brand_accent: accentColor.value || null,
-    brand_meta_title: metaTitle.value.trim() || null,
-    brand_meta_description: metaDesc.value.trim() || null,
   })
   saving.value = false
 
@@ -293,7 +327,13 @@ async function goDashboard() {
 </script>
 
 <template>
-  <div class="auth-shell">
+  <div class="auth-shell" :class="{ 'website-step': step === 2 }">
+    <aside class="ob-sidebar">
+      <router-link to="/" class="ob-back"><ArrowLeft :size="16" /> Bookboll for Business</router-link>
+      <div><h2>Let's get your<br />business ready.</h2><p>Your booking website and business tools, together in one account.</p></div>
+      <ol aria-label="Signup progress"><li v-for="(label,i) in signupSteps" :key="label" :class="{ current: progressStep === i + 1, complete: progressStep > i + 1 }" :aria-current="progressStep === i + 1 ? 'step' : undefined"><span><Check v-if="progressStep > i + 1" :size="16" /><template v-else>{{ i + 1 }}</template></span><div><strong>{{ label }}</strong><small>{{ ['Business type, country and web address', 'Your details and verified email', 'Logo and colours; you can do this later', 'Add listings from your dashboard'][i] }}</small></div></li></ol>
+      <div class="ob-sidebar-note"><ShieldCheck :size="20" /><p>No setup or monthly fee on Free.<br />Booking commissions apply.</p></div>
+    </aside>
     <div class="auth-card" :class="{ wide: step === 2 }">
       <!-- Brand -->
       <div class="auth-brand">
@@ -304,62 +344,28 @@ async function goDashboard() {
         </div>
       </div>
 
-      <!-- Progress (hidden on the done screen) -->
-      <div v-if="step < 3" class="ob-steps">
-        <div class="ob-step" :class="{ on: step === 1, done: step > 1 }">
-          <span class="ob-dot"><Check v-if="step > 1" :size="13" /><span v-else>1</span></span>
-          <span class="ob-step-l">Your business</span>
-        </div>
-        <div class="ob-line" :class="{ done: step > 1 }"></div>
-        <div class="ob-step" :class="{ on: step === 2 }">
-          <span class="ob-dot"><span>2</span></span>
-          <span class="ob-step-l">Your website</span>
-        </div>
-      </div>
-
+      <div class="ob-mobile-progress">Step {{ progressStep }} of 4 · {{ signupSteps[progressStep - 1] }}</div>
       <!-- ── STEP 1 — business details ─────────────────────────────────── -->
       <template v-if="step === 1">
-        <h1 class="auth-heading">Create your business account</h1>
-        <p class="auth-sub">Tell us about your business — it takes a minute.</p>
+        <h1 class="auth-heading">{{ accountPanel === 1 ? 'Tell us about your business' : 'Create your account' }}</h1>
+        <p class="auth-sub">{{ accountPanel === 1 ? 'Choose how customers will find you. You can add locations and listings after signup.' : 'Verify your email to keep your business account secure.' }}</p>
 
-        <form @submit.prevent="createAccount" class="auth-form">
-          <div class="auth-row">
-            <div class="auth-field">
-              <label class="auth-label">Your full name</label>
-              <input v-model="fullName" type="text" class="auth-input" placeholder="e.g. Ahmed Al Mansouri" />
-            </div>
-            <div class="auth-field">
-              <label class="auth-label">Business name</label>
-              <input v-model="businessName" type="text" class="auth-input" placeholder="e.g. Dubai Sports City" />
-            </div>
-          </div>
-
-          <div class="auth-field">
-            <label class="auth-label">Business username <span class="auth-opt">— becomes your web address</span></label>
-            <div class="ob-sub">
-              <input v-model="username" @input="normUser" type="text" class="auth-input ob-sub-in" placeholder="yourclub" spellcheck="false" autocomplete="off" />
-              <span class="ob-sub-suffix">.bookboll.com</span>
-            </div>
-            <div class="ob-sub-status">
-              <span v-if="userStatus === 'checking'" class="ob-muted">Checking…</span>
-              <span v-else-if="userStatus === 'ok'" class="ob-ok"><Check :size="13" /> {{ username }}.bookboll.com is yours</span>
-              <span v-else-if="userStatus === 'taken'" class="ob-bad">Already taken — try another</span>
-              <span v-else-if="userStatus === 'invalid'" class="ob-bad">Letters, numbers and hyphens only</span>
-              <span v-else class="ob-muted">Short and memorable — this can't be changed later</span>
-            </div>
-          </div>
-
-          <div class="auth-field">
-            <label class="auth-label">What kind of business? <span class="auth-opt">— pick all that apply</span></label>
-            <MultiSelect v-model="businessTypes" :options="typeOptions" placeholder="Select business type(s)" :max-display="2" />
-          </div>
-
+        <form ref="formElement" @submit.prevent="accountPanel === 1 ? continueBusiness() : createAccount()" class="auth-form" novalidate>
+          <template v-if="accountPanel === 1">
+            <div class="auth-field"><label for="signup-business" class="auth-label">Business name</label><input id="signup-business" v-model="businessName" class="auth-input" placeholder="e.g. City Padel Club" autocomplete="organization" required :aria-invalid="invalid('businessName')" :aria-describedby="invalid('businessName') ? 'error-businessName' : undefined" /><span v-if="invalid('businessName')" id="error-businessName" class="ob-field-error">{{ fieldErrors.businessName }}</span></div>
+            <div class="auth-field"><label for="signup-username" class="auth-label">Your booking website address</label><div class="ob-sub" :class="{ invalid: invalid('username') }"><input id="signup-username" v-model="username" @input="normUser" class="auth-input ob-sub-in" placeholder="yourclub" spellcheck="false" autocomplete="off" required :aria-invalid="invalid('username')" aria-describedby="signup-address-help" /><span class="ob-sub-suffix">.bookboll.com</span></div><div id="signup-address-help" class="ob-sub-status" aria-live="polite"><span v-if="invalid('username')" class="ob-bad">{{ fieldErrors.username }}</span><span v-else-if="userStatus === 'checking'" class="ob-muted">Checking availability…</span><span v-else-if="userStatus === 'ok'" class="ob-ok"><Check :size="13" /> Available</span><span v-else-if="userStatus === 'taken'" class="ob-bad">Already taken. Try another address.</span><span v-else class="ob-muted">Choose carefully. This address cannot be changed later.</span></div></div>
+            <fieldset class="ob-type-field"><legend class="auth-label">What kind of business do you run?</legend><p>Select all that apply.</p><div class="ob-type-options"><label v-for="t in typeOptions" :key="t.value" :class="{ selected: businessTypes.includes(t.value) }"><input type="checkbox" v-model="businessTypes" :value="t.value" :aria-invalid="invalid('businessTypes')" :aria-describedby="invalid('businessTypes') ? 'error-businessTypes' : undefined" />{{ t.label }}</label></div><span v-if="invalid('businessTypes')" id="error-businessTypes" class="ob-field-error">{{ fieldErrors.businessTypes }}</span></fieldset>
+            <div class="auth-field"><label for="signup-country" class="auth-label">Country <span class="auth-opt">(optional)</span></label><select id="signup-country" v-model="countryId" class="auth-input auth-select"><option value="">Select your country</option><option v-for="c in countries" :key="c.id" :value="c.id">{{ c.name }}</option></select></div>
+          </template>
+          <template v-else>
+            <div class="ob-business-summary"><span><strong>{{ businessName }}</strong><small>{{ username }}.bookboll.com</small></span><button type="button" @click="accountPanel = 1; attempted = false; err1 = ''">Edit</button></div>
+            <div class="auth-field"><label for="signup-name" class="auth-label">Your full name</label><input id="signup-name" v-model="fullName" class="auth-input" placeholder="Your first and last name" autocomplete="name" required :aria-invalid="invalid('fullName')" :aria-describedby="invalid('fullName') ? 'error-fullName' : undefined" /><span v-if="invalid('fullName')" id="error-fullName" class="ob-field-error">{{ fieldErrors.fullName }}</span></div>
           <!-- Email + proof. The address is confirmed here, before Continue, so no
                account is ever created for a mailbox nobody can open. -->
           <div class="auth-field">
-            <label class="auth-label">Email</label>
+            <label for="signup-email" class="auth-label">Email</label>
             <div class="ob-mail">
-              <input v-model="email" type="email" class="auth-input ob-mail-in"
+              <input id="signup-email" v-model="email" required :aria-invalid="invalid('email')" :aria-describedby="invalid('email') ? 'error-email' : undefined" type="email" class="auth-input ob-mail-in"
                      :class="{ 'is-verified': emailVerified }"
                      :readonly="emailVerified" placeholder="you@yourbusiness.com" autocomplete="email" />
               <span v-if="emailVerified" class="ob-mail-ok"><ShieldCheck :size="15" /> Verified</span>
@@ -372,6 +378,7 @@ async function goDashboard() {
               </button>
             </div>
 
+            <span v-if="invalid('email')" id="error-email" class="ob-field-error">{{ fieldErrors.email }}</span>
             <!-- The code box only appears once something has actually been sent. -->
             <div v-if="otpSent && !emailVerified" class="ob-otp">
               <div class="ob-otp-head">
@@ -379,7 +386,7 @@ async function goDashboard() {
                 <button type="button" class="ob-otp-edit" @click="otpSent = false; otp = ''">Change email</button>
               </div>
               <div class="ob-otp-row">
-                <input :value="otp" @input="onOtpInput" class="auth-input ob-otp-in"
+                <input aria-label="Email verification code" :value="otp" @input="onOtpInput" class="auth-input ob-otp-in"
                        inputmode="numeric" autocomplete="one-time-code" maxlength="6"
                        placeholder="••••••" spellcheck="false" />
                 <button type="button" class="ob-otp-btn" :disabled="otp.length !== 6 || otpChecking" @click="confirmOtp">
@@ -402,30 +409,15 @@ async function goDashboard() {
             <div v-else class="ob-sub-status"><span class="ob-muted">We'll send a 6-digit code to confirm this address.</span></div>
           </div>
 
-          <div class="auth-row">
-            <div class="auth-field">
-              <label class="auth-label">Country <span class="auth-opt">(optional)</span></label>
-              <select v-model="countryId" class="auth-input auth-select">
-                <option value="">Select country</option>
-                <option v-for="c in countries" :key="c.id" :value="c.id">{{ c.name }}</option>
-              </select>
-            </div>
-            <div class="auth-field">
-              <label class="auth-label">Password</label>
-              <div class="auth-pw-wrap">
-                <input v-model="password" :type="showPw ? 'text' : 'password'" class="auth-input" placeholder="Min 8 characters" autocomplete="new-password" />
-                <button type="button" class="auth-pw-eye" @click="showPw = !showPw"><component :is="showPw ? EyeOff : Eye" :size="16" /></button>
-              </div>
-            </div>
-          </div>
+            <div class="auth-field"><label for="signup-password" class="auth-label">Password</label><div class="auth-pw-wrap"><input id="signup-password" v-model="password" :type="showPw ? 'text' : 'password'" class="auth-input" placeholder="At least 8 characters" autocomplete="new-password" required :aria-invalid="invalid('password')" :aria-describedby="invalid('password') ? 'error-password' : undefined" /><button type="button" class="auth-pw-eye" :aria-label="showPw ? 'Hide password' : 'Show password'" @click="showPw = !showPw"><component :is="showPw ? EyeOff : Eye" :size="18" /></button></div><span v-if="invalid('password')" id="error-password" class="ob-field-error">{{ fieldErrors.password }}</span></div>
+          </template>
+          <div v-if="err1" class="auth-error" role="alert">{{ err1 }}</div>
 
-          <div v-if="err1" class="auth-error">{{ err1 }}</div>
-
-          <p class="auth-terms">By continuing you agree to the <router-link to="/terms" class="auth-link">Provider Terms &amp; Conditions</router-link>.</p>
+          <p v-if="accountPanel === 2" class="auth-terms">By creating your account you agree to the <router-link to="/terms" class="auth-link">Provider Terms &amp; Conditions</router-link>.</p>
 
           <button type="submit" class="auth-btn" :disabled="creating">
             <Loader v-if="creating" :size="16" class="auth-spin" />
-            {{ creating ? 'Creating account…' : 'Continue' }}
+            {{ creating ? 'Creating account…' : accountPanel === 1 ? 'Continue to your account' : 'Create account' }}
             <ArrowRight v-if="!creating" :size="16" />
           </button>
         </form>
@@ -437,12 +429,15 @@ async function goDashboard() {
 
       <!-- ── STEP 2 — website setup ────────────────────────────────────── -->
       <template v-else-if="step === 2">
-        <h1 class="auth-heading">Set up your website</h1>
-        <p class="auth-sub">Your own branded booking site — customers book you directly. You can change all of this later.</p>
+        <h1 class="auth-heading">Make it your website</h1>
+        <p class="auth-sub">Add your name, logo and colours. Your preview updates as you go, and everything can be changed later.</p>
 
         <div class="ob-grid">
           <!-- Form side -->
           <div class="ob-form">
+            <section class="ob-brand-group" aria-labelledby="ob-identity-title">
+              <h2 id="ob-identity-title">Your business identity</h2>
+              <p>The name and logo customers will recognise.</p>
             <!-- Logo & name -->
             <div class="ob-logo-row">
               <div class="ob-logo-prev" :class="{ img: logoUrl }" :style="logoUrl ? { backgroundImage: `url(${logoUrl})` } : { background: `linear-gradient(135deg, ${accentColor}, ${brandColor})` }">
@@ -459,63 +454,46 @@ async function goDashboard() {
             </div>
 
             <div class="auth-field">
-              <label class="auth-label">Website name</label>
-              <input v-model="brandName" type="text" class="auth-input" placeholder="Your business name" maxlength="60" />
-            </div>
-
-            <div class="auth-field">
-              <label class="auth-label">Web address</label>
-              <div class="ob-sub">
-                <span class="ob-sub-locked"><Lock :size="13" /> {{ subdomain || 'yourbusiness' }}</span>
-                <span class="ob-sub-suffix">.bookboll.com</span>
-              </div>
-              <div class="ob-sub-status">
-                <span class="ob-muted"><Check :size="13" class="ob-lock-ok" /> Locked to your business username. Want your own domain? Connect one later in <b>My Website</b>.</span>
-              </div>
+              <label for="website-name" class="auth-label">Website name</label>
+              <input id="website-name" aria-label="Website name" v-model="brandName" type="text" class="auth-input" placeholder="Your business name" maxlength="60" />
             </div>
 
             <div class="auth-field">
               <label class="auth-label">Tagline <span class="auth-opt">(optional)</span></label>
-              <input v-model="tagline" type="text" class="auth-input" placeholder="e.g. Book courts & academies in seconds" maxlength="90" />
+              <input aria-label="Tagline" v-model="tagline" type="text" class="auth-input" placeholder="e.g. Book courts & academies in seconds" maxlength="90" />
             </div>
 
+            </section>
+            <section class="ob-brand-group" aria-labelledby="ob-colours-title">
+              <h2 id="ob-colours-title">Make it yours</h2>
+              <p>Try Qatar’s burgundy, desert sands or oasis greens. You can also use your own colours.</p>
+              <div class="ob-palettes" aria-label="Brand colour palettes">
+                <button v-for="palette in colourPalettes" :key="palette.name" type="button" :aria-pressed="brandColor === palette.primary && accentColor === palette.accent" @click="brandColor = palette.primary; accentColor = palette.accent">
+                  <span :style="{ background: palette.primary }"></span><span :style="{ background: palette.accent }"></span>{{ palette.name }}
+                </button>
+              </div>
             <!-- Brand colours -->
             <div class="auth-field">
-              <label class="auth-label">Brand colours</label>
+              <span class="auth-label">Custom colours</span>
               <div class="ob-colors">
                 <div class="ob-color">
-                  <input type="color" class="ob-swatch" v-model="brandColor" />
-                  <div class="ob-color-meta"><span>Primary</span><input class="auth-input ob-hex" v-model="brandColor" spellcheck="false" maxlength="7" /></div>
+                  <input type="color" class="ob-swatch" aria-label="Primary colour" v-model="brandColor" />
+                  <div class="ob-color-meta"><span>Primary</span><input class="auth-input ob-hex" aria-label="Primary colour hex code" v-model="brandColor" spellcheck="false" maxlength="7" /></div>
                 </div>
                 <div class="ob-color">
-                  <input type="color" class="ob-swatch" v-model="accentColor" />
-                  <div class="ob-color-meta"><span>Accent</span><input class="auth-input ob-hex" v-model="accentColor" spellcheck="false" maxlength="7" /></div>
+                  <input type="color" class="ob-swatch" aria-label="Accent colour" v-model="accentColor" />
+                  <div class="ob-color-meta"><span>Accent</span><input class="auth-input ob-hex" aria-label="Accent colour hex code" v-model="accentColor" spellcheck="false" maxlength="7" /></div>
                 </div>
               </div>
               <button type="button" class="ob-reset" @click="resetColors"><RotateCcw :size="12" /> Reset to Bookboll teal</button>
             </div>
 
-            <!-- Your site automatically shows only what you list — add venues to enable
-                 venue booking, add membership programs to enable memberships. -->
-            <div class="ob-auto"><Sparkles :size="14" /> Your site shows venue booking and/or memberships automatically based on what you add — nothing to configure.</div>
-
-            <!-- SEO (optional) -->
-            <details class="ob-seo">
-              <summary><Search :size="13" /> Search engine listing <span class="auth-opt">(optional)</span></summary>
-              <div class="auth-field">
-                <label class="auth-label">Meta title <span class="auth-opt">{{ metaTitle.length }}/60</span></label>
-                <input v-model="metaTitle" type="text" class="auth-input" maxlength="60" placeholder="How your site shows in Google" />
-              </div>
-              <div class="auth-field">
-                <label class="auth-label">Meta description <span class="auth-opt">{{ metaDesc.length }}/160</span></label>
-                <textarea v-model="metaDesc" class="auth-input ob-textarea" maxlength="160" rows="2" placeholder="A short sentence describing your site for search results."></textarea>
-              </div>
-            </details>
+            </section>
           </div>
 
           <!-- Live preview side — a storefront mock reflecting every choice -->
           <div class="ob-preview" :style="{ '--pv': brandColor || DEFAULT_PRIMARY, '--pa': accentColor || DEFAULT_ACCENT }">
-            <div class="ob-pv-label">Live preview</div>
+            <div class="ob-pv-label"><Eye :size="16" /> Your website preview<span>Example</span></div>
             <div class="ob-pv-card">
               <div class="ob-pv-chrome"><span></span><span></span><span></span><div class="ob-pv-addr"><Globe :size="10" /> {{ liveHost }}</div></div>
               <div class="ob-pv-bar">
@@ -538,22 +516,18 @@ async function goDashboard() {
                 <div class="ob-pv-tile"><div class="ob-pv-tile-img"></div><div class="ob-pv-tile-l"></div><div class="ob-pv-tile-s"></div></div>
               </div>
             </div>
-            <!-- SEO snippet -->
-            <div class="ob-pv-seo">
-              <div class="ob-pv-seo-url">{{ liveHost }}</div>
-              <div class="ob-pv-seo-title">{{ seoTitle }}</div>
-              <div class="ob-pv-seo-desc">{{ seoDesc }}</div>
-            </div>
+            <div class="ob-site-address"><Globe :size="18" /><div><strong>Your reserved web address</strong><span>{{ liveHost }}</span><small>Connect your own domain later in My Website.</small></div></div>
+            <p class="ob-preview-note"><Sparkles :size="16" /> Your listings and memberships appear here when you add them in your dashboard.</p>
           </div>
         </div>
 
-        <div v-if="err2" class="auth-error">{{ err2 }}</div>
+        <div v-if="err2" class="auth-error" role="alert">{{ err2 }}</div>
 
         <div class="ob-actions">
-          <button type="button" class="auth-btn-ghost" @click="skipWebsite">Skip for now</button>
-          <button type="button" class="auth-btn" :disabled="saving" @click="finishWebsite">
+          <button type="button" class="auth-btn-ghost" :disabled="saving || logoBusy" @click="skipWebsite">Skip for now</button>
+          <button type="button" class="auth-btn" :disabled="saving || logoBusy" @click="finishWebsite">
             <Loader v-if="saving" :size="16" class="auth-spin" />
-            {{ saving ? 'Saving…' : 'Finish & go to dashboard' }}
+            {{ saving ? 'Saving…' : 'Save website & continue' }}
             <ArrowRight v-if="!saving" :size="16" />
           </button>
         </div>
@@ -563,12 +537,13 @@ async function goDashboard() {
       <template v-else>
         <div class="success-state">
           <div class="success-icon"><Rocket :size="28" /></div>
-          <h2 class="success-title">You're all set, {{ (fullName || '').split(' ')[0] || 'welcome' }}!</h2>
+          <h1 class="success-title">Your account is ready.</h1>
           <p class="success-body">
             Your business account is ready. Your dashboard will walk you through the rest:
             add your <b>location &amp; first listing</b>, connect a <b>payout method</b>, and go live.
           </p>
 
+          <ol class="ob-next-steps"><li><MapPin :size="19" /><span><strong>Add your location</strong><small>Show customers where to find you.</small></span></li><li><CalendarCheck :size="19" /><span><strong>Create a listing or membership</strong><small>Set availability, prices and payment options.</small></span></li><li><Globe :size="19" /><span><strong>Review and publish</strong><small>Your dashboard guides you through the remaining setup.</small></span></li></ol>
           <div v-if="finalUrl" class="ob-done-site">
             <div class="ob-done-site-l"><Globe :size="16" /> <span>{{ finalUrl }}</span></div>
             <div class="ob-done-site-actions">
@@ -811,14 +786,6 @@ async function goDashboard() {
 .ob-switch input:checked + .ob-slider { background: #0f766e; }
 .ob-switch input:checked + .ob-slider::before { transform: translateX(17px); }
 
-/* SEO (collapsible) */
-.ob-seo { border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 0 12px; }
-.ob-seo > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 7px; padding: 11px 0; font-size: 13px; font-weight: 700; color: #374151; }
-.ob-seo > summary::-webkit-details-marker { display: none; }
-.ob-seo[open] > summary { border-bottom: 1px solid #f1f5f9; margin-bottom: 12px; }
-.ob-seo .auth-field { margin-bottom: 12px; }
-.ob-textarea { resize: vertical; line-height: 1.45; font-family: inherit; }
-
 /* Live preview — storefront mock */
 .ob-preview { background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 14px; position: sticky; top: 14px; }
 .ob-pv-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-light, #94a3b8); margin-bottom: 10px; }
@@ -842,25 +809,8 @@ async function goDashboard() {
 .ob-pv-tile-img { height: 34px; border-radius: 6px; background: color-mix(in srgb, var(--pv) 13%, white); margin-bottom: 7px; }
 .ob-pv-tile-l { height: 7px; width: 80%; border-radius: 4px; background: var(--border, #e2e8f0); margin-bottom: 5px; }
 .ob-pv-tile-s { height: 6px; width: 50%; border-radius: 4px; background: #eef2f6; }
-.ob-pv-seo { margin-top: 12px; padding: 11px 12px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 10px; }
-.ob-pv-seo-url { font-size: 11px; color: #3c4043; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ob-pv-seo-title { font-size: 13.5px; color: #1a0dab; font-weight: 500; margin-top: 2px; line-height: 1.3; }
-.ob-pv-seo-desc { font-size: 11.5px; color: #4d5156; margin-top: 3px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 .ob-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
-@media (max-width: 560px) {
-  /* Docked flush to the viewport bottom — standalone page, no shell nav below */
-  .ob-actions {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; margin: 0;
-    background: var(--surface, #ffffff); border-top: 1px solid var(--border, #e2e8f0);
-    box-shadow: 0 -8px 24px rgba(15,23,42,.10);
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
-    flex-direction: row; border-radius: 0;
-  }
-  .ob-actions .auth-btn { flex: 1; }
-  .ob-actions .auth-btn-ghost { flex: 0 0 auto; }
-}
-
 /* ── Step 3 done ── */
 .success-state { text-align: center; padding: 8px 0 6px; }
 .success-icon {
@@ -888,17 +838,6 @@ async function goDashboard() {
   .auth-shell { padding: 12px; }
   .auth-card { padding: 22px 18px 20px; border-radius: 16px; }
 
-  /* Standalone page (no shell) — the card itself reserves room for the docked CTAs */
-  .auth-card { padding-bottom: 96px; }
-
-  /* Step 1: dock the Continue submit flush to the true viewport bottom */
-  .auth-form > .auth-btn {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-    margin: 0; border-radius: 0;
-    padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px));
-    box-shadow: 0 -8px 24px rgba(15,23,42,.10);
-  }
-
   /* Username row: let the input shrink, slim the .bookboll.com suffix */
   .ob-sub-in { min-width: 0; flex: 1; }
   .ob-sub-suffix { padding: 0 8px; font-size: 12px; }
@@ -916,5 +855,69 @@ async function goDashboard() {
   .ob-done-site-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .auth-btn-ghost.sm { padding: 11px 12px; }
 }
+
+/* Guided business onboarding */
+.auth-shell{background:#f4f7f7;align-items:start;display:grid;grid-template-columns:300px minmax(0,760px);justify-content:center;gap:56px;padding:40px 32px;min-height:100vh;color:#12332f;--surface:#fff;--text-muted:#526762;--text-light:#61796f;--border:#cedcd6}
+.ob-sidebar{position:sticky;top:32px;padding:4px 0;display:flex;flex-direction:column;gap:38px}.ob-back{display:flex;align-items:center;gap:8px;color:#075e54;text-decoration:none;font-size:14px;font-weight:700}.ob-sidebar h2{font-size:32px;line-height:1.15;letter-spacing:-.8px;color:#12332f;margin:0 0 16px}.ob-sidebar p{font-size:14px;line-height:1.6;color:#526762;margin:0}.ob-sidebar ol{padding:0;list-style:none;margin:0;display:grid;gap:28px}.ob-sidebar li{display:flex;align-items:flex-start;gap:13px;color:#657c73}.ob-sidebar li>span{width:30px;height:30px;border-radius:50%;border:1px solid #b7ccc3;display:grid;place-items:center;font-size:13px;font-weight:700;flex-shrink:0}.ob-sidebar li.current>span{background:#075e54;color:white;border-color:#075e54}.ob-sidebar li.complete>span{background:#dcf5ec;color:#075e54;border-color:#b4d9c8}.ob-sidebar strong{display:block;font-size:14px;line-height:1.7}.ob-sidebar small{display:block;font-size:12px;line-height:1.5;margin-top:3px}.ob-sidebar li.current{color:#12332f}.ob-sidebar-note{display:flex;gap:10px;padding-top:24px;border-top:1px solid #d4e2dc}.ob-sidebar-note svg{color:#075e54;flex-shrink:0}.ob-sidebar-note p{font-size:12px}.auth-card{max-width:none;padding:36px 40px;border:1px solid #d9e4de;box-shadow:0 5px 20px #12332f05;border-radius:16px;transition:none}.auth-card.wide{max-width:none}.auth-brand{margin-bottom:28px}.auth-brand-name{color:#12332f}.auth-logo{background:#0fa59b}.auth-heading{font-size:29px;line-height:1.2;color:#12332f;letter-spacing:-.6px}.auth-sub{font-size:14px;line-height:1.6;margin-top:10px;margin-bottom:26px;max-width:57ch}.auth-form{gap:22px}.auth-label{font-size:14px;color:#213f35;font-weight:650}.auth-input{background:#fff;border-color:#b9ccc3;border-radius:8px;min-height:47px;font-size:15px}.auth-input:focus{border-color:#075e54;box-shadow:0 0 0 3px #075e5415}.auth-input[aria-invalid=true],.ob-sub.invalid{border-color:#bb3636;background:#fff7f7}.ob-field-error{color:#a72828;font-size:12px;line-height:1.5}.auth-btn{background:#075e54;border-radius:8px;box-shadow:none;min-height:48px}.auth-btn:hover:not(:disabled){background:#044b43;transform:none}.ob-mobile-progress{font-size:12px;color:#526762;margin-bottom:14px}.ob-type-field{border:0;padding:0;margin:0;min-width:0}.ob-type-field>p{font-size:12px;color:#526762;margin:5px 0 10px}.ob-type-options{display:grid;grid-template-columns:1fr 1fr;gap:8px}.ob-type-options label{display:flex;align-items:center;gap:9px;border:1px solid #cbdcd3;border-radius:8px;padding:12px;line-height:1.3;font-size:13px;color:#294a3d;cursor:pointer}.ob-type-options label.selected{border-color:#087967;background:#eef8f3}.ob-type-options input{accent-color:#075e54;flex-shrink:0;width:16px;height:16px;margin:0}.ob-business-summary{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#f1f7f4;border-radius:8px;gap:16px}.ob-business-summary strong,.ob-business-summary small{display:block}.ob-business-summary strong{font-size:14px;color:#12332f}.ob-business-summary small{font-size:12px;color:#526762;margin-top:4px;overflow-wrap:anywhere}.ob-business-summary button{background:none;border:0;color:#075e54;font:inherit;font-size:13px;font-weight:700;cursor:pointer;text-decoration:underline}.ob-next-steps{padding:0;list-style:none;text-align:left;margin:26px 0;display:grid;gap:16px}.ob-next-steps li{display:flex;gap:12px;color:#075e54}.ob-next-steps strong,.ob-next-steps small{display:block}.ob-next-steps strong{font-size:14px;color:#12332f}.ob-next-steps small{font-size:13px;color:#526762;line-height:1.5;margin-top:3px}.ob-grid{grid-template-columns:1fr}.ob-preview{margin-top:0;position:static;max-width:500px;width:100%;justify-self:center}.ob-form{gap:18px}.ob-actions{border-top:1px solid #d9e4de;padding-top:22px}.success-state{text-align:left}.success-icon{margin-left:0}.auth-shell :is(a,button,summary):focus-visible{outline:3px solid #1a6afd;outline-offset:3px}.ob-mail-btn{min-width:108px}.ob-mail-in{min-width:0}.ob-pw-eye{min-width:36px;min-height:36px}.auth-pw-eye{min-width:32px;min-height:36px;align-items:center;justify-content:center}.ob-sub-status{line-height:1.5}
+@media(max-width:1000px){.auth-shell{grid-template-columns:230px minmax(0,640px);gap:28px;padding:28px 24px}.auth-card{padding:28px}.ob-sidebar h2{font-size:27px}}
+@media(max-width:760px){.auth-shell{display:block;padding:18px 16px 32px}.ob-sidebar{position:static;margin:0 0 20px;padding:0}.ob-sidebar>div,.ob-sidebar ol{display:none}.auth-card{padding:24px 20px;border-radius:12px}.auth-heading{font-size:26px}.auth-brand{margin-bottom:20px}.ob-type-options{grid-template-columns:1fr 1fr}.ob-type-options label{padding:12px 9px;font-size:12px}.ob-grid{display:block}.ob-preview{margin-top:26px}.ob-actions{gap:12px;flex-wrap:wrap}.ob-actions .auth-btn{flex:1}.ob-mail{flex-wrap:wrap}.ob-mail-in{flex:1 1 170px}.ob-mail-btn{padding-inline:12px;font-size:12px}.ob-sub-suffix{font-size:12px;padding-inline:10px}.ob-otp-row{gap:8px}.auth-pw-wrap .auth-input{padding-right:48px}}
+
+
+/* Form actions stay with their step, including when the mobile keyboard opens. */
+.auth-card, .auth-field, .ob-form, .ob-business-summary > span { min-width: 0; }
+.ob-business-summary strong, .ob-sub-locked { overflow-wrap: anywhere; }
+.ob-next-steps svg, .ob-done-site-l svg { flex-shrink: 0; }
+@media (max-width: 1000px) {
+  .auth-input, .ob-mail-in, .ob-otp-in, .ob-sub-in { font-size: 16px; }
+}
+@media (max-width: 760px) {
+  .auth-shell { padding: 16px 12px calc(28px + env(safe-area-inset-bottom, 0px)); }
+  .auth-card { padding: 24px 20px; }
+  .auth-input, .ob-mail-in, .ob-otp-in, .ob-sub-in { font-size: 16px; }
+  .auth-form > .auth-btn, .ob-actions { position: static; width: 100%; box-shadow: none; }
+  .auth-form > .auth-btn { border-radius: 8px; padding: 14px; white-space: normal; line-height: 1.45; }
+  .ob-actions { margin-top: 24px; padding: 18px 0 0; flex-direction: column-reverse; background: none; gap: 8px; }
+  .ob-actions .auth-btn, .ob-actions .auth-btn-ghost { width: 100%; min-height: 48px; flex: auto; white-space: normal; }
+  .ob-mail { gap: 10px; }.ob-mail-in { flex-basis: 100%; }
+  .ob-mail-btn { width: 100%; min-height: 44px; justify-content: center; border-radius: 8px; }
+  .ob-sub-status { flex-wrap: wrap; }.ob-sub-status > span { min-width: 0; }
+  .auth-pw-eye { width: 44px; min-height: 44px; }
+  .ob-business-summary button { min-width: 44px; min-height: 44px; }
+  .ob-logo-row { flex-wrap: wrap; }.ob-logo-actions { min-width: 0; }
+  .ob-otp-edit { min-height: 40px; }.ob-otp-in { width: 0; flex: 1; min-width: 0; }
+  .ob-otp-head { flex-wrap: wrap; gap: 8px; }.ob-otp-btn { min-height: 46px; }
+  .ob-sub-locked { white-space: normal; }.ob-sub-suffix { flex-shrink: 0; }
+  .ob-done-site-l { width: 100%; align-items: flex-start; }.ob-done-site-l span { min-width: 0; overflow-wrap: anywhere; }
+  .ob-preview { overflow: hidden; }.ob-pv-brandname { max-width: 135px; }
+  .ob-mobile-progress { padding: 10px 12px; border-left: 3px solid #087967; background: #eef8f3; border-radius: 4px; }
+}
+@media (max-width: 360px) {
+  .auth-card { padding: 22px 16px; }.auth-heading { font-size: 24px; }
+  .ob-type-options { grid-template-columns: 1fr; }.ob-type-options label { font-size: 13px; }
+  .ob-sub-suffix { font-size: 11px; padding-inline: 7px; }
+  .ob-pv-navlinks { gap: 8px; }.ob-pv-nav { padding: 12px; }
+}
+/* Website setup: identity on the left, the customer-facing result on the right. */
+.website-step { grid-template-columns:240px minmax(0,1060px); gap:40px; }
+.website-step .auth-card { padding:32px; }
+.website-step .ob-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:32px; }
+.ob-brand-group { padding:0; min-width:0; }
+.ob-brand-group + .ob-brand-group { border-top:1px solid #cedcd6; padding-top:24px; }
+.ob-brand-group h2 { margin:0; font-size:18px; color:#12332f; }
+.ob-brand-group > p { margin:5px 0 18px; font-size:13px; line-height:1.5; color:#526762; }
+.ob-brand-group .auth-field { margin-top:18px; }
+.ob-palettes { display:flex; flex-wrap:wrap; gap:8px; }
+.ob-palettes button { display:flex; align-items:center; gap:4px; padding:9px; min-height:42px; font:inherit; font-size:12px; border:1px solid #cedcd6; border-radius:7px; background:white; color:#12332f; cursor:pointer; }
+.ob-palettes button[aria-pressed=true] { border-color:#075e54; box-shadow:0 0 0 1px #075e54; }
+.ob-palettes button span { width:12px; height:20px; border-radius:3px; }.ob-palettes button span + span { margin-right:5px; }
+.website-step .ob-preview { min-width:0; width:100%; padding:20px; background:#eef5f2; border:0; border-radius:12px; position:sticky; top:24px; }
+.website-step .ob-pv-label { display:flex; align-items:center; gap:7px; font-size:13px; letter-spacing:0; text-transform:none; color:#294a3d; margin-bottom:16px; }.ob-pv-label span { margin-left:auto; font-size:11px; font-weight:500; }
+.website-step .ob-pv-hero { min-height:160px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:28px 20px; }
+.website-step .ob-pv-h1 { font-size:23px; line-height:1.25; overflow-wrap:anywhere; }
+.ob-site-address { display:flex; gap:10px; margin-top:24px; color:#075e54; }.ob-site-address svg { flex-shrink:0; margin-top:2px; }.ob-site-address div { min-width:0; display:grid; gap:5px; }.ob-site-address strong { font-size:13px; }.ob-site-address span { font-size:14px; overflow-wrap:anywhere; }.ob-site-address small { font-size:12px; line-height:1.5; color:#526762; }
+.ob-preview-note { display:flex; align-items:flex-start; gap:8px; border-top:1px solid #cedcd6; padding-top:18px; margin:20px 0 0; font-size:12px; line-height:1.6; color:#526762; }.ob-preview-note svg { flex-shrink:0; margin-top:2px; }
+@media(max-width:1190px) { .website-step { grid-template-columns:200px minmax(0,1fr); gap:24px; }.website-step .ob-grid { grid-template-columns:1fr; }.website-step .ob-preview { position:static; max-width:none; } }
+@media(max-width:760px) { .website-step { display:block; }.website-step .auth-card { padding:24px 20px; }.website-step .ob-grid { gap:24px; }.website-step .ob-preview { margin:0; padding:16px; }.website-step .ob-pv-h1 { font-size:21px; } }
+@media(max-width:360px) { .website-step .auth-card { padding:22px 16px; }.ob-colors { grid-template-columns:1fr; }.website-step .ob-preview { padding:12px; } }
 </style>
 

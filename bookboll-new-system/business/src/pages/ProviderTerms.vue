@@ -3,13 +3,12 @@
  * ProviderTerms.vue — Terms & Conditions for business providers (public, bare layout).
  *
  * Linked from the /for-business landing ("T&Cs apply"), the landing footer, and the
- * /signup wizard ("By creating an account you agree…"). Sections 5–7 carry the REAL,
- * code-verified money model (see booking.js paymentPlan/createCustomerBookingsMulti +
+ * /signup wizard ("By creating an account you agree…"). Sections 5–7 describe the requested payment policy.
+ * Backend rollout requirements are in readmeAlamgir.md. Existing integrations (see booking.js paymentPlan/createCustomerBookingsMulti +
  * walletSetup gating): marketplace bookings are always at least partly online and
  * Bookboll's fee is collected as the deposit or as commission on full-online payments
- * (15% default, per-country/agreement overrides); the provider's own website is 0% fee,
- * but own-site deposits without a Bookings-wallet payout method are retained by Bookboll
- * as the platform fee; membership programs require a Membership-wallet payout method
+ * (15% default, per-country/agreement overrides); own-website bookings also carry commission, halved during paid Premium.
+ * Bookboll retains deposits as its fee regardless of payout connection; membership programs require a Membership-wallet payout method
  * before going live; Bookboll may PAUSE approved payout methods (payout_paused →
  * isWalletReady gates). Also covered: Premium subscription + custom-domain add-on
  * (lib/premium.js), hosted community events on provider courts (host reservations are
@@ -127,7 +126,7 @@ const SECTIONS = [
 
         <section id="fees">
           <h2>5. Fees, payments &amp; deposits</h2>
-          <p class="pt-callout">In short: bookings from your own website — and bookings you add yourself in the dashboard — carry <b>no platform fee</b>. Bookboll earns only on marketplace bookings, where its fee is collected through the online payment.</p>
+          <p class="pt-callout">Bookboll charges commission on <b>marketplace and own-website bookings</b>. Free merchants pay the standard rate. During a paid Premium subscription, own-website bookings use <b>half the standard rate</b>; marketplace rates stay the same.</p>
           <ul>
             <li><b>Marketplace bookings are always paid at least partly online.</b> There is no pay-everything-on-arrival option on the marketplace. The customer either pays:
               <ul>
@@ -137,8 +136,8 @@ const SECTIONS = [
             </li>
             <li><b>The standard marketplace commission is 15%.</b> Rates can vary by country, listing type or individual agreement — the rate that applies to you is always shown in your dashboard before you list.</li>
             <li><b>Deposits are part of the customer's price.</b> An online deposit always counts toward the customer's total — it is never an extra charge on top of the price you set.</li>
-            <li><b>Your own website has no platform fee.</b> You choose the payment methods per listing: pay on arrival, online deposit, or full online payment (full online requires a connected payout method).</li>
-            <li><b>Deposits and your payout method.</b> Online deposits are collected by Bookboll. If your <b>Bookings wallet</b> has a connected payout method, deposits from your own website are passed through to you in full (0% fee). If it does not, deposits — from any surface — are retained by Bookboll as the platform fee. Connecting a payout method is how you avoid this.</li>
+            <li><b>Your own website offers two payment methods:</b> deposit + on arrival, or full payment online. Full payment online requires a connected payout method. Full payment on arrival is not offered on your own website.</li>
+            <li><b>Payout connections do not waive commission.</b> On both channels, Bookboll retains the online deposit fee and you collect the remaining balance on arrival. With full online payment, Bookboll deducts its commission and credits your share to your <b>Bookings wallet</b>. The own-website discount applies during your active paid subscription; standard commissions apply when you return to Free.</li>
             <li><b>Deposits are non-refundable to the customer.</b> Customer-facing terms and checkout state this clearly: a customer who cancels or does not show forfeits the online deposit. You must not promise deposit refunds that contradict this.</li>
             <li>Promotional codes you create are funded from your share; promotional codes Bookboll creates are funded from Bookboll's fee.</li>
             <li><b>Custom domain</b> connection carries a one-time setup fee, shown before you confirm it.</li>
@@ -169,7 +168,7 @@ const SECTIONS = [
         <section id="premium">
           <h2>8. Premium subscription &amp; paid add-ons</h2>
           <ul>
-            <li>Certain advanced dashboard features (for example data exports, the marketing email composer, your blog, promo codes, hero banners and embed widgets) require the optional <b>Premium subscription</b> — currently a monthly fee shown in your dashboard before you subscribe.</li>
+            <li>Certain advanced dashboard features (for example data exports, the marketing email composer, your blog, promo codes, hero banners and embed widgets) require the optional <b>Premium subscription</b> — US$588 per year, billed annually with no free trial. The price and any applicable promotion are shown before you subscribe. Cancelling stops the next annual renewal; access continues until the end of the paid period.</li>
             <li>Premium renews automatically until cancelled. Cancelling stops future renewals; access to gated features ends with the paid period. Amounts already billed are not returned.</li>
             <li>Bookboll may adjust the Premium price or the set of gated features with notice in your dashboard.</li>
             <li>The <b>custom domain</b> connection is a separate one-time paid add-on (section 5).</li>

@@ -1,4 +1,5 @@
 <script setup>
+import CookieConsent from './components/CookieConsent.vue'
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import ToastHost from './components/ToastHost.vue'
@@ -21,4 +22,5 @@ useHead(computed(() => route.meta?.indexable ? {} : {
   <ToastHost />
   <ConfirmDialog />
   <InputDialog />
+  <CookieConsent scope="business" />
 </template>

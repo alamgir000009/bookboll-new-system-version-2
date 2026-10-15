@@ -17,7 +17,7 @@
  * memberships' Subscription-wallet requirement are disclosed, steps mirror the real funnel,
  * and CTAs are auth-aware (signed-in providers see "Open my dashboard").
  */
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed } from 'vue'
 import { useSeo, faqLd } from '../lib/seo.js'
 import { BRAND_APEX } from '../lib/brand.js'
 import { authUser } from '../lib/auth.js'
@@ -26,20 +26,18 @@ import { webBaseUrl } from '../lib/appBase.js'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import BrandMark from '../components/BrandMark.vue'
 import {
-  Store, Globe, Check, ArrowRight, Zap, X as XIcon, Dumbbell, Goal, Dices, CalendarCheck,
-  CreditCard, Tag, Users, UsersRound, BarChart3, Repeat, UserPlus, MapPin, Info,
-  Code2, LineChart, Wallet, LayoutDashboard, Search, ChevronDown,
+  Store, Globe, Check, ArrowRight, CalendarCheck, CreditCard, Repeat, UserPlus, MapPin, Wallet, Search, ChevronDown, Palette, Link2, Smartphone, CheckCircle2,
 } from 'lucide-vue-next'
 
 // Money-accuracy: every number below is verified in code — 15% default marketplace
-// commission (lib/approvalState.js PLATFORM_COMMISSION), Premium $59/mo (lib/premium.js
-// PREMIUM_PRICE), custom domain = one-time fee (Brand.vue DOMAIN_FEE; price not quoted here).
-// Never promise refunds; commission applies to MARKETPLACE bookings only.
+// commission (lib/approvalState.js PLATFORM_COMMISSION), Premium $588/year (lib/premium.js
+// PREMIUM_YEARLY_TOTAL), custom domain = one-time fee (Brand.vue DOMAIN_FEE; price not quoted here).
+// Never promise refunds; commission applies to marketplace and own-website bookings.
 const FAQS = [
   { q: 'How much does Bookboll cost for a sports facility?',
-    a: 'Getting started is free — no setup fees and no monthly fee for the core platform. Bookings from your own Bookboll website carry a 0% platform fee, and Bookboll only earns a commission on bookings that come through the Bookboll marketplace (15% by default worldwide, collected through the online payment). Optional extras: a custom domain (one-time fee) and a Premium plan ($59/month, or $49/month billed yearly — with a free trial to start) for advanced marketing and export features.' },
+    a: 'Getting started is free — no setup fees and no monthly fee for the core platform. Booking commissions apply on your website and the Bookboll marketplace. Free merchants pay the standard rate; paid Premium merchants pay half that rate on their own-website bookings. Rates vary by country and listing, and your dashboard shows yours. Optional extras: a custom domain (one-time fee) and a Premium plan ($588/year, billed annually with no free trial) for advanced marketing and export features.' },
   { q: 'What is the Bookboll 2-in-1?',
-    a: 'One free account gives you two sales channels: your own branded booking website (yourclub.bookboll.com) where bookings are commission-free, plus a listing on the Bookboll marketplace where players searching near you can discover and book your facility. Both channels share one dashboard, one calendar and one wallet.' },
+    a: 'One free account gives you two sales channels: your own branded booking website (yourclub.bookboll.com) where you can welcome your own customers, plus a listing on the Bookboll marketplace where players searching near you can discover and book your facility. Both channels share one dashboard, one calendar and one wallet.' },
   { q: 'Do I need my own website to use Bookboll?',
     a: 'No. Bookboll gives every business a free branded booking website on its own subdomain — with hourly court booking, live availability, memberships and online payments built in. Already have a website? Embed the Bookboll booking widget or add a booking button to it instead.' },
   { q: 'Can I use my own custom domain?',
@@ -47,17 +45,17 @@ const FAQS = [
   { q: 'How do payouts work?',
     a: 'You add a payout method — such as Stripe or the Bookboll wallet, depending on wallet type and country — to your Bookboll payout wallet, set up per country so each country pays out in its own currency. Venue bookings and membership income use separate wallets (Bookings wallet and Membership wallet). Your share of online payments is credited to your wallet; anything paid on arrival you collect directly at the venue.' },
   { q: 'How do online deposits work?',
-    a: 'A deposit is part of the price, not an extra charge: the customer pays the deposit online to confirm the booking, it counts toward their total, and they pay only the remaining balance when they arrive. On the marketplace, the online payment (the deposit, or the commission on a full online payment) is also how Bookboll collects its fee — the balance on arrival is yours. On your own website, connect a payout method to your Bookings wallet so online deposits are paid to you.' },
+    a: 'A deposit is part of the price, not an extra charge: the customer pays the deposit online to confirm the booking, it counts toward their total, and they pay only the remaining balance when they arrive. On both your website and the marketplace, Bookboll keeps the online deposit as its fee and you collect the remaining balance on arrival. This works with or without connected payouts. Full payment online needs connected payouts: Bookboll deducts its commission and credits your share to your Bookings wallet. Paid Premium halves the standard commission on your own-website bookings.' },
   { q: 'What can I list on Bookboll?',
     a: 'Courts and pitches for hourly rental (padel, football, tennis, basketball, badminton, volleyball and more), full venues, gyms, classes and academy programs with recurring memberships, activity venues like escape rooms, billiards and bowling — plus games, hangouts and tournaments hosted at your venue.' },
   { q: 'Does Bookboll support gym memberships and subscriptions?',
     a: 'Yes. You can sell recurring membership plans for gyms, classes and academies — monthly or longer terms, with free trials or multi-month offers and automatic recurring billing. Programs need a payout method on your Membership wallet before they can go live.' },
   { q: 'Does Bookboll include marketing tools?',
-    a: 'Yes. You can run WhatsApp and email campaigns to customers who opted in to marketing, customise notification templates, and add your own tracking (Meta Pixel, GA4, Google Tag Manager) to your branded website. Some advanced tools — like email campaigns, promo codes and homepage banners — are part of the Premium plan ($59/month, or $49/month billed yearly, with a free trial).' },
+    a: 'Yes. You can run WhatsApp and email campaigns to customers who opted in to marketing, customise notification templates, and add your own tracking (Meta Pixel, GA4, Google Tag Manager) to your branded website. Some advanced tools — like email campaigns, promo codes and homepage banners — are part of the Premium plan ($588/year, billed annually with no free trial).' },
   { q: 'Can my team have their own accounts?',
     a: 'Yes. Invite staff with Owner, Manager or Staff roles, grant or revoke individual permissions, and scope each person to specific locations, listings or programs — so the front desk can run the calendar without touching payouts.' },
   { q: 'How long does it take to set up?',
-    a: 'Most facilities go live the same day: create an account in about 2 minutes, add your venue and courts or programs in the dashboard, connect a payout method and share your link.' },
+    a: 'Create your account, verify your email, add your venue and listings in the dashboard, choose your payment methods and share your link. Deposit + on arrival works without connected payouts. Full online payments and membership programs need the appropriate payout wallet.' },
   { q: 'Do my customers need to download an app?',
     a: 'No. Your booking site and the Bookboll marketplace both run in the browser on any phone or computer — customers book in a few taps.' },
 ]
@@ -76,599 +74,160 @@ const APP_LD = {
     '@type': 'Offer',
     price: '0',
     priceCurrency: 'USD',
-    description: 'Free to get started. 0% commission on bookings from your own website; commission applies to Bookboll marketplace bookings only (15% default).',
+    description: 'No monthly subscription on Free. Booking commissions apply on both channels; paid Premium halves the standard own-website booking commission.',
   },
   publisher: { '@type': 'Organization', name: 'Bookboll', url: `https://${BRAND_APEX}/` },
 }
 
 useSeo({
   exactTitle: 'Booking Software & Free Website for Sports Venues, Gyms & Academies | Bookboll for Business',
-  description: 'Free booking software for sports venues, gyms and academies: your own branded booking website with 0% commission, memberships, online payments and marketing tools — plus new customers from the Bookboll marketplace (15% commission on marketplace bookings only).',
+  description: 'Free booking software for sports venues, gyms and academies: your own branded booking website, memberships, online payments and marketing tools. Booking commissions apply; paid Premium halves your own-website booking commission.',
   path: '/',
   jsonLd: [APP_LD, faqLd(FAQS)],
 })
 
 const YEAR = new Date().getFullYear()
-const SPORTS = ['Padel', 'Football', 'Basketball', 'Tennis', 'Badminton', 'Volleyball', 'Gyms', 'Academies', 'Classes']
-
-const listTypes = [
-  { icon: Goal, title: 'Court & pitch rental', sub: 'Padel, football, tennis, basketball & more', tags: ['Book by the hour', 'Live availability', 'Online payments'] },
-  { icon: Dumbbell, title: 'Memberships', sub: 'Gyms, academies & classes', tags: ['Recurring plans', 'Free trials', 'Auto-billing'] },
-  { icon: Dices, title: 'Activity venues', sub: 'Escape rooms, billiards, bowling & more', tags: ['Timed sessions', 'Group bookings', 'Add-ons'] },
-]
-
-const capabilities = [
-  { icon: CalendarCheck, title: 'Court booking system', sub: 'Slots, availability & holds' },
-  { icon: Repeat, title: 'Membership software', sub: 'Recurring plans & trials' },
-  { icon: CreditCard, title: 'Online payments', sub: 'Cards, deposits & payouts' },
-  { icon: Tag, title: 'Promo codes', sub: 'Targeted discounts & offers' },
-  { icon: Code2, title: 'Embed & widgets', sub: 'Add booking to your existing site' },
-  { icon: LineChart, title: 'Marketing pixels', sub: 'Meta Pixel, GA4 & Tag Manager' },
-  { icon: Users, title: 'Customer CRM', sub: 'Know who books with you' },
-  { icon: UsersRound, title: 'Team & permissions', sub: 'Staff roles & access' },
-  { icon: BarChart3, title: 'Analytics dashboard', sub: 'Track your growth' },
-]
-
 // Mirrors the REAL funnel: signup wizard (account → optional website) → dashboard
 // (location + listing/program) → payout wallet → live.
 const steps = [
-  { icon: UserPlus, title: 'Create your account', sub: 'Business name, email & your web address — 2 minutes.' },
+  { icon: UserPlus, title: 'Create your account', sub: 'Choose your business address and verify your email.' },
   { icon: Globe, title: 'Set up your website', sub: 'Logo & colours — your address is already reserved. Skippable.', opt: true },
   { icon: MapPin, title: 'Add your first listing', sub: 'Venue, courts or programs — in your dashboard.' },
-  { icon: Wallet, title: 'Get paid & go live', sub: 'Add a payout method, share your link.' },
+  { icon: Wallet, title: 'Choose payments & go live', sub: 'Set your payment options and share your link.' },
 ]
 
-// Scroll-reveal: gated behind `.fb-anim` (added only when JS runs AND motion is allowed),
-// so no-JS / reduced-motion visitors always see the full page.
-const root = ref(null)
-let io = null
-onMounted(() => {
-  if (typeof window === 'undefined' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-  const el = root.value
-  if (!el) return
-  el.classList.add('fb-anim')
-  io = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target) } })
-  }, { threshold: 0.12 })
-  el.querySelectorAll('.fb-reveal').forEach(n => io.observe(n))
-})
-onBeforeUnmount(() => { io?.disconnect() })
+const siteThemes = [{name:'Ocean',color:'#245fce',pale:'#e8f0ff'},{name:'Forest',color:'#177455',pale:'#e7f4ed'},{name:'Plum',color:'#88486f',pale:'#f4eaf0'}]
+const siteTheme = ref(siteThemes[0])
+const activeWorkflow = ref('bookings')
+const workflows = [
+  { key: 'bookings', icon: CalendarCheck, title: 'Run your bookings', description: 'See availability, add walk-ins and keep every court or room on the same calendar.', items: ['Set opening hours and booking lengths', 'Offer peak-time prices and session extensions', 'Give your team access to the right locations'] },
+  { key: 'payments', icon: CreditCard, title: 'Keep payments clear', description: 'Let customers pay online or pay a deposit and settle the rest when they arrive.', items: ['Show the full price before confirmation', 'Track payment status beside each booking', 'Connect payouts for full online payments'] },
+  { key: 'memberships', icon: Repeat, title: 'Welcome regulars', description: 'Sell recurring plans for your gym, classes or academy alongside your venue bookings.', items: ['Create plans and introductory offers', 'Manage subscriptions and member check-in', 'Connect your Membership wallet before publishing'] },
+]
+function moveWorkflow(event,key) {
+  if (!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(event.key)) return
+  event.preventDefault()
+  const index = workflows.findIndex(w => w.key === key)
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? workflows.length - 1 : (index + (['ArrowRight','ArrowDown'].includes(event.key) ? 1 : -1) + workflows.length) % workflows.length
+  activeWorkflow.value = workflows[next].key
+  event.currentTarget.parentElement.querySelector(`#tab-${activeWorkflow.value}`)?.focus()
+}
+const workflow = computed(() => workflows.find(w => w.key === activeWorkflow.value))
 </script>
 
 <template>
-  <div ref="root" class="fb">
-    <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
-    <header class="fb-nav">
-      <div class="fb-nav-in">
-        <router-link to="/" class="fb-brand">
-          <span class="fb-mark" data-no-translate><BrandMark /></span>
-          <span class="fb-brand-name" data-no-translate>Bookboll</span>
-          <span class="fb-brand-pill">for Business</span>
-        </router-link>
-        <nav class="fb-nav-actions">
-          <router-link to="/pricing" class="fb-nav-signin">Pricing</router-link>
-          <router-link to="/blog" class="fb-nav-signin">Blog</router-link>
-          <LanguageSwitcher compact class="fb-lang" />
-          <a v-if="authUser" :href="adminDashboardUrl()" class="fb-nav-cta"><LayoutDashboard :size="15" /> Open dashboard</a>
-          <template v-else>
-            <a :href="adminLoginUrl()" class="fb-nav-signin">Sign in</a>
-            <router-link to="/signup" class="fb-nav-cta">Get started free</router-link>
-          </template>
-        </nav>
-      </div>
-    </header>
+  <div class="biz">
+    <header class="biz-nav"><div class="biz-nav-inner">
+      <router-link to="/" class="biz-brand"><span class="biz-mark"><BrandMark /></span><span>Bookboll<small>for Business</small></span></router-link>
+      <nav aria-label="Business navigation"><a href="#tools" class="biz-nav-detail">How it works</a><router-link to="/pricing">Pricing</router-link><LanguageSwitcher compact /><a :href="adminLoginUrl()">Sign in</a><a v-if="authUser" :href="adminDashboardUrl()" class="biz-button">Open dashboard</a><router-link v-else to="/signup" class="biz-button">Get started free</router-link></nav>
+    </div></header>
 
-    <!-- ── Hero ────────────────────────────────────────────────────────────── -->
-    <section class="fb-hero">
-      <div class="fb-hero-grid">
-        <div class="fb-hero-text">
-          <div class="fb-badge"><Zap :size="15" /> For sports facility owners &amp; operators</div>
-          <h1>Booking software &amp; a <span class="fb-hl">free website</span> for sports venues, gyms &amp; academies</h1>
-          <p class="fb-hero-sub">Fill your courts and grow your memberships: take commission-free bookings on your own branded website, plus win new customers from the Bookboll marketplace.</p>
-          <div class="fb-hero-cta">
-            <a v-if="authUser" :href="adminDashboardUrl()" class="fb-btn-primary">Open my dashboard <ArrowRight :size="18" /></a>
-            <template v-else>
-              <router-link to="/signup" class="fb-btn-primary">Get started free <ArrowRight :size="18" /></router-link>
-              <a :href="adminLoginUrl()" class="fb-btn-ghost">Sign in</a>
-            </template>
+    <main>
+      <section class="biz-hero-wrap">
+        <div class="biz-hero biz-container">
+          <div class="biz-hero-copy">
+            <p class="biz-intro"><Store :size="18" /> Bookboll for venues, gyms &amp; academies</p>
+            <h1>Your brand.<br />Your own<br />booking website.</h1>
+            <p class="biz-lead">Give your business a place to call its own. Your logo, your colours and your web address — with bookings, memberships and payments built in.</p>
+            <div class="biz-hero-actions"><a v-if="authUser" :href="adminDashboardUrl()" class="biz-button">Open dashboard <ArrowRight :size="17" /></a><router-link v-else to="/signup" class="biz-button">Create your website <ArrowRight :size="17" /></router-link><a href="#your-website" class="biz-text-link">See what you can make</a></div>
+            <p class="biz-fee-note"><Check :size="15" /> No setup or monthly fee on Free. Booking commissions apply.</p>
+            <div class="biz-hero-benefits"><span><Globe :size="17" /> Your own website</span><span><Search :size="17" /> Marketplace reach</span><span><CalendarCheck :size="17" /> One dashboard</span></div>
           </div>
-          <ul class="fb-trust">
-            <li><Check :size="15" /> No setup fees</li>
-            <li><Check :size="15" /> No monthly fees</li>
-            <li><Check :size="15" /> 0% on your own site</li>
-          </ul>
-        </div>
-
-        <!-- Product mock: YOUR booking website + YOUR club showing up on the Bookboll marketplace.
-             data-no-translate: decorative micro-UI — translating its tiny labels/fake URLs would
-             mangle names and overflow the mock cards. -->
-        <div class="fb-hero-visual" aria-hidden="true" data-no-translate>
-          <div class="fb-visual-glow"></div>
-
-          <!-- Your branded booking website -->
-          <div class="fb-mock fb-mock-site">
-            <div class="fb-mock-head"><span class="fb-dot r"></span><span class="fb-dot y"></span><span class="fb-dot g"></span><b>yourclub.bookboll.com</b></div>
-            <div class="fb-site-nav">
-              <span class="fb-site-logo"></span><b>Your Padel Club</b>
-              <span class="fb-site-links"><i></i><i></i></span>
-              <span class="fb-site-book">Book</span>
+          <div class="biz-website-stage" :style="{'--site-accent':siteTheme.color,'--site-pale':siteTheme.pale}">
+            <div class="biz-browser" aria-label="Example branded booking website">
+              <div class="biz-browser-bar"><span class="biz-browser-dots"><i></i><i></i><i></i></span><span><Globe :size="12" /> harbourclub.bookboll.com</span><small>Example</small></div>
+              <div class="biz-demo-nav"><strong><span>H</span> Harbour Club</strong><div><span>Courts</span><span>Memberships</span></div></div>
+              <div class="biz-demo-hero"><div><span>A place for your next game</span><h2>Make time<br />for the court.</h2><span class="biz-demo-button">Find your next session <ArrowRight :size="13" /></span></div>
+                <svg class="biz-court-art" viewBox="0 0 280 270" role="img" aria-label="Illustrated padel court"><rect width="280" height="270" fill="currentColor"/><path d="M0 230L280 150V270H0" fill="#ffffff" opacity=".06"/><g transform="translate(18 20) rotate(18 130 140)"><rect x="43" y="5" width="156" height="260" rx="2" fill="#173d4c"/><rect x="51" y="13" width="140" height="244" fill="#80cab7"/><path d="M51 74H191M51 196H191M121 13V257M51 135H191" stroke="white" stroke-width="2" fill="none"/><path d="M43 135H200" stroke="#103b40" stroke-width="8"/><path d="M43 131H200" stroke="white" stroke-width="2"/><circle cx="75" cy="104" r="7" fill="#ffe688"/><circle cx="147" cy="182" r="7" fill="white"/><circle cx="114" cy="157" r="3" fill="#d6f364"/></g></svg>
+              </div>
+              <div class="biz-demo-booking"><div><span class="biz-demo-date"><CalendarCheck :size="17" /></span><span><strong>Your next session</strong><small>Choose a court and a time</small></span></div><span class="biz-demo-live"><i></i> Live availability</span></div>
+              <div class="biz-demo-slots"><span>9:00 AM</span><span class="chosen">10:00 AM <Check :size="12" /></span><span>11:00 AM</span><span>12:00 PM</span></div>
+              <div class="biz-demo-footer"><span><CheckCircle2 :size="13" /> Online booking built in</span><span><Smartphone :size="13" /> Ready for mobile</span></div>
             </div>
-            <div class="fb-site-hero">
-              <b>Book your court</b>
-              <small>Padel · Tennis · Football</small>
-            </div>
-            <div class="fb-site-cards">
-              <div class="fb-site-card"><span class="fb-site-img c1"></span><b>Court 1</b><small>150 /hr</small></div>
-              <div class="fb-site-card"><span class="fb-site-img c2"></span><b>Court 2</b><small>150 /hr</small></div>
-            </div>
-            <div class="fb-mock-tag fb-tag-free">Your website · 0%</div>
-          </div>
-
-          <!-- The Bookboll marketplace -->
-          <div class="fb-mock fb-mock-market">
-            <div class="fb-bb-head">
-              <span class="fb-bb-logo">B</span><b>Bookboll</b>
-              <span class="fb-bb-loc"><MapPin :size="9" /> Dubai</span>
-            </div>
-            <div class="fb-mock-search"><Search :size="12" /> Padel near me</div>
-            <div class="fb-mock-item"><span class="fb-mock-thumb t1"></span><span class="fb-mock-item-t"><b>Elite Courts</b><small>1.2 km · ★ 4.9</small></span></div>
-            <div class="fb-mock-item hl"><span class="fb-mock-thumb t2"></span><span class="fb-mock-item-t"><b>Your Padel Club</b><small>2.0 km · New</small></span></div>
-            <div class="fb-mock-item"><span class="fb-mock-thumb t3"></span><span class="fb-mock-item-t"><b>Arena Club</b><small>3.4 km · ★ 4.8</small></span></div>
-            <div class="fb-mock-tag fb-tag-market">Bookboll marketplace</div>
-          </div>
-
-          <div class="fb-plus"><span>+</span></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── The 2-in-1 ──────────────────────────────────────────────────────── -->
-    <section class="fb-sec fb-twin fb-reveal">
-      <div class="fb-eyebrow">Two products, one account</div>
-      <h2 class="fb-h2">One platform, two ways to get booked</h2>
-      <div class="fb-twin-grid">
-        <div class="fb-twin-card">
-          <div class="fb-twin-ico"><Globe :size="24" /></div>
-          <h3>Your booking website</h3>
-          <ul class="fb-twin-list">
-            <li><Check :size="15" /> Free branded site — <b>yourclub.bookboll.com</b></li>
-            <li><Check :size="15" /> Court booking, memberships &amp; online payments</li>
-            <li><Check :size="15" /> Embed booking into a website you already have</li>
-          </ul>
-          <div class="fb-twin-pill fb-pill-green"><Check :size="14" /> 0% commission — you keep 100%</div>
-          <div class="fb-twin-note">Want your own domain? Connect one anytime (one-time fee).</div>
-        </div>
-        <div class="fb-twin-join"><span>+</span></div>
-        <div class="fb-twin-card">
-          <div class="fb-twin-ico"><Store :size="24" /></div>
-          <h3>The Bookboll marketplace</h3>
-          <ul class="fb-twin-list">
-            <li><Check :size="15" /> Get found by players searching near you</li>
-            <li><Check :size="15" /> We do the marketing — you take the bookings</li>
-            <li><Check :size="15" /> Marketplace loyalty rewards bring players back</li>
-          </ul>
-          <div class="fb-twin-pill fb-pill-teal"><Store :size="14" /> Commission only on sales we bring</div>
-          <div class="fb-twin-note">Marketplace listings are quality-reviewed before going live.</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Pricing clarity ─────────────────────────────────────────────────── -->
-    <section class="fb-sec fb-price fb-reveal">
-      <div class="fb-price-card">
-        <div class="fb-price-head">
-          <h2 class="fb-h2">Free on your site.<br />Pay only when we bring the customer.</h2>
-        </div>
-        <div class="fb-price-rows">
-          <div class="fb-price-row">
-            <div class="fb-price-l"><Globe :size="18" /> Bookings from your own website</div>
-            <div class="fb-price-r fb-free">0% platform fee</div>
-          </div>
-          <div class="fb-price-row">
-            <div class="fb-price-l"><Store :size="18" /> Bookings from the Bookboll marketplace</div>
-            <div class="fb-price-r fb-comm">Small platform fee</div>
+            <div class="biz-theme-picker"><div><Palette :size="18" /><span>Make it yours.<small>Try a colour for this example.</small></span></div><div role="group" aria-label="Example website colour"><button v-for="theme in siteThemes" :key="theme.name" type="button" :style="{background:theme.color}" :aria-label="theme.name+' website colour'" :aria-pressed="siteTheme.name === theme.name" @click="siteTheme = theme"><Check v-if="siteTheme.name === theme.name" :size="17" /></button></div></div>
           </div>
         </div>
-        <div class="fb-price-note">
-          <Info :size="16" />
-          <span><b>Good to know:</b> marketplace bookings are always paid at least partly online — the online deposit (or the commission on a full online payment) is how Bookboll collects its fee; the balance is paid to you on arrival. On your own website you can also offer full pay-on-arrival and there's no fee — just connect a payout method to your <b>Bookings wallet</b>, or online deposits go to Bookboll as the platform fee. Membership programs need a <b>Subscription-wallet</b> payout method before going live. <router-link to="/terms" class="fb-tc-link">Provider terms apply</router-link>.</span>
+      </section>
+
+      <section id="your-website" class="biz-site-section biz-container">
+        <div class="biz-section-head"><div><p class="biz-section-kicker"><Globe :size="18" /> Your business, online</p><h2>A website that does<br />more than look good.</h2></div><p>Give customers one link to explore your spaces, find an available time and book with you.</p></div>
+        <div class="biz-site-features"><article><Palette :size="25" /><h3>Looks like you</h3><p>Add your logo, photos and brand colours. Tell your story and show what makes your venue worth a visit.</p></article><article><Link2 :size="25" /><h3>A link of your own</h3><p>Start at <strong>yourclub.bookboll.com</strong>. Connect your own domain for a one-time fee, or embed booking on a site you already have.</p></article><article><CalendarCheck :size="25" /><h3>Open for bookings</h3><p>Customers see live availability, reserve a court or join a membership, and choose from your enabled payment options.</p></article><article><Smartphone :size="25" /><h3>Made for every screen</h3><p>Share your link on social media or WhatsApp. Customers can book from their phone, with no app required.</p></article></div>
+      </section>
+
+      <section id="tools" class="biz-tools biz-container">
+        <div class="biz-section-head"><h2>Less admin.<br />More time for your customers.</h2><p>From the first reservation to the last check-in, keep the daily details together.</p></div>
+        <div class="biz-workspace"><div class="biz-tabs" role="tablist" aria-label="Business tools"><button v-for="w in workflows" :key="w.key" :id="`tab-${w.key}`" role="tab" :aria-selected="activeWorkflow === w.key" :tabindex="activeWorkflow === w.key ? 0 : -1" @keydown="moveWorkflow($event,w.key)" :aria-controls="`panel-${w.key}`" @click="activeWorkflow = w.key"><component :is="w.icon" :size="22" /><span>{{ w.title }}</span><ArrowRight :size="17" /></button></div>
+          <div :id="`panel-${workflow.key}`" class="biz-tool-detail" role="tabpanel" :aria-labelledby="`tab-${workflow.key}`"><h3>{{ workflow.title }}</h3><p>{{ workflow.description }}</p><ul><li v-for="item in workflow.items" :key="item"><Check :size="17" />{{ item }}</li></ul></div></div>
+      </section>
+
+      <section class="biz-channels"><div class="biz-container"><div class="biz-section-head"><h2>Two ways to get booked.<br />One business account.</h2><p>Bring your own customers and make room for new ones. Both channels connect to your dashboard.</p></div><div class="biz-channel-grid">
+        <article><span class="biz-channel-icon"><Globe :size="26" /></span><h3>Your own booking website</h3><p>A home for your business, with your name, logo and colours.</p><ul><li><Check :size="16" />Your own address: yourclub.bookboll.com</li><li><Check :size="16" />Live availability and online booking</li><li><Check :size="16" />Embed booking on an existing website</li></ul><small>A custom domain is available for a one-time fee.</small><a v-if="authUser" :href="adminDashboardUrl('/brand')" class="biz-button biz-channel-cta">Manage your website <ArrowRight :size="17" /></a><router-link v-else to="/signup" class="biz-button biz-channel-cta">Create your own website <ArrowRight :size="17" /></router-link></article>
+        <article><span class="biz-channel-icon blue"><Search :size="26" /></span><h3>The Bookboll marketplace</h3><p>Help people looking for a court, class or activity discover you.</p><ul><li><Check :size="16" />Show your venue to people browsing nearby</li><li><Check :size="16" />List bookable spaces and membership plans</li><li><Check :size="16" />Manage customers from both channels together</li></ul><small>Marketplace listings are reviewed before going live.</small><a v-if="authUser" :href="adminDashboardUrl('/listings')" class="biz-button biz-channel-cta biz-button-blue">Get listed <ArrowRight :size="17" /></a><router-link v-else to="/signup" class="biz-button biz-channel-cta biz-button-blue">Get listed <ArrowRight :size="17" /></router-link></article>
+      </div></div></section>
+
+      <section class="biz-plan-section"><div class="biz-container">
+        <div class="biz-section-head"><div><p class="biz-section-kicker"><CreditCard :size="18" /> Simple plans. Clear fees.</p><h2>Start with Free.<br />Grow on your terms.</h2></div><p>Your website, marketplace presence and booking dashboard come together. Choose the plan that fits your business.</p></div>
+        <div class="biz-plan-grid">
+          <article class="biz-plan-card"><div class="biz-plan-top"><span class="biz-plan-label">FREE</span><span class="biz-plan-audience">For getting started</span></div><h3>$0 <small>/ month</small></h3><p class="biz-plan-description">The essentials to get online and start taking bookings.</p><ul><li><Check :size="17" />Your branded booking website</li><li><Check :size="17" />Bookings, memberships &amp; a shared calendar</li><li><Check :size="17" />A presence on the Bookboll marketplace</li></ul><div class="biz-commission-note"><strong>Standard booking commission</strong><span>Applies to bookings on your website and the marketplace.</span></div><a v-if="authUser" :href="adminDashboardUrl()" class="biz-button">Open dashboard <ArrowRight :size="17" /></a><router-link v-else to="/signup" class="biz-button">Start with Free <ArrowRight :size="17" /></router-link><small class="biz-plan-billing">No setup fee. Booking commissions apply.</small></article>
+          <article class="biz-plan-card biz-plan-premium"><div class="biz-plan-top"><span class="biz-plan-label">PREMIUM</span><span class="biz-plan-audience">For your next stage</span></div><h3>$588 <small>USD / year</small></h3><p class="biz-plan-description">More tools for growing relationships and repeat bookings.</p><ul><li><Check :size="17" />Everything in Free</li><li><Check :size="17" />Advanced marketing &amp; export tools</li><li><Check :size="17" />Promo codes, campaigns &amp; website banners</li></ul><div class="biz-commission-note"><strong>50% lower website commission</strong><span>Half the standard rate on your own website. Marketplace commission stays at the standard rate.</span></div><router-link to="/pricing" class="biz-button">Explore Premium <ArrowRight :size="17" /></router-link><small class="biz-plan-billing">Billed annually. No free trial.</small></article>
         </div>
-      </div>
-    </section>
+        <div class="biz-pricing-footnote"><p>No setup fee. Commission varies by country and listing; your dashboard shows your rate. A custom domain has a separate one-time fee.</p><router-link to="/pricing" class="biz-text-link">Compare all features <ArrowRight :size="16" /></router-link></div>
+        <details class="biz-payment-explainer"><summary><span><Wallet :size="19" /> How deposits and payouts work</span><ChevronDown :size="18" /></summary><p>A deposit is part of the booking price. Bookboll keeps the online deposit as its fee; you collect the remaining balance on arrival. For full online payments, connect payouts: your share is credited to your Bookings wallet after commission. Memberships use a separate Membership wallet.</p></details>
+      </div></section>
 
+      <section class="biz-launch-section"><div class="biz-container biz-launch-layout">
+        <div class="biz-launch-intro"><p class="biz-section-kicker"><Globe :size="18" /> From idea to online</p><h2>Your business.<br />Ready for its<br /><em>next chapter.</em></h2><p>Start with the essentials. Add more locations, listings and team members whenever you need them.</p><a v-if="authUser" :href="adminDashboardUrl()" class="biz-button">Continue in your dashboard <ArrowRight :size="17" /></a><router-link v-else to="/signup" class="biz-button">Let's build your website <ArrowRight :size="17" /></router-link><small>No setup fee. Booking commissions apply.</small></div>
+        <ol class="biz-launch-steps"><li v-for="(s,i) in steps" :key="s.title"><span class="biz-launch-number">0{{ i + 1 }}</span><div><span class="biz-launch-icon"><component :is="s.icon" :size="21" /></span><h3>{{ s.title }}</h3><p>{{ s.sub }}</p><span v-if="s.opt" class="biz-optional">You can personalise this later</span></div></li></ol>
+      </div></section>
 
-    <!-- ── What you can list ───────────────────────────────────────────────── -->
-    <section class="fb-sec fb-list fb-reveal">
-      <div class="fb-eyebrow">Built for your business</div>
-      <h2 class="fb-h2">Courts, gyms &amp; academies — all in one</h2>
-      <div class="fb-list-grid">
-        <div v-for="t in listTypes" :key="t.title" class="fb-list-card">
-          <div class="fb-list-ico"><component :is="t.icon" :size="26" /></div>
-          <h3>{{ t.title }}</h3>
-          <p>{{ t.sub }}</p>
-          <ul class="fb-list-tags">
-            <li v-for="tag in t.tags" :key="tag"><Check :size="13" /> {{ tag }}</li>
-          </ul>
-        </div>
-      </div>
-      <div class="fb-sports">
-        <span v-for="s in SPORTS" :key="s" class="fb-sport-chip">{{ s }}</span>
-        <span class="fb-sport-chip more">+ more</span>
-      </div>
-    </section>
-
-    <!-- ── Capabilities ────────────────────────────────────────────────────── -->
-    <section class="fb-sec fb-caps">
-      <div class="fb-reveal">
-      <div class="fb-eyebrow light">The same engine that powers Bookboll</div>
-      <h2 class="fb-h2 light">Everything you need to run your facility</h2>
-      <div class="fb-caps-grid">
-        <div v-for="c in capabilities" :key="c.title" class="fb-cap">
-          <div class="fb-cap-ico"><component :is="c.icon" :size="20" /></div>
-          <div class="fb-cap-t">
-            <b>{{ c.title }}</b>
-            <small>{{ c.sub }}</small>
-          </div>
-        </div>
-      </div>
-      </div>
-    </section>
-
-    <!-- ── How it works ────────────────────────────────────────────────────── -->
-    <section class="fb-sec fb-how fb-reveal">
-      <div class="fb-eyebrow">Live in minutes</div>
-      <h2 class="fb-h2">From sign-up to first booking</h2>
-      <div class="fb-steps">
-        <div v-for="(s, i) in steps" :key="s.title" class="fb-step">
-          <div class="fb-step-num">{{ i + 1 }}</div>
-          <div class="fb-step-ico"><component :is="s.icon" :size="22" /></div>
-          <h3>{{ s.title }} <span v-if="s.opt" class="fb-step-opt">Optional</span></h3>
-          <p>{{ s.sub }}</p>
-        </div>
-      </div>
-      <div class="fb-how-cta">
-        <a v-if="authUser" :href="adminDashboardUrl()" class="fb-btn-primary">Open my dashboard <ArrowRight :size="18" /></a>
-        <router-link v-else to="/signup" class="fb-btn-primary">Get started free <ArrowRight :size="18" /></router-link>
-      </div>
-    </section>
-
-    <!-- ── FAQ (matches the FAQPage JSON-LD above) ─────────────────────────── -->
-    <section class="fb-sec fb-faq fb-reveal">
-      <div class="fb-eyebrow">Questions, answered</div>
-      <h2 class="fb-h2">Sports facility booking — FAQs</h2>
-      <div class="fb-faq-list">
-        <details v-for="f in FAQS" :key="f.q" class="fb-faq-item">
-          <summary>{{ f.q }} <ChevronDown :size="17" class="fb-faq-caret" /></summary>
-          <p>{{ f.a }}</p>
-        </details>
-      </div>
-    </section>
-
-    <!-- ── Final CTA ───────────────────────────────────────────────────────── -->
-    <section class="fb-final">
-      <div class="fb-final-in">
-        <h2>Ready to fill your courts?</h2>
-        <p>Free website. More players. One dashboard.</p>
-        <div class="fb-final-cta">
-          <a v-if="authUser" :href="adminDashboardUrl()" class="fb-btn-primary big">Open my dashboard <ArrowRight :size="18" /></a>
-          <template v-else>
-            <router-link to="/signup" class="fb-btn-primary big">Get started free <ArrowRight :size="18" /></router-link>
-            <a :href="adminLoginUrl()" class="fb-btn-ghost">Already a partner? Sign in</a>
-          </template>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Internal links (crawlability: marketplace hubs + terms + signup) ── -->
-    <nav class="fb-crawl" aria-label="Explore Bookboll">
-      <span class="fb-crawl-t">Explore Bookboll</span>
-      <a :href="`${webBaseUrl()}/venues`">Sports venues by city</a>
-      <a :href="`${webBaseUrl()}/memberships`">Gym &amp; academy memberships</a>
-      <a :href="`${webBaseUrl()}/terms`">Terms</a>
-      <router-link to="/signup">Create your business account</router-link>
-    </nav>
-
-    <!-- ── Footer ──────────────────────────────────────────────────────────── -->
-    <footer class="fb-foot">
-      <span>© {{ YEAR }} Bookboll — booking software for sports facilities</span>
-      <div class="fb-foot-links">
-        <a :href="webBaseUrl() + '/'">← Back to marketplace</a>
-        <router-link to="/pricing">Pricing</router-link>
-        <router-link to="/blog">Blog</router-link>
-        <router-link to="/terms">Provider terms</router-link>
-        <a v-if="authUser" :href="adminDashboardUrl()">Dashboard</a>
-        <a v-else :href="adminLoginUrl()">Sign in</a>
-      </div>
-    </footer>
+      <section class="biz-container biz-faq"><div><h2>A few things<br />you might be wondering.</h2><p>Details for venue owners, operators and front-desk teams.</p><router-link to="/terms" class="biz-text-link">Read provider terms</router-link></div><div><details v-for="f in FAQS" :key="f.q"><summary>{{ f.q }}<ChevronDown :size="17" /></summary><p>{{ f.a }}</p></details></div></section>
+      <section class="biz-final biz-container"><div><h2>Put your business on the map.</h2><p>Create your branded website. Reach new customers. Run it all with Bookboll.</p></div><a v-if="authUser" :href="adminDashboardUrl()" class="biz-button">Open dashboard</a><router-link v-else to="/signup" class="biz-button">Get started free <ArrowRight :size="17" /></router-link></section>
+    </main>
+    <footer class="biz-footer biz-container"><span>© {{ YEAR }} Bookboll</span><nav aria-label="Footer"><a :href="webBaseUrl()">Marketplace</a><a :href="adminLoginUrl()">Business sign in</a><router-link to="/pricing">Pricing</router-link><router-link to="/blog">Guides</router-link><router-link to="/terms">Provider terms</router-link></nav></footer>
   </div>
 </template>
 
 <style scoped>
-/* FIXED teal theme — do NOT swap for --brand vars (must not follow super-admin marketplace theming). */
-.fb { --ink:#0f172a; --teal:#14b8a6; --teal-2:#2dd4bf; --teal-lite:#5eead4; --green:#34d399;
-  background:var(--surface, #ffffff); color:var(--ink); min-height:100vh;
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
-  -webkit-font-smoothing:antialiased; }
-.fb h1,.fb h2,.fb h3 { margin:0; }
-.fb p { margin:0; }
+.biz{--biz-ink:#12332f;--biz-green:#075e54;--biz-muted:#526762;background:#fff;color:var(--biz-ink);font-family:inherit;line-height:1.55}.biz *{box-sizing:border-box}.biz a{text-decoration:none}.biz button,.biz a{ -webkit-tap-highlight-color:transparent}.biz :is(a,button,summary):focus-visible{outline:3px solid #1a6afd;outline-offset:4px}.biz h1,.biz h2,.biz h3,.biz p{margin:0;color:inherit}.biz-container{width:min(1160px,calc(100% - 64px));margin-inline:auto}.biz-nav{border-bottom:1px solid #dfe8e5;background:#fff}.biz-nav-inner{max-width:1280px;margin:auto;padding:18px 32px;display:flex;justify-content:space-between;align-items:center;gap:24px}.biz-brand{display:flex;align-items:center;gap:10px;color:var(--biz-ink);font-size:22px;font-weight:800;line-height:1.2}.biz-brand small{display:block;font-weight:500;font-size:12px;color:var(--biz-muted);margin-top:4px}.biz-mark{width:42px;height:42px;background:#0fa59b;border-radius:12px;display:grid;place-items:center;color:white}.biz-nav nav{display:flex;align-items:center;gap:24px}.biz-nav nav>a{font-size:14px;font-weight:600;color:var(--biz-ink)}.biz .biz-button{display:inline-flex;align-items:center;justify-content:center;gap:10px;background:var(--biz-green);color:white;padding:14px 23px;border-radius:9px;font-size:15px;font-weight:700;min-height:48px}.biz .biz-button:hover{background:#044b43}.biz-nav .biz-button{padding:11px 17px}.biz-hero{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center;padding-block:80px 72px}.biz-intro{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;color:var(--biz-green)!important;margin-bottom:22px!important}.biz h1{font-size:clamp(36px,4.5vw,58px);line-height:1.06;letter-spacing:-1.9px;max-width:520px;font-weight:750}.biz-lead{font-size:18px;color:var(--biz-muted)!important;margin-top:24px!important;max-width:490px}.biz-hero-actions{display:flex;align-items:center;gap:24px;flex-wrap:wrap;margin-top:30px}.biz-text-link{color:var(--biz-green);display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:14px;text-decoration:underline!important;text-underline-offset:4px}.biz-fee-note{font-size:12px;color:var(--biz-muted)!important;margin-top:16px!important;display:flex;gap:7px;align-items:flex-start;max-width:380px}.biz-fee-note svg{flex-shrink:0;margin-top:2px}.biz-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:40px;margin-bottom:32px}.biz h2{font-size:32px;letter-spacing:-.8px;line-height:1.18;font-weight:750}.biz-section-head>p{max-width:360px;font-size:15px;color:var(--biz-muted)}.biz-tools{padding-block:40px 72px;scroll-margin-top:24px}.biz-workspace{display:grid;grid-template-columns:1fr 1.6fr;background:#f4f7f7;border-radius:16px;padding:10px;gap:10px}.biz-tabs{display:flex;flex-direction:column;gap:8px}.biz-tabs button{display:flex;align-items:center;gap:12px;padding:24px 18px;font:inherit;font-size:16px;font-weight:650;text-align:start;border:0;border-radius:10px;background:transparent;color:var(--biz-muted);cursor:pointer}.biz-tabs button>svg:last-child{margin-left:auto}.biz-tabs button[aria-selected=true]{background:var(--biz-green);color:#fff}.biz-tool-detail{background:white;border-radius:10px;padding:32px 36px}.biz h3{font-size:22px;letter-spacing:-.35px}.biz-tool-detail p{max-width:530px;color:var(--biz-muted);margin-top:8px}.biz ul{padding:0;list-style:none;margin:22px 0 0}.biz li{display:flex;gap:9px;align-items:flex-start;font-size:14px;margin-top:12px}.biz li svg{flex-shrink:0;margin-top:3px;color:var(--biz-green)}.biz-channels{background:#f4f7f7;padding:64px 0}.biz-channel-grid{display:grid;grid-template-columns:1fr 1fr;gap:60px}.biz-channel-grid article+article{border-left:1px solid #cadbd5;padding-left:60px}.biz-channel-icon{display:grid;place-items:center;width:50px;height:50px;border-radius:13px;background:#d9f0e7;color:var(--biz-green);margin-bottom:18px}.biz-channel-icon.blue{color:#215eab;background:#e0eaff}.biz-channel-grid p{color:var(--biz-muted);margin-top:8px;max-width:420px}.biz-channel-grid small{display:block;color:var(--biz-muted);font-size:12px;margin-top:24px}.biz-pricing{display:grid;grid-template-columns:1fr 1.25fr;gap:80px;padding-block:72px}.biz-pricing>div>p{color:var(--biz-muted);font-size:15px;max-width:350px;margin:18px 0}.biz-fees>div{padding:0 0 20px;margin-bottom:20px;border-bottom:1px solid #dfe8e5;display:grid;gap:5px}.biz-fees span{font-size:13px;color:var(--biz-green);font-weight:700}.biz-fees strong{font-size:19px}.biz-fees small{color:var(--biz-muted);font-size:13px}.biz details summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none;cursor:pointer;font-weight:650}.biz details summary::-webkit-details-marker{display:none}.biz details[open] summary svg{transform:rotate(180deg)}.biz details p{font-size:14px;color:var(--biz-muted);margin:14px 0 0;max-width:68ch}.biz-setup{padding:48px 0 68px;border-top:1px solid #dfe8e5}.biz-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:30px;margin:0;padding:0;list-style:none;counter-reset:step}.biz-steps li{display:block;margin:0;border-top:2px solid #d5e7df;padding-top:20px}.biz-steps li>span{display:grid;place-items:center;width:30px;height:30px;background:#dcf5ec;color:var(--biz-green);border-radius:50%;font-weight:700;margin-bottom:16px}.biz-steps h3{font-size:17px;line-height:1.3}.biz-steps p{font-size:13px;color:var(--biz-muted);margin-top:8px}.biz-faq{display:grid;grid-template-columns:1fr 1.6fr;gap:70px;padding-block:32px 72px}.biz-faq>div>p{color:var(--biz-muted);font-size:14px;margin:16px 0}.biz-faq details{padding:20px 0;border-bottom:1px solid #dfe8e5}.biz-faq details:first-child{padding-top:0}.biz-faq summary{font-size:15px}.biz-faq summary svg{flex-shrink:0}.biz-final{display:flex;align-items:center;justify-content:space-between;gap:30px;background:#075e54;color:#fff;border-radius:16px;padding:38px 42px}.biz-final p{font-size:15px;color:#d5ebe5;margin-top:8px}.biz-final .biz-button{background:white;color:var(--biz-green);flex-shrink:0}.biz-final .biz-button:hover{background:#dcf5ec}.biz-footer{display:flex;justify-content:space-between;gap:24px;padding-block:30px;font-size:13px;color:var(--biz-muted)}.biz-footer nav{display:flex;gap:22px;flex-wrap:wrap}.biz-footer a{color:var(--biz-muted)}
+@media(max-width:1000px){.biz-hero{gap:30px;padding-block:54px}.biz-nav nav{gap:14px}.biz-nav-detail{display:none}.biz h1{font-size:44px}.biz-lead{font-size:16px}.biz-section-head{display:block;margin-bottom:24px}.biz h2{font-size:28px}.biz-section-head>p{margin-top:14px;max-width:520px}.biz-tools{padding-block:24px 44px}.biz-workspace{grid-template-columns:1fr}.biz-tabs{flex-direction:row;gap:4px}.biz-tabs button{padding:12px 8px;flex:1;flex-direction:column;text-align:center;font-size:12px;gap:8px}.biz-tabs button>svg:last-child{display:none}.biz-tool-detail{padding:24px 20px}.biz-channel-grid{grid-template-columns:1fr;gap:28px}.biz-channel-grid article+article{border-left:0;padding:28px 0 0;border-top:1px solid #cadbd5}.biz-channels{padding:40px 0}.biz-pricing,.biz-faq{grid-template-columns:1fr;padding-block:40px;gap:28px}.biz-pricing>div>p{max-width:none}.biz-steps{grid-template-columns:1fr 1fr;gap:24px}.biz-setup{padding-block:32px 20px}.biz-final{align-items:flex-start;flex-direction:column;padding:28px 24px}.biz-footer{flex-direction:column;gap:12px}.biz-footer nav{gap:16px}}
 
-/* ── Nav ── */
-.fb-nav { position:sticky; top:0; z-index:30; background:rgba(15,23,42,.82); backdrop-filter:blur(10px); border-bottom:1px solid rgba(148,163,184,.16); }
-.fb-nav-in { max-width:1120px; margin:0 auto; padding:13px 22px; display:flex; align-items:center; justify-content:space-between; }
-.fb-brand { display:flex; align-items:center; gap:9px; text-decoration:none; }
-.fb-mark { width:30px; height:30px; border-radius:9px; background:#16a39b; color:#fff; font-weight:900; font-size:17px; display:flex; align-items:center; justify-content:center; }
-.fb-brand-name { color:#fff; font-weight:900; font-size:18px; letter-spacing:-.01em; }
-.fb-brand-pill { color:var(--teal-lite); font-weight:800; font-size:11.5px; background:rgba(20,184,166,.16); padding:3px 9px; border-radius:999px; }
-.fb-nav-actions { display:flex; align-items:center; gap:14px; }
-.fb-nav-signin { color:#cbd5e1; font-weight:700; font-size:14px; text-decoration:none; }
-.fb-nav-signin:hover { color:#fff; }
-.fb-nav-cta { display:inline-flex; align-items:center; gap:7px; background:var(--teal); color:#04201c; font-weight:800; font-size:14px; padding:9px 17px; border-radius:999px; text-decoration:none; white-space:nowrap; }
-.fb-nav-cta:hover { background:var(--teal-2); }
-/* Language switcher, restyled for the dark sticky nav */
-.fb-lang :deep(.lang-trigger) { background:rgba(255,255,255,.08); border-color:rgba(148,163,184,.35); color:var(--border, #e2e8f0); }
-.fb-lang :deep(.lang-trigger:hover) { border-color:var(--teal-lite); color:#fff; }
+/* Website-first composition: the product is visible, with a working brand-colour preview. */
+.biz-hero-wrap{background:#064e45;color:white;overflow:hidden}.biz-hero-wrap .biz-hero{grid-template-columns:1fr 1.13fr;gap:52px;padding-block:62px 54px}.biz-hero-wrap h1{font-size:clamp(42px,4.6vw,62px);line-height:1.02;letter-spacing:-2px;color:white;max-width:540px}.biz-hero-wrap .biz-intro{color:#c4f1dd!important;font-size:13px;margin-bottom:25px!important}.biz-hero-wrap .biz-lead{color:#d8eae4!important;font-size:17px;line-height:1.65;max-width:450px;margin-top:24px!important}.biz-hero-wrap .biz-button{background:#c4f1dd;color:#064e45}.biz-hero-wrap .biz-button:hover{background:white}.biz-hero-wrap .biz-text-link{color:white;font-size:13px}.biz-hero-wrap .biz-fee-note{color:#bed6cd!important;font-size:11px;max-width:430px}.biz-hero-benefits{display:flex;flex-wrap:wrap;gap:17px;border-top:1px solid #ffffff30;padding-top:22px;margin-top:28px}.biz-hero-benefits span{display:flex;align-items:center;gap:7px;font-size:11px;color:#d8eae4}.biz-hero-benefits svg{color:#b4e5cf}.biz-website-stage{min-width:0;padding-top:8px}.biz-browser{background:white;color:#16302e;border-radius:13px;box-shadow:0 24px 45px #001d1c44;overflow:hidden;border:1px solid #ffffff88;transform:rotate(-1deg)}.biz-browser-bar{display:flex;align-items:center;gap:12px;padding:12px 15px;border-bottom:1px solid #e4eae7;background:#f6f8f7}.biz-browser-bar>span:nth-child(2){display:flex;align-items:center;justify-content:center;gap:6px;flex:1;border-radius:4px;background:white;font-size:10px;color:#566d66;padding:4px}.biz-browser-bar small{font-size:9px;color:#6e807a}.biz-browser-dots{display:flex;gap:4px}.biz-browser-dots i{height:5px;width:5px;background:#b7c9c0;border-radius:50%}.biz-demo-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 20px;font-size:10px}.biz-demo-nav strong{font-size:15px;display:flex;align-items:center;gap:7px}.biz-demo-nav strong>span{display:grid;place-items:center;width:28px;height:28px;background:var(--site-accent);color:white;font-size:17px;border-radius:50%}.biz-demo-nav>div{display:flex;gap:15px;color:#5a6d65}.biz-demo-hero{display:grid;grid-template-columns:1fr 1fr;min-height:250px;background:var(--site-pale);overflow:hidden}.biz-demo-hero>div{padding:30px 0 30px 24px;z-index:1}.biz-demo-hero>div>span:first-child{font-size:10px;color:var(--site-accent);font-weight:650}.biz-demo-hero h2{font-size:36px;line-height:1.05;letter-spacing:-1px;margin:12px 0 21px;color:#14342e}.biz-demo-button{display:inline-flex;align-items:center;gap:8px;font-size:10px;background:var(--site-accent);color:white;border-radius:5px;padding:11px 13px;white-space:nowrap}.biz-court-art{width:100%;height:100%;min-height:250px;object-fit:cover;color:var(--site-accent)}.biz-demo-booking{padding:21px 22px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px}.biz-demo-booking>div{display:flex;align-items:center;gap:9px}.biz-demo-date{display:grid;place-items:center;width:34px;height:34px;background:var(--site-pale);color:var(--site-accent);border-radius:7px}.biz-demo-booking strong{display:block;font-size:13px}.biz-demo-booking small{display:block;font-size:10px;color:#76897f;margin-top:3px}.biz-demo-live{font-size:9px;color:#267858;white-space:nowrap;display:flex;align-items:center;gap:4px}.biz-demo-live i{width:5px;height:5px;border-radius:50%;background:#26835f}.biz-demo-slots{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:5px 22px 18px}.biz-demo-slots>span{font-size:10px;border:1px solid #d7e1db;border-radius:6px;padding:11px 7px;text-align:center;display:flex;justify-content:center;align-items:center;gap:5px}.biz-demo-slots .chosen{background:var(--site-accent);border-color:var(--site-accent);color:white}.biz-demo-footer{display:flex;gap:18px;padding:13px 22px;background:#f6f8f7;border-top:1px solid #e4eae7;font-size:10px;color:#60776a}.biz-demo-footer>span{display:flex;gap:6px;align-items:center}.biz-theme-picker{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:24px;padding:0 9px;color:white}.biz-theme-picker>div:first-child{display:flex;align-items:center;gap:9px}.biz-theme-picker span{font-size:13px;font-weight:650}.biz-theme-picker small{display:block;font-size:11px;font-weight:400;color:#bed6cd;margin-top:3px}.biz-theme-picker>div:last-child{display:flex;gap:9px}.biz-theme-picker button{width:32px;height:32px;border:2px solid #ffffff66;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:white;outline-offset:4px}.biz-theme-picker button[aria-pressed=true]{border-color:white;box-shadow:0 0 0 3px #ffffff28}.biz-theme-picker button:focus-visible{outline:3px solid white}.biz-site-section{padding-block:65px 56px;scroll-margin-top:20px}.biz-section-kicker{display:flex;align-items:center;gap:9px;color:#087f77;font-size:13px;font-weight:700;margin-bottom:16px!important}.biz-site-features{display:grid;grid-template-columns:repeat(4,1fr);gap:28px}.biz-site-features article{padding-top:20px;border-top:2px solid #b9ded0}.biz-site-features article>svg{color:#087f77;margin-bottom:14px}.biz-site-features h3{font-size:17px;line-height:1.3}.biz-site-features p{font-size:13px;color:#61796f;line-height:1.65;margin-top:10px}.biz-site-features strong{font-weight:650;color:#254e40;overflow-wrap:anywhere}.biz-tools{border-top:1px solid #dfe8e5;padding-block:52px}.biz-channels{background:#edf7f2}.biz-channel-grid article{padding:24px 26px;background:white;border-radius:12px;border:1px solid #d5e8de}.biz-channel-grid{gap:22px}.biz-channel-grid article+article{border:1px solid #d5e8de;padding:24px 26px}.biz-steps li{border-color:#0b8270}
+@media(max-width:1000px){.biz-hero-wrap .biz-hero{gap:30px}.biz-hero-wrap h1{font-size:46px}.biz-demo-hero h2{font-size:29px}.biz-demo-nav>div{gap:9px}.biz-demo-hero{grid-template-columns:1.1fr 1fr}.biz-demo-hero>div{padding:24px 0 24px 18px}.biz-demo-live{display:none}.biz-hero-wrap .biz-lead{font-size:15px}.biz-hero-actions{gap:17px}.biz-site-features{grid-template-columns:1fr 1fr;gap:26px}}
+@media(max-width:760px){.biz-hero-wrap .biz-hero{grid-template-columns:1fr;padding-block:36px;gap:32px}.biz-hero-wrap h1{font-size:49px;max-width:520px}.biz-hero-wrap .biz-intro{font-size:11px;margin-bottom:22px!important}.biz-hero-wrap .biz-lead{font-size:16px}.biz-hero-benefits{gap:14px;margin-top:22px;padding-top:18px}.biz-hero-benefits span{font-size:10px}.biz-website-stage{max-width:580px;width:100%;padding:0}.biz-browser{transform:none}.biz-demo-nav{padding:13px 14px}.biz-demo-nav strong{font-size:13px}.biz-demo-nav>div{font-size:8px;gap:10px}.biz-demo-hero h2{font-size:30px}.biz-demo-hero{min-height:225px}.biz-court-art{min-height:225px}.biz-demo-button{font-size:9px;padding:10px}.biz-demo-booking{padding:15px 14px 9px}.biz-demo-slots{padding:4px 14px 14px;gap:5px}.biz-demo-slots>span{font-size:9px;padding:10px 3px}.biz-demo-footer{gap:12px;padding:11px 14px;font-size:9px}.biz-theme-picker{margin-top:17px;padding:0}.biz-theme-picker>div:first-child>svg{display:none}.biz-theme-picker span{font-size:12px}.biz-theme-picker small{font-size:10px}.biz-site-section{padding-block:38px}.biz-site-features{gap:23px 18px}.biz-site-features h3{font-size:16px}.biz-site-features p{font-size:12px}.biz-tools{padding-block:36px}.biz-channel-grid article,.biz-channel-grid article+article{padding:24px}.biz-hero-wrap .biz-hero-actions{align-items:flex-start;flex-direction:column}.biz-hero-wrap .biz-fee-note{font-size:10px;line-height:1.6}}
+@media(prefers-reduced-motion:no-preference){.biz-demo-hero,.biz-demo-button,.biz-demo-date,.biz-demo-slots .chosen,.biz-demo-nav strong>span{transition:background-color .2s}.biz-court-art{transition:color .2s}}
 
-/* ── Hero ── */
-.fb-hero { background:radial-gradient(1200px 500px at 80% -10%, rgba(20,184,166,.22), transparent 60%), linear-gradient(135deg,#0f172a,#134e4a); color:#fff; padding:64px 22px 76px; }
-.fb-hero-grid { max-width:1120px; margin:0 auto; display:grid; grid-template-columns:1.02fr .98fr; gap:48px; align-items:center; }
-.fb-badge { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:800; color:var(--teal-lite); background:rgba(20,184,166,.16); padding:6px 13px; border-radius:999px; }
-/* 40px (was 46) — the keyword-rich h1 is longer; keeps it to ~3 lines in its column. */
-.fb-hero-text h1 { color:#fff; font-size:40px; line-height:1.12; font-weight:900; letter-spacing:-.02em; margin:16px 0 14px; }
-.fb-hl { color:var(--teal-lite); }
-.fb-hero-sub { font-size:16.5px; color:#cbd5e1; line-height:1.55; max-width:500px; }
-.fb-hero-cta { display:flex; gap:12px; margin:26px 0 18px; flex-wrap:wrap; }
-.fb-btn-primary { display:inline-flex; align-items:center; gap:8px; background:var(--teal); color:#04201c; font-weight:800; font-size:15.5px; padding:14px 26px; border-radius:999px; text-decoration:none; box-shadow:0 8px 24px rgba(20,184,166,.32); transition:background .16s ease, transform .16s ease, box-shadow .16s ease; }
-.fb-btn-primary:hover { background:var(--teal-2); transform:translateY(-2px); box-shadow:0 12px 28px rgba(20,184,166,.42); }
-.fb-btn-primary.big { padding:16px 32px; font-size:16.5px; }
-.fb-btn-ghost { display:inline-flex; align-items:center; gap:8px; color:var(--border, #e2e8f0); font-weight:800; font-size:15px; padding:14px 22px; border-radius:999px; text-decoration:none; border:1.5px solid rgba(148,163,184,.4); transition:border-color .16s ease, color .16s ease; }
-.fb-btn-ghost:hover { border-color:var(--teal-lite); color:#fff; }
-.fb-trust { list-style:none; padding:0; margin:0; display:flex; flex-wrap:wrap; gap:8px 20px; }
-.fb-trust li { display:flex; align-items:center; gap:7px; font-size:13.5px; color:#cbd5e1; font-weight:700; }
-.fb-trust svg { color:var(--green); }
-
-/* ── Hero visual (CSS product mock; logical insets so RTL mirrors cleanly) ── */
-.fb-hero-visual { position:relative; height:360px; }
-.fb-visual-glow { position:absolute; inset:10% 6%; background:radial-gradient(closest-side, rgba(20,184,166,.35), transparent 72%); filter:blur(6px); }
-.fb-mock { position:absolute; background:var(--surface, #ffffff); border-radius:16px; box-shadow:0 30px 70px rgba(0,0,0,.45); overflow:hidden; }
-.fb-mock-tag { position:absolute; font-size:10px; font-weight:800; padding:4px 9px; border-radius:999px; box-shadow:0 4px 12px rgba(0,0,0,.25); z-index:3; }
-.fb-tag-free { top:44px; inset-inline-end:-8px; background:var(--green); color:#04201c; }
-.fb-tag-market { top:-9px; inset-inline-start:14px; background:#0f172a; color:var(--teal-lite); border:1px solid rgba(94,234,212,.4); }
-.fb-plus { position:absolute; top:47%; left:50%; transform:translate(-58%,-50%); width:42px; height:42px; border-radius:50%; background:linear-gradient(135deg,var(--teal-2),var(--teal)); color:#04201c; font-weight:900; font-size:24px; display:flex; align-items:center; justify-content:center; box-shadow:0 8px 20px rgba(0,0,0,.35); z-index:2; }
-
-/* Your booking website — browser chrome + nav + hero + court cards */
-.fb-mock-site { width:302px; top:6px; inset-inline-start:4px; transform:rotate(-2deg); }
-.fb-mock-head { display:flex; align-items:center; gap:5px; padding:8px 12px; background:#f1f5f9; border-bottom:1px solid var(--border, #e2e8f0); }
-.fb-mock-head b { margin-inline-start:6px; font-size:10.5px; color:var(--text-muted, #64748b); font-weight:700; }
-.fb-dot { width:8px; height:8px; border-radius:50%; background:#cbd5e1; }
-.fb-dot.r { background:#fca5a5; } .fb-dot.y { background:#fcd34d; } .fb-dot.g { background:#86efac; }
-.fb-site-nav { display:flex; align-items:center; gap:7px; padding:8px 12px; border-bottom:1px solid #f1f5f9; }
-.fb-site-logo { width:14px; height:14px; border-radius:5px; background:linear-gradient(135deg,var(--teal-2),#0f766e); flex-shrink:0; }
-.fb-site-nav b { font-size:11px; font-weight:800; color:#0f172a; white-space:nowrap; }
-.fb-site-links { display:flex; gap:6px; margin-inline-start:auto; }
-.fb-site-links i { width:16px; height:4px; border-radius:99px; background:var(--border, #e2e8f0); }
-.fb-site-book { font-size:9.5px; font-weight:800; color:#04201c; background:var(--teal); border-radius:999px; padding:3px 9px; }
-.fb-site-hero { margin:10px 12px 0; height:64px; border-radius:10px; background:linear-gradient(120deg,#0f766e,#134e4a 55%,#0f172a); display:flex; flex-direction:column; justify-content:center; gap:3px; padding:0 12px; box-sizing:border-box; }
-.fb-site-hero b { color:#fff; font-size:13px; font-weight:900; }
-.fb-site-hero small { color:#99f6e4; font-size:9.5px; font-weight:700; }
-.fb-site-cards { display:flex; gap:9px; padding:10px 12px 12px; }
-.fb-site-card { flex:1; border:1px solid var(--border, #e2e8f0); border-radius:10px; padding:6px; display:flex; flex-direction:column; gap:2px; }
-.fb-site-img { height:34px; border-radius:7px; }
-.fb-site-img.c1 { background:linear-gradient(135deg,#2dd4bf,#0e7490); }
-.fb-site-img.c2 { background:linear-gradient(135deg,#60a5fa,#3730a3); }
-.fb-site-card b { font-size:10px; font-weight:800; color:#0f172a; margin-top:3px; }
-.fb-site-card small { font-size:9px; font-weight:800; color:#0f766e; }
-
-/* The Bookboll marketplace — app header + search + results (your club highlighted) */
-.fb-mock-market { width:216px; inset-inline-end:0; bottom:2px; transform:rotate(2deg); }
-.fb-bb-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid #f1f5f9; }
-.fb-bb-logo { width:16px; height:16px; border-radius:5px; background:linear-gradient(135deg,var(--teal-2),var(--teal)); color:#04201c; font-size:10px; font-weight:900; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.fb-bb-head b { font-size:11px; font-weight:900; color:#0f172a; }
-.fb-bb-loc { display:inline-flex; align-items:center; gap:3px; margin-inline-start:auto; font-size:8.5px; font-weight:800; color:#475569; background:#f1f5f9; border-radius:999px; padding:3px 7px; }
-.fb-bb-loc svg { color:var(--teal); }
-.fb-mock-search { display:flex; align-items:center; gap:6px; background:#f1f5f9; color:var(--text-muted, #64748b); font-size:10.5px; font-weight:700; padding:7px 10px; border-radius:8px; margin:9px 10px 7px; }
-.fb-mock-search svg { color:var(--teal); flex-shrink:0; }
-.fb-mock-item { display:flex; align-items:center; gap:8px; padding:6px; margin:0 10px 5px; border-radius:9px; border:1px solid transparent; }
-.fb-mock-item:last-of-type { margin-bottom:11px; }
-.fb-mock-item.hl { background:#f0fdfa; border-color:rgba(20,184,166,.45); }
-.fb-mock-thumb { width:26px; height:26px; border-radius:7px; flex-shrink:0; }
-.fb-mock-thumb.t1 { background:linear-gradient(135deg,#38bdf8,#1d4ed8); }
-.fb-mock-thumb.t2 { background:linear-gradient(135deg,var(--teal-2),#0f766e); }
-.fb-mock-thumb.t3 { background:linear-gradient(135deg,#fbbf24,#ea580c); }
-.fb-mock-item-t { display:flex; flex-direction:column; min-width:0; }
-.fb-mock-item-t b { font-size:11px; font-weight:800; color:#0f172a; white-space:nowrap; }
-.fb-mock-item.hl .fb-mock-item-t b { color:#0f766e; }
-.fb-mock-item-t small { font-size:9.5px; color:var(--text-light, #94a3b8); font-weight:600; }
-
-/* ── Shared section ── */
-.fb-sec { max-width:1120px; margin:0 auto; padding:68px 22px; scroll-margin-top:70px; }
-.fb-eyebrow { text-align:center; font-size:12.5px; font-weight:900; letter-spacing:.09em; text-transform:uppercase; color:var(--teal); }
-.fb-eyebrow.light { color:var(--teal-lite); }
-.fb-h2 { text-align:center; font-size:32px; font-weight:900; letter-spacing:-.02em; margin:10px 0 0; line-height:1.18; }
-.fb-h2.light { color:#fff; }
-
-/* Scroll-reveal (gated behind .fb-anim so no-JS / reduced-motion always sees content) */
-.fb-anim .fb-reveal { opacity:0; transform:translateY(18px); transition:opacity .55s ease, transform .55s ease; }
-.fb-anim .fb-reveal.in { opacity:1; transform:none; }
-
-/* ── Twin (2-in-1) ── */
-.fb-twin-grid { display:grid; grid-template-columns:1fr auto 1fr; gap:18px; align-items:stretch; margin-top:40px; }
-.fb-twin-card { background:var(--surface, #ffffff); border:1.5px solid var(--border, #e2e8f0); border-radius:20px; padding:30px 28px; display:flex; flex-direction:column; transition:border-color .16s ease, box-shadow .16s ease; }
-.fb-twin-card:hover { border-color:var(--teal); box-shadow:0 16px 40px rgba(15,23,42,.07); }
-.fb-twin-ico { width:54px; height:54px; border-radius:15px; background:#0f172a; color:var(--teal-lite); display:flex; align-items:center; justify-content:center; margin-bottom:16px; }
-.fb-twin-card h3 { font-size:22px; font-weight:900; }
-.fb-twin-list { list-style:none; padding:0; margin:14px 0 18px; display:flex; flex-direction:column; gap:10px; flex:1; }
-.fb-twin-list li { display:flex; align-items:flex-start; gap:9px; font-size:14.5px; font-weight:600; color:#334155; line-height:1.45; }
-.fb-twin-list svg { color:var(--teal); flex-shrink:0; margin-top:2px; }
-.fb-twin-pill { display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:800; padding:9px 14px; border-radius:999px; align-self:flex-start; }
-.fb-pill-green { background:#ecfdf5; color:#047857; }
-.fb-pill-teal { background:#f0fdfa; color:#0f766e; }
-.fb-twin-note { font-size:12px; color:var(--text-light, #94a3b8); margin-top:12px; line-height:1.5; }
-.fb-twin-join { display:flex; align-items:center; justify-content:center; }
-.fb-twin-join span { width:46px; height:46px; border-radius:50%; background:linear-gradient(135deg,var(--teal-2),var(--teal)); color:#04201c; font-weight:900; font-size:26px; display:flex; align-items:center; justify-content:center; box-shadow:0 8px 20px rgba(20,184,166,.3); }
-
-/* ── Pricing ── */
-.fb-price { padding-top:0; }
-.fb-price-card { background:linear-gradient(135deg,#0f172a,#134e4a); border-radius:24px; padding:44px 40px; color:#fff; }
-.fb-price-head .fb-h2 { color:#fff; text-align:start; }
-.fb-price-rows { margin:28px 0 22px; display:flex; flex-direction:column; gap:12px; }
-.fb-price-row { display:flex; align-items:center; justify-content:space-between; gap:16px; background:rgba(255,255,255,.05); border:1px solid rgba(148,163,184,.18); border-radius:14px; padding:16px 20px; flex-wrap:wrap; }
-.fb-price-l { display:flex; align-items:center; gap:11px; font-size:15.5px; font-weight:700; color:var(--border, #e2e8f0); }
-.fb-price-l svg { color:var(--teal-lite); flex-shrink:0; }
-.fb-price-r { font-size:16px; font-weight:900; white-space:nowrap; }
-.fb-free { color:var(--green); }
-.fb-comm { color:var(--teal-lite); }
-.fb-price-note { display:flex; align-items:flex-start; gap:10px; font-size:12.5px; line-height:1.6; color:#cbd5e1; background:rgba(20,184,166,.1); border:1px solid rgba(20,184,166,.25); border-radius:14px; padding:13px 15px; }
-.fb-price-note svg { color:var(--teal-lite); flex-shrink:0; margin-top:1px; }
-.fb-price-note b { color:#fff; }
-.fb-tc { color:var(--text-light, #94a3b8); }
-.fb-tc-link { color:var(--teal-lite); font-weight:700; text-decoration:underline; text-underline-offset:2px; }
-.fb-tc-link:hover { color:#fff; }
-
-/* ── What you can list ── */
-.fb-list-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:20px; margin-top:40px; }
-.fb-list-card { background:var(--surface, #ffffff); border:1.5px solid var(--border, #e2e8f0); border-radius:20px; padding:28px 26px; transition:border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
-.fb-list-card:hover { border-color:var(--teal); box-shadow:0 16px 40px rgba(15,23,42,.07); transform:translateY(-2px); }
-.fb-list-ico { width:56px; height:56px; border-radius:16px; background:linear-gradient(135deg,#0f172a,#134e4a); color:var(--teal-lite); display:flex; align-items:center; justify-content:center; margin-bottom:16px; }
-.fb-list-card h3 { font-size:20px; font-weight:900; }
-.fb-list-card p { font-size:14px; color:var(--text-muted, #64748b); line-height:1.5; margin:7px 0 16px; }
-.fb-list-tags { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; }
-.fb-list-tags li { display:flex; align-items:center; gap:8px; font-size:13.5px; font-weight:700; color:#334155; }
-.fb-list-tags svg { color:var(--teal); flex-shrink:0; }
-.fb-sports { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin-top:28px; }
-.fb-sport-chip { font-size:12.5px; font-weight:800; color:#0f766e; background:#f0fdfa; border:1px solid #99f6e4; border-radius:999px; padding:6px 14px; }
-.fb-sport-chip.more { color:var(--text-muted, #64748b); background:#f8fafc; border-color:var(--border, #e2e8f0); }
-
-/* ── Capabilities (dark) ── */
-.fb-caps { max-width:none; background:linear-gradient(135deg,#0f172a,#134e4a); margin-top:0; }
-.fb-caps-grid { max-width:1000px; margin:40px auto 0; display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-.fb-cap { display:flex; align-items:center; gap:14px; background:rgba(255,255,255,.05); border:1px solid rgba(148,163,184,.16); border-radius:16px; padding:18px 18px; }
-.fb-cap:hover { border-color:rgba(94,234,212,.45); background:rgba(20,184,166,.08); }
-.fb-cap-ico { width:44px; height:44px; border-radius:12px; background:rgba(20,184,166,.16); color:var(--teal-lite); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.fb-cap-t { display:flex; flex-direction:column; gap:2px; min-width:0; }
-.fb-cap-t b { font-size:15px; font-weight:800; color:#fff; }
-.fb-cap-t small { font-size:12.5px; color:var(--text-light, #94a3b8); }
-
-/* ── How it works ── */
-.fb-steps { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; margin-top:44px; position:relative; }
-.fb-steps::before { content:''; position:absolute; top:44px; left:6%; right:6%; border-top:2px dashed #cbd5e1; }
-.fb-step { position:relative; z-index:1; background:var(--surface, #ffffff); border:1.5px solid var(--border, #e2e8f0); border-radius:18px; padding:26px 22px 22px; transition:border-color .16s ease, box-shadow .16s ease; }
-.fb-step:hover { border-color:var(--teal); box-shadow:0 12px 30px rgba(15,23,42,.06); }
-.fb-step-num { position:absolute; top:-14px; inset-inline-start:22px; width:30px; height:30px; border-radius:50%; background:linear-gradient(135deg,var(--teal-2),var(--teal)); color:#04201c; font-weight:900; font-size:14.5px; display:flex; align-items:center; justify-content:center; box-shadow:0 6px 16px rgba(20,184,166,.3); }
-.fb-step-ico { width:46px; height:46px; border-radius:13px; background:#f0fdfa; color:#0f766e; display:flex; align-items:center; justify-content:center; margin:8px 0 14px; }
-.fb-step h3 { font-size:16.5px; font-weight:900; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.fb-step-opt { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted, #64748b); background:#f1f5f9; border-radius:999px; padding:2px 8px; }
-.fb-step p { font-size:13.5px; color:var(--text-muted, #64748b); line-height:1.5; margin-top:6px; }
-.fb-how-cta { text-align:center; margin-top:40px; }
-
-/* ── FAQ ── */
-.fb-faq { padding-top:0; }
-.fb-faq-list { max-width:760px; margin:36px auto 0; display:flex; flex-direction:column; gap:10px; }
-/* Quiet divider-list FAQ (matches the marketplace's redesigned FAQ) */
-.fb-faq-item { border-bottom:1px solid var(--border, #e8edf3); }
-.fb-faq-item:last-child { border-bottom:none; }
-.fb-faq-item summary { display:flex; align-items:center; justify-content:space-between; gap:14px; list-style:none; cursor:pointer; padding:14px 2px; font-size:14px; font-weight:600; color:#334155; }
-.fb-faq-item summary:hover { color:var(--teal); }
-.fb-faq-item[open] summary { color:#0f172a; }
-.fb-faq-item summary::-webkit-details-marker { display:none; }
-.fb-faq-caret { color:var(--text-light, #94a3b8); flex-shrink:0; transition:transform .18s; }
-.fb-faq-item[open] .fb-faq-caret { transform:rotate(180deg); color:var(--teal); }
-.fb .fb-faq-item p { font-size:13.5px; color:var(--text-muted, #64748b); line-height:1.65; margin:0; padding:0 24px 15px 2px; }
-
-/* ── Final CTA ── */
-.fb-final { background:radial-gradient(900px 400px at 50% 120%, rgba(20,184,166,.25), transparent 60%), linear-gradient(135deg,#0f172a,#134e4a); color:#fff; padding:80px 22px; text-align:center; }
-.fb-final-in { max-width:680px; margin:0 auto; }
-.fb-final h2 { color:#fff; font-size:36px; font-weight:900; letter-spacing:-.02em; }
-.fb-final p { font-size:17px; color:#cbd5e1; margin-top:12px; }
-.fb-final-cta { display:flex; gap:14px; justify-content:center; align-items:center; margin-top:30px; flex-wrap:wrap; }
-
-/* ── Internal links row (subtle, blends into the dark footer band) ── */
-.fb-crawl { background:#0b1220; border-bottom:1px solid rgba(148,163,184,.14); padding:15px 22px; display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px 20px; font-size:12.5px; }
-.fb-crawl-t { color:var(--text-muted, #64748b); font-weight:800; font-size:11px; text-transform:uppercase; letter-spacing:.07em; }
-.fb-crawl a { color:var(--text-light, #94a3b8); text-decoration:none; font-weight:700; }
-.fb-crawl a:hover { color:var(--teal-lite); }
-
-/* ── Footer ── */
-.fb-foot { background:#0b1220; color:var(--text-light, #94a3b8); padding:22px; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; font-size:13px; }
-.fb-foot-links { display:flex; gap:20px; }
-.fb-foot-links a { color:#cbd5e1; text-decoration:none; font-weight:700; }
-.fb-foot-links a:hover { color:#fff; }
-
-/* ── Responsive ── */
-@media (max-width:900px) {
-  .fb-hero-grid { grid-template-columns:1fr; gap:36px; }
-  /* Scale the mock collage so the two cards don't collide once the grid stacks. */
-  .fb-hero-visual { height:300px; max-width:460px; margin:0 auto; width:100%; }
-  .fb-mock-site { width:252px; }
-  .fb-mock-market { width:178px; }
-  .fb-site-hero { height:52px; }
-  .fb-site-img { height:26px; }
-  .fb-hero-text h1 { font-size:36px; }
-  .fb-twin-grid { grid-template-columns:1fr; }
-  .fb-twin-join span { transform:rotate(90deg); }
-  .fb-list-grid { grid-template-columns:1fr 1fr; }
-  .fb-list-card:last-child { grid-column:1 / -1; }
-  .fb-caps-grid { grid-template-columns:1fr 1fr; }
-  .fb-steps { grid-template-columns:1fr 1fr; gap:24px 18px; }
-  .fb-steps::before { display:none; }
+/* Clear conversion points, followed by a contrasting plan comparison and launch path. */
+.biz-channel-grid article{display:flex;flex-direction:column;align-items:flex-start}.biz-channel-grid article small{margin-bottom:22px}.biz-channel-cta{margin-top:auto}.biz .biz-button-blue{background:#245fce}.biz .biz-button-blue:hover{background:#174aa9}.biz-plan-section{padding:66px 0;background:#f5f6f0}.biz-plan-section .biz-section-head>p{max-width:390px}.biz-plan-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}.biz-plan-card{display:flex;flex-direction:column;align-items:stretch;min-width:0;padding:32px;background:white;border:1px solid #dbe2d7;border-radius:18px}.biz-plan-top{min-height:31px;display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:21px}.biz-plan-label{font-size:12px;font-weight:800;letter-spacing:1.5px;color:#075e54}.biz-plan-audience{font-size:12px;color:#617368}.biz-plan-card h3{font-size:49px;letter-spacing:-1.5px;line-height:1.15}.biz-plan-card h3 small{font-size:14px;font-weight:500;color:#64786c;letter-spacing:0}.biz-plan-description{font-size:14px;line-height:1.6;color:#5c7367;margin-top:14px!important;max-width:390px;min-height:45px}.biz-plan-card ul{list-style:none;padding:0;margin:25px 0;display:grid;gap:14px;font-size:14px}.biz-plan-card li{display:flex;gap:10px;align-items:flex-start;line-height:1.5}.biz-plan-card li svg{flex-shrink:0;color:#0c7965;margin-top:2px}.biz-commission-note{border-top:1px solid #dce8e0;padding-top:21px;margin-bottom:23px;margin-top:auto;min-height:104px}.biz-commission-note strong{display:block;font-size:18px;line-height:1.35}.biz-commission-note span{display:block;font-size:12px;line-height:1.6;color:#60776b;margin-top:8px}.biz-plan-card .biz-button{align-self:flex-start;min-width:180px}.biz-plan-premium{background:#073f36;border-color:#073f36;color:white;position:relative;overflow:hidden}.biz-plan-premium .biz-plan-label{background:#d8ed8c;padding:7px 10px;border-radius:5px;color:#1d3e21}.biz-plan-premium .biz-plan-audience,.biz-plan-premium h3 small,.biz-plan-premium .biz-plan-description,.biz-plan-premium .biz-commission-note span{color:#c9dfd4}.biz-plan-premium li svg{color:#d8ed8c}.biz-plan-premium .biz-commission-note{border-color:#ffffff30}.biz-plan-premium .biz-button{background:#d8ed8c;color:#183e27}.biz-plan-premium .biz-button:hover{background:#e5f5b1}.biz-plan-billing{font-size:11px;color:#64786c;margin-top:10px}.biz-plan-premium .biz-plan-billing{color:#c9dfd4}.biz-pricing-footnote{display:flex;justify-content:space-between;gap:30px;align-items:center;margin:22px 0}.biz-pricing-footnote p{font-size:12px;color:#64786c;max-width:650px;line-height:1.7}.biz-pricing-footnote a{font-size:13px;flex-shrink:0}.biz-payment-explainer{padding:21px 24px;background:#e9eee4;border-radius:10px;border:1px solid #dce4d5}.biz-payment-explainer summary{display:flex;justify-content:space-between;align-items:center;gap:15px;cursor:pointer;list-style:none;font-size:14px;font-weight:700}.biz-payment-explainer summary>span{display:flex;gap:10px;align-items:center}.biz-payment-explainer summary::-webkit-details-marker{display:none}.biz-payment-explainer p{margin-top:16px;font-size:14px;line-height:1.75;color:#4e695b;max-width:970px}.biz-launch-section{padding:76px 0;background:#fff}.biz-launch-layout{display:grid;grid-template-columns:.85fr 1.15fr;gap:72px;align-items:start}.biz-launch-intro h2{font-size:43px;line-height:1.13;letter-spacing:-1px}.biz-launch-intro h2 em{font-style:normal;color:#17846b}.biz-launch-intro>p:not(.biz-section-kicker){font-size:15px;line-height:1.75;color:#60776b;max-width:330px;margin:22px 0 28px}.biz-launch-intro>small{display:block;font-size:11px;color:#64786c;margin-top:14px}.biz-launch-steps{margin:0;padding:0;list-style:none}.biz-launch-steps li{display:flex;gap:22px;position:relative;padding-bottom:26px}.biz-launch-steps li:last-child{padding-bottom:0}.biz-launch-steps li:not(:last-child):before{content:'';position:absolute;left:24px;top:52px;bottom:2px;width:1px;background:#b7d7c8}.biz-launch-number{display:grid;place-items:center;width:49px;height:49px;border-radius:50%;flex-shrink:0;background:#edf6ee;border:1px solid #bfdbc9;font-size:14px;font-weight:750;color:#0b715c}.biz-launch-steps li>div{flex:1;border:1px solid #dce7de;border-radius:13px;padding:20px 22px;background:#f8faf7;position:relative}.biz-launch-icon{float:right;color:#237f67;margin-left:18px}.biz-launch-steps h3{font-size:17px;line-height:1.45;margin:0}.biz-launch-steps p{font-size:13px;color:#61776b;line-height:1.65;margin-top:7px;max-width:330px}.biz-optional{display:inline-block;margin-top:10px;font-size:10px;font-weight:650;background:#e5eee3;color:#496646;border-radius:4px;padding:4px 7px}
+@media(max-width:760px){.biz-plan-section{padding:38px 0}.biz-plan-grid{grid-template-columns:1fr;gap:18px}.biz-plan-card{padding:25px}.biz-plan-card h3{font-size:43px}.biz-commission-note{min-height:0}.biz-plan-description{min-height:0}.biz-pricing-footnote{flex-direction:column;align-items:flex-start;gap:12px}.biz-launch-section{padding:42px 0}.biz-launch-layout{grid-template-columns:1fr;gap:30px}.biz-launch-intro h2{font-size:36px}.biz-launch-intro>p:not(.biz-section-kicker){max-width:none}.biz-launch-steps li{gap:14px}.biz-launch-steps li>div{padding:19px 16px}.biz-launch-number{width:37px;height:37px;font-size:12px}.biz-launch-steps li:not(:last-child):before{left:18px;top:41px}.biz-launch-steps h3{font-size:16px}.biz-launch-icon{margin-left:9px}.biz-launch-icon svg{width:19px}.biz-channel-cta{font-size:13px}}
+@media(max-width:760px){.biz-nav-inner{flex-direction:column;align-items:stretch;gap:14px;padding:16px 20px}.biz-nav .biz-brand{align-self:flex-start;font-size:21px}.biz-nav nav{width:100%;justify-content:space-between;gap:12px}.biz-nav nav>a,.biz-nav nav>button{font-size:12px;white-space:nowrap}.biz-nav .biz-button{padding:11px 14px;min-height:40px;font-size:12px}.biz-nav .biz-brand small{font-size:11px}}
+/* Narrow screens keep the real website demo and all calls to action readable. */
+@media (max-width: 760px) {
+  .biz-container { width: 100%; padding-inline: 20px; min-width: 0; }
+  .biz-nav-inner { padding: 15px 20px; }.biz-nav nav { flex-wrap: wrap; gap: 9px; }
+  .biz-nav nav > a, .biz-nav nav > button { min-height: 42px; display: inline-flex; align-items: center; }
+  .biz-nav nav > .biz-nav-detail { display: none; }
+  .biz-nav nav .biz-button { padding-inline: 12px; margin-left: auto; }
+  .biz-hero-wrap h1 { font-size: clamp(35px, 9.4vw, 49px); letter-spacing: -1.4px; line-height: 1.07; }
+  .biz-hero-wrap .biz-hero { gap: 28px; padding-block: 32px; }
+  .biz-hero-wrap .biz-lead { font-size: 15px; line-height: 1.7; }
+  .biz-hero-wrap .biz-hero-actions { gap: 18px; }.biz-hero-actions .biz-button { min-height: 48px; }
+  .biz-hero-benefits { display: grid; grid-template-columns: 1fr; gap: 12px; }.biz-hero-benefits span { font-size: 12px; }
+  .biz-demo-hero h2 { font-size: clamp(24px,7vw,30px); }.biz-demo-hero { min-height: 205px; }.biz-court-art { min-height: 205px; }
+  .biz-demo-nav > div { gap: 7px; }.biz-demo-nav strong { font-size: 12px; }
+  .biz-demo-slots { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .biz-demo-footer { flex-wrap: wrap; gap: 9px; }.biz-browser-bar small { display: none; }
+  .biz-theme-picker { gap: 12px; flex-wrap: wrap; }.biz-theme-picker button { width: 40px; height: 40px; }
+  .biz-plan-card { padding: 23px; }.biz-plan-top { align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+  .biz-plan-card .biz-button, .biz-channel-cta { width: 100%; justify-content: center; white-space: normal; min-height: 48px; }
+  .biz-launch-intro h2 { font-size: 33px; }.biz-launch-steps li > div { min-width: 0; }.biz-launch-icon { display: none; }
+  .biz-payment-explainer { padding: 18px; }.biz-payment-explainer summary > span { min-width: 0; }
+  .biz-footer nav { flex-wrap: wrap; }.biz-faq summary { line-height: 1.6; gap: 15px; }
 }
-@media (max-width:720px) {
-  .fb-hero-text h1 { font-size:32px; }
-}
-
-@media (max-width:560px) {
-  .fb-hero { padding:44px 18px 56px; }
-  /* Pass 2: converge the type scale — the page h1 leads (only remaining 900), all
-     other headings step down to 800 so nothing competes with it. */
-  .fb-hero-text h1 { font-size:22px; line-height:1.2; }
-  .fb-hero-sub { font-size:14.5px; }
-  .fb-sec { padding:50px 18px; }
-  .fb-h2 { font-size:17px; font-weight:800; }
-  .fb-final h2 { font-size:18px; font-weight:800; }
-  .fb-twin-card h3, .fb-list-card h3 { font-size:16px; font-weight:800; }
-  .fb-step h3 { font-size:15.5px; font-weight:800; }
-  .fb-eyebrow { font-weight:800; letter-spacing:.05em; font-size:12px; }
-  /* Kickers that merely restate the heading below them add a redundant row per section. */
-  .fb-faq .fb-eyebrow, .fb-list .fb-eyebrow { display:none; }
-  /* Desktop-oriented forced break in the pricing heading. */
-  .fb-price-head br { display:none; }
-  .fb-list-grid, .fb-caps-grid, .fb-steps { grid-template-columns:1fr; }
-  /* Tighter heading→content rhythm under the smaller phone headings. */
-  .fb-twin-grid, .fb-list-grid, .fb-caps-grid, .fb-steps, .fb-faq-list { margin-top:24px; }
-  .fb-how-cta { margin-top:28px; }
-  .fb-price-card { padding:30px 22px; }
-  /* Money-disclosure note keeps every word, but demoted from an outlined tinted box to a
-     plain footnote so the pricing card has ONE inner visual level (the two rows). */
-  .fb-price-note { background:transparent; border:none; padding:2px 0 0; font-size:12.5px; }
-  .fb-price-l { font-size:14.5px; }
-  .fb-brand-pill { display:none; }
-  .fb-btn-primary, .fb-btn-ghost { width:100%; justify-content:center; box-sizing:border-box; }
-  .fb-btn-primary, .fb-btn-primary.big { font-size:15px; }
-  .fb-hero-cta, .fb-final-cta { width:100%; }
-  .fb-faq-item summary { font-size:14px; }
-  .fb-step-opt { font-size:11px; letter-spacing:0; }
-  /* Shrink the decorative hero collage ~20% (aria-hidden CSS illustration). */
-  .fb-hero-visual { height:238px; max-width:360px; }
-  .fb-mock-site { width:218px; }
-  .fb-mock-market { width:152px; }
-  .fb-site-hero { height:44px; }
-  .fb-site-img { height:22px; }
-  .fb-plus { width:34px; height:34px; font-size:19px; }
-  /* Calm the sports chip cloud; the full list stays in the "Which sports" FAQ below. */
-  .fb-sport-chip { font-size:12px; padding:5px 11px; }
-  .fb-sport-chip:nth-child(n+7):not(.more) { display:none; }
-  /* Header CTA up to ~44px touch height on phones. */
-  .fb-nav-cta { padding:11px 14px; }
-  /* Footer links were a single unwrappable flex line (~330px+) — let them wrap. */
-  .fb-foot-links { flex-wrap:wrap; gap:10px 16px; }
-}
-@media (max-width:400px) {
-  /* Narrow phones (344-400px): slim the sticky bar so it never overflows sideways.
-     "Sign in" stays reachable via hero, final CTA and footer links. */
-  .fb-nav-in { padding:11px 12px; }
-  .fb-nav-actions { gap:8px; }
-  .fb-nav-signin { display:none; }
-  .fb-brand-name { font-size:16px; }
-  .fb-nav-cta { padding:11px 12px; font-size:12.5px; }
+@media (max-width: 360px) {
+  .biz-container { padding-inline: 16px; }.biz-nav-inner { padding-inline: 16px; }
+  .biz-nav nav { column-gap: 8px; }.biz-nav .biz-button { font-size: 11px; padding-inline: 10px; }
+  .biz-site-features { grid-template-columns: 1fr; gap: 20px; }
+  .biz-tabs button { font-size: 11px; }.biz-plan-card { padding: 20px; }.biz-channel-grid article,.biz-channel-grid article+article { padding: 20px; }
 }
 </style>
-

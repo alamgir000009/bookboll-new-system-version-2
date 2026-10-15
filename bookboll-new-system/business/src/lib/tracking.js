@@ -15,6 +15,7 @@
 import { watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { activeBrand, isWhiteLabel, platformBrand, isBrandPreview } from './brand.js'
+import { cookieConsent, consentReady, restrictTracking, trackingAllowed, markTrackingStarted } from './cookieConsent.js'
 
 // ── Validators — only well-formed IDs are ever turned into snippets ────────────
 export const isGa4     = (id) => /^G-[A-Z0-9]{4,}$/i.test((id || '').trim())
@@ -22,6 +23,7 @@ export const isGtm     = (id) => /^GTM-[A-Z0-9]{4,}$/i.test((id || '').trim())
 export const isMetaPix = (id) => /^\d{6,20}$/.test((id || '').trim())
 
 const MARK = 'data-bb-trk'   // marks every node we inject (for de-dupe + cleanup)
+let enabledConfig = {}
 let lastSig = ''             // signature of the currently-injected config
 
 /** Normalize a tracking config off a brand-like object ({ tracking: {...} }). */
@@ -58,6 +60,7 @@ export function clearTracking() {
   if (typeof document === 'undefined') return
   document.querySelectorAll(`[${MARK}]`).forEach((n) => n.remove())
   lastSig = ''
+  enabledConfig = {}
 }
 
 /**
@@ -66,12 +69,22 @@ export function clearTracking() {
  */
 export function injectTracking(cfg) {
   if (typeof document === 'undefined' || !cfg) return
+  cfg = restrictTracking(cfg)
   const sig = sigOf(cfg)
   if (sig === lastSig) return
   clearTracking()
   lastSig = sig
+  enabledConfig = cfg
+  if (!hasAnyTracking(cfg)) return
+  markTrackingStarted()
   const head = document.head
   const body = document.body
+
+  // Set consent before any permitted Google tag runs. No Google requests before consent.
+  if (isGtm(cfg.gtm) || isGa4(cfg.ga4)) {
+    const marketing = trackingAllowed('marketing') ? 'granted' : 'denied'
+    head.appendChild(el('script', {}, `window.dataLayer=window.dataLayer||[];window.gtag=window.gtag||function(){window.dataLayer.push(arguments)};gtag('consent','default',{analytics_storage:'${trackingAllowed('analytics') ? 'granted' : 'denied'}',ad_storage:'${marketing}',ad_user_data:'${marketing}',ad_personalization:'${marketing}'});`))
+  }
 
   // Google Tag Manager
   if (isGtm(cfg.gtm)) {
@@ -123,8 +136,8 @@ export function injectTracking(cfg) {
 /** Fire a page-view on SPA navigation for GA4 + Meta (GTM users handle this via a GTM trigger). */
 export function trackPageView(path) {
   if (typeof window === 'undefined') return
-  try { if (typeof window.gtag === 'function') window.gtag('event', 'page_view', { page_path: path }) } catch { /* ignore */ }
-  try { if (typeof window.fbq === 'function') window.fbq('track', 'PageView') } catch { /* ignore */ }
+  try { if (trackingAllowed('analytics') && isGa4(enabledConfig.ga4) && typeof window.gtag === 'function') window.gtag('event', 'page_view', { page_path: path }) } catch { /* ignore */ }
+  try { if (trackingAllowed('marketing') && isMetaPix(enabledConfig.metaPixel) && typeof window.fbq === 'function') window.fbq('track', 'PageView') } catch { /* ignore */ }
 }
 
 /** The config that applies RIGHT NOW: the provider's on their own site, else the platform's. */
@@ -143,16 +156,16 @@ export function useStorefrontTracking() {
   // Never inject in the dashboard "live preview" (?preview=1): preview is for checking layout,
   // not measuring traffic — so it must not pollute the provider's analytics, and (belt-and-braces
   // with detectBrandSlug) it keeps a provider's custom scripts off the apex origin during preview.
-  const apply = () => { if (isBrandPreview()) { clearTracking(); return } injectTracking(activeTrackingConfig()) }
+  const apply = () => { if (!consentReady.value || isBrandPreview()) { clearTracking(); return } injectTracking(activeTrackingConfig()) }
 
   onMounted(apply)
   // Watch BOTH refs so tags re-apply on either transition (apex platform config vs a resolved
   // provider brand). The idempotent signature check in injectTracking makes redundant fires no-ops.
-  watch([activeBrand, platformBrand], apply, { deep: true })
+  watch([activeBrand, platformBrand, cookieConsent, consentReady], apply, { deep: true })
 
   // SPA page-views (skip the first — the snippets already fire an initial PageView on load).
   let first = true
-  watch(() => route.fullPath, (p) => { if (first) { first = false; return } if (!isBrandPreview()) trackPageView(p) })
+  watch(() => route.path, (p) => { if (first) { first = false; return } if (!isBrandPreview()) trackPageView(p) })
 
   onBeforeUnmount(clearTracking)
 }

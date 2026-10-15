@@ -2,30 +2,26 @@
 /**
  * ForBusinessPricing.vue — the dedicated /for-business/pricing page.
  *
- * Free vs Premium comparison for provider businesses: Monthly/Yearly toggle
- * (yearly default, save badge), plan headers with trial chips + auth-aware CTAs,
- * a core-platform group (identical on both plans) and the Premium growth
- * toolkit with ✗/✓ marks. Every number reads from lib/premium.js so this page
- * can never drift from the real plan. Fixed teal landing theme (NOT the
+ * Free vs annual Premium comparison for provider businesses
+ * Annual plan headers and account-aware calls to action,
+ * a commission comparison and shared core tools, plus the Premium growth
+ * toolkit with ✗/✓ marks. Subscription prices read from lib/premium.js.
+ * Commission enforcement is pending in readmeAlamgir.md. Fixed teal landing theme (NOT the
  * marketplace brand), bare 'auth' layout, indexable with its own SEO + FAQ LD.
  */
 import { ref, computed } from 'vue'
 import { useSeo, faqLd } from '../lib/seo.js'
 import { authUser } from '../lib/auth.js'
 import { adminLoginUrl, adminDashboardUrl } from '../lib/crossApp.js'
-import { PREMIUM_PRICE, PREMIUM_YEARLY_PER_MONTH, PREMIUM_YEARLY_TOTAL, PREMIUM_YEARLY_SAVE_PCT, PREMIUM_TRIAL_DAYS, PREMIUM_FEATURES } from '../lib/premium.js'
+import { PREMIUM_YEARLY_TOTAL, PREMIUM_FEATURES } from '../lib/premium.js'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import BrandMark from '../components/BrandMark.vue'
 import { Check, X as XIcon, ArrowRight, ArrowLeft, Info } from 'lucide-vue-next'
 
-const billing = ref('yearly')                 // yearly default (best value)
-const trialDays = computed(() => PREMIUM_TRIAL_DAYS[billing.value] || PREMIUM_TRIAL_DAYS.monthly)
-const premiumPerMonth = computed(() => billing.value === 'yearly' ? PREMIUM_YEARLY_PER_MONTH : PREMIUM_PRICE)
-
-// Core platform — identical on both plans (values as text, or a plain checkmark).
+// Booking commission differs by plan; core tools are included on both.
 const CORE_ROWS = [
-  { label: 'Bookings on your own website', free: '0% fee', premium: '0% fee' },
-  { label: 'Bookboll marketplace bookings', free: '15% commission', premium: '15% commission' },
+  { label: 'Own-website booking commission', free: 'Standard rate', premium: 'Half the standard rate' },
+  { label: 'Marketplace booking commission', free: 'Standard rate', premium: 'Standard rate' },
   { label: 'Free branded booking website (yourclub.bookboll.com)' },
   { label: 'Bookboll marketplace listing' },
   { label: 'Court, venue & activity bookings' },
@@ -36,13 +32,15 @@ const CORE_ROWS = [
 
 const PRICING_FAQS = [
   { q: 'Is the Free plan really free?',
-    a: 'Yes — no setup fees and no monthly fee, forever. Bookings from your own Bookboll website carry a 0% platform fee; Bookboll only earns a commission on bookings that come through the Bookboll marketplace (15% by default).' },
-  { q: 'How does the Premium free trial work?',
-    a: `Premium starts with a free trial — ${PREMIUM_TRIAL_DAYS.yearly} days on yearly billing or ${PREMIUM_TRIAL_DAYS.monthly} days on monthly. You upgrade from your dashboard, are only billed after the trial ends, and can cancel anytime during it.` },
+    a: 'The Free plan has no setup or monthly subscription fee. Booking commissions apply on both your own website and the Bookboll marketplace. Free merchants pay the standard rate; paid Premium merchants pay half that rate for own-website bookings. Your listing form shows the applicable rate.' },
+  { q: 'How is Premium billed?',
+    a: 'Premium is an annual subscription with no free trial. The annual charge is due when you subscribe. You can cancel renewal from the dashboard and keep access until the end of your paid year.' },
+  { q: 'Does connecting payouts remove the commission?',
+    a: 'No. Your website offers full payment online or deposit + on arrival. Full online payment needs connected payouts: Bookboll deducts its commission and credits your share to your Bookings wallet. Deposit + on arrival works without connected payouts: Bookboll keeps the online deposit fee, and you collect the remaining balance. Commission applies either way.' },
   { q: 'What does Premium cost?',
-    a: `$${PREMIUM_YEARLY_PER_MONTH}/month billed annually ($${PREMIUM_YEARLY_TOTAL} once a year, ${PREMIUM_YEARLY_SAVE_PCT}% off), or $${PREMIUM_PRICE}/month billed monthly. Prices are in USD.` },
+    a: `US$${PREMIUM_YEARLY_TOTAL} per year, billed annually. There is no monthly plan or free trial.` },
   { q: 'Can I switch or cancel later?',
-    a: 'Yes. You can upgrade to Premium, switch between monthly and yearly, or go back to Free at any time from your dashboard — your website, listings and data stay as they are.' },
+    a: 'Yes. You can upgrade to annual Premium or cancel its next renewal at any time. You keep Premium until the end of the paid year, then return to Free from your dashboard — your website, listings and data stay as they are.' },
 ]
 
 // SoftwareApplication LD with BOTH plan tiers — lets search engines show the
@@ -54,21 +52,19 @@ const PRICING_LD = {
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Web',
   url: 'https://business.bookboll.com/pricing',
-  description: 'Booking software and a free branded website for sports venues, gyms and academies — free forever plan, Premium growth toolkit with a free trial.',
+  description: 'Booking software and a free branded website for sports venues, gyms and academies — free forever plan, annual Premium growth toolkit.',
   offers: [
     { '@type': 'Offer', name: 'Free', price: '0', priceCurrency: 'USD',
-      description: 'Free forever — booking website, marketplace listing, memberships, payments. 0% fee on own-website bookings; 15% commission on marketplace bookings only.' },
-    { '@type': 'Offer', name: 'Premium (annual)', price: String(PREMIUM_YEARLY_PER_MONTH), priceCurrency: 'USD',
-      description: `$${PREMIUM_YEARLY_PER_MONTH}/month billed annually ($${PREMIUM_YEARLY_TOTAL}/year) — ${PREMIUM_TRIAL_DAYS.yearly}-day free trial.` },
-    { '@type': 'Offer', name: 'Premium (monthly)', price: String(PREMIUM_PRICE), priceCurrency: 'USD',
-      description: `$${PREMIUM_PRICE}/month billed monthly — ${PREMIUM_TRIAL_DAYS.monthly}-day free trial.` },
+      description: 'No monthly subscription fee. Booking website, marketplace listing, memberships and payments. Standard booking commissions apply on both website and marketplace.' },
+    { '@type': 'Offer', name: 'Premium (annual)', price: String(PREMIUM_YEARLY_TOTAL), priceCurrency: 'USD',
+      description: 'US$588 billed annually, no free trial. Paid Premium halves own-website booking commission; marketplace rates stay the same.' },
   ],
   publisher: { '@type': 'Organization', name: 'Bookboll', url: 'https://bookboll.com/' },
 }
 
 useSeo({
   exactTitle: 'Pricing — Free & Premium Plans | Bookboll for Business',
-  description: `Bookboll for Business pricing: a free-forever plan with your own booking website and marketplace listing, and Premium at $${PREMIUM_YEARLY_PER_MONTH}/month billed annually (or $${PREMIUM_PRICE}/month) with a free trial — marketing emails, promo codes, data exports, white-label and more.`,
+  description: `Bookboll for Business: no monthly subscription on Free. Annual Premium at US$${PREMIUM_YEARLY_TOTAL}/year halves own-website booking commission and adds marketing tools. Booking commissions apply on both plans.`,
   path: '/pricing',
   jsonLd: [PRICING_LD, faqLd(PRICING_FAQS)],
 })
@@ -101,55 +97,55 @@ const open = ref(-1)
     <!-- ── Hero ───────────────────────────────────────────────────────────── -->
     <section class="fbp-hero">
       <router-link to="/" class="fbp-back"><ArrowLeft :size="15" /> Bookboll for Business</router-link>
-      <h1>Simple pricing.<br /><span class="fbp-hl">Free forever</span>, or Premium with a free trial.</h1>
-      <p class="fbp-hero-sub">The core platform — your booking website, marketplace listing, memberships and payments — costs nothing. Premium adds the growth toolkit.</p>
+      <h1>Simple pricing.<br /><span class="fbp-hl">Free forever</span>, or grow with Premium.</h1>
+      <p class="fbp-hero-sub">No monthly subscription on Free. Booking commissions apply on both channels. Paid Premium halves your own-website booking commission and adds tools to grow your business.</p>
     </section>
 
     <!-- ── Plans ──────────────────────────────────────────────────────────── -->
     <section class="fbp-sec">
-      <div class="fbp-billing" role="group" aria-label="Billing period">
-        <button type="button" :class="{ on: billing === 'monthly' }" @click="billing = 'monthly'">Monthly</button>
-        <button type="button" :class="{ on: billing === 'yearly' }" @click="billing = 'yearly'">Yearly <span class="fbp-save">Save {{ PREMIUM_YEARLY_SAVE_PCT }}%</span></button>
-      </div>
 
       <div class="fbp-pt">
         <!-- column headers -->
         <div class="fbp-pt-corner"></div>
         <div class="fbp-pt-head">
           <div class="fbp-pt-name">Free</div>
-          <div class="fbp-pt-price"><b>$0</b><span>/month</span></div>
+          <div class="fbp-pt-price"><b>$0</b><span>forever</span></div>
           <div class="fbp-pt-bill">Free forever · no card needed</div>
           <a :href="authUser ? adminDashboardUrl() : '/signup'" class="fbp-pt-cta ghost">{{ authUser ? 'Open my dashboard' : 'Get started free' }}</a>
         </div>
         <div class="fbp-pt-head hot">
           <div class="fbp-pt-ribbon">Recommended</div>
           <div class="fbp-pt-name">Premium</div>
-          <div class="fbp-pt-price"><b>${{ premiumPerMonth }}</b><span>/month</span></div>
-          <div class="fbp-pt-bill">{{ billing === 'yearly' ? `billed annually — $${PREMIUM_YEARLY_TOTAL}/year` : 'billed monthly' }}</div>
-          <div class="fbp-pt-trial">{{ trialDays }}-day free trial · cancel anytime</div>
-          <a :href="authUser ? adminDashboardUrl() : '/signup'" class="fbp-pt-cta">Start free trial</a>
+          <div class="fbp-pt-price"><b>${{ PREMIUM_YEARLY_TOTAL }}</b><span>/year</span></div>
+          <div class="fbp-pt-bill">Billed annually in USD</div>
+          <div class="fbp-pt-trial">One year of Premium</div>
+          <a :href="authUser ? adminDashboardUrl() : '/signup'" class="fbp-pt-cta">Choose annual Premium</a>
         </div>
 
         <!-- core platform: identical on both plans -->
-        <div class="fbp-pt-group">Core platform — included on both plans</div>
+        <div class="fbp-pt-group">Booking fees &amp; included tools</div>
         <template v-for="r in CORE_ROWS" :key="r.label">
           <div class="fbp-pt-l">{{ r.label }}</div>
-          <div class="fbp-pt-c"><template v-if="r.free">{{ r.free }}</template><Check v-else :size="17" class="fbp-pt-yes" /></div>
-          <div class="fbp-pt-c hot"><template v-if="r.premium">{{ r.premium }}</template><Check v-else :size="17" class="fbp-pt-yes" /></div>
+          <div class="fbp-pt-c" data-plan="Free"><template v-if="r.free">{{ r.free }}</template><Check v-else :size="17" class="fbp-pt-yes" aria-label="Included" /></div>
+          <div class="fbp-pt-c hot" data-plan="Premium"><template v-if="r.premium">{{ r.premium }}</template><Check v-else :size="17" class="fbp-pt-yes" aria-label="Included" /></div>
         </template>
 
         <!-- premium growth toolkit -->
         <div class="fbp-pt-group">Growth toolkit — Premium</div>
-        <template v-for="ft in PREMIUM_FEATURES" :key="ft.key">
+        <template v-for="ft in PREMIUM_FEATURES.filter(f => f.key !== 'website_commission')" :key="ft.key">
           <div class="fbp-pt-l">{{ ft.label }}<small>{{ ft.desc }}</small></div>
-          <div class="fbp-pt-c"><XIcon :size="16" class="fbp-pt-no" /></div>
-          <div class="fbp-pt-c hot"><Check :size="17" class="fbp-pt-yes" /></div>
+          <div class="fbp-pt-c" data-plan="Free"><XIcon :size="16" class="fbp-pt-no" aria-label="Not included" /></div>
+          <div class="fbp-pt-c hot" data-plan="Premium"><Check :size="17" class="fbp-pt-yes" aria-label="Included" /></div>
         </template>
       </div>
 
       <div class="fbp-note">
         <Info :size="14" />
-        <span>Prices in USD. The {{ trialDays }}-day free trial starts when you upgrade from your dashboard — you're only billed after it ends, and you can cancel anytime. Yearly billing is ${{ PREMIUM_YEARLY_TOTAL }} once a year ({{ PREMIUM_YEARLY_SAVE_PCT }}% off monthly). Optional extras: a custom domain (one-time fee). <router-link to="/terms" class="fbp-link">Provider terms apply</router-link>.</span>
+        <span><b>How the commission works:</b> if your standard rate is 15%, Free website bookings use 15% and paid Premium website bookings use 7.5%. Rates vary by country and listing; your dashboard shows yours. Connecting payouts does not remove the fee. The discount applies during your paid subscription. Marketplace commission stays at the standard rate.</span>
+      </div>
+      <div class="fbp-note">
+        <Info :size="14" />
+        <span>Subscription prices are in USD. Premium is ${{ PREMIUM_YEARLY_TOTAL }} once a year with no free trial. Booking commissions apply separately. Optional extras: a custom domain (one-time fee). <router-link to="/terms" class="fbp-link">Provider terms apply</router-link>.</span>
       </div>
     </section>
 
@@ -268,11 +264,19 @@ const open = ref(-1)
 @media (max-width:700px) {
   .fbp-hero h1 { font-size:28px; }
   .fbp-sec { padding:30px 14px; }
-  .fbp-pt { grid-template-columns:1.25fr 1fr 1fr; }
+  .fbp-nav-in { flex-wrap: wrap; padding: 12px 16px; }
+  .fbp-nav-actions { width: 100%; justify-content: space-between; }
+  .fbp-brand { flex-shrink: 0; }
+  .fbp-pt { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .fbp-pt > * { min-width: 0; }
+  .fbp-pt-corner { display: none; }
+  .fbp-pt-head { padding: 16px 10px; justify-content: flex-end; }
+  .fbp-pt-ribbon { position: static; font-size: 9px; margin-bottom: 6px; }
   .fbp-pt-price b { font-size:26px; }
-  .fbp-pt-l { font-size:12.5px; padding:10px 10px; }
-  .fbp-pt-l small { display:none; }
-  .fbp-pt-c { font-size:11px; padding:10px 6px; }
+  .fbp-pt-l { grid-column: 1 / -1; font-size:13px; padding:14px 14px 8px; border-top:1px solid #e2e8f0; border-bottom:0; }
+  .fbp-pt-l small { font-size:12px; color:#64748b; line-height:1.5; }
+  .fbp-pt-c { flex-direction:column; gap:6px; font-size:12px; padding:10px 8px 14px; }
+  .fbp-pt-c::before { content:attr(data-plan); font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:600; color:#64748b; }
   .fbp-pt-cta { font-size:12px; padding:9px 12px; }
   .fbp-nav-signin { display:none; }
 }
