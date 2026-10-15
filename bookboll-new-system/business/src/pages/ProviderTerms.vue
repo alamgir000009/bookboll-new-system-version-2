@@ -23,8 +23,8 @@
  * Fixed teal theme (matches the landing — NOT the super-admin marketplace brand).
  */
 import { useSeo } from '../lib/seo.js'
-import LanguageSwitcher from '../components/LanguageSwitcher.vue'
-import { ArrowLeft, ScrollText } from 'lucide-vue-next'
+import BusinessHeader from '../components/BusinessHeader.vue'
+import { ScrollText } from 'lucide-vue-next'
 
 useSeo({
   exactTitle: 'Provider Terms & Conditions | Bookboll for Business',
@@ -58,19 +58,7 @@ const SECTIONS = [
 <template>
   <div class="pt">
     <!-- ── Top bar (matches the For Business landing) ─────────────────────── -->
-    <header class="pt-nav">
-      <div class="pt-nav-in">
-        <router-link to="/" class="pt-brand">
-          <span class="pt-mark" data-no-translate>B</span>
-          <span class="pt-brand-name" data-no-translate>Bookboll</span>
-          <span class="pt-brand-pill">for Business</span>
-        </router-link>
-        <div class="pt-nav-actions">
-          <LanguageSwitcher compact class="pt-lang" />
-          <router-link to="/" class="pt-back"><ArrowLeft :size="15" /> Back</router-link>
-        </div>
-      </div>
-    </header>
+    <BusinessHeader />
 
     <!-- ── Header ─────────────────────────────────────────────────────────── -->
     <section class="pt-hero">
@@ -278,18 +266,7 @@ const SECTIONS = [
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
 
 /* Nav */
-.pt-nav { position:sticky; top:0; z-index:30; background:rgba(15,23,42,.85); backdrop-filter:blur(10px); border-bottom:1px solid rgba(148,163,184,.16); }
-.pt-nav-in { max-width:1020px; margin:0 auto; padding:13px 22px; display:flex; align-items:center; justify-content:space-between; }
-.pt-brand { display:flex; align-items:center; gap:9px; text-decoration:none; }
-.pt-mark { width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,#2dd4bf,var(--teal)); color:#04201c; font-weight:900; font-size:17px; display:flex; align-items:center; justify-content:center; }
-.pt-brand-name { color:#fff; font-weight:900; font-size:18px; }
-.pt-brand-pill { color:var(--teal-lite); font-weight:800; font-size:11.5px; background:rgba(20,184,166,.16); padding:3px 9px; border-radius:999px; }
-.pt-back { display:inline-flex; align-items:center; gap:6px; color:#cbd5e1; font-weight:700; font-size:14px; text-decoration:none; }
-.pt-back:hover { color:#fff; }
-.pt-nav-actions { display:flex; align-items:center; gap:14px; }
 /* Language switcher, restyled for the dark sticky nav */
-.pt-lang :deep(.lang-trigger) { background:rgba(255,255,255,.08); border-color:rgba(148,163,184,.35); color:var(--border, #e2e8f0); }
-.pt-lang :deep(.lang-trigger:hover) { border-color:var(--teal-lite); color:#fff; }
 
 /* Hero */
 .pt-hero { background:linear-gradient(135deg,#0f172a,#134e4a); color:#fff; padding:46px 22px 40px; }
@@ -330,14 +307,6 @@ const SECTIONS = [
 
 /* Narrow phones (360px-class) */
 @media (max-width:600px) {
-  /* Nav: keep brand + actions on one row without overflow */
-  .pt-nav-in { padding:11px 14px; }
-  .pt-brand { gap:7px; }
-  .pt-brand-name { font-size:16px; }
-  .pt-brand-pill { display:none; }
-  .pt-nav-actions { gap:8px; }
-  .pt-back { padding:8px 4px; }
-
   /* Hero: cap h1 at phone size, tighten gutters */
   .pt-hero { padding:32px 16px 28px; }
   .pt-hero h1 { font-size:22px; }

@@ -12,8 +12,7 @@ import { loadPublishedPosts, fmtPostDate } from '../lib/blog.js'
 import { useSeo } from '../lib/seo.js'
 import { authUser } from '../lib/auth.js'
 import { adminLoginUrl, adminDashboardUrl } from '../lib/crossApp.js'
-import LanguageSwitcher from '../components/LanguageSwitcher.vue'
-import BrandMark from '../components/BrandMark.vue'
+import BusinessHeader from '../components/BusinessHeader.vue'
 import { Newspaper, ArrowRight, ArrowLeft } from 'lucide-vue-next'
 
 const posts = ref([])
@@ -41,23 +40,7 @@ useSeo({
 <template>
   <div class="fbb">
     <!-- ── Top nav (fixed teal landing theme, mirrors /for-business/pricing) ── -->
-    <header class="fbb-nav">
-      <div class="fbb-nav-in">
-        <router-link to="/" class="fbb-brand">
-          <span class="fbb-mark" data-no-translate><BrandMark /></span>
-          <span class="fbb-brand-name" data-no-translate>Bookboll</span>
-          <span class="fbb-brand-pill">for Business</span>
-        </router-link>
-        <nav class="fbb-nav-actions">
-          <LanguageSwitcher class="fbb-lang" />
-          <a v-if="authUser" :href="adminDashboardUrl()" class="fbb-nav-cta">Open dashboard</a>
-          <template v-else>
-            <a :href="adminLoginUrl()" class="fbb-nav-signin">Sign in</a>
-            <router-link to="/signup" class="fbb-nav-cta">Get started free</router-link>
-          </template>
-        </nav>
-      </div>
-    </header>
+    <BusinessHeader />
 
     <!-- ── Hero ── -->
     <section class="fbb-hero">
@@ -114,18 +97,6 @@ useSeo({
 .fbb { --ink:#0f172a; --teal:#14b8a6; --teal-2:#2dd4bf; --teal-lite:#5eead4; background:#ffffff; color:var(--ink); min-height:100vh; }
 
 /* nav (mirrors the landing) */
-.fbb-nav { position:sticky; top:0; z-index:30; background:rgba(15,23,42,.82); backdrop-filter:blur(10px); border-bottom:1px solid rgba(148,163,184,.16); }
-.fbb-nav-in { max-width:1120px; margin:0 auto; padding:10px 22px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.fbb-brand { display:inline-flex; align-items:center; gap:9px; text-decoration:none; }
-.fbb-mark { width:30px; height:30px; border-radius:9px; background:#16a39b; color:#fff; display:flex; align-items:center; justify-content:center; }
-.fbb-brand-name { color:#fff; font-weight:900; font-size:18px; letter-spacing:-.01em; }
-.fbb-brand-pill { color:var(--teal-lite); font-weight:800; font-size:11.5px; background:rgba(20,184,166,.16); padding:3px 9px; border-radius:999px; }
-.fbb-nav-actions { display:flex; align-items:center; gap:14px; }
-.fbb-nav-signin { color:#cbd5e1; font-weight:700; font-size:14px; text-decoration:none; }
-.fbb-nav-signin:hover { color:#fff; }
-.fbb-nav-cta { display:inline-flex; align-items:center; gap:7px; background:var(--teal); color:#04201c; font-weight:800; font-size:14px; padding:9px 17px; border-radius:999px; text-decoration:none; white-space:nowrap; }
-.fbb-nav-cta:hover { background:var(--teal-2); }
-.fbb-lang :deep(.lang-trigger) { background:rgba(255,255,255,.08); border-color:rgba(148,163,184,.35); color:#e2e8f0; }
 
 /* hero */
 .fbb-hero { background:radial-gradient(1100px 460px at 80% -10%, rgba(20,184,166,.22), transparent 60%), linear-gradient(135deg,#0f172a,#134e4a); color:#fff; padding:46px 22px 54px; text-align:center; }
@@ -170,7 +141,6 @@ useSeo({
   .fbb-card-cover { height:auto; aspect-ratio:16 / 9; }
   .fbb-card-body { padding:13px 14px 14px; }
   .fbb-card-title { font-size:16px; }
-  .fbb-nav-signin { display:none; }
 }
 </style>
 

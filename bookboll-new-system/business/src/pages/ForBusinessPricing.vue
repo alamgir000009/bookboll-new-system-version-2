@@ -14,8 +14,7 @@ import { useSeo, faqLd } from '../lib/seo.js'
 import { authUser } from '../lib/auth.js'
 import { adminLoginUrl, adminDashboardUrl } from '../lib/crossApp.js'
 import { PREMIUM_YEARLY_TOTAL, PREMIUM_FEATURES } from '../lib/premium.js'
-import LanguageSwitcher from '../components/LanguageSwitcher.vue'
-import BrandMark from '../components/BrandMark.vue'
+import BusinessHeader from '../components/BusinessHeader.vue'
 import { Check, X as XIcon, ArrowRight, ArrowLeft, Info } from 'lucide-vue-next'
 
 // Booking commission differs by plan; core tools are included on both.
@@ -74,25 +73,7 @@ const open = ref(-1)
 
 <template>
   <div class="fbp">
-    <!-- ── Top nav (fixed teal landing theme) ─────────────────────────────── -->
-    <header class="fbp-nav">
-      <div class="fbp-nav-in">
-        <router-link to="/" class="fbp-brand">
-          <span class="fbp-mark" data-no-translate><BrandMark /></span>
-          <span class="fbp-brand-name" data-no-translate>Bookboll</span>
-          <span class="fbp-brand-pill">for Business</span>
-        </router-link>
-        <nav class="fbp-nav-actions">
-          <router-link to="/blog" class="fbp-nav-signin">Blog</router-link>
-          <LanguageSwitcher class="fbp-lang" />
-          <a v-if="authUser" :href="adminDashboardUrl()" class="fbp-nav-cta">Open dashboard</a>
-          <template v-else>
-            <a :href="adminLoginUrl()" class="fbp-nav-signin">Sign in</a>
-            <router-link to="/signup" class="fbp-nav-cta">Get started free</router-link>
-          </template>
-        </nav>
-      </div>
-    </header>
+    <BusinessHeader />
 
     <!-- ── Hero ───────────────────────────────────────────────────────────── -->
     <section class="fbp-hero">
@@ -181,19 +162,6 @@ const open = ref(-1)
 <style scoped>
 .fbp { --ink:#0f172a; --teal:#14b8a6; --teal-2:#2dd4bf; --teal-lite:#5eead4; background:#ffffff; color:var(--ink); min-height:100vh; }
 
-/* nav (mirrors the landing) */
-.fbp-nav { position:sticky; top:0; z-index:30; background:rgba(15,23,42,.82); backdrop-filter:blur(10px); border-bottom:1px solid rgba(148,163,184,.16); }
-.fbp-nav-in { max-width:1120px; margin:0 auto; padding:10px 22px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.fbp-brand { display:inline-flex; align-items:center; gap:9px; text-decoration:none; }
-.fbp-mark { width:30px; height:30px; border-radius:9px; background:#16a39b; color:#fff; display:flex; align-items:center; justify-content:center; }
-.fbp-brand-name { color:#fff; font-weight:900; font-size:18px; letter-spacing:-.01em; }
-.fbp-brand-pill { color:var(--teal-lite); font-weight:800; font-size:11.5px; background:rgba(20,184,166,.16); padding:3px 9px; border-radius:999px; }
-.fbp-nav-actions { display:flex; align-items:center; gap:14px; }
-.fbp-nav-signin { color:#cbd5e1; font-weight:700; font-size:14px; text-decoration:none; }
-.fbp-nav-signin:hover { color:#fff; }
-.fbp-nav-cta { display:inline-flex; align-items:center; gap:7px; background:var(--teal); color:#04201c; font-weight:800; font-size:14px; padding:9px 17px; border-radius:999px; text-decoration:none; white-space:nowrap; }
-.fbp-nav-cta:hover { background:var(--teal-2); }
-.fbp-lang :deep(.lang-trigger) { background:rgba(255,255,255,.08); border-color:rgba(148,163,184,.35); color:#e2e8f0; }
 
 /* hero */
 .fbp-hero { background:radial-gradient(1100px 460px at 80% -10%, rgba(20,184,166,.22), transparent 60%), linear-gradient(135deg,#0f172a,#134e4a); color:#fff; padding:46px 22px 54px; text-align:center; }
@@ -264,9 +232,6 @@ const open = ref(-1)
 @media (max-width:700px) {
   .fbp-hero h1 { font-size:28px; }
   .fbp-sec { padding:30px 14px; }
-  .fbp-nav-in { flex-wrap: wrap; padding: 12px 16px; }
-  .fbp-nav-actions { width: 100%; justify-content: space-between; }
-  .fbp-brand { flex-shrink: 0; }
   .fbp-pt { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .fbp-pt > * { min-width: 0; }
   .fbp-pt-corner { display: none; }
@@ -278,7 +243,6 @@ const open = ref(-1)
   .fbp-pt-c { flex-direction:column; gap:6px; font-size:12px; padding:10px 8px 14px; }
   .fbp-pt-c::before { content:attr(data-plan); font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:600; color:#64748b; }
   .fbp-pt-cta { font-size:12px; padding:9px 12px; }
-  .fbp-nav-signin { display:none; }
 }
 </style>
 
