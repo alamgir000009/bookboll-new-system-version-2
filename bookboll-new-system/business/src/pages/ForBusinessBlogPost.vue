@@ -1,6 +1,6 @@
 <script setup>
 /**
- * ForBusinessBlogPost.vue — a single article at /blog/:slug.
+ * ForBusinessBlogPost.vue — a single article at /post/:slug.
  *
  * Reads the business blog, falling back to the marketplace blog while the
  * business blog has no posts of its own (lib/blog.js loadBusinessBlogPost), so a

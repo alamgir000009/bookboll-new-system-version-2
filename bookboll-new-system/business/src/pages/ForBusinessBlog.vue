@@ -79,7 +79,7 @@ useSeo({
             <p role="status">{{ visiblePosts.length }} {{ visiblePosts.length === 1 ? 'article' : 'articles' }}<span> · Newest first</span></p>
           </section>
 
-          <router-link v-if="featured" :to="`/blog/${featured.slug}`" class="fbb-feature">
+          <router-link v-if="featured" :to="`/post/${featured.slug}`" class="fbb-feature">
             <div class="fbb-feature-image">
               <img v-if="featured.cover_image" :src="featured.cover_image" alt="" />
               <Newspaper v-else :size="40" />
@@ -99,7 +99,7 @@ useSeo({
           <section v-if="articles.length" class="fbb-stories" :aria-label="query.trim() ? 'Search results' : 'More stories'">
             <h2 class="fbb-section-title">{{ query.trim() ? 'Search results' : 'More stories' }}</h2>
             <div class="fbb-grid">
-              <router-link v-for="post in articles" :key="post.id" :to="`/blog/${post.slug}`" class="fbb-card">
+              <router-link v-for="post in articles" :key="post.id" :to="`/post/${post.slug}`" class="fbb-card">
                 <div class="fbb-thumb">
                   <img v-if="post.cover_image" :src="post.cover_image" alt="" loading="lazy" />
                   <Newspaper v-else :size="25" />

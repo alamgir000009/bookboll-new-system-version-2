@@ -27,7 +27,9 @@ const showPreview = ref(false)
 // the customer marketplace blog and the for-businesses landing blog.
 const audience = ref('marketplace')   // 'marketplace' | 'business'
 const isBiz = computed(() => audience.value === 'business')
-const blogBase = computed(() => isBiz.value ? businessHomeUrl('/blog') : `${webBaseUrl()}/post`)
+// Both blogs serve articles at /post/<slug> — the marketplace on the web app,
+// For Business on business.bookboll.com.
+const blogBase = computed(() => isBiz.value ? businessHomeUrl('/post') : `${webBaseUrl()}/post`)
 
 const blank = () => ({ id: null, title: '', slug: '', excerpt: '', body: '', cover_image: '', status: 'draft', author_name: 'Bookboll', tags: [], meta_title: '', meta_description: '', published_at: null })
 const form = ref(blank())

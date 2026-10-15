@@ -23,7 +23,7 @@ const router = createRouter({
     { path: '/', component: ForBusiness, meta: { indexable: true, allowAuthed: true } },
     { path: '/pricing', component: ForBusinessPricing, meta: { indexable: true, allowAuthed: true } },
     { path: '/blog', component: ForBusinessBlog, meta: { indexable: true, allowAuthed: true } },
-    { path: '/blog/:slug', component: ForBusinessBlogPost, meta: { indexable: true, allowAuthed: true } },
+    { path: '/post/:slug', component: ForBusinessBlogPost, meta: { indexable: true, allowAuthed: true } },
     { path: '/terms', component: ProviderTerms, meta: { indexable: true, allowAuthed: true } },
     { path: '/signup', component: Signup },
 
@@ -31,7 +31,8 @@ const router = createRouter({
     { path: '/for-business', redirect: '/' },
     { path: '/for-business/pricing', redirect: '/pricing' },
     { path: '/for-business/blog', redirect: '/blog' },
-    { path: '/for-business/blog/:slug', redirect: to => `/blog/${to.params.slug}` },
+    { path: '/for-business/blog/:slug', redirect: to => `/post/${to.params.slug}` },
+    { path: '/blog/:slug', redirect: to => `/post/${to.params.slug}` },
     { path: '/for-business/terms', redirect: '/terms' },
   ],
 })
