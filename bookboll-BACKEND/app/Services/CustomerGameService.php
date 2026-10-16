@@ -108,7 +108,7 @@ class CustomerGameService
      */
     public function config(?int $listingId = null, bool $community = false)
     {
-        $listing = $listingId ? Listing::find($listingId) : null;
+        $listing = $listingId ? Listing::with(['pricingGroups', 'pricingCells'])->find($listingId) : null;
 
         $plan = $listing ? $this->paymentPlan($listing, $this->venueFor($listing)) : null;
 
@@ -137,7 +137,7 @@ class CustomerGameService
      */
     public function quote(User $host, array $data)
     {
-        $listing = ! empty($data['listing_id']) ? Listing::find($data['listing_id']) : null;
+        $listing = ! empty($data['listing_id']) ? Listing::with(['pricingGroups', 'pricingCells'])->find($data['listing_id']) : null;
 
         if (! empty($data['listing_id']) && ! $listing) {
             return sendError('Court not found.', [], 404);
@@ -161,7 +161,7 @@ class CustomerGameService
             return sendError('Please sign in to host.');
         }
 
-        $listing = ! empty($data['listing_id']) ? Listing::find($data['listing_id']) : null;
+        $listing = ! empty($data['listing_id']) ? Listing::with(['pricingGroups', 'pricingCells'])->find($data['listing_id']) : null;
 
         if (! empty($data['listing_id']) && ! $listing) {
             return sendError('Court not found.', [], 404);
@@ -1167,7 +1167,7 @@ class CustomerGameService
 
         $stripe   = app(StripeService::class);
         $urls     = $stripe->checkoutReturnUrls();
-        $listing  = $game->listing_id ? Listing::find($game->listing_id) : null;
+        $listing  = $game->listing_id ? Listing::with(['pricingGroups', 'pricingCells'])->find($game->listing_id) : null;
         $venue    = $game->location_id ? Venue::find($game->location_id) : null;
         $label    = $game->game_type === 'tournament' ? 'Tournament' : ($game->game_type === 'event' ? 'Hangout' : 'Game');
 
@@ -2113,7 +2113,7 @@ class CustomerGameService
         $first = $matches[0];
         $last  = $matches[count($matches) - 1];
 
-        $listings = Listing::whereIn('id', array_filter(array_column($matches, 'listing_id')))->get()->keyBy('id');
+        $listings = Listing::with(['pricingGroups', 'pricingCells'])->whereIn('id', array_filter(array_column($matches, 'listing_id')))->get()->keyBy('id');
 
         foreach ($matches as $m) {
             if (empty($m['listing_id']) || ! $listings->has($m['listing_id'])) {
@@ -2353,7 +2353,7 @@ class CustomerGameService
 
         $matches  = TournamentMatch::where('tournament_id', $tournament->id)
             ->orderBy('round')->orderBy('match_index')->get();
-        $listings = Listing::whereIn('id', $matches->pluck('listing_id')->filter()->unique())->get()->keyBy('id');
+        $listings = Listing::with(['pricingGroups', 'pricingCells'])->whereIn('id', $matches->pluck('listing_id')->filter()->unique())->get()->keyBy('id');
         $requests = GameJoinRequest::where('game_id', $tournament->id)->orderBy('created_at')->get();
 
         $mine = $viewer?->uuid ? $requests->firstWhere('joiner_customer_id', $viewer->uuid) : null;

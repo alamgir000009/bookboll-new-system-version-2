@@ -630,27 +630,258 @@ if (! function_exists('generatePaymentId')) {
 }
 
 if (! function_exists('determineSlotPrice')) {
+    /**
+     * What a single slot costs. Thin wrapper so every existing caller — slots,
+     * quotes, bookings, games — prices through the same resolver.
+     *
+     * @see resolveSlotPricing() for the breakdown behind the number.
+     */
     function determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay)
     {
-        if ($specialDay && $specialDay->timeBlocks && $specialDay->timeBlocks->count()) {
-            foreach ($specialDay->timeBlocks as $block) {
-                if (timeSlotFallsInRange($slotStart, $slotEnd, $block->start_time, $block->end_time)) {
-                    return $block->price_per_hour ?? $listing->base_price;
-                }
+        return resolveSlotPricing($listing, $weekday, $slotStart, $slotEnd, $specialDay)['price'];
+    }
+}
+
+if (! function_exists('resolveSlotPricing')) {
+    /**
+     * The one authority on what a slot costs, and why.
+     *
+     * Resolution mirrors the admin dashboard's own grid (PricingGrid.vue +
+     * NewBookingDrawer.resolveSlotPrice), most specific source first:
+     *
+     *   1. pricing cell for (day_of_week, slot_time) — a direct_price, or the
+     *      group the cell is painted with
+     *   2. pricing group whose days + window cover the slot
+     *   3. the listing's base_price
+     *
+     * A special day is then applied as an OVERLAY on that figure: a flat price
+     * (time block price_per_hour, else the day's own price) replaces it, and
+     * otherwise price_multiplier scales it. Previously the special day was
+     * checked first and returned outright, so a multiplier-only special day —
+     * the "1.5x on public holidays" case — priced at plain base_price.
+     *
+     * @return array{price: float, breakdown: array<string, mixed>}
+     */
+    function resolveSlotPricing($listing, $weekday, $slotStart, $slotEnd, $specialDay): array
+    {
+        // determineSlotPrice() used to read `pricingGroups` only when the caller
+        // happened to have eager-loaded it, and silently billed base_price when
+        // they hadn't — which is how games and customer quotes lost every
+        // pricing group. Load what we need instead of guessing.
+        if ($listing instanceof \App\Models\Listing) {
+            $listing->loadMissing(['pricingGroups', 'pricingCells']);
+        }
+
+        $basePrice = (float) ($listing->base_price ?? 0);
+        $currency  = null;
+
+        $source       = 'base_price';
+        $matchedGroup = null;
+        $matchedCell  = null;
+
+        $dayOfWeek = \App\Models\Schedule::DAY_INDEX[strtolower((string) $weekday)] ?? null;
+
+        $listPrice = $basePrice;
+
+        // 1. The pricing grid: an explicit decision for this exact day and start time.
+        if ($dayOfWeek !== null) {
+            $matchedCell = collect($listing->pricingCells ?? [])
+                ->first(fn($cell) => (int) $cell->day_of_week === $dayOfWeek
+                    && substr((string) $cell->slot_time, 0, 5) === substr((string) $slotStart, 0, 5));
+        }
+
+        if ($matchedCell && $matchedCell->direct_price !== null) {
+            $listPrice = (float) $matchedCell->direct_price;
+            $source    = 'pricing_cell';
+        } elseif ($matchedCell && $matchedCell->pricing_group_id) {
+            $cellGroup = collect($listing->pricingGroups ?? [])
+                ->firstWhere('id', $matchedCell->pricing_group_id);
+
+            if ($cellGroup) {
+                $listPrice    = (float) $cellGroup->price_per_hour;
+                $currency     = $cellGroup->currency ?: null;
+                $matchedGroup = $cellGroup;
+                $source       = 'pricing_group';
             }
         }
 
-        if ($listing->relationLoaded('pricingGroups')) {
-            foreach ($listing->pricingGroups as $group) {
-                if (in_array($weekday, $group->days)) {
-                    if (timeSlotFallsInRange($slotStart, $slotEnd, $group->start_time, $group->end_time)) {
-                        return $group->price_per_hour;
-                    }
-                }
+        // 2. No cell painted for this slot: fall back to the group windows.
+        if ($source === 'base_price') {
+            $matchedGroup = matchingPricingGroupForSlot($listing, $weekday, $slotStart, $slotEnd);
+
+            if ($matchedGroup) {
+                $listPrice = (float) $matchedGroup->price_per_hour;
+                $currency  = $matchedGroup->currency ?: null;
+                $source    = 'pricing_group';
             }
         }
 
-        return $listing->base_price;
+        $price = $listPrice;
+
+        // 3. The special day overlay.
+        $specialDayDetail = null;
+        if ($specialDay) {
+            $block = null;
+            if ($specialDay->timeBlocks && $specialDay->timeBlocks->count()) {
+                $block = $specialDay->timeBlocks
+                    ->first(fn($b) => timeSlotFallsInRange($slotStart, $slotEnd, $b->start_time, $b->end_time));
+            }
+
+            $flat = null;
+            if ($block && $block->price_per_hour !== null) {
+                $flat = (float) $block->price_per_hour;
+            } elseif ($specialDay->price !== null) {
+                $flat = (float) $specialDay->price;
+            }
+
+            $multiplier = $specialDay->price_multiplier !== null
+                ? (float) $specialDay->price_multiplier
+                : 1.0;
+            if ($multiplier <= 0) {
+                $multiplier = 1.0;
+            }
+
+            $appliedMultiplier = 1.0;
+            if ($flat !== null) {
+                $price  = $flat;
+                $source = 'special_day';
+            } elseif ($multiplier !== 1.0) {
+                $price             = round($listPrice * $multiplier, 2);
+                $appliedMultiplier = $multiplier;
+                $source            = 'special_day';
+            }
+
+            if ($block || $flat !== null || $appliedMultiplier !== 1.0) {
+                $specialDayDetail = [
+                    'id'           => $specialDay->id,
+                    'name'         => $specialDay->description,
+                    'type'         => $specialDay->type,
+                    'flat_price'   => $flat,
+                    'multiplier'   => $appliedMultiplier,
+                    'block_start'  => $block ? substr((string) $block->start_time, 0, 5) : null,
+                    'block_end'    => $block ? substr((string) $block->end_time, 0, 5) : null,
+                ];
+                $currency = $block?->price_currency ?: $currency;
+            }
+        }
+
+        $price = round($price, 2);
+
+        return [
+            'price'     => $price,
+            'breakdown' => [
+                'price'         => $price,
+                'base_price'    => round($basePrice, 2),
+                'list_price'    => round($listPrice, 2),
+                'source'        => $source,
+                'is_dynamic'    => $source !== 'base_price',
+                'currency'      => $currency,
+                'pricing_group' => $matchedGroup ? [
+                    'id'             => $matchedGroup->id,
+                    'name'           => $matchedGroup->name,
+                    'color'          => $matchedGroup->color,
+                    'start_time'     => substr((string) $matchedGroup->start_time, 0, 5),
+                    'end_time'       => substr((string) $matchedGroup->end_time, 0, 5),
+                    'days'           => $matchedGroup->days,
+                    'price_per_hour' => (float) $matchedGroup->price_per_hour,
+                    'matched_by'     => $matchedCell ? 'pricing_cell' : 'time_window',
+                ] : null,
+                'pricing_cell'  => $matchedCell ? [
+                    'id'           => $matchedCell->id,
+                    'day_of_week'  => (int) $matchedCell->day_of_week,
+                    'slot_time'    => substr((string) $matchedCell->slot_time, 0, 5),
+                    'direct_price' => $matchedCell->direct_price !== null ? (float) $matchedCell->direct_price : null,
+                ] : null,
+                'special_day'   => $specialDayDetail,
+            ],
+        ];
+    }
+}
+
+if (! function_exists('matchingPricingGroupForSlot')) {
+    /**
+     * The group that owns this slot. Deterministic: a slot straddling the seam
+     * between two adjacent groups (17:00-18:00 against 06:00-17:30 and
+     * 17:30-23:00) used to take whichever group the unordered hasMany happened
+     * to yield first. Prefer the group containing the slot's start, then the
+     * dashboard's own sort_order, then id.
+     */
+    function matchingPricingGroupForSlot($listing, $weekday, $slotStart, $slotEnd)
+    {
+        if ($listing instanceof \App\Models\Listing) {
+            $listing->loadMissing('pricingGroups');
+        }
+
+        $candidates = collect($listing->pricingGroups ?? [])
+            ->filter(fn($group) => pricingGroupCoversWeekday($group, $weekday))
+            ->filter(fn($group) => timeSlotFallsInRange($slotStart, $slotEnd, $group->start_time, $group->end_time));
+
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        $startMinutes = timeToMinutes(substr((string) $slotStart, 0, 5));
+
+        return $candidates
+            ->sortBy([
+                fn($group) => slotStartInsidePricingGroup($startMinutes, $group) ? 0 : 1,
+                fn($group) => (int) ($group->sort_order ?? 0),
+                fn($group) => (int) $group->id,
+            ])
+            ->first();
+    }
+}
+
+if (! function_exists('pricingGroupCoversWeekday')) {
+    /**
+     * `pricing_groups.days` holds two incompatible shapes depending on which
+     * editor wrote the listing: the API validates lowercase day NAMES
+     * ("monday"), while the dashboard's pricing grid posts numeric indices
+     * ("1,2,3,4,5", Sunday = 0) that ListingDashboardService stores verbatim.
+     * The old `in_array($weekday, $group->days)` only ever matched the names,
+     * so every group built in the dashboard grid silently never applied and the
+     * slot fell through to base_price. Normalize both sides to the index.
+     */
+    function pricingGroupCoversWeekday($group, $weekday): bool
+    {
+        $days = $group->days;
+        if (is_string($days)) {
+            $days = array_filter(array_map('trim', explode(',', $days)), fn($d) => $d !== '');
+        }
+        if (! is_array($days) || ! $days) {
+            return false;
+        }
+
+        $wanted = \App\Models\Schedule::DAY_INDEX[strtolower((string) $weekday)] ?? null;
+        if ($wanted === null) {
+            return false;
+        }
+
+        foreach ($days as $day) {
+            $day = is_string($day) ? strtolower(trim($day)) : $day;
+
+            $index = is_numeric($day)
+                ? (int) $day
+                : (\App\Models\Schedule::DAY_INDEX[$day] ?? null);
+
+            if ($index === $wanted) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+if (! function_exists('slotStartInsidePricingGroup')) {
+    function slotStartInsidePricingGroup(int $slotStartMinutes, $group): bool
+    {
+        $groupStart = timeToMinutes($group->start_time);
+        $groupEnd   = in_array($group->end_time, ['00:00', '24:00'], true)
+            ? 24 * 60
+            : timeToMinutes($group->end_time);
+
+        return $slotStartMinutes >= $groupStart && $slotStartMinutes < $groupEnd;
     }
 }
 

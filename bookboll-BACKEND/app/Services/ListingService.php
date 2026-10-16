@@ -40,6 +40,7 @@ class ListingService
             'assets',
             'resources',
             'pricingGroups',
+            'pricingCells',
             'venue'          => function ($q) {
                 $q->orderBy('sort_order', 'ASC');
             },
@@ -126,6 +127,7 @@ class ListingService
                 'assets',
                 'resources',
                 'pricingGroups',
+            'pricingCells',
                 'schedules' => function ($q) {$q->where('is_open', true);},
             ]);
 
@@ -193,6 +195,7 @@ class ListingService
                 'venue',
                 'schedules' => function ($q) {$q->where('is_open', true);},
                 'pricingGroups',
+            'pricingCells',
                 'addOns',
                 'resources',
             ]);
@@ -1236,6 +1239,7 @@ class ListingService
             'venue',
             'schedules',
             'pricingGroups',
+            'pricingCells',
             'venue.schedules',
             'assets',
         ])->findOrFail($listingId);
@@ -1783,7 +1787,8 @@ class ListingService
 
             if ($isAvailable || $isLocked) {
 
-                $price = determineSlotPrice($listing, $weekday, $slotStart, $slotEnd, $specialDay);
+                $pricing = resolveSlotPricing($listing, $weekday, $slotStart, $slotEnd, $specialDay);
+                $price   = $pricing['price'];
 
                 $duration = getFormattedDuration($slotMinutes);
 
@@ -1803,6 +1808,9 @@ class ListingService
                     'time'                => "{$slotStart} - {$slotEnd}",
                     'max_bookings_per_slot' => $listing->max_bookings_per_slot,
                     'price'                 => round($price, 2),
+                    // Why this slot costs what it costs: which pricing group,
+                    // grid cell or special day won, and the base it moved from.
+                    'pricing'               => $pricing['breakdown'],
                 ]);
             }
 
@@ -1835,6 +1843,7 @@ class ListingService
                 'venue',
                 'schedules',
                 'pricingGroups',
+            'pricingCells',
                 'venue.schedules',
             ])->findOrFail($listingId);
 

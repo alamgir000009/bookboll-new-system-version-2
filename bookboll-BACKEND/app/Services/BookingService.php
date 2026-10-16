@@ -1793,7 +1793,7 @@ class BookingService
             }
 
             $createdBookings = collect();
-            $listing         = Listing::with(['pricingGroups'])->findOrFail($formData['listing_id']);
+            $listing         = Listing::with(['pricingGroups', 'pricingCells'])->findOrFail($formData['listing_id']);
 
             $weekday = strtolower(Carbon::parse($request->date)->format('l'));
 
@@ -2041,7 +2041,7 @@ class BookingService
      */
     public function prepareCustomerCheckout(array $formData, User $user): array
     {
-        $listing      = $this->listingModel::with(['pricingGroups'])->findOrFail($formData['listing_id']);
+        $listing      = $this->listingModel::with(['pricingGroups', 'pricingCells'])->findOrFail($formData['listing_id']);
         $quoteService = app(CustomerBookingQuoteService::class);
         $normalizedSlots = $quoteService->normalizeCustomerSlots($listing, $formData);
 
@@ -2461,7 +2461,7 @@ class BookingService
             }
 
             $listingId = $formData['listing_id'] ?? $booking->listing_id;
-            $listing   = Listing::with('pricingGroups')->findOrFail($listingId);
+            $listing   = Listing::with(['pricingGroups', 'pricingCells'])->findOrFail($listingId);
 
             $shouldRecalculatePrice = $fromMobile
                 || (($listingChanged || $venueChanged || $timeChanged) && ! isset($formData['total_price']));
@@ -4370,7 +4370,7 @@ class BookingService
             'date'       => 'required|date',
         ]);
 
-        $listing = Listing::with(['schedules', 'addOns', 'pricingGroups'])->find($data['listing_id']);
+        $listing = Listing::with(['schedules', 'addOns', 'pricingGroups', 'pricingCells'])->find($data['listing_id']);
         if (! $listing) {
             return sendError('Listing not found', [], 404);
         }
