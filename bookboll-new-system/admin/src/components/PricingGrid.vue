@@ -5,6 +5,18 @@ import { fmt12 } from '../lib/slots'
 import { markDirty } from '../lib/unsavedGuard.js'
 
 const DAY_NAME = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' }
+
+/* `pricing_groups.days` comes back in two shapes, depending on which editor last
+   wrote the listing: this grid posts numeric indices ("1,2,3", Sunday = 0), while
+   the API validates lowercase day NAMES ("monday,tuesday"). Parsing only numbers
+   meant a name-based group showed EVERY day pill switched off — and the moment
+   anyone tapped a day, the Set was seeded with NaN and the days it already had were
+   written away. That is the likeliest way a working group became a dead one. */
+const DAY_INDEX = {
+  sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2,
+  wed: 3, weds: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4,
+  fri: 5, friday: 5, sat: 6, saturday: 6,
+}
 const ALL_TIMES = Array.from({ length: 24 * 2 }, (_, i) => {
   const h = Math.floor(i / 2), m = (i % 2) * 30
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
@@ -270,14 +282,21 @@ function removeGroup(id) {
 }
 
 function groupDays(g) {
-  return (g.days || '').split(',').filter(Boolean).map(Number)
+  const raw = Array.isArray(g?.days) ? g.days : String(g?.days ?? '').split(',')
+  return [...new Set(
+    raw
+      .map(d => String(d).trim().toLowerCase())
+      .filter(Boolean)
+      .map(d => (/^[0-6]$/.test(d) ? Number(d) : DAY_INDEX[d]))
+      .filter(d => Number.isInteger(d)),
+  )].sort((a, b) => a - b)
 }
 function groupHasDay(g, d) { return groupDays(g).includes(d) }
 function toggleGroupDay(g, d) {
   const set = new Set(groupDays(g))
   if (set.has(d)) set.delete(d)
   else set.add(d)
-  updateGroup(g.id, { days: [...set].sort().join(',') })
+  updateGroup(g.id, { days: [...set].sort((a, b) => a - b).join(',') })
 }
 
 function fillDay(day) {
