@@ -683,14 +683,44 @@ class ListingDashboardService
         }
     }
 
+    /**
+     * Save the pricing grid WITHOUT throwing the rows away first.
+     *
+     * This used to delete every group and cell for the listing and insert the
+     * payload fresh, so a group kept its identity for exactly as long as nobody
+     * pressed Save. Each save burned a block of auto-increment ids, reset
+     * `created_by` and `created_at` to the last editor, logged a delete and a
+     * create for every row, and changed the `source_id` the slot API hands out
+     * for a group that had not been touched. A real edit and a no-op save were
+     * indistinguishable in the audit log.
+     *
+     * So: match the payload against what is already stored, UPDATE those in
+     * place, INSERT only what is genuinely new, and delete only what the editor
+     * dropped. A group that nobody changed comes out byte-identical, same id.
+     */
     protected function syncPricing(Listing $listing, array $groups, array $cells): void
     {
-        PricingCell::where('listing_id', $listing->id)->delete();
-        PricingGroup::where('listing_id', $listing->id)->delete();
+        $gidMap = $this->syncPricingGroups($listing, $groups);
+        $this->syncPricingCells($listing, $cells, $gidMap);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $groups
+     * @return array<string, int>  payload id (and `__idx_N`) => stored id
+     */
+    protected function syncPricingGroups(Listing $listing, array $groups): array
+    {
+        // Keyed on the stored id, so a payload id belonging to ANOTHER listing
+        // simply misses and becomes a new row here rather than editing theirs.
+        $existing = PricingGroup::where('listing_id', $listing->id)
+            ->get()
+            ->keyBy(fn (PricingGroup $g) => (string) $g->id);
 
         $gidMap = [];
+        $keep   = [];
+
         foreach (array_values($groups) as $idx => $g) {
-            $created = PricingGroup::create([
+            $attrs = [
                 'listing_id'     => $listing->id,
                 'name'           => $g['name'] ?? ('Group ' . ($idx + 1)),
                 'color'          => $g['color'] ?? null,
@@ -703,33 +733,119 @@ class ListingDashboardService
                 'days'           => array_key_exists('days', $g)
                     ? $this->normalizeGroupDays($g['days'])
                     : ['1', '2', '3', '4', '5'],
-                'currency'       => $g['currency'] ?? '',
                 'sort_order'     => (int) ($g['sort_order'] ?? $idx),
-            ]);
-            $oldId = isset($g['id']) ? (string) $g['id'] : null;
-            if ($oldId !== null && $oldId !== '') {
-                $gidMap[$oldId] = $created->id;
+            ];
+            // The grid does not send a currency, and the old save wrote '' over
+            // whatever was there — which the slot breakdown reads back. Only
+            // touch it when the caller actually said something.
+            $currency = $g['currency'] ?? null;
+            if (is_string($currency) && $currency !== '') {
+                $attrs['currency'] = $currency;
             }
-            $gidMap['__idx_' . $idx] = $created->id;
+
+            $payloadId = isset($g['id']) ? trim((string) $g['id']) : '';
+            $row       = $payloadId !== '' ? $existing->get($payloadId) : null;
+
+            if ($row) {
+                $row->fill($attrs)->save();
+            } else {
+                $row = PricingGroup::create($attrs);
+            }
+
+            $keep[] = (int) $row->id;
+            if ($payloadId !== '') {
+                $gidMap[$payloadId] = (int) $row->id;
+            }
+            $gidMap['__idx_' . $idx] = (int) $row->id;
         }
 
+        // Only what the editor actually dropped. Deleted one at a time so the
+        // activity log records the removal — a mass delete fires no model events,
+        // which is how the old churn stayed invisible.
+        $stale = PricingGroup::where('listing_id', $listing->id)
+            ->when($keep, fn ($q) => $q->whereNotIn('id', $keep))
+            ->get();
+        foreach ($stale as $row) {
+            $row->delete();
+        }
+
+        return $gidMap;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $cells
+     * @param  array<string, int>  $gidMap
+     */
+    protected function syncPricingCells(Listing $listing, array $cells, array $gidMap): void
+    {
+        // A cell's identity is the square it occupies, not its row id: the grid
+        // posts `tmp-{day}-{slot}` for anything freshly painted, so matching on
+        // id alone would re-insert every repaint. One row per square also
+        // collapses any duplicates an earlier save left behind.
+        $existing = PricingCell::where('listing_id', $listing->id)
+            ->get()
+            ->groupBy(fn (PricingCell $c) => $this->cellKey($c->day_of_week, $this->normalizeHm($c->slot_time)));
+
+        $groupIds = array_values(array_unique(array_map('intval', $gidMap)));
+        $keep     = [];
+
         foreach ($cells as $c) {
-            $pgId = $c['pricing_group_id'] ?? null;
-            if ($pgId !== null && $pgId !== '') {
-                $pgId = $gidMap[(string) $pgId] ?? (is_numeric($pgId) ? (int) $pgId : null);
-            } else {
-                $pgId = null;
-            }
-            PricingCell::create([
+            $dow  = (int) ($c['day_of_week'] ?? 0);
+            $slot = $this->normalizeHm($c['slot_time'] ?? '00:00');
+
+            $attrs = [
                 'listing_id'       => $listing->id,
-                'day_of_week'      => (int) ($c['day_of_week'] ?? 0),
-                'slot_time'        => $this->normalizeHm($c['slot_time'] ?? '00:00'),
-                'pricing_group_id' => $pgId,
+                'day_of_week'      => $dow,
+                'slot_time'        => $slot,
+                'pricing_group_id' => $this->resolveCellGroupId($c['pricing_group_id'] ?? null, $gidMap, $groupIds),
                 'direct_price'     => isset($c['direct_price']) && $c['direct_price'] !== null && $c['direct_price'] !== ''
                     ? (float) $c['direct_price']
                     : null,
-            ]);
+            ];
+
+            $row = $existing->get($this->cellKey($dow, $slot))?->first();
+            if ($row) {
+                $row->fill($attrs)->save();
+            } else {
+                $row = PricingCell::create($attrs);
+            }
+            $keep[] = (int) $row->id;
         }
+
+        $stale = PricingCell::where('listing_id', $listing->id)
+            ->when($keep, fn ($q) => $q->whereNotIn('id', $keep))
+            ->get();
+        foreach ($stale as $row) {
+            $row->delete();
+        }
+    }
+
+    protected function cellKey(int|string|null $dayOfWeek, string $slotTime): string
+    {
+        return ((int) $dayOfWeek) . '|' . $slotTime;
+    }
+
+    /**
+     * A cell may name its group by payload id (`tmp-g-…` for one created in the
+     * same save) or by a stored id. Either way the answer has to be a group that
+     * belongs to THIS listing, so an id from elsewhere resolves to nothing
+     * rather than quietly pricing someone else's slot.
+     *
+     * @param  array<string, int>  $gidMap
+     * @param  array<int, int>  $groupIds
+     */
+    protected function resolveCellGroupId($raw, array $gidMap, array $groupIds): ?int
+    {
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        $mapped = $gidMap[(string) $raw] ?? null;
+        if ($mapped !== null) {
+            return (int) $mapped;
+        }
+
+        return is_numeric($raw) && in_array((int) $raw, $groupIds, true) ? (int) $raw : null;
     }
 
     /**

@@ -5231,46 +5231,89 @@ class BookingService
         return app(SpecialDayService::class)->mapToDashboard($sd);
     }
 
+    /**
+     * The weekly pricing grid the booking drawer shades its slots with.
+     *
+     * This walked each group's window and expanded it itself, and got three
+     * things wrong doing so:
+     *
+     *  - `days` was matched against a map of lowercase day NAMES, but the admin
+     *    pricing grid stores numeric indices ("0".."6"), so every group built in
+     *    that grid produced no cells at all.
+     *  - `if ($end <= $start) continue` discarded any group ending at midnight —
+     *    a 22:00-00:00 window reads as end 0, start 1320 — which is the shape of
+     *    a late-evening peak group.
+     *  - Real `pricing_cells` rows were ignored entirely, so a price painted in
+     *    the Slot Grid never reached the drawer, and two overlapping groups each
+     *    emitted a cell for the same square with no tiebreak.
+     *
+     * So staff booking a slot were shown base price where the customer is
+     * charged a peak one. Ask the same resolvers the customer price goes through
+     * instead of re-deriving the answer: `pricingGroupCoversWeekday()` normalises
+     * both `days` shapes and `matchingPricingGroupForSlot()` applies the same
+     * cell-then-window-then-tiebreak order, so the two cannot drift again.
+     *
+     * Special days are deliberately NOT folded in — they are date-specific and
+     * ride back separately in `special_days`, while these cells are per-weekday.
+     */
     protected function mapDashboardPricing(Listing $listing): array
     {
-        $dowMap = [
-            'sunday' => 0,
-            'monday' => 1,
-            'tuesday' => 2,
-            'wednesday' => 3,
-            'thursday' => 4,
-            'friday' => 5,
-            'saturday' => 6,
-        ];
+        $listing->loadMissing(['pricingGroups', 'pricingCells']);
+
         $slotMins = $listing->slotDurationMinutes();
         if ($slotMins < 15) {
             $slotMins = 60;
         }
 
-        $groups = [];
-        $cells  = [];
-        foreach ($listing->pricingGroups as $g) {
-            $groups[] = [
+        $groups = $listing->pricingGroups
+            ->map(fn ($g) => [
                 'id'    => (string) $g->id,
                 'name'  => $g->name,
                 'price' => (float) $g->price_per_hour,
-            ];
-            $start = $this->timeToMinutes($this->fmtTime($g->start_time));
-            $end   = $this->timeToMinutes($this->fmtTime($g->end_time));
-            if ($end <= $start) {
-                continue;
-            }
-            $days = is_array($g->days) ? $g->days : [];
-            foreach ($days as $dayName) {
-                $dow = $dowMap[strtolower((string) $dayName)] ?? null;
-                if ($dow === null) {
-                    continue;
-                }
-                for ($t = $start; $t + $slotMins <= $end; $t += $slotMins) {
+            ])
+            ->values()
+            ->all();
+
+        // Keyed once: a fully painted week is ~700 cells, and rescanning the
+        // collection for each of ~700 squares is work for nothing.
+        $painted = $listing->pricingCells
+            ->keyBy(fn ($c) => ((int) $c->day_of_week) . '|' . substr((string) $c->slot_time, 0, 5));
+
+        $dayNames = array_flip(Schedule::DAY_INDEX);
+        $cells    = [];
+
+        foreach ($dayNames as $dow => $weekday) {
+            for ($t = 0; $t + $slotMins <= 24 * 60; $t += $slotMins) {
+                $slot = sprintf('%02d:%02d', intdiv($t, 60), $t % 60);
+                $end  = $t + $slotMins;
+                // Midnight as an END is end-of-day, and that is the spelling the
+                // range helpers expect.
+                $slotEnd = $end === 24 * 60 ? '00:00' : sprintf('%02d:%02d', intdiv($end, 60), $end % 60);
+
+                $cell = $painted->get($dow . '|' . $slot);
+
+                if ($cell && $cell->direct_price !== null) {
                     $cells[] = [
                         'day_of_week'      => $dow,
-                        'slot_time'        => sprintf('%02d:%02d', intdiv($t, 60), $t % 60),
-                        'pricing_group_id' => (string) $g->id,
+                        'slot_time'        => $slot,
+                        'pricing_group_id' => null,
+                        'direct_price'     => (float) $cell->direct_price,
+                    ];
+
+                    continue;
+                }
+
+                $group = null;
+                if ($cell && $cell->pricing_group_id) {
+                    $group = $listing->pricingGroups->firstWhere('id', $cell->pricing_group_id);
+                }
+                $group ??= matchingPricingGroupForSlot($listing, $weekday, $slot, $slotEnd);
+
+                if ($group) {
+                    $cells[] = [
+                        'day_of_week'      => $dow,
+                        'slot_time'        => $slot,
+                        'pricing_group_id' => (string) $group->id,
                         'direct_price'     => null,
                     ];
                 }
