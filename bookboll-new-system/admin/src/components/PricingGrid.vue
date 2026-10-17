@@ -162,33 +162,76 @@ function cellFor(day, slot) {
   return props.cells.find(c => c.day_of_week === day && c.slot_time === slot)
 }
 
+/* A group's TIME WINDOW prices slots on its own — that is what the Start/End/Days
+   fields above are for, and what the backend applies in matchingPricingGroupForSlot().
+   This grid used to shade painted cells only, so defining a group 10 PM-12 AM on Sat
+   left every square blank and the grid showed a different price from the one the
+   customer is actually charged. Mirror the backend's resolution here instead, in the
+   same order: a painted square wins, otherwise the group whose window covers the
+   slot — preferring one the slot STARTS inside, then lowest sort_order, then lowest
+   id. Window-covered squares are drawn dashed so hand-painted ones stay distinct. */
+const slotMins = computed(() => (Number(props.slotDuration) > 0 ? Number(props.slotDuration) : 60))
+
+function groupEndMin(g) {
+  const m = minutesOf(g.end_time || '00:00')
+  return m === 0 ? 24 * 60 : m   // midnight as an END is end-of-day
+}
+function groupCoversSlot(g, day, slot) {
+  if (!groupDays(g).includes(day)) return false
+  const s = minutesOf(slot)
+  return s < groupEndMin(g) && s + slotMins.value > minutesOf(g.start_time || '00:00')
+}
+function windowGroupFor(day, slot) {
+  const covering = props.groups.filter(g => groupCoversSlot(g, day, slot))
+  if (!covering.length) return null
+  const s = minutesOf(slot)
+  // An unsaved group has a `tmp-g-…` id; the backend will give it the highest id
+  // of the save, so rank it last on that tiebreak rather than first.
+  const idRank = (g) => (Number.isFinite(Number(g.id)) ? Number(g.id) : Number.MAX_SAFE_INTEGER)
+  const rank = (g) => [
+    (s >= minutesOf(g.start_time || '00:00') && s < groupEndMin(g)) ? 0 : 1,
+    Number(g.sort_order) || 0,
+    idRank(g),
+  ]
+  return [...covering].sort((a, b) => {
+    const ra = rank(a), rb = rank(b)
+    for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return ra[i] - rb[i]
+    return 0
+  })[0]
+}
+/** Which group prices this square, and whether a human painted it there. */
+function resolvedCell(day, slot) {
+  const c = cellFor(day, slot)
+  if (c && c.pricing_group_id) {
+    const g = props.groups.find(x => x.id === c.pricing_group_id)
+    if (g) return { group: g, painted: true }
+  }
+  const g = windowGroupFor(day, slot)
+  return { group: g || null, painted: false }
+}
+
 function cellStyle(day, slot) {
   if (!slotInOpen(day, slot)) return { background: '#f8fafc', color: '#cbd5e1', cursor: 'default' }
-  const c = cellFor(day, slot)
   if (props.pattern === 'B') {
+    const c = cellFor(day, slot)
     if (c && c.direct_price != null) { const col = directColor(c.direct_price); return { background: col + '22', borderLeft: `3px solid ${col}`, color: col } }
     return { background: '#fff', color: '#cbd5e1' }
   }
-  if (!c) return { background: '#fff' }
-  if (c.pricing_group_id) {
-    const g = props.groups.find(x => x.id === c.pricing_group_id)
-    if (g) { const col = groupColor(g); return { background: col + '22', borderLeft: `3px solid ${col}`, color: col } }
-  }
-  return {}
+  const { group, painted } = resolvedCell(day, slot)
+  if (!group) return { background: '#fff' }
+  const col = groupColor(group)
+  return painted
+    ? { background: col + '22', borderLeft: `3px solid ${col}`, color: col }
+    : { background: col + '14', borderLeft: `3px dashed ${col}`, color: col }
 }
 
 function cellLabel(day, slot) {
-  const c = cellFor(day, slot)
   if (props.pattern === 'B') {
+    const c = cellFor(day, slot)
     if (c && c.direct_price != null) return c.direct_price
     return slotInOpen(day, slot) ? props.basePrice : ''
   }
-  if (!c) return ''
-  if (c.pricing_group_id) {
-    const g = props.groups.find(x => x.id === c.pricing_group_id)
-    return g ? g.price : ''
-  }
-  return ''
+  return resolvedCell(day, slot).group?.price ?? ''
 }
 
 function isFaded(day, slot) {
@@ -371,7 +414,8 @@ function fillDay(day) {
       </div>
       <div v-if="!groups.length" class="empty-groups">No pricing groups yet. Click Add Group to define time-range pricing.</div>
       <div v-else class="pg-paint-hint">
-        {{ activeGroupId ? 'Painting with the selected group — click cells in the grid below to apply it.' : 'Select a group above, then paint the grid below.' }}
+        Dashed squares below come from a group's own Start/End/Days — they are already live.
+        {{ activeGroupId ? 'Painting with the selected group — click cells in the grid below to override it.' : 'Select a group above to paint individual squares.' }}
       </div>
     </div>
 
