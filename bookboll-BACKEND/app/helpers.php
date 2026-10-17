@@ -798,6 +798,59 @@ if (! function_exists('resolveSlotPricing')) {
     }
 }
 
+if (! function_exists('compactSlotPricing')) {
+    /**
+     * The small version of resolveSlotPricing()'s breakdown, for the slot list.
+     *
+     * The full breakdown answers "why" in detail and is worth having internally,
+     * but it repeats the matched group's whole definition — times, price and its
+     * seven-entry `days` array — on EVERY slot of EVERY day. A 24-slot day carries
+     * that two dozen times over for one group, and the month view asks for thirty
+     * of those days at once. This keeps the question the caller actually has
+     * ("normal, dynamic group, grid cell or special day — and which one?") and
+     * drops the parts it can look up once from the listing.
+     *
+     * `source_id` is read through `source`: the pricing group's id, the special
+     * day's id, or the grid cell's — whichever decided the number.
+     *
+     * @param  array<string, mixed>  $breakdown
+     * @return array<string, mixed>
+     */
+    function compactSlotPricing(array $breakdown): array
+    {
+        $source  = $breakdown['source'] ?? 'base_price';
+        $group   = $breakdown['pricing_group'] ?? null;
+        $cell    = $breakdown['pricing_cell'] ?? null;
+        $special = $breakdown['special_day'] ?? null;
+
+        $sourceId = null;
+        $label    = null;
+        $color    = null;
+
+        if ($source === 'special_day' && $special) {
+            $sourceId = $special['id'] ?? null;
+            $label    = $special['name'] ?? null;
+        } elseif ($group) {
+            $sourceId = $group['id'] ?? null;
+            $label    = $group['name'] ?? null;
+            $color    = $group['color'] ?? null;
+        } elseif ($cell) {
+            $sourceId = $cell['id'] ?? null;
+        }
+
+        return [
+            'source'     => $source,
+            'is_dynamic' => (bool) ($breakdown['is_dynamic'] ?? false),
+            // What the slot would have cost untouched, so a caller can show the
+            // move without a second lookup.
+            'base_price' => $breakdown['base_price'] ?? null,
+            'source_id'  => $sourceId,
+            'label'      => $label,
+            'color'      => $color,
+        ];
+    }
+}
+
 if (! function_exists('matchingPricingGroupForSlot')) {
     /**
      * The group that owns this slot. Deterministic: a slot straddling the seam
@@ -822,12 +875,28 @@ if (! function_exists('matchingPricingGroupForSlot')) {
 
         $startMinutes = timeToMinutes(substr((string) $slotStart, 0, 5));
 
+        /*
+         * Overlapping groups are legal (nothing validates against them on the
+         * dashboard save path), so the tiebreak decides the price the customer
+         * pays: prefer the group the slot STARTS inside, then the lowest
+         * sort_order, then the lowest id.
+         *
+         * This was written as `sortBy([fn, fn, fn])`. Collection::sortByMany()
+         * calls a callable comparison as `$prop($a, $b)` — it treats each
+         * closure as a full COMPARATOR, not a key extractor — so these returned
+         * `$a`'s own sort_order/id as if it were the <=> result. Any non-zero
+         * value read as "$a is greater", which pushed the group with the LOWEST
+         * sort_order to the end and picked an effectively arbitrary group
+         * whenever two covered the same hour. Compare the ranks explicitly.
+         */
+        $rank = fn($group) => [
+            slotStartInsidePricingGroup($startMinutes, $group) ? 0 : 1,
+            (int) ($group->sort_order ?? 0),
+            (int) $group->id,
+        ];
+
         return $candidates
-            ->sortBy([
-                fn($group) => slotStartInsidePricingGroup($startMinutes, $group) ? 0 : 1,
-                fn($group) => (int) ($group->sort_order ?? 0),
-                fn($group) => (int) $group->id,
-            ])
+            ->sort(fn($a, $b) => $rank($a) <=> $rank($b))
             ->first();
     }
 }

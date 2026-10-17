@@ -697,7 +697,12 @@ class ListingDashboardService
                 'price_per_hour' => (float) ($g['price'] ?? $g['price_per_hour'] ?? 0),
                 'start_time'     => $this->normalizeHm($g['start_time'] ?? '18:00'),
                 'end_time'       => $this->normalizeHm($g['end_time'] ?? '22:00'),
-                'days'           => $this->normalizeGroupDays($g['days'] ?? null),
+                // Presence matters: the grid always sends `days`, so an empty one means
+                // "no days selected" and must stay empty. Only a caller that omits the
+                // key entirely gets the legacy Mon-Fri default.
+                'days'           => array_key_exists('days', $g)
+                    ? $this->normalizeGroupDays($g['days'])
+                    : ['1', '2', '3', '4', '5'],
                 'currency'       => $g['currency'] ?? '',
                 'sort_order'     => (int) ($g['sort_order'] ?? $idx),
             ]);
@@ -727,16 +732,37 @@ class ListingDashboardService
         }
     }
 
+    /**
+     * The pricing grid posts `days` as a comma string of weekday INDICES, and
+     * Sunday is index 0 — so the old `array_filter($parts)` with no callback
+     * dropped it on every save, because "0" is falsy in PHP. A group the admin
+     * had set for Sunday came back without it, silently fell through to
+     * whichever other group covered the slot, and no error was ever shown.
+     * Filter on emptiness, never on truthiness.
+     *
+     * An empty day list means "no days selected" and must stay empty — the old
+     * Mon-Fri fallback silently widened a group the user had cleared. Only a
+     * caller that OMITS the key keeps that default, and syncPricing decides it.
+     */
     protected function normalizeGroupDays($days): array
     {
         if (is_array($days)) {
-            return $days;
+            return array_values(array_filter(
+                array_map(fn ($d) => is_string($d) ? trim($d) : $d,
+                    $days),
+                fn ($d) => $d !== '' && $d !== null,
+            ));
         }
-        if (is_string($days) && $days !== '') {
-            return array_values(array_filter(array_map('trim', explode(',', $days))));
+        if (is_string($days)) {
+            return array_values(array_filter(
+                array_map('trim', explode(',', $days)),
+                fn ($d) => $d !== '',
+            ));
         }
 
-        return ['1', '2', '3', '4', '5'];
+        // Reached only for null — which is also what the framework's
+        // convert-empty-strings middleware hands us for a cleared day list.
+        return [];
     }
 
     protected function mapHoursFromSchedules(Listing $listing): array

@@ -1810,7 +1810,9 @@ class ListingService
                     'price'                 => round($price, 2),
                     // Why this slot costs what it costs: which pricing group,
                     // grid cell or special day won, and the base it moved from.
-                    'pricing'               => $pricing['breakdown'],
+                    // Compact on purpose — the full breakdown repeats the matched
+                    // group's definition on every slot of every day.
+                    'pricing'               => compactSlotPricing($pricing['breakdown']),
                 ]);
             }
 
