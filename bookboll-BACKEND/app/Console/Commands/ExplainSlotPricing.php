@@ -31,7 +31,7 @@ class ExplainSlotPricing extends Command
 
     public function handle(): int
     {
-        $listing = Listing::with(['pricingGroups', 'pricingCells'])->find($this->argument('listing'));
+        $listing = Listing::with('pricingGroups')->find($this->argument('listing'));
         if (! $listing) {
             $this->error('Listing not found.');
 
@@ -60,8 +60,7 @@ class ExplainSlotPricing extends Command
                 ])->all(),
         );
 
-        $cells = $listing->pricingCells->count();
-        $this->line("Painted grid cells: {$cells}" . ($cells ? '  (a painted cell beats the group windows)' : ''));
+        $this->line('Pricing groups are the only source — the grid is a view of them.');
 
         // 2. Is the deployed code the fixed code? The old tiebreak was written as
         //    sortBy([fn, fn, fn]), which Collection treats as full comparators.

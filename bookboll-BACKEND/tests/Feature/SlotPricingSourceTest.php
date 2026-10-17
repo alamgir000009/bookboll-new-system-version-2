@@ -13,7 +13,6 @@
  */
 
 use App\Models\Listing;
-use App\Models\PricingCell;
 use App\Models\PricingGroup;
 use App\Models\Schedule;
 use App\Models\SpecialDay;
@@ -97,20 +96,20 @@ it('names the group even when the grid wrote numeric days', function () {
     ]);
 });
 
-it('reports a painted grid cell with a direct price', function () {
-    $cell = PricingCell::create([
-        'listing_id' => $this->listing->id,
-        'day_of_week' => (int) $this->date->dayOfWeek,   // Carbon: Sunday = 0, same as the grid
-        'slot_time' => '20:00', 'pricing_group_id' => null, 'direct_price' => 410,
+it('has no grid-cell source left to report', function () {
+    // `pricing_cells` was a second store that won over the group windows without
+    // re-checking that the group it named still covered the slot. It is gone, so
+    // a slot is base_price, a pricing_group, or a special_day — nothing else.
+    PricingGroup::create([
+        'listing_id' => $this->listing->id, 'name' => 'Peak', 'color' => null,
+        'start_time' => '19:00', 'end_time' => '22:00', 'price_per_hour' => 300,
+        'days' => ['monday'], 'sort_order' => 0,
     ]);
 
-    $slot = slotsFor()['20:00'];
+    $sources = collect(slotsFor())->pluck('pricing.source')->unique()->values()->all();
 
-    expect((float) $slot['price'])->toBe(410.0)
-        ->and($slot['pricing'])->toMatchArray([
-            'source' => 'pricing_cell', 'is_dynamic' => true,
-            'base_price' => 250, 'source_id' => $cell->id,
-        ]);
+    expect($sources)->not->toContain('pricing_cell')
+        ->and(\Illuminate\Support\Facades\Schema::hasTable('pricing_cells'))->toBeFalse();
 });
 
 it('reports a special day, and lets it beat the group', function () {

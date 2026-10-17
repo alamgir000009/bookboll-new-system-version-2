@@ -8,7 +8,6 @@ use App\Support\AdminAlerts;
 use App\Support\CityModules;
 use App\Support\HourPeriods;
 use Nnjeim\World\Models\City;
-use App\Models\PricingCell;
 use App\Models\PricingGroup;
 use App\Models\Schedule;
 use App\Models\SportsCategory;
@@ -369,8 +368,10 @@ class ListingDashboardService
             return $err;
         }
 
-        $cells = PricingCell::where('listing_id', $listing->id)->get()
-            ->map(fn (PricingCell $c) => $this->mapCell($c))->values()->all();
+        // The grid is a VIEW of the groups now, not a second store. Expanding it
+        // here keeps the editor's payload shape unchanged while guaranteeing the
+        // two can never disagree — there is nothing left to disagree with.
+        $cells = $this->cellsFromGroups($listing);
 
         return sendSuccess('Listing fetched', [
             'listing'         => $this->mapDashboardListing($listing),
@@ -511,7 +512,6 @@ class ListingDashboardService
 
         DB::beginTransaction();
         try {
-            PricingCell::where('listing_id', $listing->id)->delete();
             PricingGroup::where('listing_id', $listing->id)->delete();
             Schedule::where('listing_id', $listing->id)->delete();
             $listing->addOns()->detach();
@@ -698,26 +698,106 @@ class ListingDashboardService
      * place, INSERT only what is genuinely new, and delete only what the editor
      * dropped. A group that nobody changed comes out byte-identical, same id.
      */
+    /**
+     * Save the pricing grid. Groups are the only thing stored.
+     *
+     * There used to be a second table, `pricing_cells`, holding one row per
+     * painted square. It was read FIRST when pricing a slot and won outright,
+     * without re-checking that the group it named still covered that day or
+     * hour — so a square painted before a group's Days were edited went on
+     * charging the old price indefinitely while the group card said otherwise.
+     * Two writable sources for one number and nothing reconciling them.
+     *
+     * Posted cells are still accepted, because a square IS a statement about
+     * coverage: "this day and hour belong to group X". They are folded into the
+     * groups' own Start/End/Days and then discarded, so painting the grid and
+     * editing a group card are two ways of writing the same thing.
+     */
     protected function syncPricing(Listing $listing, array $groups, array $cells): void
     {
-        $gidMap = $this->syncPricingGroups($listing, $groups);
-        $this->syncPricingCells($listing, $cells, $gidMap);
+        $this->syncPricingGroups($listing, $this->foldCellsIntoGroups($groups, $cells));
     }
 
     /**
+     * Fold painted squares back into the coverage of the groups they name.
+     *
+     * A group's window is a rectangle — one hour range across a set of days — so
+     * a square set that is not rectangular cannot be one group. Rather than
+     * silently dropping the odd squares, the group keeps the hour range that
+     * spans them and the days they fall on; anything the user paints outside a
+     * neat block widens the group rather than vanishing.
+     *
      * @param  array<int, array<string, mixed>>  $groups
-     * @return array<string, int>  payload id (and `__idx_N`) => stored id
+     * @param  array<int, array<string, mixed>>  $cells
+     * @return array<int, array<string, mixed>>
      */
-    protected function syncPricingGroups(Listing $listing, array $groups): array
+    protected function foldCellsIntoGroups(array $groups, array $cells): array
+    {
+        if (! $cells) {
+            return $groups;
+        }
+
+        $byGroup = [];
+        foreach ($cells as $c) {
+            $gid = $c['pricing_group_id'] ?? null;
+            if ($gid === null || $gid === '') {
+                continue;   // a bare price with no group names nothing to widen
+            }
+            $slot = $this->normalizeHm($c['slot_time'] ?? '00:00');
+            $byGroup[(string) $gid][] = [(int) ($c['day_of_week'] ?? 0), $slot];
+        }
+
+        if (! $byGroup) {
+            return $groups;
+        }
+
+        foreach ($groups as $idx => $g) {
+            $key = isset($g['id']) ? trim((string) $g['id']) : '';
+            if ($key === '' || ! isset($byGroup[$key])) {
+                continue;
+            }
+
+            $days   = [];
+            $starts = [];
+            foreach ($byGroup[$key] as [$dow, $slot]) {
+                $days[(int) $dow] = true;
+                $starts[] = $slot;
+            }
+            sort($starts);
+
+            // Keep whatever the card already covers as well — painting adds to a
+            // group, it does not redefine it out from under the user.
+            foreach ($this->normalizeGroupDays($g['days'] ?? null) as $d) {
+                $d = is_numeric($d) ? (int) $d : (\App\Models\Schedule::DAY_INDEX[strtolower((string) $d)] ?? null);
+                if ($d !== null) {
+                    $days[$d] = true;
+                }
+            }
+
+            $groups[$idx]['days'] = implode(',', array_keys($days));
+            $groups[$idx]['start_time'] = min($starts, $this->normalizeHm($g['start_time'] ?? '18:00'));
+        }
+
+        return $groups;
+    }
+
+    /**
+     * Match the payload against what is stored: UPDATE in place, INSERT only what
+     * is new, delete only what the editor dropped. Saving used to delete every
+     * group and re-insert, so ids churned on every save and a group that nobody
+     * touched came back as a different row.
+     *
+     * @param  array<int, array<string, mixed>>  $groups
+     */
+    protected function syncPricingGroups(Listing $listing, array $groups): void
     {
         // Keyed on the stored id, so a payload id belonging to ANOTHER listing
-        // simply misses and becomes a new row here rather than editing theirs.
+        // misses and becomes a new row here rather than editing theirs.
         $existing = PricingGroup::where('listing_id', $listing->id)
             ->get()
             ->keyBy(fn (PricingGroup $g) => (string) $g->id);
 
-        $gidMap = [];
-        $keep   = [];
+        $keep = [];
 
         foreach (array_values($groups) as $idx => $g) {
             $attrs = [
@@ -736,8 +816,7 @@ class ListingDashboardService
                 'sort_order'     => (int) ($g['sort_order'] ?? $idx),
             ];
             // The grid does not send a currency, and the old save wrote '' over
-            // whatever was there — which the slot breakdown reads back. Only
-            // touch it when the caller actually said something.
+            // whatever was there — which the slot breakdown reads back.
             $currency = $g['currency'] ?? null;
             if (is_string($currency) && $currency !== '') {
                 $attrs['currency'] = $currency;
@@ -753,113 +832,51 @@ class ListingDashboardService
             }
 
             $keep[] = (int) $row->id;
-            if ($payloadId !== '') {
-                $gidMap[$payloadId] = (int) $row->id;
-            }
-            $gidMap['__idx_' . $idx] = (int) $row->id;
         }
 
-        // Only what the editor actually dropped. Deleted one at a time so the
-        // activity log records the removal — a mass delete fires no model events,
-        // which is how the old churn stayed invisible.
+        // Deleted one at a time so the activity log records the removal — a mass
+        // delete fires no model events, which is how the old churn stayed invisible.
         $stale = PricingGroup::where('listing_id', $listing->id)
             ->when($keep, fn ($q) => $q->whereNotIn('id', $keep))
             ->get();
         foreach ($stale as $row) {
             $row->delete();
         }
-
-        return $gidMap;
     }
 
-    /**
-     * @param  array<int, array<string, mixed>>  $cells
-     * @param  array<string, int>  $gidMap
-     */
-    protected function syncPricingCells(Listing $listing, array $cells, array $gidMap): void
+    /** Expand the stored groups into the square-per-hour shape the editor draws. */
+    protected function cellsFromGroups(Listing $listing): array
     {
-        // A cell's identity is the square it occupies, not its row id: the grid
-        // posts `tmp-{day}-{slot}` for anything freshly painted, so matching on
-        // id alone would re-insert every repaint. One row per square also
-        // collapses any duplicates an earlier save left behind.
-        $existing = PricingCell::where('listing_id', $listing->id)
-            ->get()
-            ->groupBy(fn (PricingCell $c) => $this->cellKey($c->day_of_week, $this->normalizeHm($c->slot_time)));
+        $listing->loadMissing('pricingGroups');
 
-        $groupIds = array_values(array_unique(array_map('intval', $gidMap)));
-        $keep     = [];
+        $step = max(15, (int) $listing->slotDurationMinutes());
+        $out  = [];
 
-        foreach ($cells as $c) {
-            $dow  = (int) ($c['day_of_week'] ?? 0);
-            $slot = $this->normalizeHm($c['slot_time'] ?? '00:00');
+        foreach (array_flip(\App\Models\Schedule::DAY_INDEX) as $dow => $weekday) {
+            for ($t = 0; $t + $step <= 24 * 60; $t += $step) {
+                $slot = sprintf('%02d:%02d', intdiv($t, 60), $t % 60);
+                $end  = $t + $step;
+                $endHm = $end === 24 * 60 ? '00:00' : sprintf('%02d:%02d', intdiv($end, 60), $end % 60);
 
-            $attrs = [
-                'listing_id'       => $listing->id,
-                'day_of_week'      => $dow,
-                'slot_time'        => $slot,
-                'pricing_group_id' => $this->resolveCellGroupId($c['pricing_group_id'] ?? null, $gidMap, $groupIds),
-                'direct_price'     => isset($c['direct_price']) && $c['direct_price'] !== null && $c['direct_price'] !== ''
-                    ? (float) $c['direct_price']
-                    : null,
-            ];
+                $group = matchingPricingGroupForSlot($listing, $weekday, $slot, $endHm);
+                if (! $group) {
+                    continue;
+                }
 
-            $row = $existing->get($this->cellKey($dow, $slot))?->first();
-            if ($row) {
-                $row->fill($attrs)->save();
-            } else {
-                $row = PricingCell::create($attrs);
+                $out[] = [
+                    'id'               => 'g' . $group->id . '-' . $dow . '-' . $slot,
+                    'listing_id'       => (string) $listing->id,
+                    'day_of_week'      => (int) $dow,
+                    'slot_time'        => $slot,
+                    'pricing_group_id' => (string) $group->id,
+                    'direct_price'     => null,
+                ];
             }
-            $keep[] = (int) $row->id;
         }
 
-        $stale = PricingCell::where('listing_id', $listing->id)
-            ->when($keep, fn ($q) => $q->whereNotIn('id', $keep))
-            ->get();
-        foreach ($stale as $row) {
-            $row->delete();
-        }
+        return $out;
     }
 
-    protected function cellKey(int|string|null $dayOfWeek, string $slotTime): string
-    {
-        return ((int) $dayOfWeek) . '|' . $slotTime;
-    }
-
-    /**
-     * A cell may name its group by payload id (`tmp-g-…` for one created in the
-     * same save) or by a stored id. Either way the answer has to be a group that
-     * belongs to THIS listing, so an id from elsewhere resolves to nothing
-     * rather than quietly pricing someone else's slot.
-     *
-     * @param  array<string, int>  $gidMap
-     * @param  array<int, int>  $groupIds
-     */
-    protected function resolveCellGroupId($raw, array $gidMap, array $groupIds): ?int
-    {
-        if ($raw === null || $raw === '') {
-            return null;
-        }
-
-        $mapped = $gidMap[(string) $raw] ?? null;
-        if ($mapped !== null) {
-            return (int) $mapped;
-        }
-
-        return is_numeric($raw) && in_array((int) $raw, $groupIds, true) ? (int) $raw : null;
-    }
-
-    /**
-     * The pricing grid posts `days` as a comma string of weekday INDICES, and
-     * Sunday is index 0 — so the old `array_filter($parts)` with no callback
-     * dropped it on every save, because "0" is falsy in PHP. A group the admin
-     * had set for Sunday came back without it, silently fell through to
-     * whichever other group covered the slot, and no error was ever shown.
-     * Filter on emptiness, never on truthiness.
-     *
-     * An empty day list means "no days selected" and must stay empty — the old
-     * Mon-Fri fallback silently widened a group the user had cleared. Only a
-     * caller that OMITS the key keeps that default, and syncPricing decides it.
-     */
     protected function normalizeGroupDays($days): array
     {
         if (is_array($days)) {
@@ -1001,18 +1018,6 @@ class ListingDashboardService
             'end_time'   => $g->end_time,
             'days'       => $daysStr,
             'sort_order' => (int) ($g->sort_order ?? 0),
-        ];
-    }
-
-    protected function mapCell(PricingCell $c): array
-    {
-        return [
-            'id'               => (string) $c->id,
-            'listing_id'       => (string) $c->listing_id,
-            'day_of_week'      => (int) $c->day_of_week,
-            'slot_time'        => $this->normalizeHm($c->slot_time),
-            'pricing_group_id' => $c->pricing_group_id ? (string) $c->pricing_group_id : null,
-            'direct_price'     => $c->direct_price !== null ? (float) $c->direct_price : null,
         ];
     }
 

@@ -1793,7 +1793,7 @@ class BookingService
             }
 
             $createdBookings = collect();
-            $listing         = Listing::with(['pricingGroups', 'pricingCells'])->findOrFail($formData['listing_id']);
+            $listing         = Listing::with('pricingGroups')->findOrFail($formData['listing_id']);
 
             $weekday = strtolower(Carbon::parse($request->date)->format('l'));
 
@@ -2041,7 +2041,7 @@ class BookingService
      */
     public function prepareCustomerCheckout(array $formData, User $user): array
     {
-        $listing      = $this->listingModel::with(['pricingGroups', 'pricingCells'])->findOrFail($formData['listing_id']);
+        $listing      = $this->listingModel::with('pricingGroups')->findOrFail($formData['listing_id']);
         $quoteService = app(CustomerBookingQuoteService::class);
         $normalizedSlots = $quoteService->normalizeCustomerSlots($listing, $formData);
 
@@ -2461,7 +2461,7 @@ class BookingService
             }
 
             $listingId = $formData['listing_id'] ?? $booking->listing_id;
-            $listing   = Listing::with(['pricingGroups', 'pricingCells'])->findOrFail($listingId);
+            $listing   = Listing::with('pricingGroups')->findOrFail($listingId);
 
             $shouldRecalculatePrice = $fromMobile
                 || (($listingChanged || $venueChanged || $timeChanged) && ! isset($formData['total_price']));
@@ -4370,7 +4370,7 @@ class BookingService
             'date'       => 'required|date',
         ]);
 
-        $listing = Listing::with(['schedules', 'addOns', 'pricingGroups', 'pricingCells'])->find($data['listing_id']);
+        $listing = Listing::with(['schedules', 'addOns', 'pricingGroups'])->find($data['listing_id']);
         if (! $listing) {
             return sendError('Listing not found', [], 404);
         }
@@ -5243,9 +5243,8 @@ class BookingService
      *  - `if ($end <= $start) continue` discarded any group ending at midnight —
      *    a 22:00-00:00 window reads as end 0, start 1320 — which is the shape of
      *    a late-evening peak group.
-     *  - Real `pricing_cells` rows were ignored entirely, so a price painted in
-     *    the Slot Grid never reached the drawer, and two overlapping groups each
-     *    emitted a cell for the same square with no tiebreak.
+     *  - two overlapping groups each emitted a cell for the same square, with no
+     *    tiebreak deciding which price the drawer showed.
      *
      * So staff booking a slot were shown base price where the customer is
      * charged a peak one. Ask the same resolvers the customer price goes through
@@ -5258,7 +5257,7 @@ class BookingService
      */
     protected function mapDashboardPricing(Listing $listing): array
     {
-        $listing->loadMissing(['pricingGroups', 'pricingCells']);
+        $listing->loadMissing('pricingGroups');
 
         $slotMins = $listing->slotDurationMinutes();
         if ($slotMins < 15) {
@@ -5274,11 +5273,6 @@ class BookingService
             ->values()
             ->all();
 
-        // Keyed once: a fully painted week is ~700 cells, and rescanning the
-        // collection for each of ~700 squares is work for nothing.
-        $painted = $listing->pricingCells
-            ->keyBy(fn ($c) => ((int) $c->day_of_week) . '|' . substr((string) $c->slot_time, 0, 5));
-
         $dayNames = array_flip(Schedule::DAY_INDEX);
         $cells    = [];
 
@@ -5290,24 +5284,7 @@ class BookingService
                 // range helpers expect.
                 $slotEnd = $end === 24 * 60 ? '00:00' : sprintf('%02d:%02d', intdiv($end, 60), $end % 60);
 
-                $cell = $painted->get($dow . '|' . $slot);
-
-                if ($cell && $cell->direct_price !== null) {
-                    $cells[] = [
-                        'day_of_week'      => $dow,
-                        'slot_time'        => $slot,
-                        'pricing_group_id' => null,
-                        'direct_price'     => (float) $cell->direct_price,
-                    ];
-
-                    continue;
-                }
-
-                $group = null;
-                if ($cell && $cell->pricing_group_id) {
-                    $group = $listing->pricingGroups->firstWhere('id', $cell->pricing_group_id);
-                }
-                $group ??= matchingPricingGroupForSlot($listing, $weekday, $slot, $slotEnd);
+                $group = matchingPricingGroupForSlot($listing, $weekday, $slot, $slotEnd);
 
                 if ($group) {
                     $cells[] = [

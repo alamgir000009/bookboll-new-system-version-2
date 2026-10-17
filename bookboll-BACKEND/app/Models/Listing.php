@@ -195,10 +195,6 @@ class Listing extends Model
         return $this->hasMany(PricingGroup::class);
     }
 
-    public function pricingCells()
-    {
-        return $this->hasMany(PricingCell::class);
-    }
 
     public function addOns()
     {

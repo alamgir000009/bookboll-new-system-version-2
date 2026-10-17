@@ -669,7 +669,7 @@ if (! function_exists('resolveSlotPricing')) {
         // they hadn't — which is how games and customer quotes lost every
         // pricing group. Load what we need instead of guessing.
         if ($listing instanceof \App\Models\Listing) {
-            $listing->loadMissing(['pricingGroups', 'pricingCells']);
+            $listing->loadMissing('pricingGroups');
         }
 
         $basePrice = (float) ($listing->base_price ?? 0);
@@ -677,43 +677,30 @@ if (! function_exists('resolveSlotPricing')) {
 
         $source       = 'base_price';
         $matchedGroup = null;
-        $matchedCell  = null;
-
-        $dayOfWeek = \App\Models\Schedule::DAY_INDEX[strtolower((string) $weekday)] ?? null;
 
         $listPrice = $basePrice;
 
-        // 1. The pricing grid: an explicit decision for this exact day and start time.
-        if ($dayOfWeek !== null) {
-            $matchedCell = collect($listing->pricingCells ?? [])
-                ->first(fn($cell) => (int) $cell->day_of_week === $dayOfWeek
-                    && substr((string) $cell->slot_time, 0, 5) === substr((string) $slotStart, 0, 5));
-        }
+        /*
+         * A pricing group is the ONLY thing that moves a slot off base price.
+         *
+         * There used to be a second store, `pricing_cells` — one row per painted
+         * square, naming a group — and it was read FIRST and won outright. It
+         * never re-checked that the group it named still covered that day or
+         * hour, so a square painted before a group's Days were edited went on
+         * charging the old group's price for ever, while the group card in the
+         * admin said something else. Two writable sources for one number, with
+         * no reconciliation: the group editor and the customer's price could
+         * disagree indefinitely, and did.
+         *
+         * Groups are now the single source of truth and the grid is a view of
+         * them, so the two cannot drift. See the drop migration for the data.
+         */
+        $matchedGroup = matchingPricingGroupForSlot($listing, $weekday, $slotStart, $slotEnd);
 
-        if ($matchedCell && $matchedCell->direct_price !== null) {
-            $listPrice = (float) $matchedCell->direct_price;
-            $source    = 'pricing_cell';
-        } elseif ($matchedCell && $matchedCell->pricing_group_id) {
-            $cellGroup = collect($listing->pricingGroups ?? [])
-                ->firstWhere('id', $matchedCell->pricing_group_id);
-
-            if ($cellGroup) {
-                $listPrice    = (float) $cellGroup->price_per_hour;
-                $currency     = $cellGroup->currency ?: null;
-                $matchedGroup = $cellGroup;
-                $source       = 'pricing_group';
-            }
-        }
-
-        // 2. No cell painted for this slot: fall back to the group windows.
-        if ($source === 'base_price') {
-            $matchedGroup = matchingPricingGroupForSlot($listing, $weekday, $slotStart, $slotEnd);
-
-            if ($matchedGroup) {
-                $listPrice = (float) $matchedGroup->price_per_hour;
-                $currency  = $matchedGroup->currency ?: null;
-                $source    = 'pricing_group';
-            }
+        if ($matchedGroup) {
+            $listPrice = (float) $matchedGroup->price_per_hour;
+            $currency  = $matchedGroup->currency ?: null;
+            $source    = 'pricing_group';
         }
 
         $price = $listPrice;
@@ -784,13 +771,7 @@ if (! function_exists('resolveSlotPricing')) {
                     'end_time'       => substr((string) $matchedGroup->end_time, 0, 5),
                     'days'           => $matchedGroup->days,
                     'price_per_hour' => (float) $matchedGroup->price_per_hour,
-                    'matched_by'     => $matchedCell ? 'pricing_cell' : 'time_window',
-                ] : null,
-                'pricing_cell'  => $matchedCell ? [
-                    'id'           => $matchedCell->id,
-                    'day_of_week'  => (int) $matchedCell->day_of_week,
-                    'slot_time'    => substr((string) $matchedCell->slot_time, 0, 5),
-                    'direct_price' => $matchedCell->direct_price !== null ? (float) $matchedCell->direct_price : null,
+                    'matched_by'     => 'time_window',
                 ] : null,
                 'special_day'   => $specialDayDetail,
             ],
@@ -820,7 +801,6 @@ if (! function_exists('compactSlotPricing')) {
     {
         $source  = $breakdown['source'] ?? 'base_price';
         $group   = $breakdown['pricing_group'] ?? null;
-        $cell    = $breakdown['pricing_cell'] ?? null;
         $special = $breakdown['special_day'] ?? null;
 
         $sourceId = null;
@@ -834,8 +814,6 @@ if (! function_exists('compactSlotPricing')) {
             $sourceId = $group['id'] ?? null;
             $label    = $group['name'] ?? null;
             $color    = $group['color'] ?? null;
-        } elseif ($cell) {
-            $sourceId = $cell['id'] ?? null;
         }
 
         return [

@@ -18,7 +18,6 @@
  */
 
 use App\Models\Listing;
-use App\Models\PricingCell;
 use App\Models\PricingGroup;
 use App\Models\User;
 use App\Models\Venue;
@@ -117,38 +116,21 @@ it('still shades a group stored with day names', function () {
         ->and(($this->cellAt)($cells, 2, '19:00'))->toBeNull();
 });
 
-it('reports a price painted in the slot grid', function () {
-    PricingCell::create([
-        'listing_id' => $this->listing->id, 'day_of_week' => 1,
-        'slot_time' => '09:00', 'pricing_group_id' => null, 'direct_price' => 777,
-    ]);
-
-    $cell = ($this->cellAt)(($this->grid)(), 1, '09:00');
-
-    expect($cell)->not->toBeNull()
-        ->and((float) $cell['direct_price'])->toBe(777.0)
-        ->and($cell['pricing_group_id'])->toBeNull();
-});
-
-it('lets a painted cell override the group covering that hour', function () {
+it('draws the grid purely from the groups', function () {
     $peak = PricingGroup::create([
         'listing_id' => $this->listing->id, 'name' => 'Peak', 'price_per_hour' => 400,
         'start_time' => '19:00', 'end_time' => '22:00', 'days' => ['1'], 'sort_order' => 0,
     ]);
-    $other = PricingGroup::create([
-        'listing_id' => $this->listing->id, 'name' => 'Other', 'price_per_hour' => 650,
-        'start_time' => '19:00', 'end_time' => '22:00', 'days' => ['1'], 'sort_order' => 1,
-    ]);
-    PricingCell::create([
-        'listing_id' => $this->listing->id, 'day_of_week' => 1,
-        'slot_time' => '20:00', 'pricing_group_id' => $other->id, 'direct_price' => null,
-    ]);
 
     $cells = ($this->grid)();
 
-    expect(($this->cellAt)($cells, 1, '20:00')['pricing_group_id'])->toBe((string) $other->id)
-        // The unpainted hours of the same window still follow the tiebreak.
-        ->and(($this->cellAt)($cells, 1, '19:00')['pricing_group_id'])->toBe((string) $peak->id);
+    // Inside the window, shaded by the group; outside it, nothing.
+    expect(($this->groupAt)($cells, 1, '19:00'))->toBe((string) $peak->id)
+        ->and(($this->groupAt)($cells, 1, '21:00'))->toBe((string) $peak->id)
+        ->and(($this->cellAt)($cells, 1, '22:00'))->toBeNull()
+        ->and(($this->cellAt)($cells, 2, '19:00'))->toBeNull()
+        // Nothing is stored for any of it.
+        ->and(\Illuminate\Support\Facades\Schema::hasTable('pricing_cells'))->toBeFalse();
 });
 
 it('emits one cell per square when two groups overlap', function () {

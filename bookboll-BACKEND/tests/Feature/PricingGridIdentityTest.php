@@ -13,7 +13,6 @@
  */
 
 use App\Models\Listing;
-use App\Models\PricingCell;
 use App\Models\PricingGroup;
 use App\Models\Schedule;
 use App\Models\User;
@@ -155,50 +154,6 @@ it('keeps a stored currency the grid never sends back', function () {
     expect(PricingGroup::find($peak->id)->currency)->toBe('qar');
 });
 
-it('repaints a grid square without duplicating its row', function () {
-    $cells = [
-        ['id' => 'tmp-0-22:00', 'day_of_week' => 0, 'slot_time' => '22:00',
-         'pricing_group_id' => 'tmp-g-1', 'direct_price' => null],
-    ];
-    ($this->put)($this->fresh, $cells)->assertOk();
-
-    $cell = PricingCell::where('listing_id', $this->listing->id)->sole();
-    $peak = PricingGroup::where('listing_id', $this->listing->id)->where('name', 'Peak')->sole();
-    expect((int) $cell->pricing_group_id)->toBe((int) $peak->id);
-
-    // Paint the same square with the other group — one row, same id, new group.
-    $quiet = PricingGroup::where('listing_id', $this->listing->id)->where('name', 'Quiet')->sole();
-    ($this->put)(($this->reposted)(), [
-        ['id' => 'tmp-0-22:00', 'day_of_week' => 0, 'slot_time' => '22:00',
-         'pricing_group_id' => (string) $quiet->id, 'direct_price' => null],
-    ])->assertOk();
-
-    $after = PricingCell::where('listing_id', $this->listing->id)->sole();
-    expect((int) $after->id)->toBe((int) $cell->id)
-        ->and((int) $after->pricing_group_id)->toBe((int) $quiet->id);
-});
-
-it('refuses to point a cell at another listing group', function () {
-    $other = Listing::create([
-        'name' => 'Court B', 'venue_id' => $this->venue->id, 'status' => 'active',
-        'base_price' => 250, 'capacity' => 10, 'slot_duration' => 60,
-        'payment_options' => ['cash_on_arrival' => true], 'max_bookings_per_slot' => 1,
-    ]);
-    $theirs = PricingGroup::create([
-        'listing_id' => $other->id, 'name' => 'Theirs', 'price_per_hour' => 9999,
-        'start_time' => '22:00', 'end_time' => '00:00', 'days' => ['0'], 'sort_order' => 0,
-    ]);
-
-    ($this->put)($this->fresh, [
-        ['day_of_week' => 0, 'slot_time' => '22:00',
-         'pricing_group_id' => (string) $theirs->id, 'direct_price' => null],
-    ])->assertOk();
-
-    expect(PricingCell::where('listing_id', $this->listing->id)->sole()->pricing_group_id)->toBeNull()
-        // …and their group is still theirs.
-        ->and(PricingGroup::find($theirs->id)->listing_id)->toBe($other->id);
-});
-
 it('does not let a payload id from another listing edit that listing group', function () {
     $other = Listing::create([
         'name' => 'Court B', 'venue_id' => $this->venue->id, 'status' => 'active',
@@ -221,4 +176,64 @@ it('does not let a payload id from another listing edit that listing group', fun
         ->and($theirs->listing_id)->toBe($other->id)
         // The hijack attempt became an ordinary new row on the right listing.
         ->and(PricingGroup::where('listing_id', $this->listing->id)->sole()->name)->toBe('Hijack');
+});
+
+/*
+ * Two views, one store.
+ *
+ * The grid used to be its own table, read FIRST when pricing a slot and never
+ * re-checked against the group it named — so a square painted before a group's
+ * Days were edited kept charging the old price while the group card said
+ * otherwise. Painting is now a statement about the group's coverage, folded into
+ * its own Start/End/Days, so editing either view writes the same thing.
+ */
+it('folds a painted square into the group coverage', function () {
+    ($this->put)($this->fresh)->assertOk();
+    $peak = PricingGroup::where('listing_id', $this->listing->id)->where('name', 'Peak')->sole();
+
+    expect($peak->days)->not->toContain('4');   // Peak is Sun+Mon to start with
+
+    // Paint Thursday 22:00 with Peak, exactly as the grid posts it.
+    ($this->put)(($this->reposted)(), [
+        ['day_of_week' => 4, 'slot_time' => '22:00',
+         'pricing_group_id' => (string) $peak->id, 'direct_price' => null],
+    ])->assertOk();
+
+    $peak->refresh();
+    expect($peak->days)->toContain('4')
+        // …and the days it already had are kept, not replaced.
+        ->and($peak->days)->toContain('0')
+        ->and($peak->days)->toContain('1');
+
+    // The slot now prices from the group, with nothing else stored anywhere.
+    $listing = Listing::with('pricingGroups')->find($this->listing->id);
+    expect(matchingPricingGroupForSlot($listing, 'thursday', '22:00', '23:00')?->name)->toBe('Peak');
+});
+
+it('keeps no second store for the grid', function () {
+    ($this->put)($this->fresh, [
+        ['day_of_week' => 4, 'slot_time' => '22:00', 'pricing_group_id' => 'tmp-g-1', 'direct_price' => null],
+    ])->assertOk();
+
+    expect(\Illuminate\Support\Facades\Schema::hasTable('pricing_cells'))->toBeFalse();
+});
+
+it('hands the grid back expanded from the groups', function () {
+    ($this->put)($this->fresh)->assertOk();
+    $peak = PricingGroup::where('listing_id', $this->listing->id)->where('name', 'Peak')->sole();
+
+    $cells = $this->actingAs($this->staff)
+        ->withHeaders(['from' => 'admin-web'])
+        ->getJson('/api/admin/listings/dashboard/' . $this->listing->id)
+        ->assertOk()
+        ->json('data.pricing_cells');
+
+    $at = fn ($dow, $slot) => collect($cells)
+        ->first(fn ($c) => (int) $c['day_of_week'] === $dow && $c['slot_time'] === $slot);
+
+    // Peak is 22:00-00:00 on Sun+Mon, so those squares come back shaded by it…
+    expect($at(0, '22:00')['pricing_group_id'])->toBe((string) $peak->id)
+        ->and($at(1, '23:00')['pricing_group_id'])->toBe((string) $peak->id)
+        // …and a day it does not cover comes back with nothing on it.
+        ->and($at(4, '22:00'))->toBeNull();
 });
