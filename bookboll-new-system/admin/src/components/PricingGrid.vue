@@ -34,6 +34,15 @@ const props = defineProps({
 const emit = defineEmits(['update:groups', 'update:cells', 'update:pattern', 'below-base'])
 
 const activeGroupId = ref(null)
+const directPriceInput = ref(null)
+const priceInputError = ref(false)
+const priceErrorMsg = ref('')
+// Tell the parent when the error is specifically "below base price" so it can
+// highlight the base-price field — the thing the user actually has to change.
+watch([priceInputError, priceErrorMsg], () => {
+  emit('below-base', priceInputError.value && /lower than base price/i.test(priceErrorMsg.value))
+})
+const GRID_COLORS = ['#b91c1c', '#ea580c', '#eab308', '#0f766e', '#3b82f6', '#8b5cf6', '#ec4899']
 
 // Keep the two views in sync: the Slot Grid stores per-cell direct prices, the Groups
 // view stores cells assigned to a named price group. When the user switches views we
@@ -121,10 +130,6 @@ const slots = computed(() => {
   return result
 })
 
-function cellFor(day, slot) {
-  return props.cells.find(c => c.day_of_week === day && c.slot_time === slot)
-}
-
 /* A group's TIME WINDOW prices slots on its own — that is what the Start/End/Days
    fields above are for, and what the backend applies in matchingPricingGroupForSlot().
    This grid used to shade painted cells only, so defining a group 10 PM-12 AM on Sat
@@ -170,16 +175,8 @@ function windowGroupFor(day, slot) {
  *   painted: a human put it here, vs. it following a group's Start/End/Days
  */
 function resolvedCell(day, slot) {
-  const c = cellFor(day, slot)
-  if (c && c.direct_price != null) {
-    return { direct: Number(c.direct_price), group: null, painted: true, price: Number(c.direct_price) }
-  }
-  if (c && c.pricing_group_id) {
-    const g = props.groups.find(x => x.id === c.pricing_group_id)
-    if (g) return { direct: null, group: g, painted: true, price: Number(g.price) }
-  }
   const g = windowGroupFor(day, slot)
-  return { direct: null, group: g || null, painted: false, price: g ? Number(g.price) : Number(props.basePrice) }
+  return { group: g || null, price: g ? Number(g.price) : Number(props.basePrice) }
 }
 
 function cellStyle(day, slot) {
@@ -205,42 +202,237 @@ function isFaded(day, slot) {
   return slotInOpen(day, slot) && !resolvedCell(day, slot).group
 }
 
-function paintCell(day, slot, mode) {
-  if (!slotInOpen(day, slot)) return
-  // Painting is pure clicks — no input/change event reaches the form root,
-  // so flag the unsaved edit here. (The view-conversion watcher above stays
-  // silent: switching Groups ↔ Slot Grid isn't a user edit.)
-  markDirty()
-  const existing = props.cells.find(c => c.day_of_week === day && c.slot_time === slot)
-  const next = props.cells.filter(c => !(c.day_of_week === day && c.slot_time === slot))
-  // Both views paint the same thing: this day and hour belong to the selected
-  // group. The server folds it into that group's own Start/End/Days.
-  if (!activeGroupId.value) return
-  if (mode === 'erase') {
-    if (existing && existing.pricing_group_id === activeGroupId.value) emit('update:cells', next)
-    return
+
+
+
+/* Painting rewrites the GROUP, because the group is the only thing stored.
+ *
+ * A group is a rectangle: one hour range across a set of days. An arbitrary set
+ * of painted squares is not, so a square cannot simply be "folded in" — widening
+ * start_time to swallow it would silently re-price every hour in between, which
+ * on a live listing is somebody's money. Instead the group's squares are
+ * recomputed and cut back into rectangles: contiguous hour runs, with the days
+ * that share an identical run collected together. A tidy block stays one group;
+ * a scattered paint honestly becomes two or three rather than quietly covering
+ * hours nobody picked.
+ */
+function squaresOf(g) {
+  const out = new Set()
+  const gs = minutesOf(g.start_time || '00:00')
+  const ge = groupEndMin(g)
+  for (const d of groupDays(g)) {
+    for (const slot of slots.value) {
+      const m = minutesOf(slot)
+      if (m >= gs && m < ge) out.add(d + '|' + slot)
+    }
   }
-  next.push({ id: `tmp-${day}-${slot}`, day_of_week: day, slot_time: slot, pricing_group_id: activeGroupId.value, direct_price: null })
-  emit('update:cells', next)
+  return out
 }
 
+/** Cut a square set back into the fewest rectangles that cover exactly it. */
+function rectanglesOf(squares) {
+  const step = slotMins.value
+  const byDay = new Map()
+  for (const key of squares) {
+    const [d, slot] = key.split('|')
+    if (!byDay.has(d)) byDay.set(d, [])
+    byDay.get(d).push(minutesOf(slot))
+  }
 
+  const daysByRun = new Map()
+  for (const [d, mins] of byDay) {
+    mins.sort((a, b) => a - b)
+    let from = null, prev = null
+    const close = () => {
+      const key = from + '-' + (prev + step)
+      if (!daysByRun.has(key)) daysByRun.set(key, [])
+      daysByRun.get(key).push(Number(d))
+    }
+    for (const m of mins) {
+      if (from === null) { from = prev = m; continue }
+      if (m === prev + step) { prev = m; continue }
+      close(); from = prev = m
+    }
+    if (from !== null) close()
+  }
+
+  const hm = (m) => `${String(Math.floor((m % (24 * 60)) / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+  return [...daysByRun.entries()]
+    .map(([run, days]) => {
+      const [a, b] = run.split('-').map(Number)
+      return { _from: a, start_time: hm(a), end_time: hm(b), days: [...new Set(days)].sort((x, y) => x - y).join(',') }
+    })
+    .sort((x, y) => x._from - y._from)
+}
+
+// A split group keeps ONE name with a part number. Strip it before re-splitting,
+// or every paint compounds the suffix and two different groups collide on "(2)".
+const PART = / · \d+$/
+const baseName = (n) => String(n || 'Group').replace(PART, '')
+
+/**
+ * Rebuild one group from its squares, splitting when they are not one block.
+ *
+ * The FIRST rectangle always keeps the original row's id, so a group the user
+ * has selected stays selected and the server updates it in place instead of
+ * churning a new row.
+ */
+function rebuild(g, squares) {
+  const rects = rectanglesOf(squares)
+  const base = baseName(g.name)
+  return rects.map((r, i) => {
+    const { _from, ...rect } = r
+    return {
+      ...g,
+      ...rect,
+      id: i === 0 ? g.id : `tmp-g-${g.id}-${rect.days}-${rect.start_time}`,
+      name: base,
+    }
+  })
+}
+
+/** Number the pieces of a split group, but only where there is more than one. */
+function numberParts(list) {
+  const seen = new Map()
+  for (const g of list) seen.set(baseName(g.name), (seen.get(baseName(g.name)) || 0) + 1)
+  const n = new Map()
+  return list.map(g => {
+    const base = baseName(g.name)
+    if (seen.get(base) < 2) return { ...g, name: base }
+    n.set(base, (n.get(base) || 0) + 1)
+    return { ...g, name: `${base} · ${n.get(base)}` }
+  })
+}
+
+/** Apply a square change to every group, then keep the selection alive. */
+function repaint(mutate) {
+  markDirty()
+  const wasActive = props.groups.find(g => g.id === activeGroupId.value)
+  const out = []
+  for (const g of props.groups) {
+    const sq = squaresOf(g)
+    mutate(g, sq)
+    out.push(...rebuild(g, sq))
+  }
+  emit('update:groups', numberParts(out))
+
+  // Erasing a group's last square removes its row; fall back to whatever is left
+  // of the same group rather than leaving the brush pointing at nothing.
+  if (!out.some(g => g.id === activeGroupId.value)) {
+    const kin = wasActive && out.find(g => baseName(g.name) === baseName(wasActive.name))
+    activeGroupId.value = kin ? kin.id : (out[0]?.id ?? null)
+  }
+}
+
+/*
+ * The Slot Grid prices squares directly: type a number, paint it on. That used
+ * to write a `direct_price` into pricing_cells — a second store that beat the
+ * group windows and never re-checked them, which is why a square kept charging
+ * an old price long after the group it belonged to had changed.
+ *
+ * The interaction stays; only where it lands changes. A painted price becomes a
+ * pricing group of its own, named "Grid <price>", so there is still exactly one
+ * place a slot's price can come from.
+ *
+ * Matching is by price, but ONLY against groups this grid created. The converter
+ * that collapsed groups by price (and silently merged three different 300 groups
+ * into one) matched against EVERY group, which is what destroyed the listing-52
+ * pricing. A group the user named is never a candidate here.
+ */
+const isGridGroup = (g) => /^Grid\s/.test(baseName(g.name))
+
+function paintWithPrice(keys, price) {
+  markDirty()
+  const erase = price === Number(props.basePrice)
+
+  // Every "Grid <price>" row is one logical brush — a scattered paint splits it
+  // into several rectangles, and adding to only one of them would strand the
+  // rest. Pool their squares, add the new ones, and cut the whole set back into
+  // rectangles in one go, so neighbouring squares merge instead of piling up as
+  // separate one-hour groups.
+  const mine = erase ? [] : props.groups.filter(g => isGridGroup(g) && Number(g.price) === price)
+  const others = props.groups.filter(g => ! mine.includes(g))
+
+  const out = []
+  for (const g of others) {
+    const sq = squaresOf(g)
+    // One price per square: giving it to the brush takes it from everyone else.
+    for (const key of keys) sq.delete(key)
+    out.push(...rebuild(g, sq))
+  }
+
+  if (! erase) {
+    const pooled = new Set()
+    for (const g of mine) for (const key of squaresOf(g)) pooled.add(key)
+    for (const key of keys) pooled.add(key)
+
+    const template = mine[0] ?? {
+      id: `tmp-g-grid-${price}-${Date.now()}`,
+      name: `Grid ${price}`,
+      color: GRID_COLORS[out.length % GRID_COLORS.length],
+      sort_order: out.length,
+    }
+    out.push(...rebuild({ ...template, name: `Grid ${price}`, price }, pooled))
+  }
+
+  emit('update:groups', numberParts(out))
+}
+
+/** The typed price, or null with the error shown if it cannot be used. */
+function typedPrice() {
+  const v = directPriceInput.value
+  if (v === null || v === '' || isNaN(Number(v))) {
+    priceInputError.value = true
+    priceErrorMsg.value = 'Please enter a price'
+
+    return null
+  }
+  const price = Number(v)
+  if (price < Number(props.basePrice)) {
+    priceInputError.value = true
+    priceErrorMsg.value = 'Price cannot be lower than base price. Change the base price first.'
+
+    return null
+  }
+  priceInputError.value = false
+  priceErrorMsg.value = ''
+
+  return price
+}
+
+function paintCell(day, slot, mode) {
+  if (!slotInOpen(day, slot)) return
+  const key = day + '|' + slot
+
+  if (props.pattern === 'B') {
+    const price = typedPrice()
+    if (price === null) return
+    paintWithPrice([key], mode === 'erase' ? Number(props.basePrice) : price)
+
+    return
+  }
+
+  if (!activeGroupId.value) return
+  repaint((g, sq) => {
+    if (g.id !== activeGroupId.value) sq.delete(key)
+    else if (mode === 'erase') sq.delete(key)
+    else sq.add(key)
+  })
+}
 
 const painting = ref(false)
 const paintMode = ref('paint')
 function onMouseDown(day, slot) {
-  const existing = props.cells.find(c => c.day_of_week === day && c.slot_time === slot)
-  if (props.pattern === 'A') {
-    if (!activeGroupId.value) return
-    paintMode.value = (existing && existing.pricing_group_id === activeGroupId.value) ? 'erase' : 'paint'
+  const owner = resolvedCell(day, slot).group
+  if (props.pattern === 'B') {
+    // Repainting a square with the price it already shows clears it, which is
+    // also what painting the base price does.
+    const price = typedPrice()
+    if (price === null) return
+    paintMode.value = (owner && Number(owner.price) === price) ? 'erase' : 'paint'
   } else {
-    // Slot Grid paints the selected group too. It used to paint a bare number
-    // into pricing_cells, a second store that beat the group windows and never
-    // re-checked them; that table is gone, so a price with no group behind it
-    // has nowhere to live and would silently save nothing.
     if (!activeGroupId.value) return
-    const existingId = cellFor(day, slot)?.pricing_group_id
-    paintMode.value = (existingId === activeGroupId.value) ? 'erase' : 'paint'
+    paintMode.value = (owner && owner.id === activeGroupId.value) ? 'erase' : 'paint'
   }
   painting.value = true
   paintCell(day, slot, paintMode.value)
@@ -274,7 +466,6 @@ function updateGroup(id, patch) {
 function removeGroup(id) {
   markDirty()
   emit('update:groups', props.groups.filter(g => g.id !== id))
-  emit('update:cells', props.cells.filter(c => c.pricing_group_id !== id))
   if (activeGroupId.value === id) activeGroupId.value = null
 }
 
@@ -297,12 +488,20 @@ function toggleGroupDay(g, d) {
 }
 
 function fillDay(day) {
-  if (props.pattern === 'A' && !activeGroupId.value) return
-  markDirty()
-  const existing = props.cells.filter(c => c.day_of_week !== day)
-  const daySlots = slots.value.filter(s => slotInOpen(day, s))
-  const additions = daySlots.map(slot => ({ id: `tmp-${day}-${slot}`, day_of_week: day, slot_time: slot, pricing_group_id: activeGroupId.value, direct_price: null }))
-  emit('update:cells', [...existing, ...additions])
+  const mine = slots.value.filter(slot => slotInOpen(day, slot)).map(slot => day + '|' + slot)
+
+  if (props.pattern === 'B') {
+    const price = typedPrice()
+    if (price === null) return
+    paintWithPrice(mine, price)
+
+    return
+  }
+
+  if (!activeGroupId.value) return
+  repaint((g, sq) => {
+    for (const key of mine) g.id === activeGroupId.value ? sq.add(key) : sq.delete(key)
+  })
 }
 </script>
 
@@ -355,11 +554,26 @@ function fillDay(day) {
       </div>
       <div v-if="!groups.length" class="empty-groups">No pricing groups yet. Click Add Group to define time-range pricing.</div>
       <div v-else class="pg-paint-hint">
-        Dashed squares below come from a group's own Start/End/Days — they are already live.
-        {{ activeGroupId ? 'Painting with the selected group — click cells in the grid below to override it.' : 'Select a group above to paint individual squares.' }}
+        The grid below is these groups. Painting a square adds that day and hour to the group —
+        {{ activeGroupId ? 'click or drag across the grid to paint with the selected group.' : 'select a group above to start.' }}
       </div>
     </div>
 
+    <!-- Slot Grid has no group CARDS, so without this row there is nothing to
+         paint with and every click is a silent no-op. -->
+    <!-- Slot Grid: type a price, paint it on. The number becomes a pricing
+         group of its own, so there is still only one place a price lives. -->
+    <div v-if="pattern==='B'" class="pg-toolbar">
+      <div class="price-input">
+        <label>Price ({{ currency }})</label>
+        <input type="number" v-model.number="directPriceInput" placeholder="Enter price"
+               :class="{'price-err': priceInputError}"
+               @input="priceInputError = false"
+               style="width: 140px;" />
+        <span v-if="priceInputError" class="price-err-msg">{{ priceErrorMsg }}</span>
+        <span v-else class="price-hint">Paint the base price ({{ basePrice }}) to erase</span>
+      </div>
+    </div>
 
     <div class="grid-wrap" @mouseup="onMouseUp" @mouseleave="onMouseUp">
       <div class="grid-head">
@@ -392,6 +606,7 @@ function fillDay(day) {
 .vt-btn.active { background: var(--surface, #ffffff); color: var(--text); box-shadow: var(--shadow-sm); }
 
 .pg-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.price-hint { color: var(--text-muted); font-size: 12px; }
 .tool { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, #ffffff); color: var(--text); }
 .tool.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 .price-input { display: flex; align-items: center; gap: 8px; font-size: 13px; }
