@@ -61,6 +61,9 @@ export async function loadDayAvailability(listing, date) {
     closed: none && (holiday || /no available/i.test(msg) || !res.success),
     closedName: holiday ? 'Holiday' : (none ? 'Closed' : ''),
     special: false,
+    // The venue's own currency, resolved server-side the same way the booking is
+    // charged. Carried even on a closed day, so an empty state can still label itself.
+    currency: res.data?.currency || '',
   }
 }
 

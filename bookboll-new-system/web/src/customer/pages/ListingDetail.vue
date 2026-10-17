@@ -194,7 +194,17 @@ function teardownRealtime() {
 
 const l = computed(() => data.value?.listing || {})
 const loc = computed(() => data.value?.location || null)
-const cur = computed(() => loc.value?.currency_override || selectedCountry.value?.currency_code || 'AED')
+/* The currency the VENUE charges in — not the one the visitor is browsing from.
+   This read selectedCountry (the storefront's country picker), so someone browsing
+   with Pakistan selected saw "PKR 250" on a Qatar pitch priced at 250 QAR: same
+   number, wrong money, on a real checkout. /fetch-time-slots now names the venue's
+   currency, resolved server-side exactly as the booking is charged; the old chain
+   stays as the fallback for the first paint, before any day has loaded. */
+const serverCurrency = ref('')
+const cur = computed(() => serverCurrency.value
+  || loc.value?.currency_override
+  || selectedCountry.value?.currency_code
+  || 'AED')
 const slotMins = computed(() => l.value.slot_duration || 60)
 const perPerson = computed(() => isPerPerson(l.value))
 const maxPlayers = computed(() => Math.max(1, l.value.capacity || 1))
@@ -451,6 +461,7 @@ async function loadDay() {
   if (!data.value) return
   loadingSlots.value = true
   const avail = await loadDayAvailability(l.value, date.value)
+  if (avail?.currency) serverCurrency.value = avail.currency
   daySched.value = dayScheduleInfo(l.value, date.value, avail)
   slots.value = excludeSiblingDraftSlots(buildDaySlots(l.value, date.value, avail, holdToken()))
   loadingSlots.value = false

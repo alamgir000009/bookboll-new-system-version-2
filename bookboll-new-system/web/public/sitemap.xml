@@ -40,10 +40,6 @@
     <lastmod>2025-12-19</lastmod>
   </url>
   <url>
-    <loc>https://bookboll.com/facilities/7</loc>
-    <lastmod>2025-12-19</lastmod>
-  </url>
-  <url>
     <loc>https://bookboll.com/facilities/9</loc>
     <lastmod>2026-02-22</lastmod>
   </url>
@@ -70,6 +66,14 @@
   <url>
     <loc>https://bookboll.com/facilities/17</loc>
     <lastmod>2026-10-10</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/facilities/18</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/facilities/21</loc>
+    <lastmod>2026-10-13</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/listings/2</loc>
@@ -106,14 +110,6 @@
   <url>
     <loc>https://bookboll.com/listings/16</loc>
     <lastmod>2026-01-07</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/listings/19</loc>
-    <lastmod>2026-01-07</lastmod>
-  </url>
-  <url>
-    <loc>https://bookboll.com/listings/21</loc>
-    <lastmod>2026-01-20</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/listings/22</loc>
@@ -168,10 +164,6 @@
     <lastmod>2026-09-16</lastmod>
   </url>
   <url>
-    <loc>https://bookboll.com/listings/49</loc>
-    <lastmod>2026-09-19</lastmod>
-  </url>
-  <url>
     <loc>https://bookboll.com/listings/51</loc>
     <lastmod>2026-10-06</lastmod>
   </url>
@@ -186,6 +178,46 @@
   <url>
     <loc>https://bookboll.com/listings/54</loc>
     <lastmod>2026-10-10</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/55</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/57</loc>
+    <lastmod>2026-10-13</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/58</loc>
+    <lastmod>2026-10-13</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/59</loc>
+    <lastmod>2026-10-13</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/60</loc>
+    <lastmod>2026-10-13</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/61</loc>
+    <lastmod>2026-10-13</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/62</loc>
+    <lastmod>2026-10-13</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/63</loc>
+    <lastmod>2026-10-15</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/64</loc>
+    <lastmod>2026-10-15</lastmod>
+  </url>
+  <url>
+    <loc>https://bookboll.com/listings/65</loc>
+    <lastmod>2026-10-15</lastmod>
   </url>
   <url>
     <loc>https://bookboll.com/post/unlocking-padel-in-qatar-how-to-book-indoor-padel-courts-with-bookboll-at-great-prices</loc>
@@ -215,6 +247,9 @@
     <loc>https://bookboll.com/venues/lahore/sports</loc>
   </url>
   <url>
+    <loc>https://bookboll.com/venues/doha/hangout</loc>
+  </url>
+  <url>
     <loc>https://bookboll.com/venues/doha/football</loc>
   </url>
   <url>
@@ -234,6 +269,15 @@
   </url>
   <url>
     <loc>https://bookboll.com/venues/lahore/abseiling</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/lahore/4x4-off-roading</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/doha/desert-safari</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/doha/tour</loc>
   </url>
   <url>
     <loc>https://bookboll.com/venues/qatar</loc>
@@ -261,5 +305,14 @@
   </url>
   <url>
     <loc>https://bookboll.com/venues/pakistan/abseiling</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/pakistan/4x4-off-roading</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/qatar/desert-safari</loc>
+  </url>
+  <url>
+    <loc>https://bookboll.com/venues/qatar/tour</loc>
   </url>
 </urlset>
