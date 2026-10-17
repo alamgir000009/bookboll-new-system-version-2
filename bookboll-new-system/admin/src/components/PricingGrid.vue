@@ -1,8 +1,9 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { Plus, Trash2 } from 'lucide-vue-next'
+import { Plus, Trash2, Eraser } from 'lucide-vue-next'
 import { fmt12 } from '../lib/slots'
 import { markDirty } from '../lib/unsavedGuard.js'
+import { useConfirm } from '../lib/confirm.js'
 
 const DAY_NAME = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' }
 
@@ -33,6 +34,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:groups', 'update:cells', 'update:pattern', 'below-base'])
 
+const confirm = useConfirm()
 const activeGroupId = ref(null)
 const directPriceInput = ref(null)
 const priceInputError = ref(false)
@@ -273,6 +275,41 @@ function paintCell(day, slot, mode) {
   emit('update:cells', next)
 }
 
+/* Painted squares outrank every group window — the backend reads the cell, takes
+   the group it names and never re-checks that the group still covers that day or
+   hour. So squares painted months ago keep charging their old group's price while
+   the group card above says something else, and editing the group cannot pull them
+   back. There was no way to undo a paint except selecting the owning group and
+   clicking each square, which is unusable once a grid is full. */
+const paintedCells = computed(() =>
+  props.cells.filter(c => c.pricing_group_id || c.direct_price != null))
+
+const paintedPerDay = computed(() => {
+  const n = {}
+  for (const c of paintedCells.value) n[c.day_of_week] = (n[c.day_of_week] || 0) + 1
+  return n
+})
+
+async function clearPainted() {
+  const n = paintedCells.value.length
+  if (!n) return
+  if (!(await confirm({
+    danger: true,
+    title: `Clear ${n} painted ${n === 1 ? 'square' : 'squares'}?`,
+    message: 'Every square you painted by hand is removed, and pricing goes back to what each group\u2019s own Start/End/Days say. Nothing else about your groups changes.',
+    confirmText: 'Clear painted squares',
+  }))) return
+  markDirty()
+  emit('update:cells', props.cells.filter(c => !(c.pricing_group_id || c.direct_price != null)))
+}
+
+function clearDay(day) {
+  if (!paintedPerDay.value[day]) return
+  markDirty()
+  emit('update:cells', props.cells.filter(c =>
+    !(c.day_of_week === day && (c.pricing_group_id || c.direct_price != null))))
+}
+
 const painting = ref(false)
 const paintMode = ref('paint')
 function onMouseDown(day, slot) {
@@ -372,6 +409,9 @@ function fillDay(day) {
         <button type="button" class="vt-btn" :class="{active: pattern==='A'}" @click="emit('update:pattern','A')">Groups</button>
         <button type="button" class="vt-btn" :class="{active: pattern==='B'}" @click="emit('update:pattern','B')">Slot Grid</button>
       </div>
+      <button v-if="paintedCells.length" type="button" class="btn btn-secondary btn-sm clear-painted" @click="clearPainted">
+        <Eraser :size="14" />Clear {{ paintedCells.length }} painted
+      </button>
       <button v-if="pattern==='A'" type="button" class="btn btn-secondary btn-sm" @click="addGroup"><Plus :size="14" />Add Group</button>
     </div>
 
@@ -437,6 +477,8 @@ function fillDay(day) {
         <div v-for="d in DAY_ORDER" :key="d" class="grid-day">
           {{ DAY_SHORT[d] }}
           <button type="button" class="fill-btn" @click="fillDay(d)" title="Fill whole day">fill</button>
+          <button v-if="paintedPerDay[d]" type="button" class="fill-btn clear-btn"
+                  @click="clearDay(d)" :title="`Clear ${paintedPerDay[d]} painted square(s) on this day`">clear</button>
         </div>
       </div>
       <div v-for="slot in slots" :key="slot" class="grid-row">
@@ -474,6 +516,8 @@ function fillDay(day) {
 .group-card { border: 1px solid var(--border); border-radius: 8px; padding: 18px; background: var(--surface, #ffffff); cursor: pointer; transition: border-color .12s, box-shadow .12s; }
 .group-card.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(15,118,110,.12); }
 .pg-paint-hint { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
+.clear-painted { margin-right: auto; }
+.clear-btn { color: var(--error); }
 .gc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .gc-title { display: flex; align-items: center; gap: 10px; flex: 1; }
 .gc-dot { width: 12px; height: 12px; border-radius: 50%; }
