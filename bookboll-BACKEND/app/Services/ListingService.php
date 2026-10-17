@@ -1244,8 +1244,19 @@ class ListingService
             'assets',
         ])->findOrFail($listingId);
 
+        /*
+         * Every price below is a bare number, and a bare number is not a price —
+         * 250 QAR and 250 PKR are not remotely the same thing to the customer
+         * reading the slot. Callers were left to guess the currency from
+         * somewhere else, and a storefront guessing wrong puts the wrong symbol
+         * on a real checkout. Resolve it the same way a booking does when it is
+         * actually charged (venue override -> its country -> platform default),
+         * so the slot list and the charge can never disagree.
+         */
+        $currency = Booking::currencyForVenue($listing->venue_id);
+
         if (! $listing->isVisibleToRequestSurface() || ! $listing->venue || $listing->venue->status !== 'active') {
-            return sendSuccess('No available schedule for this day');
+            return sendSuccess('No available schedule for this day', ['timeSlots' => [], 'currency' => $currency]);
         }
 
         $weekday     = strtolower($date->format('l'));
@@ -1268,7 +1279,7 @@ class ListingService
             ->values();
 
         if ($venueSchedules->isEmpty() || $listingSchedules->isEmpty()) {
-            return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
+            return sendSuccess('No available schedule for this day', ['timeSlots' => [], 'currency' => $currency]);
         }
 
         $specialDay = SpecialDay::with('timeBlocks')
@@ -1283,7 +1294,7 @@ class ListingService
         $isHoliday = $specialDay?->type === 'holiday';
 
         if ($isHoliday) {
-            return sendSuccess('No available schedule for this day (Holiday)', ['timeSlots' => []]);
+            return sendSuccess('No available schedule for this day (Holiday)', ['timeSlots' => [], 'currency' => $currency]);
         }
 
         if ($specialDay && $specialDay->timeBlocks->isNotEmpty()) {
@@ -1304,7 +1315,7 @@ class ListingService
         }
 
         if ($availableBlocks->isEmpty()) {
-            return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
+            return sendSuccess('No available schedule for this day', ['timeSlots' => [], 'currency' => $currency]);
         }
 
         // If the previous day's schedule generated any slot that crosses
@@ -1315,7 +1326,7 @@ class ListingService
         if ($prevSpilloverMinutes > 0) {
             $availableBlocks = $this->trimBlocksByLeadingMinutes($availableBlocks, $prevSpilloverMinutes);
             if ($availableBlocks->isEmpty()) {
-                return sendSuccess('No available schedule for this day', ['timeSlots' => []]);
+                return sendSuccess('No available schedule for this day', ['timeSlots' => [], 'currency' => $currency]);
             }
         }
 
@@ -1396,7 +1407,7 @@ class ListingService
 
         $timeSlots = $timeSlots->sortBy('start_time')->values();
 
-        return sendSuccess('Listing slots fetched successfully', compact('timeSlots'));
+        return sendSuccess('Listing slots fetched successfully', ['timeSlots' => $timeSlots, 'currency' => $currency]);
     }
 
     /**
