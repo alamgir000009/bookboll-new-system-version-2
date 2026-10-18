@@ -704,6 +704,7 @@ Route::prefix('customer')->group(function () {
         Route::get('notifications/feed', [CustomerGameController::class, 'notificationFeed'])->name('customer.notifications.feed');
         Route::get('messages/group', [CustomerCommunityController::class, 'loadGroupThread'])->name('customer.messages.group.index');
         Route::post('messages/group', [CustomerCommunityController::class, 'sendGroupMessage'])->name('customer.messages.group.store');
+        Route::delete('messages/group/{id}', [CustomerCommunityController::class, 'deleteGroupMessage'])->name('customer.messages.group.destroy');
 
         // Direct messages (the inbox also lists community group chats)
         Route::get('messages/thread', [CustomerMessageController::class, 'thread'])->name('customer.messages.thread');

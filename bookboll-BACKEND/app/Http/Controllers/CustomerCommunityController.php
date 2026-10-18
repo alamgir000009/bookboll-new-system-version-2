@@ -208,6 +208,22 @@ class CustomerCommunityController extends Controller
         );
     }
 
+    /** Moderation: remove one message from a community's group chat. */
+    public function deleteGroupMessage(Request $request, string $id)
+    {
+        // The key is what the client says the thread is; the service checks it
+        // against the message's own thread rather than trusting it.
+        $data = $request->validate([
+            'key' => 'nullable|string|max:200',
+        ]);
+
+        return $this->communities->deleteGroupMessage(
+            auth()->user(),
+            $id,
+            (string) ($data['key'] ?? '')
+        );
+    }
+
     public function markChatRead(string $uuid)
     {
         return $this->communities->markChatRead(auth()->user(), $uuid);

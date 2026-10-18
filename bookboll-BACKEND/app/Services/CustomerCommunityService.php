@@ -683,6 +683,67 @@ class CustomerCommunityService
         return sendSuccess('Messages', ['messages' => $mapped]);
     }
 
+    /**
+     * Remove one group-chat message.
+     *
+     * The community is taken from the MESSAGE's own conversation key, never from
+     * the key in the request: otherwise a moderator of community A could delete
+     * a message in community B by sending B's message id with A's key. The
+     * submitted key still has to match, so a caller cannot act on a thread it
+     * did not mean to address.
+     *
+     * Allowed for the message's author, and for the people who run the
+     * community. Moderators are named in the product spec but are not yet a
+     * role this backend stores — community_members carries owner and admin only
+     * — so they gain this through the role hierarchy work, not here.
+     *
+     * Soft delete: moderation has to stay reviewable, and SoftDeletes takes the
+     * message out of the thread, the unread counts and the inbox preview.
+     */
+    public function deleteGroupMessage(User $user, string $messageUuid, string $key)
+    {
+        if (! $user->uuid) {
+            return sendError('Not allowed.', [], 403);
+        }
+
+        $message = CustomerMessage::where('uuid', $messageUuid)->first();
+        if (! $message) {
+            return sendError('Message not found.', [], 404);
+        }
+
+        // The message decides which community this is, not the caller.
+        $actualKey = (string) $message->conversation_key;
+        if ($key !== '' && $key !== $actualKey) {
+            return sendError('That message is not part of this conversation.', [], 403);
+        }
+
+        $communityUuid = $this->communityUuidFromGroupKey($actualKey);
+        if (! $communityUuid) {
+            return sendError('Not a community conversation.', [], 422);
+        }
+
+        $community = $this->findVisibleByUuid($communityUuid);
+        if (! $community) {
+            return sendError('Community not found.', [], 404);
+        }
+
+        $membership = $this->membershipFor($community->id, $user->uuid);
+        if (! $this->isMember($membership)) {
+            return sendError('Members only.', [], 403);
+        }
+
+        $isAuthor = $message->sender_id === $user->uuid;
+        if (! $isAuthor && ! $this->canManage($membership)) {
+            return sendError('Not allowed.', [], 403);
+        }
+
+        $message->delete();
+
+        // Reported only after the row is actually gone, because the client
+        // leaves the message on screen unless the server confirms removal.
+        return sendSuccess('Message deleted', ['ok' => true]);
+    }
+
     public function sendGroupMessage(User $user, string $key, string $body)
     {
         $clean = trim($body);
