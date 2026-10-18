@@ -20,6 +20,36 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Record Everything
+    |--------------------------------------------------------------------------
+    |
+    | When true, every entry Telescope sees is stored. When false, only the
+    | interesting ones are kept (reportable exceptions, failed requests and
+    | jobs, scheduled tasks and monitored tags).
+    |
+    | This deliberately does NOT look at APP_ENV: set TELESCOPE_ENABLED=true
+    | on the live server and you get full traffic there, without pretending
+    | the environment is `local`. Leave it off on busy production hosts if
+    | you only want the failures, since recording everything is costly.
+    |
+    */
+
+    'record_all' => env('TELESCOPE_RECORD_ALL', env('TELESCOPE_ENABLED', true)),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Hide Sensitive Request Details
+    |--------------------------------------------------------------------------
+    |
+    | Masks cookies and CSRF tokens in recorded requests. Keep this on unless
+    | you are specifically debugging session/CSRF behaviour locally.
+    |
+    */
+
+    'hide_sensitive' => env('TELESCOPE_HIDE_SENSITIVE', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Telescope Domain
     |--------------------------------------------------------------------------
     |

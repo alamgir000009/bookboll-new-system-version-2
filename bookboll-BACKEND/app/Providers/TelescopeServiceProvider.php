@@ -16,10 +16,14 @@ class TelescopeServiceProvider extends TelescopeApplicationServiceProvider
     {
         $this->hideSensitiveRequestDetails();
 
-        $isLocal = $this->app->environment('local');
+        // Telescope used to be keyed off APP_ENV=local, which meant the only way
+        // to inspect traffic on the live server was to lie about the environment.
+        // It is now driven purely by config/env flags, so it can be switched on
+        // in production without touching APP_ENV.
+        $recordAll = (bool) config('telescope.record_all');
 
-        Telescope::filter(function (IncomingEntry $entry) use ($isLocal) {
-            return $isLocal ||
+        Telescope::filter(function (IncomingEntry $entry) use ($recordAll) {
+            return $recordAll ||
                    $entry->isReportableException() ||
                    $entry->isFailedRequest() ||
                    $entry->isFailedJob() ||
@@ -33,7 +37,7 @@ class TelescopeServiceProvider extends TelescopeApplicationServiceProvider
      */
     protected function hideSensitiveRequestDetails(): void
     {
-        if ($this->app->environment('local')) {
+        if (! config('telescope.hide_sensitive', true)) {
             return;
         }
 
@@ -49,7 +53,7 @@ class TelescopeServiceProvider extends TelescopeApplicationServiceProvider
     /**
      * Register the Telescope gate.
      *
-     * This gate determines who can access Telescope in non-local environments.
+     * This gate determines who can access Telescope, in every environment.
      */
     protected function gate(): void
     {

@@ -45,6 +45,7 @@
                         </div>
                     </a>
 
+                    @if (config('telescope.enabled'))
                     <a href="{{ url('/'.ltrim(config('telescope.path'), '/')) }}" class="content-card group flex items-start gap-4 hover:border-sidebar/40 transition-colors">
                         <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sidebar/10 text-sidebar">
                             <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -56,6 +57,7 @@
                             <p class="mt-0.5 text-sm text-gray-500">Debug requests, queries, jobs &amp; mail</p>
                         </div>
                     </a>
+                    @endif
 
                     <a href="{{ route('backups.index') }}" wire:navigate class="content-card group flex items-start gap-4 hover:border-sidebar/40 transition-colors">
                         <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sidebar/10 text-sidebar">
