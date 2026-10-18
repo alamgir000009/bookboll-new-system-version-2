@@ -887,10 +887,13 @@ function resolveSelectedProvider() {
 }
 
 let loaded = false
+const walletDataReady = ref(false)
 async function ensureLoaded() {
   if (!currentUser.value && !getAdminTokenSafe()) return
   loaded = true
   await loadAll()
+  walletDataReady.value = true
+  openRequestedSetup()
 }
 function getAdminTokenSafe() {
   try { return !!localStorage.getItem('bb_admin_token') } catch { return false }
@@ -1079,6 +1082,18 @@ async function applyMethodToAllWallets(patch) {
 
 // Open / close the account payout-method editor (lives on the My Wallets landing).
 const methodEditorOpen = ref(false)
+let openedSetupPath = ''
+function openRequestedSetup() {
+  if (!walletDataReady.value || route.query.setup !== 'payout' || isPlatformAdmin.value || !canEditPayout.value || !selectedProvider.value) return
+  if (openedSetupPath === route.fullPath) return
+  openedSetupPath = route.fullPath
+  walletView.value = 'list'
+  openMethodEditor()
+}
+watch(() => route.fullPath, () => {
+  openedSetupPath = ''
+  openRequestedSetup()
+})
 function openMethodEditor() {
   bookbollSetupOpen.value = false
   payoutError.value = ''
@@ -1557,7 +1572,7 @@ async function seedPayment(type) {
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">{{ role === 'provider' ? 'My Wallets' : 'Earnings &amp; Payouts' }}</div>
+        <h1 class="page-title">{{ role === 'provider' ? 'My Wallets' : 'Earnings &amp; Payouts' }}</h1>
         <div class="page-subtitle">
           {{ role === 'provider'
             ? 'A wallet per country — your earnings, what\'s still clearing, and your payouts.'
@@ -1598,10 +1613,10 @@ async function seedPayment(type) {
             <div class="pm-info">
               <div class="pm-title">Payout method</div>
               <div v-if="accountState==='active' && accountIsAutomatic" class="pm-sub">Stripe Connect · automatic split — your share is paid straight to your bank, nothing to withdraw.</div>
-              <div v-else-if="accountState==='active'" class="pm-sub">Bookboll Wallet · {{ accountWallet?.payout_bank_name || 'bank account on file' }}<template v-if="accountBankCountryName"> ({{ accountBankCountryName }})</template> — manual withdrawals · <b style="color:#15803d">approved</b>.</div>
-              <div v-else-if="accountState==='paused'" class="pm-sub">Your payout method is <b style="color:#b45309">paused by Bookboll</b>. Your balance is safe, but online payments &amp; new programs that rely on this wallet are disabled until it's resumed — please contact Bookboll support.</div>
-              <div v-else-if="accountState==='pending_review'" class="pm-sub">Manual payout (Bookboll Wallet) — <b style="color:#1d4ed8">submitted for review</b>. Listings &amp; programs stay paused until Bookboll approves your details.</div>
-              <div v-else-if="accountState==='rejected'" class="pm-sub">Manual payout — <b style="color:#dc2626">not approved</b><template v-if="accountRejectionReason">: {{ accountRejectionReason }}</template>. Update your details and resubmit.</div>
+              <div v-else-if="accountState==='active'" class="pm-sub">Bookboll Wallet · {{ accountWallet?.payout_bank_name || 'bank account on file' }}<template v-if="accountBankCountryName"> ({{ accountBankCountryName }})</template> — manual withdrawals · <b style="color: var(--positive-ink)">approved</b>.</div>
+              <div v-else-if="accountState==='paused'" class="pm-sub">Your payout method is <b style="color: var(--warning-ink)">paused by Bookboll</b>. Your balance is safe, but online payments &amp; new programs that rely on this wallet are disabled until it's resumed — please contact Bookboll support.</div>
+              <div v-else-if="accountState==='pending_review'" class="pm-sub">Manual payout (Bookboll Wallet) — <b style="color: var(--info-ink)">submitted for review</b>. Listings &amp; programs stay paused until Bookboll approves your details.</div>
+              <div v-else-if="accountState==='rejected'" class="pm-sub">Manual payout — <b style="color: var(--danger-ink)">not approved</b><template v-if="accountRejectionReason">: {{ accountRejectionReason }}</template>. Update your details and resubmit.</div>
               <div v-else class="pm-sub">Your <b>{{ purposeLabel }} wallet</b> isn't set up yet. Choose how you'd like to get paid — it applies to <b>every</b> {{ purposeLabel }} currency wallet below.</div>
             </div>
             <button v-if="canEditPayout" class="btn" :class="(accountState==='none' || accountState==='rejected') ? 'btn-primary' : 'btn-secondary'" @click="openMethodEditor">
@@ -1966,8 +1981,8 @@ async function seedPayment(type) {
               <td><span class="badge" :class="t.type==='subscription_online'?'badge-info':'badge-neutral'">{{ t.type==='subscription_online'?'Subscription':'Booking' }}</span></td>
               <td>{{ t.source_label||'—' }}</td>
               <td style="text-align:right">{{ fmtMoney(t.amount,t.currency) }}</td>
-              <td style="text-align:right;color:#b45309">- {{ fmtMoney(t.platform_fee,t.currency) }}</td>
-              <td style="text-align:right;font-weight:600;color:#059669">{{ fmtMoney(t.provider_share,t.currency) }}</td>
+              <td style="text-align:right;color: var(--warning-ink)">- {{ fmtMoney(t.platform_fee,t.currency) }}</td>
+              <td style="text-align:right;font-weight:600;color: var(--positive-ink)">{{ fmtMoney(t.provider_share,t.currency) }}</td>
               <td><span class="badge" :class="txStatusClass(t.status)">{{ txStatusLabel(t.status) }}</span></td>
               <td><template v-if="t.status==='on_hold'">{{ fmtDay(t.available_on) }} <span class="muted">({{ daysUntil(t.available_on) }}d)</span></template><template v-else-if="t.released_at">{{ fmtDay(t.released_at) }}</template><template v-else>—</template></td>
             </tr>
@@ -2014,21 +2029,21 @@ async function seedPayment(type) {
       <!-- KPIs -->
       <div class="grid grid-4" style="margin-bottom:20px">
         <div class="card kpi">
-          <div class="kpi-top"><span class="kpi-label">Funds on Hold</span><div class="kpi-icon" style="background:#fff7ed;color:#c2410c"><Hourglass :size="18"/></div></div>
+          <div class="kpi-top"><span class="kpi-label">Funds on Hold</span><div class="kpi-icon" style="background: var(--warning-bg);color: var(--warning-ink)"><Hourglass :size="18"/></div></div>
           <div class="kpi-value">{{ fmtMoney(adminKpis.onHoldTotal) }}</div>
           <div class="kpi-sub">{{ adminKpis.onHoldCount }} credits across all providers</div>
         </div>
         <div class="card kpi">
-          <div class="kpi-top"><span class="kpi-label">Awaiting Payout</span><div class="kpi-icon" style="background:#fef3c7;color:#b45309"><Clock :size="18"/></div></div>
+          <div class="kpi-top"><span class="kpi-label">Awaiting Payout</span><div class="kpi-icon" style="background: var(--warning-bg);color: var(--warning-ink)"><Clock :size="18"/></div></div>
           <div class="kpi-value">{{ fmtMoney(adminKpis.openAmt) }}</div>
           <div class="kpi-sub kpi-delta neutral">{{ adminKpis.openCount }} request{{ adminKpis.openCount===1?'':'s' }} to action</div>
         </div>
         <div class="card kpi">
-          <div class="kpi-top"><span class="kpi-label">Total Paid Out</span><div class="kpi-icon" style="background:#ecfdf5;color:#059669"><Check :size="18"/></div></div>
+          <div class="kpi-top"><span class="kpi-label">Total Paid Out</span><div class="kpi-icon" style="background: var(--positive-bg);color: var(--positive-ink)"><Check :size="18"/></div></div>
           <div class="kpi-value">{{ fmtMoney(adminKpis.paidAmt) }}</div>
         </div>
         <div class="card kpi">
-          <div class="kpi-top"><span class="kpi-label">Platform Revenue</span><div class="kpi-icon" style="background:#ecfeff;color:#0891b2"><DollarSign :size="18"/></div></div>
+          <div class="kpi-top"><span class="kpi-label">Platform Revenue</span><div class="kpi-icon" style="background: var(--info-bg);color: var(--info-ink)"><DollarSign :size="18"/></div></div>
           <div class="kpi-value">{{ fmtMoney(adminKpis.platformFees) }}</div>
         </div>
       </div>
@@ -2144,8 +2159,8 @@ async function seedPayment(type) {
             <td>{{ fmtDate(t.created_at) }}</td><td>{{ providerName(t.owner_user_id) }}</td><td>{{ t.source_label||'—' }}</td>
             <td><span class="badge" :class="t.type==='subscription_online'?'badge-info':'badge-neutral'">{{ t.type==='subscription_online'?'Subscription':'Booking' }}</span></td>
             <td style="text-align:right">{{ fmtMoney(t.amount,t.currency) }}</td>
-            <td style="text-align:right;color:#b45309">- {{ fmtMoney(t.platform_fee,t.currency) }}</td>
-            <td style="text-align:right;font-weight:600;color:#059669">{{ fmtMoney(t.provider_share,t.currency) }}</td>
+            <td style="text-align:right;color: var(--warning-ink)">- {{ fmtMoney(t.platform_fee,t.currency) }}</td>
+            <td style="text-align:right;font-weight:600;color: var(--positive-ink)">{{ fmtMoney(t.provider_share,t.currency) }}</td>
             <td><span class="badge" :class="txStatusClass(t.status)">{{ txStatusLabel(t.status) }}</span></td>
           </tr>
           <tr v-if="!filteredEarnings.length"><td colspan="8" class="empty">{{ adminEarnings.length ? 'Nothing matches these filters.' : 'No earnings yet.' }}</td></tr>
@@ -2187,7 +2202,7 @@ async function seedPayment(type) {
     <!-- ══════════ WITHDRAWAL REQUEST DETAIL PANEL (Admin) ══════════════ -->
     <Teleport to="body">
       <div v-if="viewingRequest" class="req-backdrop" @click.self="closeRequest">
-        <div class="req-panel">
+        <div class="req-panel" v-dialog="closeRequest">
           <!-- Header -->
           <div class="req-header">
             <div>
@@ -2196,7 +2211,7 @@ async function seedPayment(type) {
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <span class="badge" :class="badgeClass(viewingRequest.status)">{{ viewingRequest.status }}</span>
-              <button class="req-close" @click="closeRequest"><X :size="18"/></button>
+              <button class="req-close" @click="closeRequest" aria-label="Close"><X :size="18"/></button>
             </div>
           </div>
 
@@ -2247,7 +2262,7 @@ async function seedPayment(type) {
             <!-- Business verification submitted with the wallet (KYC) -->
             <div class="req-section" v-if="reqWallet && (reqWallet.kyc_business_name || reqWallet.kyc_registration_no || reqWallet.kyc_address || reqWallet.kyc_contact || reqWallet.kyc_doc_url)">
               <div class="req-section-title">Business Verification (KYC on the wallet)</div>
-              <div class="payout-summary" style="background:#f8fafc;border-radius:8px;padding:12px">
+              <div class="payout-summary" style="background: var(--bg);border-radius:8px;padding:12px">
                 <div class="ps-row"><span class="ps-label">Legal / trading name</span><span class="ps-value">{{ reqWallet.kyc_business_name || '—' }}</span></div>
                 <div class="ps-row"><span class="ps-label">Registration #</span><span class="ps-value ps-mono">{{ reqWallet.kyc_registration_no || '—' }}</span></div>
                 <div class="ps-row"><span class="ps-label">Address</span><span class="ps-value">{{ reqWallet.kyc_address || '—' }}</span></div>
@@ -2263,7 +2278,7 @@ async function seedPayment(type) {
               <div v-if="!reqBank.any" class="req-warn">
                 <AlertCircle :size="14"/>No payout bank details on file — do not send a transfer until the provider adds them.
               </div>
-              <div v-else class="payout-summary" style="background:#f8fafc;border-radius:8px;padding:12px">
+              <div v-else class="payout-summary" style="background: var(--bg);border-radius:8px;padding:12px">
                 <div class="ps-row"><span class="ps-label">Bank</span><span class="ps-value">{{ reqBank.bank_name||'—' }}</span></div>
                 <div class="ps-row"><span class="ps-label">Country</span><span class="ps-value">{{ reqBank.bank_country||'—' }}</span></div>
                 <div class="ps-row"><span class="ps-label">Account Holder</span><span class="ps-value">{{ reqBank.account_holder||'—' }}</span></div>
@@ -2318,7 +2333,7 @@ async function seedPayment(type) {
                   <div v-for="t in reqRecon.rows.slice(0, 30)" :key="t.id" class="req-tx-row">
                     <span>{{ fmtDay(t.created_at) }}</span>
                     <span>{{ t.source_label||'—' }}</span>
-                    <span style="text-align:right;font-weight:600;color:#059669">{{ fmtMoney(t.share,t.currency) }}</span>
+                    <span style="text-align:right;font-weight:600;color: var(--positive-ink)">{{ fmtMoney(t.share,t.currency) }}</span>
                     <span style="text-align:right">{{ t.recorded != null ? fmtMoney(t.recorded, t.currency) : '—' }}</span>
                     <span><span class="rv-tag" :class="t.manual ? 'na' : (t.ok ? 'ok' : 'bad')">{{ t.manual ? 'manual' : (t.ok ? 'matched' : 'no record') }}</span></span>
                   </div>
@@ -2330,8 +2345,8 @@ async function seedPayment(type) {
             <div class="req-section">
               <div class="req-section-title">Wallet Ledger — Money In &amp; Out</div>
               <div class="req-wallet-stats">
-                <div class="rws-item"><div class="rws-label">Money in</div><div class="rws-value" style="color:#059669">{{ fmtMoney(reqFlow.totalIn, reqWallet?.currency || viewingRequest.currency) }}</div></div>
-                <div class="rws-item"><div class="rws-label">Money out</div><div class="rws-value" style="color:#dc2626">{{ fmtMoney(reqFlow.totalOut, reqWallet?.currency || viewingRequest.currency) }}</div></div>
+                <div class="rws-item"><div class="rws-label">Money in</div><div class="rws-value" style="color: var(--positive-ink)">{{ fmtMoney(reqFlow.totalIn, reqWallet?.currency || viewingRequest.currency) }}</div></div>
+                <div class="rws-item"><div class="rws-label">Money out</div><div class="rws-value" style="color: var(--danger-ink)">{{ fmtMoney(reqFlow.totalOut, reqWallet?.currency || viewingRequest.currency) }}</div></div>
                 <div class="rws-item"><div class="rws-label">Net</div><div class="rws-value">{{ fmtMoney(reqFlow.net, reqWallet?.currency || viewingRequest.currency) }}</div></div>
                 <div class="rws-item"><div class="rws-label">Transactions</div><div class="rws-value">{{ reqFlow.count }}</div></div>
               </div>
@@ -2344,8 +2359,8 @@ async function seedPayment(type) {
                   <span>{{ fmtDay(t.created_at) }}</span>
                   <span>{{ t.source_label || t.description || t.type || '—' }}</span>
                   <span><span class="rv-tag" :class="t.status === 'completed' ? 'ok' : (t.status === 'on_hold' ? 'na' : 'bad')">{{ t.status === 'on_hold' ? 'clearing' : (t.status || '—') }}</span></span>
-                  <span style="text-align:right;font-weight:600;color:#059669">{{ t.direction === 'credit' ? fmtMoney(t.provider_share ?? t.amount, t.currency) : '' }}</span>
-                  <span style="text-align:right;font-weight:600;color:#dc2626">{{ t.direction === 'debit' ? fmtMoney(t.provider_share ?? t.amount, t.currency) : '' }}</span>
+                  <span style="text-align:right;font-weight:600;color: var(--positive-ink)">{{ t.direction === 'credit' ? fmtMoney(t.provider_share ?? t.amount, t.currency) : '' }}</span>
+                  <span style="text-align:right;font-weight:600;color: var(--danger-ink)">{{ t.direction === 'debit' ? fmtMoney(t.provider_share ?? t.amount, t.currency) : '' }}</span>
                 </div>
                 <div v-if="reqLedger.length > 40" class="muted" style="font-size:12px;padding:8px 0 0">Showing the latest 40 of {{ reqLedger.length }} transactions.</div>
               </div>
@@ -2389,7 +2404,7 @@ async function seedPayment(type) {
             </div>
 
             <!-- Already processed info -->
-            <div v-else class="req-section" style="background:#f8fafc;border-radius:10px;padding:14px">
+            <div v-else class="req-section" style="background: var(--bg);border-radius:10px;padding:14px">
               <div class="req-section-title">Processing Info</div>
               <div class="req-grid">
                 <div class="req-item"><div class="req-item-label">Status</div><div><span class="badge" :class="badgeClass(viewingRequest.status)">{{ viewingRequest.status }}</span></div></div>
@@ -2405,7 +2420,7 @@ async function seedPayment(type) {
 
     <!-- ══ WITHDRAWAL REQUEST MODAL ═══════════════════════════════════ -->
     <div v-if="wdModal" class="modal-backdrop" @click.self="wdModal=false; wdError=''">
-      <div class="modal wd-modal">
+      <div class="modal wd-modal" v-dialog>
         <div class="modal-header">
           <div>
             <div class="modal-title">Request Withdrawal</div>
@@ -2413,7 +2428,7 @@ async function seedPayment(type) {
               Submit a request — your Super Admin will process the bank transfer and mark it paid.
             </div>
           </div>
-          <button class="btn-icon" @click="wdModal=false; wdError=''"><X :size="18"/></button>
+          <button class="btn-icon" @click="wdModal=false; wdError=''" aria-label="Close"><X :size="18"/></button>
         </div>
 
         <div class="modal-body">
@@ -2509,10 +2524,10 @@ async function seedPayment(type) {
 
     <!-- HOLD POLICY MODAL -->
     <div v-if="policyModal" class="modal-backdrop" @click.self="policyModal=false">
-      <div class="modal" style="max-width:460px">
+      <div class="modal" v-dialog style="max-width:460px">
         <div class="modal-header">
           <div class="modal-title">Hold period — {{ policyTarget && providerName(policyTarget.owner_user_id) }}</div>
-          <button class="btn-icon" @click="policyModal=false"><X :size="18"/></button>
+          <button class="btn-icon" @click="policyModal=false" aria-label="Close"><X :size="18"/></button>
         </div>
         <div class="modal-body">
           <div class="muted" style="font-size:13px;margin-bottom:10px">Applies to future subscription credits only. Existing on-hold transactions keep their original release date.</div>
@@ -2537,9 +2552,9 @@ async function seedPayment(type) {
 .btn-icon:hover { background:var(--bg); color:var(--text); }
 .kpi-sub { font-size:12px; color:var(--text-muted); margin-top:4px; }
 .kpi-delta { font-size:12px; margin-top:4px; }
-.alert { display:flex; align-items:center; gap:8px; padding:10px 12px; background:#fef3c7; border:1px solid #fde68a; color:#92400e; border-radius:8px; margin-bottom:14px; font-size:13px; }
+.alert { display:flex; align-items:center; gap:8px; padding:10px 12px; background:var(--warning-bg, #fef3c7); border:1px solid var(--warning-border, #fde68a); color:var(--warning-ink, #92400e); border-radius:8px; margin-bottom:14px; font-size:13px; }
 .req { color:'#ef4444'; } .form-opt { font-size:11px; font-weight:400; color:var(--text-muted); margin-left:4px; }
-.form-error { display:flex; align-items:center; gap:7px; padding:10px 13px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; font-size:13px; color:#dc2626; margin-top:10px; }
+.form-error { display:flex; align-items:center; gap:7px; padding:10px 13px; background:var(--danger-bg, #fef2f2); border:1px solid var(--danger-border, #fecaca); border-radius:8px; font-size:13px; color:var(--danger-ink, #dc2626); margin-top:10px; }
 .tab-badge { background:#ef4444; color:#fff; border-radius:99px; font-size:11px; font-weight:700; padding:1px 6px; margin-left:4px; }
 
 /* ── Wallet setup (choose a payout method before creating programs) ───────────── */
@@ -2549,11 +2564,11 @@ async function seedPayment(type) {
 .wc-chips { display:flex; flex-wrap:wrap; gap:8px; }
 .wc-chip { display:inline-flex; align-items:center; gap:8px; padding:7px 13px; border:1.5px solid var(--border); background:var(--surface, #ffffff); border-radius:999px; font-size:13.5px; font-weight:700; color:var(--text); cursor:pointer; }
 .wc-chip:hover { border-color:var(--brand-accent, #14b8a6); }
-.wc-chip.on { border-color:var(--brand, #0f766e); background:#f0fdfa; color:var(--brand, #0f766e); }
+.wc-chip.on { border-color:var(--brand, #0f766e); background:var(--primary-soft, #f0fdfa); color:var(--primary-ink, #0f766e); }
 .wc-state { font-size:11px; font-weight:700; padding:1px 7px; border-radius:999px; }
-.wc-state.ready { background:#dcfce7; color:#15803d; }
-.wc-state.pending { background:#fef3c7; color:#b45309; }
-.wc-state.none { background:var(--border, #e2e8f0); color:#475569; }
+.wc-state.ready { background:var(--positive-bg, #dcfce7); color:var(--positive-ink, #15803d); }
+.wc-state.pending { background:var(--warning-bg, #fef3c7); color:var(--warning-ink, #b45309); }
+.wc-state.none { background:var(--border, #e2e8f0); color:var(--text-secondary, #475569); }
 .ws-country-note { margin-left:auto; font-size:11.5px; color:var(--text-muted); }
 
 /* Wallets landing (select a wallet / add a new one) */
@@ -2566,62 +2581,62 @@ async function seedPayment(type) {
 .wnav { display:flex; gap:4px; border-bottom:1.5px solid var(--border); margin-bottom:18px; }
 .wnav-tab { display:inline-flex; align-items:center; gap:7px; padding:11px 16px; font-size:14px; font-weight:600; color:var(--text-muted); background:none; border:none; border-bottom:2.5px solid transparent; margin-bottom:-1.5px; cursor:pointer; transition:color .12s, border-color .12s; white-space:nowrap; text-decoration:none; }
 .wnav-tab:hover { color:var(--text); }
-.wnav-tab.active { color:var(--brand, #0f766e); border-bottom-color:var(--brand, #0f766e); }
+.wnav-tab.active { color:var(--primary-ink, #0f766e); border-bottom-color:var(--brand, #0f766e); }
 .wnav-tab svg { flex-shrink:0; }
-.wp-note { display:flex; align-items:flex-start; gap:8px; font-size:12.5px; line-height:1.5; color:#9a3412; background:#fff7ed; border:1px solid #fed7aa; border-radius:11px; padding:10px 12px; margin-bottom:16px; }
+.wp-note { display:flex; align-items:flex-start; gap:8px; font-size:12.5px; line-height:1.5; color:var(--warning-ink, #9a3412); background:var(--warning-bg, #fff7ed); border:1px solid var(--warning-border, #fed7aa); border-radius:11px; padding:10px 12px; margin-bottom:16px; }
 .wp-note svg { flex-shrink:0; margin-top:1px; }
 @media (max-width:560px){ .wnav-tab { padding:10px 12px; font-size:13px; } }
 .wl-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:14px; }
 .wl-card { display:flex; flex-direction:column; gap:10px; text-align:left; padding:18px; border:1px solid var(--border); border-radius:16px; background:var(--surface, #ffffff); cursor:pointer; transition:border-color .12s, box-shadow .12s, transform .12s; }
 .wl-card:hover { border-color:var(--brand-accent, #14b8a6); box-shadow:0 8px 22px rgba(15,23,42,.07); transform:translateY(-2px); }
 .wl-card-top { display:flex; align-items:center; gap:8px; }
-.wl-flag { width:32px; height:32px; border-radius:9px; background:#f0fdfa; color:var(--brand, #0f766e); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.wl-flag { width:32px; height:32px; border-radius:9px; background:var(--primary-soft, #f0fdfa); color:var(--primary-ink, #0f766e); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .wl-country { font-size:14.5px; font-weight:700; color:var(--text); flex:1; min-width:0; }
 .wl-badge { font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; }
-.wl-badge.ready { background:#dcfce7; color:#15803d; }
-.wl-badge.pending { background:#dbeafe; color:#1d4ed8; }
-.wl-badge.setup { background:#fef3c7; color:#b45309; }
-.wl-card.legacy { background:#f8fafc; opacity:.92; }
+.wl-badge.ready { background:var(--positive-bg, #dcfce7); color:var(--positive-ink, #15803d); }
+.wl-badge.pending { background:var(--info-bg, #dbeafe); color:var(--info-ink, #1d4ed8); }
+.wl-badge.setup { background:var(--warning-bg, #fef3c7); color:var(--warning-ink, #b45309); }
+.wl-card.legacy { background:var(--surface-hover, #f8fafc); opacity:.92; }
 
 /* Wallet detail header (Change method / Delete) */
 .wd-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
 .wd-head-title { display:flex; align-items:center; gap:8px; font-size:16px; font-weight:800; color:var(--text); }
 .wd-head-actions { display:flex; gap:8px; flex-wrap:wrap; }
-.wd-legacy-tag { font-size:11px; font-weight:700; color:#b45309; background:#fef3c7; padding:2px 9px; border-radius:999px; }
-.wd-legacy-note { display:flex; align-items:center; gap:7px; font-size:12.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:9px 12px; margin-bottom:16px; }
-.btn-danger-soft { background:#fef2f2; color:#dc2626; border:1px solid #fecaca; }
-.btn-danger-soft:hover:not(:disabled) { background:#fee2e2; }
+.wd-legacy-tag { font-size:11px; font-weight:700; color:var(--warning-ink, #b45309); background:var(--warning-bg, #fef3c7); padding:2px 9px; border-radius:999px; }
+.wd-legacy-note { display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--warning-ink, #92400e); background:var(--warning-bg, #fffbeb); border:1px solid var(--warning-border, #fde68a); border-radius:10px; padding:9px 12px; margin-bottom:16px; }
+.btn-danger-soft { background:var(--danger-bg, #fef2f2); color:var(--danger-ink, #dc2626); border:1px solid var(--danger-border, #fecaca); }
+.btn-danger-soft:hover:not(:disabled) { background:var(--danger-bg, #fee2e2); }
 .btn-danger-soft:disabled { opacity:.5; cursor:not-allowed; }
 .wl-card-bal { font-size:24px; font-weight:800; color:var(--text); }
 .wl-card-foot { display:flex; align-items:center; justify-content:space-between; font-size:12.5px; color:var(--text-muted); }
-.wl-card-foot svg { color:#cbd5e1; }
-.wl-card:hover .wl-card-foot svg { color:var(--brand, #0f766e); }
-.wl-add { align-items:center; justify-content:center; text-align:center; border-style:dashed; background:#f8fafc; gap:6px; }
-.wl-add-ic { width:44px; height:44px; border-radius:12px; background:var(--surface, #ffffff); border:1px solid var(--border); color:var(--brand, #0f766e); display:flex; align-items:center; justify-content:center; }
+.wl-card-foot svg { color:var(--text-light, #cbd5e1); }
+.wl-card:hover .wl-card-foot svg { color:var(--primary-ink, #0f766e); }
+.wl-add { align-items:center; justify-content:center; text-align:center; border-style:dashed; background:var(--surface-hover, #f8fafc); gap:6px; }
+.wl-add-ic { width:44px; height:44px; border-radius:12px; background:var(--surface, #ffffff); border:1px solid var(--border); color:var(--primary-ink, #0f766e); display:flex; align-items:center; justify-content:center; }
 .wl-add-label { font-size:14px; font-weight:700; color:var(--text); }
 .wl-add-sub { font-size:12px; color:var(--text-muted); }
-.wl-badge.muted { background:#f1f5f9; color:var(--text-muted, #64748b); }
-.wl-cta-text { display:inline-flex; align-items:center; gap:4px; color:var(--brand, #0f766e); font-weight:700; }
+.wl-badge.muted { background:var(--bg, #f1f5f9); color:var(--text-muted, #64748b); }
+.wl-cta-text { display:inline-flex; align-items:center; gap:4px; color:var(--primary-ink, #0f766e); font-weight:700; }
 .wl-subhead { font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:.03em; color:var(--text-muted); margin:24px 0 12px; }
 
 /* Account payout-method panel (shared across all currency wallets) */
 .pm-panel { padding:18px; margin-bottom:8px; }
 .pm-row { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
 .pm-ic { width:46px; height:46px; border-radius:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.pm-ic.auto { background:#ecfdf5; color:#059669; }
-.pm-ic.manual { background:#f0fdfa; color:var(--brand, #0f766e); }
-.pm-ic.pending { background:#dbeafe; color:#1d4ed8; }
-.pm-ic.rejected { background:#fee2e2; color:#dc2626; }
-.pm-ic.none { background:#fef3c7; color:#b45309; }
+.pm-ic.auto { background:var(--positive-bg, #ecfdf5); color:var(--positive-ink, #059669); }
+.pm-ic.manual { background:var(--primary-soft, #f0fdfa); color:var(--primary-ink, #0f766e); }
+.pm-ic.pending { background:var(--info-bg, #dbeafe); color:var(--info-ink, #1d4ed8); }
+.pm-ic.rejected { background:var(--danger-bg, #fee2e2); color:var(--danger-ink, #dc2626); }
+.pm-ic.none { background:var(--warning-bg, #fef3c7); color:var(--warning-ink, #b45309); }
 
 /* KYC business details (manual payout review) */
-.ws-kyc-note { display:flex; align-items:flex-start; gap:8px; font-size:12.5px; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; padding:10px 12px; margin-bottom:14px; }
+.ws-kyc-note { display:flex; align-items:flex-start; gap:8px; font-size:12.5px; color:var(--info-ink, #1e40af); background:var(--info-bg, #eff6ff); border:1px solid var(--info-border, #bfdbfe); border-radius:10px; padding:10px 12px; margin-bottom:14px; }
 .kyc-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .kyc-grid .kyc-wide { grid-column:1 / -1; }
 .kyc-grid input[type="text"] { width:100%; }
 .kyc-doc { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.kyc-doc-link { display:inline-flex; align-items:center; gap:4px; font-size:12.5px; font-weight:600; color:var(--brand, #0f766e); }
-.field-err { color:#dc2626; font-size:12px; margin-top:4px; }
+.kyc-doc-link { display:inline-flex; align-items:center; gap:4px; font-size:12.5px; font-weight:600; color:var(--primary-ink, #0f766e); }
+.field-err { color:var(--danger-ink, #dc2626); font-size:12px; margin-top:4px; }
 @media (max-width:560px) { .kyc-grid { grid-template-columns:1fr; } }
 .pm-info { flex:1; min-width:200px; }
 .pm-title { font-size:14.5px; font-weight:800; color:var(--text); }
@@ -2629,22 +2644,22 @@ async function seedPayment(type) {
 .pm-viewonly { font-size:11.5px; font-weight:700; color:var(--text-muted); background:var(--bg); border:1px solid var(--border); border-radius:999px; padding:2px 9px; }
 .pm-editor { padding-top:2px; }
 .pm-mini { display:flex; align-items:center; gap:10px; padding:12px 16px; margin-bottom:20px; flex-wrap:wrap; }
-.pm-mini-ic { color:var(--brand, #0f766e); flex-shrink:0; }
+.pm-mini-ic { color:var(--primary-ink, #0f766e); flex-shrink:0; }
 .pm-mini-text { font-size:12.5px; color:var(--text-muted); flex:1; min-width:200px; }
 .pm-mini-btn { margin-left:auto; }
 
 /* Admin: payout-method approval queue */
 .wl-back { display:inline-flex; align-items:center; gap:6px; background:none; border:none; color:var(--text-muted); font-size:13px; font-weight:600; cursor:pointer; padding:2px 4px; margin-bottom:14px; }
-.wl-back:hover { color:var(--brand, #0f766e); }
+.wl-back:hover { color:var(--primary-ink, #0f766e); }
 
 .wallet-setup { max-width:760px; margin:0 auto; }
 .ws-head { text-align:center; margin-bottom:20px; }
 .ws-icon {
   width:72px;height:72px;border-radius:18px;margin:0 auto 16px;
   display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#ccfbf1,#99f6e4);color:#0f766e;
+  background:linear-gradient(135deg,var(--primary-soft, #ccfbf1),#99f6e4);color:var(--primary-ink, #0f766e);
 }
-.ws-icon.pending { background:linear-gradient(135deg,#fef3c7,#fde68a);color:#b45309; }
+.ws-icon.pending { background:linear-gradient(135deg,var(--warning-bg, #fef3c7),#fde68a);color:var(--warning-ink, #b45309); }
 .ws-title { font-size:21px;font-weight:700;margin-bottom:8px; }
 .ws-body { font-size:14px;color:var(--text-muted);max-width:520px;margin:0 auto 18px;line-height:1.6; }
 .ws-country {
@@ -2668,15 +2683,15 @@ async function seedPayment(type) {
 .ws-bankq.hero .ws-bankq-select { max-width:420px; margin:0 auto; }
 .ws-bankq-label { display:flex;align-items:center;gap:7px;font-size:15px;color:var(--text);margin-bottom:10px;flex-wrap:wrap; }
 .ws-bankq-label strong { font-weight:800; }
-.ws-bankq-hl { font-style:normal; color:var(--primary); }
-.ws-bankq-label svg { color:var(--primary); flex-shrink:0; }
+.ws-bankq-hl { font-style:normal; color:var(--primary-ink); }
+.ws-bankq-label svg { color:var(--primary-ink); flex-shrink:0; }
 .ws-bankq-hint { font-size:12.5px;color:var(--text-muted);line-height:1.5;margin:10px 0 0; }
 .ws-bankq-select { width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:10px;padding:11px 12px;font-size:14.5px;color:var(--text);background:var(--surface, #ffffff); }
 .ws-bankq-select:focus { outline:none;border-color:var(--primary); }
 
 .ws-methods { display:flex;flex-direction:column;gap:20px; }
 .ws-group-head { display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:13px;font-weight:800;color:var(--text);margin-bottom:9px; }
-.ws-group-head svg { color:var(--primary); }
+.ws-group-head svg { color:var(--primary-ink); }
 .ws-group-head span { flex-basis:100%;font-size:12px;font-weight:500;color:var(--text-muted);line-height:1.45;margin-left:21px; }
 .ws-method {
   border:1px solid var(--border);border-radius:14px;padding:16px 18px;background:var(--surface, #ffffff);
@@ -2689,45 +2704,45 @@ async function seedPayment(type) {
 .wsm-icon {
   width:42px;height:42px;border-radius:11px;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
-  background:#f1f5f9;color:var(--text-muted);
+  background:var(--bg, #f1f5f9);color:var(--text-muted);
 }
-.wsm-icon.recommended { background:#ccfbf1;color:#0f766e; }
-.wsm-icon.good { background:#dbeafe;color:#1d4ed8; }
-.wsm-icon.last { background:#fef3c7;color:#b45309; }
-.wsm-icon.disabled { background:#f1f5f9;color:var(--text-light, #94a3b8); }
+.wsm-icon.recommended { background:var(--primary-soft, #ccfbf1);color:var(--primary-ink, #0f766e); }
+.wsm-icon.good { background:var(--info-bg, #dbeafe);color:var(--info-ink, #1d4ed8); }
+.wsm-icon.last { background:var(--warning-bg, #fef3c7);color:var(--warning-ink, #b45309); }
+.wsm-icon.disabled { background:var(--bg, #f1f5f9);color:var(--text-light, #94a3b8); }
 .wsm-titles { display:flex;align-items:center;gap:10px;flex-wrap:wrap; }
 .wsm-name { font-size:15px;font-weight:700; }
-.wsm-badge { font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px;background:#f1f5f9;color:var(--text-muted); }
-.wsm-badge.recommended { background:#ccfbf1;color:#0f766e; }
-.wsm-badge.good { background:#dbeafe;color:#1d4ed8; }
-.wsm-badge.last { background:#fef3c7;color:#b45309; }
+.wsm-badge { font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px;background:var(--bg, #f1f5f9);color:var(--text-muted); }
+.wsm-badge.recommended { background:var(--primary-soft, #ccfbf1);color:var(--primary-ink, #0f766e); }
+.wsm-badge.good { background:var(--info-bg, #dbeafe);color:var(--info-ink, #1d4ed8); }
+.wsm-badge.last { background:var(--warning-bg, #fef3c7);color:var(--warning-ink, #b45309); }
 .wsm-badge.disabled { background:var(--border, #e2e8f0);color:var(--text-muted, #64748b); }
-.wsm-badge.muted { background:#f1f5f9;color:var(--text-light, #94a3b8); }
-.wsm-badge.na { background:#fee2e2;color:#b91c1c; }
-.wsm-badge.beta { background:#fff7ed;color:#ea580c;border:1px solid #fed7aa; }
+.wsm-badge.muted { background:var(--bg, #f1f5f9);color:var(--text-light, #94a3b8); }
+.wsm-badge.na { background:var(--danger-bg, #fee2e2);color:var(--danger-ink, #b91c1c); }
+.wsm-badge.beta { background:var(--warning-bg, #fff7ed);color:var(--warning-ink, #ea580c);border:1px solid var(--warning-border, #fed7aa); }
 .wsm-switch { display:flex;align-items:flex-start;gap:7px;padding:9px 11px;background:var(--surface, #ffffff);border:1px dashed var(--border);border-radius:9px;font-size:12.5px;color:var(--text-muted, #64748b);line-height:1.5; }
 .wsm-switch svg { flex-shrink:0;margin-top:1px;color:var(--text-muted); }
 /* Stripe-unavailable: the card steps back so the deposit hero above reads first */
 .ws-method.ws-off { opacity:.75; }
 /* "Sorry — Stripe isn't available here" lead-in (bookings wallet) */
-.ws-sorry { display:flex;align-items:flex-start;gap:11px;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px;margin-bottom:14px; }
-.ws-sorry-ic { width:34px;height:34px;border-radius:10px;background:#fef3c7;color:#b45309;display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+.ws-sorry { display:flex;align-items:flex-start;gap:11px;background:var(--warning-bg, #fffbeb);border:1px solid var(--warning-border, #fde68a);border-radius:12px;padding:12px 14px;margin-bottom:14px; }
+.ws-sorry-ic { width:34px;height:34px;border-radius:10px;background:var(--warning-bg, #fef3c7);color:var(--warning-ink, #b45309);display:flex;align-items:center;justify-content:center;flex-shrink:0; }
 .ws-sorry-t { display:flex;flex-direction:column;gap:2px;font-size:13px;line-height:1.5; }
-.ws-sorry-t b { color:#92400e;font-size:13.5px; }
-.ws-sorry-t span { color:#a16207; }
+.ws-sorry-t b { color:var(--warning-ink, #92400e);font-size:13.5px; }
+.ws-sorry-t span { color:var(--warning-ink, #a16207); }
 /* One-line Stripe footnote under the deposit hero */
 .ws-stripe-mini { display:flex;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;border:1px dashed var(--border, #e2e8f0);border-radius:10px;font-size:12.5px;color:var(--text-muted, #64748b);line-height:1.5; }
 .ws-stripe-mini svg { flex-shrink:0; }
-.ws-stripe-mini b { color:#334155; }
+.ws-stripe-mini b { color:var(--text-secondary, #334155); }
 /* "Deposit + rest on arrival" — icon-led 3-step story, one glance to get it */
 .ws-dep-steps { display:flex;flex-direction:column;gap:8px;margin:12px 0 2px; }
-.ws-dep-step { display:flex;align-items:center;gap:10px;font-size:13px;color:#334155;font-weight:600;line-height:1.4; }
-.ws-dep-step b { color:#0f172a; }
-.ws-dep-ic { width:30px;height:30px;border-radius:9px;background:#ecfdf5;color:#059669;display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+.ws-dep-step { display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-secondary, #334155);font-weight:600;line-height:1.4; }
+.ws-dep-step b { color:var(--text, #0f172a); }
+.ws-dep-ic { width:30px;height:30px;border-radius:9px;background:var(--positive-bg, #ecfdf5);color:var(--positive-ink, #059669);display:flex;align-items:center;justify-content:center;flex-shrink:0; }
 .wsm-blurb { font-size:13px;color:var(--text-muted);line-height:1.55; }
 .wsm-unavailable {
   display:flex;align-items:flex-start;gap:7px;
-  padding:9px 11px;background:#f1f5f9;border:1px solid var(--border);border-radius:9px;
+  padding:9px 11px;background:var(--bg, #f1f5f9);border:1px solid var(--border);border-radius:9px;
   font-size:12.5px;color:var(--text-muted, #64748b);line-height:1.5;
 }
 .wsm-unavailable svg { flex-shrink:0;margin-top:1px; }
@@ -2740,32 +2755,32 @@ async function seedPayment(type) {
 .no-programs-hint {
   display:flex; align-items:center; gap:12px; flex-wrap:wrap;
   padding:14px 18px; margin-bottom:18px;
-  background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px;
-  font-size:13.5px; color:#1e40af;
+  background:var(--info-bg, #eff6ff); border:1px solid var(--info-border, #bfdbfe); border-radius:10px;
+  font-size:13.5px; color:var(--info-ink, #1e40af);
 }
-.nph-icon { color:#3b82f6; flex-shrink:0; }
+.nph-icon { color:var(--info-ink, #3b82f6); flex-shrink:0; }
 .nph-text { flex:1; min-width:0; line-height:1.5; }
-.nph-text strong { color:#1e3a8a; }
+.nph-text strong { color:var(--info-ink, #1e3a8a); }
 
 /* ── Payout details card ─────────────────────────────────────────────────────── */
 .payout-card { padding:18px 20px; }
 .payout-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
-.payout-icon { color:var(--primary); }
+.payout-icon { color:var(--primary-ink); }
 
 /* Missing state */
 .payout-missing {
   display:flex; align-items:flex-start; gap:10px;
-  padding:14px; background:#fef3c7; border:1px solid #fde68a; border-radius:10px;
-  font-size:13px; color:#92400e;
+  padding:14px; background:var(--warning-bg, #fef3c7); border:1px solid var(--warning-border, #fde68a); border-radius:10px;
+  font-size:13px; color:var(--warning-ink, #92400e);
 }
 .payout-missing svg { flex-shrink:0; margin-top:1px; }
 
 /* View state */
 .payout-view { display:flex; flex-direction:column; gap:12px; }
 .pv-bank-row { display:flex; align-items:center; gap:8px; }
-.pv-bank-icon { color:var(--primary); flex-shrink:0; }
+.pv-bank-icon { color:var(--primary-ink); flex-shrink:0; }
 .pv-bank-name { font-size:15px; font-weight:700; color:var(--text); }
-.pv-country-pill { font-size:11px; font-weight:600; padding:2px 8px; border-radius:99px; background:#eff6ff; color:#1d4ed8; margin-left:4px; }
+.pv-country-pill { font-size:11px; font-weight:600; padding:2px 8px; border-radius:99px; background:var(--info-bg, #eff6ff); color:var(--info-ink, #1d4ed8); margin-left:4px; }
 .payout-summary { display:flex; flex-direction:column; gap:7px; padding:12px 14px; background:var(--bg); border-radius:9px; border:1px solid var(--border); }
 .ps-row { display:flex; align-items:baseline; gap:16px; font-size:13px; }
 .ps-label { font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; min-width:120px; flex-shrink:0; }
@@ -2785,7 +2800,7 @@ async function seedPayment(type) {
 .payout-select:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(59,130,246,.1); }
 .mono-input { font-family:'SF Mono',Monaco,monospace; font-size:13px; letter-spacing:.04em; }
 .field-error input, .field-error select { border-color:#ef4444 !important; }
-.field-err-msg { font-size:12px; color:#dc2626; margin-top:4px; display:flex; align-items:center; gap:4px; }
+.field-err-msg { font-size:12px; color:var(--danger-ink, #dc2626); margin-top:4px; display:flex; align-items:center; gap:4px; }
 .field-err-msg::before { content:'⚠'; font-size:11px; }
 
 /* ── Hold progress ───────────────────────────────────────────────────────────── */
@@ -2794,28 +2809,28 @@ async function seedPayment(type) {
 .hold-title { font-weight:600; font-size:14px; }
 .hold-sub { font-size:12px; margin-top:2px; }
 .hold-bar-wrap { display:flex; flex-direction:column; gap:4px; }
-.hold-bar { height:6px; background:#f1f5f9; border-radius:999px; overflow:hidden; }
+.hold-bar { height:6px; background:var(--bg, #f1f5f9); border-radius:999px; overflow:hidden; }
 .hold-bar-fill { height:100%; background:linear-gradient(90deg,#f59e0b,#10b981); transition:width .3s; }
 .hold-bar-label { font-size:12px; color:var(--text-muted); }
-.hold-amount { font-weight:700; color:#0f766e; white-space:nowrap; }
+.hold-amount { font-weight:700; color:var(--primary-ink, #0f766e); white-space:nowrap; }
 
 /* ── Filter row ──────────────────────────────────────────────────────────────── */
 .filter-row { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
 .chip { padding:6px 12px; border:1px solid var(--border); border-radius:999px; background:var(--surface, #ffffff); font-size:12px; color:var(--text-muted); cursor:pointer; transition:all .15s; }
-.chip.active { background:var(--text); color:#fff; border-color:var(--text); }
+.chip.active { background:var(--primary); color:#fff; border-color:var(--primary); }
 
 /* ── Release schedule ────────────────────────────────────────────────────────── */
 .schedule-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; }
-.schedule-cell { padding:12px; border:1px solid var(--border); border-radius:8px; background:#f8fafc; }
+.schedule-cell { padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--surface-hover, #f8fafc); }
 .schedule-date { font-size:12px; color:var(--text-muted); text-transform:uppercase; font-weight:600; }
-.schedule-amt { font-weight:700; font-size:16px; margin-top:4px; color:#0f766e; }
+.schedule-amt { font-weight:700; font-size:16px; margin-top:4px; color:var(--primary-ink, #0f766e); }
 .schedule-count { font-size:12px; color:var(--text-muted); margin-top:2px; }
 
 /* ── Hold policy table ───────────────────────────────────────────────────────── */
 .mini-table { width:100%; font-size:13px; border-collapse:collapse; }
 .mini-table th, .mini-table td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--border); }
 .mini-table th { font-weight:600; font-size:12px; color:var(--text-muted); text-transform:uppercase; }
-.mini-table tr.row-paused td { background:#fffbeb; }
+.mini-table tr.row-paused td { background:var(--warning-bg, #fffbeb); }
 
 /* ── Withdrawal request cards (admin) ───────────────────────────────────────── */
 .wr-list { display:flex; flex-direction:column; gap:8px; }
@@ -2829,7 +2844,7 @@ async function seedPayment(type) {
 .wr-provider { font-weight:600; font-size:14px; }
 .wr-meta { font-size:12px; color:var(--text-muted); margin-top:2px; }
 .wr-amount { font-size:18px; font-weight:700; color:var(--text); white-space:nowrap; }
-.wr-action { display:flex; align-items:center; gap:4px; font-size:13px; font-weight:500; color:var(--primary); white-space:nowrap; }
+.wr-action { display:flex; align-items:center; gap:4px; font-size:13px; font-weight:500; color:var(--primary-ink); white-space:nowrap; }
 
 /* ── Request detail panel ────────────────────────────────────────────────────── */
 .req-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:1000; display:flex; justify-content:flex-end; backdrop-filter:blur(2px); }
@@ -2841,36 +2856,36 @@ async function seedPayment(type) {
 }
 @keyframes slideInRight { from { transform:translateX(40px); opacity:0 } to { transform:translateX(0); opacity:1 } }
 .req-header { display:flex; align-items:center; justify-content:space-between; padding:18px 20px 14px; border-bottom:1px solid var(--border, #e2e8f0); flex-shrink:0; }
-.req-title { font-size:17px; font-weight:700; color:#0f172a; }
+.req-title { font-size:17px; font-weight:700; color:var(--text, #0f172a); }
 .req-ref { font-size:12px; color:var(--text-muted, #64748b); font-family:'SF Mono',Monaco,monospace; margin-top:3px; }
-.req-close { width:32px; height:32px; border-radius:8px; border:none; background:#f1f5f9; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text-muted, #64748b); }
-.req-close:hover { background:var(--border, #e2e8f0); color:#0f172a; }
+.req-close { width:32px; height:32px; border-radius:8px; border:none; background:var(--bg, #f1f5f9); display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text-muted, #64748b); }
+.req-close:hover { background:var(--border, #e2e8f0); color:var(--text, #0f172a); }
 .req-loading { flex:1; display:flex; align-items:center; justify-content:center; gap:10px; color:var(--text-muted, #64748b); font-size:14px; }
 .req-body { flex:1; overflow-y:auto; padding:0 0 24px; }
-.req-section { padding:18px 20px; border-bottom:1px solid #f1f5f9; }
+.req-section { padding:18px 20px; border-bottom:1px solid var(--border, #f1f5f9); }
 .req-section-title { font-size:11px; font-weight:700; color:var(--text-light, #94a3b8); text-transform:uppercase; letter-spacing:.06em; margin-bottom:12px; }
 .req-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .req-item-label { font-size:11px; font-weight:600; color:var(--text-light, #94a3b8); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px; }
-.req-item-value { font-size:13.5px; font-weight:500; color:#0f172a; }
-.req-amount { font-size:20px; font-weight:800; color:#0f172a; }
-.req-warn { display:flex; align-items:center; gap:8px; padding:10px 14px; background:#fef3c7; border:1px solid #fde68a; border-radius:8px; font-size:13px; color:#92400e; }
+.req-item-value { font-size:13.5px; font-weight:500; color:var(--text, #0f172a); }
+.req-amount { font-size:20px; font-weight:800; color:var(--text, #0f172a); }
+.req-warn { display:flex; align-items:center; gap:8px; padding:10px 14px; background:var(--warning-bg, #fef3c7); border:1px solid var(--warning-border, #fde68a); border-radius:8px; font-size:13px; color:var(--warning-ink, #92400e); }
 .req-wallet-stats { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
-.rws-item { background:#f8fafc; border:1px solid var(--border, #e2e8f0); border-radius:8px; padding:12px; }
+.rws-item { background:var(--surface-hover, #f8fafc); border:1px solid var(--border, #e2e8f0); border-radius:8px; padding:12px; }
 .rws-label { font-size:11px; font-weight:600; color:var(--text-light, #94a3b8); text-transform:uppercase; margin-bottom:4px; }
-.rws-value { font-size:15px; font-weight:700; color:#0f172a; }
+.rws-value { font-size:15px; font-weight:700; color:var(--text, #0f172a); }
 .req-tx-list { border:1px solid var(--border, #e2e8f0); border-radius:8px; overflow:hidden; font-size:12px; }
 .req-tx-head, .req-tx-row { display:grid; grid-template-columns:auto 1fr auto auto auto; gap:8px; padding:8px 12px; align-items:center; }
-.req-tx-head { background:#f8fafc; font-size:11px; font-weight:700; color:var(--text-light, #94a3b8); text-transform:uppercase; border-bottom:1px solid var(--border, #e2e8f0); }
-.req-tx-row { border-bottom:1px solid #f1f5f9; }
+.req-tx-head { background:var(--surface-hover, #f8fafc); font-size:11px; font-weight:700; color:var(--text-light, #94a3b8); text-transform:uppercase; border-bottom:1px solid var(--border, #e2e8f0); }
+.req-tx-row { border-bottom:1px solid var(--border, #f1f5f9); }
 .req-tx-row:last-child { border-bottom:none; }
 /* Withdrawal-history table: 4 columns (requested · amount · status · settled) */
 .req-wh-head, .req-wh-row { grid-template-columns:auto 1fr auto auto; }
 /* The provider's membership programs, as quick-glance chips */
 .req-prog-chips { display:flex; flex-wrap:wrap; gap:6px; }
-.req-prog-chip { font-size:12px; font-weight:700; color:#334155; background:#f1f5f9; border:1px solid var(--border, #e2e8f0); border-radius:999px; padding:4px 11px; }
-.req-prog-chip.off { color:var(--text-light, #94a3b8); background:#f8fafc; }
+.req-prog-chip { font-size:12px; font-weight:700; color:var(--text-secondary, #334155); background:var(--bg, #f1f5f9); border:1px solid var(--border, #e2e8f0); border-radius:999px; padding:4px 11px; }
+.req-prog-chip.off { color:var(--text-light, #94a3b8); background:var(--surface-hover, #f8fafc); }
 .req-actions { padding:16px 20px; border-top:1px solid var(--border, #e2e8f0); background:var(--surface, #ffffff); flex-shrink:0; }
-.req-action-note { display:flex; align-items:center; gap:7px; padding:10px 13px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; font-size:12.5px; color:#0369a1; }
+.req-action-note { display:flex; align-items:center; gap:7px; padding:10px 13px; background:var(--info-bg, #f0f9ff); border:1px solid var(--info-border, #bae6fd); border-radius:8px; font-size:12.5px; color:var(--info-ink, #0369a1); }
 
 .empty { text-align:center; color:var(--text-muted); padding:20px; }
 .spin { animation:spin 1s linear infinite; }
@@ -2882,11 +2897,11 @@ async function seedPayment(type) {
 /* No payout state */
 .wd-no-payout {
   display:flex; align-items:flex-start; gap:14px;
-  padding:18px; background:#fef3c7; border:1px solid #fde68a; border-radius:12px;
+  padding:18px; background:var(--warning-bg, #fef3c7); border:1px solid var(--warning-border, #fde68a); border-radius:12px;
 }
-.wd-np-icon { color:#d97706; flex-shrink:0; margin-top:2px; }
-.wd-np-title { font-size:14px; font-weight:700; color:#92400e; margin-bottom:5px; }
-.wd-np-body  { font-size:13px; color:#92400e; line-height:1.55; }
+.wd-np-icon { color:var(--warning-ink, #d97706); flex-shrink:0; margin-top:2px; }
+.wd-np-title { font-size:14px; font-weight:700; color:var(--warning-ink, #92400e); margin-bottom:5px; }
+.wd-np-body  { font-size:13px; color:var(--warning-ink, #92400e); line-height:1.55; }
 
 /* Destination card */
 .wd-destination { margin-bottom:16px; }
@@ -2895,10 +2910,10 @@ async function seedPayment(type) {
   display:flex; align-items:flex-start; gap:10px;
   padding:12px 14px; background:var(--bg); border:1px solid var(--border); border-radius:10px;
 }
-.wd-dest-icon { color:var(--primary); flex-shrink:0; margin-top:2px; }
+.wd-dest-icon { color:var(--primary-ink); flex-shrink:0; margin-top:2px; }
 .wd-dest-body { flex:1; min-width:0; }
 .wd-dest-bank { font-size:14px; font-weight:700; color:var(--text); margin-bottom:6px; }
-.wd-dest-country { font-size:11px; font-weight:500; color:#1d4ed8; background:#eff6ff; padding:1px 7px; border-radius:99px; margin-left:6px; }
+.wd-dest-country { font-size:11px; font-weight:500; color:var(--info-ink, #1d4ed8); background:var(--info-bg, #eff6ff); padding:1px 7px; border-radius:99px; margin-left:6px; }
 .wd-dest-row { display:flex; gap:10px; font-size:12.5px; margin-top:3px; }
 .wd-dest-key { color:var(--text-muted); min-width:90px; flex-shrink:0; }
 .wd-dest-val { color:var(--text); font-family:'SF Mono',Monaco,monospace; font-weight:500; word-break:break-all; }
@@ -2912,8 +2927,8 @@ async function seedPayment(type) {
 .wd-bal-sep  { width:1px; background:var(--border); flex-shrink:0; }
 .wd-bal-label { font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; }
 .wd-bal-value { font-size:16px; font-weight:700; }
-.wd-bal-value.available { color:#059669; }
-.wd-bal-value.hold      { color:#d97706; }
+.wd-bal-value.available { color:var(--positive-ink, #059669); }
+.wd-bal-value.hold      { color:var(--warning-ink, #d97706); }
 
 /* Amount input */
 .wd-amount-wrap { display:flex; align-items:center; border:1px solid var(--border); border-radius:8px; overflow:hidden; transition:border-color .15s, box-shadow .15s; }
@@ -2921,15 +2936,15 @@ async function seedPayment(type) {
 .wd-currency-badge { padding:0 12px; background:var(--bg); font-size:12px; font-weight:700; color:var(--text-muted); border-right:1px solid var(--border); height:40px; display:flex; align-items:center; white-space:nowrap; }
 .wd-amount-input { flex:1; padding:8px 12px; border:none; font-size:16px; font-weight:600; color:var(--text); outline:none; background:var(--surface, #ffffff); }
 .wd-amount-input::placeholder { color:#d1d5db; font-weight:400; font-size:14px; }
-.wd-max-btn { padding:0 14px; height:40px; background:#eff6ff; color:#2563eb; font-size:12px; font-weight:700; border:none; border-left:1px solid var(--border); cursor:pointer; transition:background .1s; }
-.wd-max-btn:hover { background:#dbeafe; }
+.wd-max-btn { padding:0 14px; height:40px; background:var(--info-bg, #eff6ff); color:var(--info-ink, #2563eb); font-size:12px; font-weight:700; border:none; border-left:1px solid var(--border); cursor:pointer; transition:background .1s; }
+.wd-max-btn:hover { background:var(--info-bg, #dbeafe); }
 
 /* ── Payout notices (provider) ─────────────────────────────────────────────── */
 .pay-notices { display:flex; flex-direction:column; gap:10px; margin-bottom:18px; }
 .pay-notice { display:flex; align-items:center; gap:11px; padding:12px 14px; border-radius:12px; font-size:13.5px; border:1px solid; }
-.pay-notice.paid { background:#f0fdf4; border-color:#bbf7d0; color:#166534; }
-.pay-notice.approved { background:#eff6ff; border-color:#bfdbfe; color:#1e40af; }
-.pay-notice.rejected { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+.pay-notice.paid { background:var(--positive-bg, #f0fdf4); border-color:var(--positive-border, #bbf7d0); color:var(--positive-ink, #166534); }
+.pay-notice.approved { background:var(--info-bg, #eff6ff); border-color:var(--info-border, #bfdbfe); color:var(--info-ink, #1e40af); }
+.pay-notice.rejected { background:var(--danger-bg, #fef2f2); border-color:var(--danger-border, #fecaca); color:var(--danger-ink, #991b1b); }
 .pn-ico { flex-shrink:0; }
 .pn-text { flex:1; line-height:1.45; }
 .pn-x { flex-shrink:0; width:26px; height:26px; border:none; background:transparent; color:inherit; opacity:.65; cursor:pointer; border-radius:6px; display:flex; align-items:center; justify-content:center; }
@@ -2943,8 +2958,8 @@ async function seedPayment(type) {
 .ph-next { font-size:12.5px; opacity:.92; display:flex; align-items:center; gap:6px; }
 .ph-next.ph-muted { opacity:.72; }
 .ph-next.ph-auto { margin-top:10px; align-items:flex-start; line-height:1.5; background:rgba(255,255,255,.15); padding:8px 11px; border-radius:8px; }
-.ph-btn { margin-top:16px; align-self:flex-start; background:var(--surface, #ffffff); color:#0f766e; font-weight:700; }
-.ph-btn:hover:not(:disabled) { background:#f0fdfa; }
+.ph-btn { margin-top:16px; align-self:flex-start; background:var(--surface, #ffffff); color:var(--primary-ink, #0f766e); font-weight:700; }
+.ph-btn:hover:not(:disabled) { background:var(--primary-soft, #f0fdfa); }
 .ph-btn:disabled { opacity:.55; cursor:not-allowed; }
 .ph-warn { margin-top:10px; font-size:12px; display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.15); padding:7px 10px; border-radius:8px; }
 .ph-side { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
@@ -2957,13 +2972,13 @@ async function seedPayment(type) {
 .pd-row:last-child { border-bottom:none; }
 .pd-row span { color:var(--text-muted, #64748b); }
 .pd-row b { color:var(--text); text-align:right; overflow-wrap:anywhere; }
-.pd-empty { display:flex; align-items:center; gap:8px; font-size:13px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 12px; }
+.pd-empty { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--warning-ink, #92400e); background:var(--warning-bg, #fffbeb); border:1px solid var(--warning-border, #fde68a); border-radius:10px; padding:10px 12px; }
 .pd-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:14px; }
 .ph-stat { background:var(--surface, #ffffff); border:1px solid var(--border); border-radius:14px; padding:16px; display:flex; flex-direction:column; gap:6px; }
 .phs-top { display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600; color:var(--text-muted); }
-.ph-stat.clearing .phs-top { color:#c2410c; }
-.ph-stat.paying .phs-top { color:#b45309; }
-.ph-stat.lifetime .phs-top { color:#0891b2; }
+.ph-stat.clearing .phs-top { color:var(--warning-ink, #c2410c); }
+.ph-stat.paying .phs-top { color:var(--warning-ink, #b45309); }
+.ph-stat.lifetime .phs-top { color:var(--info-ink, #0891b2); }
 .phs-val { font-size:20px; font-weight:800; color:var(--text); }
 .phs-sub { font-size:12px; color:var(--text-muted); }
 
@@ -2988,32 +3003,32 @@ async function seedPayment(type) {
 
 /* ── Reconciliation verdict + checks (admin panel) ─────────────────────────── */
 .rv-verdict { display:flex; align-items:flex-start; gap:11px; border-radius:10px; padding:12px 14px; margin-bottom:12px; }
-.rv-verdict.ok { background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; }
-.rv-verdict.warn { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; }
+.rv-verdict.ok { background:var(--positive-bg, #f0fdf4); border:1px solid var(--positive-border, #bbf7d0); color:var(--positive-ink, #166534); }
+.rv-verdict.warn { background:var(--warning-bg, #fff7ed); border:1px solid var(--warning-border, #fed7aa); color:var(--warning-ink, #9a3412); }
 .rv-verdict b { display:block; font-size:14px; }
 .rv-verdict span { font-size:12.5px; opacity:.9; }
 .rv-checks { display:flex; flex-direction:column; gap:7px; }
 .rv-check { display:flex; align-items:flex-start; gap:8px; font-size:12.5px; line-height:1.4; color:var(--text); }
-.rv-check.ok { color:#166534; }
-.rv-check.bad { color:#b91c1c; }
+.rv-check.ok { color:var(--positive-ink, #166534); }
+.rv-check.bad { color:var(--danger-ink, #b91c1c); }
 .rv-check svg { flex-shrink:0; margin-top:1px; }
 .rv-tag { font-size:10px; font-weight:700; text-transform:uppercase; padding:1px 7px; border-radius:999px; }
-.rv-tag.ok { background:#dcfce7; color:#166534; }
-.rv-tag.bad { background:#fee2e2; color:#991b1b; }
+.rv-tag.ok { background:var(--positive-bg, #dcfce7); color:var(--positive-ink, #166534); }
+.rv-tag.bad { background:var(--danger-bg, #fee2e2); color:var(--danger-ink, #991b1b); }
 .rv-tag.na { background:var(--bg); color:var(--text-muted); }
 
 /* approved withdrawals get a blue badge */
-.badge-info { background:#eff6ff; color:#1d4ed8; }
+.badge-info { background:var(--info-bg, #eff6ff); color:var(--info-ink, #1d4ed8); }
 
 /* ── Balance integrity guard (admin) ───────────────────────────────────────── */
-.drift-banner { border:1px solid #fecaca; background:#fef2f2; border-radius:14px; padding:16px 18px; margin-bottom:20px; }
-.drift-head { display:flex; align-items:center; gap:8px; font-weight:800; font-size:15px; color:#991b1b; }
-.drift-sub { font-size:12.5px; color:#b91c1c; margin:4px 0 12px; line-height:1.5; }
-.drift-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid #fecaca; }
+.drift-banner { border:1px solid var(--danger-border, #fecaca); background:var(--danger-bg, #fef2f2); border-radius:14px; padding:16px 18px; margin-bottom:20px; }
+.drift-head { display:flex; align-items:center; gap:8px; font-weight:800; font-size:15px; color:var(--danger-ink, #991b1b); }
+.drift-sub { font-size:12.5px; color:var(--danger-ink, #b91c1c); margin:4px 0 12px; line-height:1.5; }
+.drift-row { display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--danger-border, #fecaca); }
 .drift-actions { display:flex; gap:8px; flex-shrink:0; flex-wrap:wrap; justify-content:flex-end; }
 .drift-main { flex:1; min-width:0; }
-.drift-main b { display:block; font-size:14px; color:#7f1d1d; }
-.drift-main span { font-size:12.5px; color:#b91c1c; }
+.drift-main b { display:block; font-size:14px; color:var(--danger-ink, #7f1d1d); }
+.drift-main span { font-size:12.5px; color:var(--danger-ink, #b91c1c); }
 
 @media (max-width: 860px) {
   .pay-hero { grid-template-columns:1fr; }

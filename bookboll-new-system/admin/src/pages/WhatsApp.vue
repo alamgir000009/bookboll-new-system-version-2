@@ -76,7 +76,7 @@ const steps = computed(() => {
     // so marketing simply can't work. (status can go green on phone+token alone — that only
     // proves you can send — but this step must reflect marketing-readiness.)
     { key: 'product', title: isPlatform.value ? 'Add the WhatsApp product' : 'Add your WhatsApp number', done: filled(c.phone_number_id) && filled(c.waba_id) },
-    { key: 'token', title: 'Create a PERMANENT access token', done: tokenOk },
+    { key: 'token', title: 'Create a permanent access token', done: tokenOk },
   ]
   if (isPlatform.value) list.push({ key: 'webhook', title: 'Connect the webhook (inbound messages + booking bot)', done: filled(c.verify_token) })
   list.push({ key: 'test', title: 'Save & test', done: connectedOk.value })
@@ -127,7 +127,7 @@ async function load() {
 }
 onMounted(load)
 watch(currentOwnerUserId, load)
-watch(cfg, () => { if (!loading.value) markDirty() }, { deep: true })
+watch(cfg, () => { if (!loading.value) markDirty() }, { deep: true, flush: 'sync' })
 
 async function save() {
   saving.value = true
@@ -230,7 +230,7 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 
       <!-- Step: Create your Meta app -->
       <div class="card wa-step-card" :class="{ done: stepMap.app.done, open: openStep === 'app' }">
-        <button type="button" class="wa-step-head" @click="toggleStep('app')">
+        <button type="button" class="wa-step-head" :aria-expanded="openStep === 'app'" @click="toggleStep('app')">
           <span class="wa-step-num"><Check v-if="stepMap.app.done" :size="14" /><template v-else>{{ stepMap.app.num }}</template></span>
           <span class="wa-step-title">Create your Meta app</span>
           <ChevronDown :size="16" class="wa-chev" />
@@ -268,7 +268,7 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 
       <!-- Step: Add the WhatsApp product / your number -->
       <div class="card wa-step-card" :class="{ done: stepMap.product.done, open: openStep === 'product' }">
-        <button type="button" class="wa-step-head" @click="toggleStep('product')">
+        <button type="button" class="wa-step-head" :aria-expanded="openStep === 'product'" @click="toggleStep('product')">
           <span class="wa-step-num"><Check v-if="stepMap.product.done" :size="14" /><template v-else>{{ stepMap.product.num }}</template></span>
           <span class="wa-step-title">{{ stepMap.product.title }}</span>
           <ChevronDown :size="16" class="wa-chev" />
@@ -313,9 +313,9 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 
       <!-- Step: Permanent access token -->
       <div class="card wa-step-card" :class="{ done: stepMap.token.done, open: openStep === 'token' }">
-        <button type="button" class="wa-step-head" @click="toggleStep('token')">
+        <button type="button" class="wa-step-head" :aria-expanded="openStep === 'token'" @click="toggleStep('token')">
           <span class="wa-step-num"><Check v-if="stepMap.token.done" :size="14" /><template v-else>{{ stepMap.token.num }}</template></span>
-          <span class="wa-step-title">Create a PERMANENT access token</span>
+          <span class="wa-step-title">Create a permanent access token</span>
           <ChevronDown :size="16" class="wa-chev" />
         </button>
         <div v-show="openStep === 'token'" class="wa-step-body">
@@ -351,7 +351,7 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 
       <!-- Step: Webhook (SUPERADMIN ONLY) -->
       <div v-if="isPlatform" class="card wa-step-card" :class="{ done: stepMap.webhook.done, open: openStep === 'webhook' }">
-        <button type="button" class="wa-step-head" @click="toggleStep('webhook')">
+        <button type="button" class="wa-step-head" :aria-expanded="openStep === 'webhook'" @click="toggleStep('webhook')">
           <span class="wa-step-num"><Check v-if="stepMap.webhook.done" :size="14" /><template v-else>{{ stepMap.webhook.num }}</template></span>
           <span class="wa-step-title">Connect the webhook <small class="wa-step-sub">inbound messages + the booking bot</small></span>
           <ChevronDown :size="16" class="wa-chev" />
@@ -398,7 +398,7 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 
       <!-- Step: Save & test -->
       <div class="card wa-step-card" :class="{ done: stepMap.test.done, open: openStep === 'test' }">
-        <button type="button" class="wa-step-head" @click="toggleStep('test')">
+        <button type="button" class="wa-step-head" :aria-expanded="openStep === 'test'" @click="toggleStep('test')">
           <span class="wa-step-num"><Check v-if="stepMap.test.done" :size="14" /><template v-else>{{ stepMap.test.num }}</template></span>
           <span class="wa-step-title">Save &amp; test</span>
           <ChevronDown :size="16" class="wa-chev" />
@@ -473,7 +473,7 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 @media (max-width: 800px) { .wa-uses { grid-template-columns: 1fr; } }
 .wa-use { display: flex; gap: 11px; align-items: flex-start; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; }
 .wa-use-ic { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.wa-use-ic.on { background: #dcfce7; color: #16a34a; }
+.wa-use-ic.on { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #16a34a); }
 .wa-use-ic.dim { background: var(--bg); color: var(--text-muted); }
 .wa-use b { font-size: 13.5px; display: block; }
 .wa-use small { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
@@ -489,14 +489,14 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 .wa-prog-bar { width: 220px; max-width: 100%; height: 7px; background: var(--border, #e2e8f0); border-radius: 999px; overflow: hidden; }
 .wa-prog-bar i { display: block; height: 100%; background: #25d366; border-radius: 999px; transition: width .3s; }
 .wa-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; border-radius: 999px; padding: 7px 15px; }
-.wa-pill.ok { background: #dcfce7; color: #166534; }
+.wa-pill.ok { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #166534); }
 .wa-pill.off { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
 .wa-pill.busy { background: var(--bg); color: var(--text-muted); }
 .wa-check-sub { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--border); margin-top: 13px; padding-top: 12px; }
 .wa-status-main { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; font-size: 13px; flex-wrap: wrap; }
 .wa-quality { margin-left: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted); background: var(--bg); border-radius: 999px; padding: 2px 8px; }
 .wa-chip { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
-.wa-chip.ok { background: #dcfce7; color: #166534; border-color: #86efac; display: inline-flex; align-items: center; gap: 4px; }
+.wa-chip.ok { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #166534); border-color: #86efac; display: inline-flex; align-items: center; gap: 4px; }
 
 /* Wizard step cards */
 .wa-wizard { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
@@ -504,7 +504,7 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 .wa-step-head { width: 100%; display: flex; align-items: center; gap: 12px; padding: 13px 16px; min-height: 50px; background: none; border: none; cursor: pointer; text-align: left; font: inherit; color: var(--text); }
 .wa-step-head:hover { background: var(--bg); }
 .wa-step-num { width: 27px; height: 27px; border-radius: 50%; background: var(--bg); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12.5px; flex-shrink: 0; color: var(--text-muted); }
-.wa-step-card.done .wa-step-num { background: #dcfce7; border-color: #86efac; color: #16a34a; }
+.wa-step-card.done .wa-step-num { background: var(--positive-bg, #dcfce7); border-color: #86efac; color: var(--positive-ink, #16a34a); }
 .wa-step-title { flex: 1; font-weight: 700; font-size: 14px; line-height: 1.35; }
 .wa-step-sub { display: block; font-weight: 600; font-size: 11.5px; color: var(--text-muted); }
 .wa-chev { color: var(--text-muted); flex-shrink: 0; transition: transform .15s; }
@@ -526,13 +526,13 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 @media (max-width: 720px) { .wa-grid { grid-template-columns: 1fr; } .wa-col-2 { grid-column: span 1; } }
 .wa-field { display: flex; flex-direction: column; gap: 5px; }
 .wa-field > span { display: flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700; color: var(--text-muted); }
-.wa-okck { color: #16a34a; flex-shrink: 0; }
+.wa-okck { color: var(--positive-ink, #16a34a); flex-shrink: 0; }
 .wa-opt { font-style: normal; font-weight: 600; color: var(--text-light, #94a3b8); text-transform: none; }
-.wa-req { font-style: normal; font-weight: 700; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 999px; padding: 1px 7px; text-transform: none; font-size: 11px; }
+.wa-req { font-style: normal; font-weight: 700; color: var(--warning-ink, #b45309); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 999px; padding: 1px 7px; text-transform: none; font-size: 11px; }
 .wa-input-need { border-color: #fcd34d; background: #fffdf5; }
-.wa-warn { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 12px; margin-top: 10px; line-height: 1.5; }
+.wa-warn { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 10px; padding: 10px 12px; margin-top: 10px; line-height: 1.5; }
 .wa-warn svg { flex-shrink: 0; margin-top: 1px; }
-.wa-warn b { color: #0f172a; }
+.wa-warn b { color: var(--text, #0f172a); }
 .wa-field em { font-size: 11.5px; color: var(--text-light, #94a3b8); font-style: normal; }
 .wa-field em code { font-size: 10.5px; }
 .wa-input { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13.5px; background: var(--surface, #ffffff); font-family: inherit; }
@@ -550,18 +550,18 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 
 .wa-note { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--text-muted); margin-top: 10px; line-height: 1.55; }
 .wa-note svg { flex-shrink: 0; margin-top: 2px; }
-.wa-note.ok { color: #166534; }
-.wa-note.warn { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 12px; }
+.wa-note.ok { color: var(--positive-ink, #166534); }
+.wa-note.warn { color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 10px; padding: 10px 12px; }
 .wa-note code { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; font-size: 11px; }
 
 .wa-sec { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 12px; }
 .wa-sec-gap { margin-top: 18px; }
 
 /* Amber deployment note */
-.wa-amber { display: flex; gap: 11px; align-items: flex-start; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 13px 15px; margin-bottom: 14px; color: #92400e; font-size: 12.5px; line-height: 1.6; }
+.wa-amber { display: flex; gap: 11px; align-items: flex-start; background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 12px; padding: 13px 15px; margin-bottom: 14px; color: var(--warning-ink, #92400e); font-size: 12.5px; line-height: 1.6; }
 .wa-amber > svg { flex-shrink: 0; margin-top: 2px; }
 .wa-amber-body { flex: 1; min-width: 0; }
-.wa-amber-body code { background: #fef3c7; border: 1px solid #fde68a; border-radius: 5px; padding: 1px 5px; font-size: 11.5px; }
+.wa-amber-body code { background: var(--warning-bg, #fef3c7); border: 1px solid var(--warning-border, #fde68a); border-radius: 5px; padding: 1px 5px; font-size: 11.5px; }
 .wa-cmd { position: relative; background: #0f172a; border-radius: 10px; padding: 12px 40px 12px 14px; margin-top: 9px; }
 .wa-cmd pre { margin: 0; color: var(--border, #e2e8f0); font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .wa-cmd .btn-icon { position: absolute; top: 8px; right: 8px; color: var(--text-light, #94a3b8); }
@@ -579,11 +579,11 @@ const fmtWhen = (iso) => new Date(iso).toLocaleString()
 .wa-log-body { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
 .wa-log-when { white-space: nowrap; color: var(--text-muted); }
 .wa-badge { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; border-radius: 999px; padding: 2px 8px; }
-.wa-badge.sent { background: #dbeafe; color: #1e40af; }
-.wa-badge.delivered { background: #dcfce7; color: #166534; }
-.wa-badge.read { background: #ccfbf1; color: #0f766e; }
-.wa-badge.failed { background: #fee2e2; color: #b91c1c; }
-.wa-err { margin-left: 6px; font-size: 11px; color: #b91c1c; cursor: help; font-style: normal; text-decoration: underline dotted; }
+.wa-badge.sent { background: var(--info-bg, #dbeafe); color: var(--info-ink, #1e40af); }
+.wa-badge.delivered { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #166534); }
+.wa-badge.read { background: var(--primary-soft, #ccfbf1); color: var(--primary-ink, #0f766e); }
+.wa-badge.failed { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #b91c1c); }
+.wa-err { margin-left: 6px; font-size: 11px; color: var(--danger-ink, #b91c1c); cursor: help; font-style: normal; text-decoration: underline dotted; }
 
 /* Phone (≤600px) — 344px-safe tweaks, mobile only */
 @media (max-width: 600px) {

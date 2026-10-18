@@ -7,3 +7,4 @@ import { apiFetch } from './api.js'
 export async function fetchPaymentsDashboard(query = {}) {
   return apiFetch('/admin/payments/dashboard', { query })
 }
+

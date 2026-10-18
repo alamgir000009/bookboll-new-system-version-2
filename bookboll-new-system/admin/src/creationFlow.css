@@ -1,0 +1,98 @@
+/* Task navigation stays still while the form scrolls. Shared by both editors. */
+html .creation-drawer { max-width: 1160px; color: var(--text); }
+.creation-drawer .bb-drawer-header { padding: 22px 28px; align-items: center; }
+.creation-drawer .bb-drawer-title { font-size: 22px; letter-spacing: -.4px; }
+.creation-drawer .bb-drawer-subtitle { max-width: 70ch; line-height: 1.6; }
+.creation-drawer .bb-drawer-close { width: 42px; height: 42px; }
+.cf-workspace { display: grid; grid-template-columns: 220px minmax(0,1fr); flex: 1; min-height: 0; }
+.cf-loading { flex: 1; padding: 36px 28px; color: var(--text-muted); }
+.cf-steps { padding: 20px 12px; border-inline-end: 1px solid var(--border); background: var(--surface); overflow-y: auto; }
+.cf-step { display: flex; gap: 10px; width: 100%; text-align: start; padding: 14px 10px; border-radius: 10px; margin-bottom: 6px; color: var(--text-muted); align-items: flex-start; }
+.cf-step:hover { background: var(--surface-hover); color: var(--text); }
+.cf-step.active { background: var(--primary-soft); color: var(--primary-ink); }
+.cf-step-number { display: grid; place-items: center; flex: 0 0 26px; height: 26px; border: 1px solid var(--border-strong); border-radius: 50%; font-size: 12px; font-weight: 650; }
+.cf-step.active .cf-step-number { border-color: var(--primary-ink); }
+.cf-step strong { display: block; font-size: 13px; line-height: 1.5; font-weight: 650; }
+.cf-step small { display: block; font-size: 11.5px; line-height: 1.5; margin-top: 4px; color: var(--text-muted); }
+.creation-drawer .bb-drawer-body { padding: 24px; min-width: 0; overscroll-behavior: contain; scroll-padding: 20px; }
+.cf-context { padding-bottom: 20px; }
+.cf-context h2 { font-size: 20px; letter-spacing: -.3px; }
+.cf-context p { font-size: 13px; line-height: 1.65; color: var(--text-muted); margin-top: 6px; max-width: 68ch; }
+.cf-form-card { padding: 22px; border: 1px solid var(--border); background: var(--surface); border-radius: 12px; }
+.cf-form-card .form-row { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.creation-drawer .geo-inherited-title, .creation-drawer .opt-tag { text-transform: none; letter-spacing: 0; }
+.creation-drawer :is(input,textarea)::placeholder { color: var(--text-light); opacity: 1; }
+.cf-catalog-actions { display: flex; align-items: center; gap: 8px; }
+.cf-created { display: flex; align-items: center; gap: 14px; padding: 18px; margin-bottom: 24px; border: 1px solid var(--positive-border); border-radius: 12px; background: var(--positive-bg); }
+.cf-created > svg { color: var(--positive-ink); flex-shrink: 0; }
+.cf-created > div { flex: 1; }
+.cf-created p { font-size: 13px; color: var(--text-secondary); margin-top: 3px; }
+.cf-note { display: flex; align-items: flex-start; gap: 9px; color: var(--text-secondary); font-size: 13px; line-height: 1.65; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); margin-bottom: 20px; }
+.cf-note svg { flex-shrink: 0; margin-top: 2px; color: var(--primary-ink); }
+.cf-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--border); background: var(--surface); }
+.cf-footer .btn { min-height: 44px; border-radius: 9px; justify-content: center; }
+.cf-footer-note { flex: 1; color: var(--text-muted); font-size: 12px; }
+.cf-footer-error { flex: 1 0 100%; padding: 10px 12px; border-radius: 8px; color: var(--danger-ink); background: var(--danger-bg); font-size: 13px; line-height: 1.5; }
+.cf-summary { display: flex; gap: 16px; align-items: center; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 18px; }
+.cf-summary img { width: 86px; height: 86px; border-radius: 10px; object-fit: cover; }
+.cf-summary h3 { font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; }
+.cf-summary p { color: var(--text-muted); font-size: 13px; line-height: 1.6; margin-top: 4px; }
+.cf-summary-price { font-size: 19px; font-weight: 650; margin-top: 8px; }
+.cf-summary-price small { font-size: 13px; color: var(--text-muted); font-weight: 400; }
+.cf-review { display: grid; gap: 14px; }
+.cf-review-card { padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.cf-review-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.cf-review-head h3 { font-size: 15px; }
+.cf-review-head button { color: var(--primary-ink); padding: 6px 10px; border-radius: 7px; font-weight: 600; font-size: 12px; }
+.cf-review-head button:hover { background: var(--primary-soft); }
+.cf-review dl { display: grid; grid-template-columns: minmax(90px,.7fr) minmax(0,1fr); gap: 10px 18px; font-size: 13px; line-height: 1.6; }
+.cf-review dt { color: var(--text-muted); }
+.cf-review dd { margin: 0; overflow-wrap: anywhere; }
+.cf-review-text { white-space: pre-line; color: var(--text-secondary); font-size: 13px; line-height: 1.7; max-height: 200px; overflow: auto; }
+.cf-option { padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; margin-top: 18px; }
+.cf-option summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.cf-option[open] summary { margin-bottom: 16px; }
+.creation-drawer :is(button,a):focus-visible { outline: 2px solid var(--primary-ink); outline-offset: 3px; }
+.creation-drawer .form-label { font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+.creation-drawer .form-hint { line-height: 1.6; }
+.creation-drawer .btn:disabled, .cf-step:disabled { opacity: .5; cursor: not-allowed; }
+.creation-drawer .section-head { min-height: 76px; }
+.creation-drawer .section-card { box-shadow: none; }
+.creation-drawer .section-sub { line-height: 1.5; margin-top: 4px; }
+.creation-drawer .section-body { padding: 20px; }
+.creation-drawer .section-footer { display: none; }
+html .creation-drawer .tick { display: none; }
+.creation-drawer .section-title > div:first-child { font-size: 15px; }
+.creation-drawer .section-head .opt-tag { text-transform: none; letter-spacing: 0; }
+html .creation-drawer .geo-inherited-title { text-transform: none; letter-spacing: 0; }
+html .creation-drawer .lm-country-hint { padding: 0; border: 0; background: transparent; }
+@media (max-width: 760px) {
+  .creation-drawer .bb-drawer-header { padding: 16px; }
+  .creation-drawer .bb-drawer-title { font-size: 20px; }
+  .cf-workspace { display: flex; flex-direction: column; }
+  .cf-steps { display: flex; gap: 5px; padding: 10px 12px; overflow-x: auto; overflow-y: hidden; flex-shrink: 0; border-inline-end: 0; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+  .cf-steps::-webkit-scrollbar { display: none; }
+  .cf-step { width: auto; margin: 0; padding: 10px; flex-shrink: 0; align-items: center; }
+  .cf-step small { display: none; }
+  .cf-step strong { white-space: nowrap; font-size: 12px; }
+  .cf-step-number { flex-basis: 23px; width: 23px; height: 23px; }
+  .creation-drawer .bb-drawer-body { padding: 18px 14px; }
+  .creation-drawer .section-body { padding: 16px; }
+  .creation-drawer .section-head { padding: 16px; }
+  .cf-context h2 { font-size: 18px; }
+  .cf-form-card { padding: 16px; }
+  .cf-form-card .form-row { grid-template-columns: minmax(0,1fr); gap: 12px; }
+  .cf-catalog-actions { width: 100%; }
+  .cf-catalog-actions .btn { flex: 1; }
+  .cf-created { flex-wrap: wrap; }
+  .cf-created .btn { flex: 1 0 100%; order: 1; }
+  .cf-footer { padding: 12px 14px max(12px,env(safe-area-inset-bottom)); gap: 8px; }
+  .cf-footer-note { flex: 1 0 100%; font-size: 11.5px; }
+  .cf-footer .btn { font-size: 12px; padding: 10px; flex: 1; }
+  .cf-summary, .cf-review-card { padding: 16px; }
+  .cf-summary img { width: 64px; height: 64px; }
+  .cf-summary h3 { font-size: 17px; }
+  .cf-review dl { gap: 8px 12px; }
+  .creation-drawer :is(input,select,textarea) { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .creation-drawer { animation: none; } }

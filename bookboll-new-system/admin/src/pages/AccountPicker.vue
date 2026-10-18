@@ -69,22 +69,22 @@ function open(id) { chooseAdminAccount(id) }
 .ap-card { width: 100%; max-width: 440px; background: var(--surface, #ffffff); border-radius: 20px; padding: 32px 32px 24px; box-shadow: 0 24px 60px rgba(0,0,0,.35); }
 .ap-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
 .ap-logo { width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #14b8a6, #0f766e); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; }
-.ap-brand-name { font-size: 18px; font-weight: 800; color: #0f172a; }
+.ap-brand-name { font-size: 18px; font-weight: 800; color: var(--text, #0f172a); }
 .ap-brand-sub { font-size: 12px; color: var(--text-muted, #64748b); }
-.ap-title { font-size: 22px; font-weight: 800; color: #0f172a; margin: 0 0 4px; }
+.ap-title { font-size: 22px; font-weight: 800; color: var(--text, #0f172a); margin: 0 0 4px; }
 .ap-sub { font-size: 13.5px; color: var(--text-muted, #64748b); margin: 0 0 20px; line-height: 1.5; }
-.ap-sub b { color: #0f172a; }
+.ap-sub b { color: var(--text, #0f172a); }
 .ap-list { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .ap-item { width: 100%; display: flex; align-items: center; gap: 13px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 14px; padding: 13px 15px; cursor: pointer; text-align: left; transition: border-color .12s, box-shadow .12s, transform .12s; }
 .ap-item:hover { border-color: #14b8a6; box-shadow: 0 8px 22px rgba(15,23,42,.08); transform: translateY(-1px); }
-.ap-ava { flex-shrink: 0; width: 42px; height: 42px; border-radius: 12px; background: color-mix(in srgb, #0f766e 12%, #fff); color: #0f766e; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; }
+.ap-ava { flex-shrink: 0; width: 42px; height: 42px; border-radius: 12px; background: color-mix(in srgb, #0f766e 12%, var(--surface, #fff)); color: var(--primary-ink, #0f766e); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; }
 .ap-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.ap-name { font-size: 15.5px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-name { font-size: 15.5px; font-weight: 800; color: var(--text, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ap-role { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--text-muted, #64748b); }
-.ap-go { color: #cbd5e1; flex-shrink: 0; }
-.ap-item:hover .ap-go { color: #14b8a6; }
+.ap-go { color: var(--text-light, #cbd5e1); flex-shrink: 0; }
+.ap-item:hover .ap-go { color: var(--primary-ink, #14b8a6); }
 .ap-signout { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: none; border: none; color: var(--text-light, #94a3b8); font-size: 13px; font-weight: 700; cursor: pointer; padding: 8px; }
-.ap-signout:hover { color: #dc2626; }
+.ap-signout:hover { color: var(--danger-ink, #dc2626); }
 
 /* Phones (360px / 344px): loosen combined shell+card padding so business names get room */
 @media (max-width: 600px) {

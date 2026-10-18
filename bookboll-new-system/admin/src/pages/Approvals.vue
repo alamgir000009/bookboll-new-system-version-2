@@ -55,13 +55,19 @@ const allCities = ref([])
 const allCountries = ref([])
 const tab = ref('all')   // 'all' | 'content' (listings & programs) | 'money' (withdrawals & payouts)
 const search = ref('')
+const queueLoading = ref(true)
+const queueError = ref('')
 
 async function load() {
+  queueLoading.value = true
+  queueError.value = ''
   const [dash, money, ref] = await Promise.all([
     fetchApprovalsDashboard(),
     fetchWalletPayoutsDashboard(),
     loadReferenceData(),
   ])
+  if (!dash.success || !money.success) queueError.value = 'Some queue data could not be loaded. Refresh before making a decision.'
+  queueLoading.value = false
   if (!dash.success) {
     pushToast(firstError(dash, 'Could not load approvals queue.'), 'error')
     listings.value = []
@@ -820,15 +826,16 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 </script>
 
 <template>
-  <div class="page">
+  <div class="page admin-workspace approvals-workspace">
     <div class="page-header">
       <div>
-        <div class="page-title">Approval Queue</div>
+        <h1 class="page-title">Approval Queue</h1>
         <div class="page-subtitle">Review listings, programs, withdrawals and payout methods</div>
       </div>
       <div v-if="totalCount > 0" class="total-badge">{{ totalCount }} pending</div>
     </div>
 
+    <p class="workspace-note"><Shield :size="18" />Review submitted details, check eligibility, then approve or request changes.</p>
     <!-- Tabs: All · Listings & Programs · Withdrawals & Payouts -->
     <div class="aq-tabs" role="tablist">
       <button
@@ -836,7 +843,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
         :class="{ active: tab === t.key }" role="tab" :aria-selected="tab === t.key"
         @click="tab = t.key"
       >
-        {{ t.label }}<span v-if="t.count" class="aq-tab-count">{{ t.count }}</span>
+        <span>{{ t.label }}</span><strong class="aq-tab-count">{{ queueLoading ? '…' : t.count }}</strong>
       </button>
     </div>
 
@@ -883,10 +890,12 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
     </FilterBar>
 
     <!-- Empty state for the active tab -->
-    <div v-if="activeCount === 0" class="empty-state">
+    <div v-if="queueLoading" class="workspace-empty" role="status">Loading the approval queue…</div>
+    <div v-else-if="queueError" class="workspace-empty" role="alert"><AlertTriangle :size="28" /><h3>Queue unavailable</h3><p>{{ queueError }}</p><button class="btn btn-secondary" @click="load"><RefreshCw :size="15" />Try again</button></div>
+    <div v-else-if="activeCount === 0" class="empty-state">
       <CheckCircle :size="32" />
-      <div class="empty-title">All caught up!</div>
-      <div class="empty-sub">Nothing pending in this view</div>
+      <div class="empty-title">Nothing waiting in this view</div>
+      <div class="empty-sub">New submissions appear here when they are ready for review. If filters are applied, try another view.</div><button class="btn btn-secondary" @click="load"><RefreshCw :size="15" />Refresh queue</button>
     </div>
 
     <!-- ══ LISTINGS & PROGRAMS ══ -->
@@ -1106,7 +1115,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 
     <!-- PREVIEW MODAL -->
     <div v-if="previewModal && previewItem" class="modal-backdrop" @click.self="previewModal=false">
-      <div class="modal-card modal-preview">
+      <div class="modal-card modal-preview" v-dialog>
         <!-- Header -->
         <div class="modal-head">
           <div class="modal-title" style="color: var(--text)">
@@ -1115,7 +1124,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
             </span>
             {{ previewItem.name }}
           </div>
-          <button class="btn-icon" @click="previewModal=false"><X :size="16" /></button>
+          <button class="btn-icon" @click="previewModal=false" aria-label="Close"><X :size="16" /></button>
         </div>
 
         <!-- Tabs -->
@@ -1386,10 +1395,10 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 
     <!-- REQUEST CHANGES MODAL -->
     <div v-if="sendBackModal" class="modal-backdrop" @click.self="sendBackModal=false">
-      <div class="modal-card">
+      <div class="modal-card" v-dialog>
         <div class="modal-head">
           <div class="modal-title"><PauseCircle :size="18" />Request changes</div>
-          <button class="btn-icon" @click="sendBackModal=false"><X :size="16" /></button>
+          <button class="btn-icon" @click="sendBackModal=false" aria-label="Close"><X :size="16" /></button>
         </div>
         <div class="modal-body">
           <div class="modal-sub">The provider will see this note and be asked to make changes and resubmit.</div>
@@ -1408,10 +1417,10 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 
     <!-- BULK APPROVE MODAL -->
     <div v-if="bulkModal" class="modal-backdrop" @click.self="bulkModal=false">
-      <div class="modal-card">
+      <div class="modal-card" v-dialog>
         <div class="modal-head">
           <div class="modal-title" style="color: var(--text)"><ListChecks :size="18" />Approve all pending content</div>
-          <button class="btn-icon" @click="bulkModal=false"><X :size="16" /></button>
+          <button class="btn-icon" @click="bulkModal=false" aria-label="Close"><X :size="16" /></button>
         </div>
         <div class="modal-body">
           <div class="modal-sub">
@@ -1430,10 +1439,10 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 
     <!-- REJECT PAYOUT METHOD MODAL -->
     <div v-if="payoutRejectModal" class="modal-backdrop" @click.self="payoutRejectModal=null">
-      <div class="modal-card">
+      <div class="modal-card" v-dialog>
         <div class="modal-head">
           <div class="modal-title"><X :size="18" />Return payout submission</div>
-          <button class="btn-icon" @click="payoutRejectModal=null"><X :size="16" /></button>
+          <button class="btn-icon" @click="payoutRejectModal=null" aria-label="Close"><X :size="16" /></button>
         </div>
         <div class="modal-body">
           <div class="modal-sub">{{ payoutRejectModal.business }} will see this reason and can fix their details and resubmit. Their restrictions stay in place until approved.</div>
@@ -1455,7 +1464,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 
 <style scoped>
 /* page header badge */
-.total-badge { background: #fef3c7; color: #92400e; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; border: 1px solid #fde68a; white-space: nowrap; }
+.total-badge { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--warning-border, #fde68a); white-space: nowrap; }
 
 /* filter panel fields */
 .aq-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -1468,23 +1477,23 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 
 /* escrow sanity chip on withdrawal cards */
 .escrow-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; }
-.escrow-chip.ok { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
-.escrow-chip.warn { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.escrow-chip.ok { background: var(--positive-bg, #f0fdf4); color: var(--positive-ink, #15803d); border: 1px solid var(--positive-border, #bbf7d0); }
+.escrow-chip.warn { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #b91c1c); border: 1px solid var(--danger-border, #fecaca); }
 
 /* copyable bank details */
 .req-copyable { display: inline-flex; align-items: center; gap: 6px; }
 .req-copyable code { font-family: 'SF Mono', Monaco, monospace; font-size: 12px; background: var(--bg, #f1f5f9); padding: 2px 7px; border-radius: 6px; color: var(--text); }
 .req-copy { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, #ffffff); color: var(--text-muted); cursor: pointer; }
-.req-copy:hover { color: var(--primary); border-color: var(--primary); }
+.req-copy:hover { color: var(--primary-ink); border-color: var(--primary); }
 
 /* readiness checks on payout-method cards */
 .req-checks { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .req-check { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
-.req-check.ok { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
-.req-check.warn { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.req-check.ok { background: var(--positive-bg, #f0fdf4); color: var(--positive-ink, #15803d); border: 1px solid var(--positive-border, #bbf7d0); }
+.req-check.warn { background: var(--warning-bg, #fffbeb); color: var(--warning-ink, #b45309); border: 1px solid var(--warning-border, #fde68a); }
 
 /* approved-awaiting-transfer banner (green variant of the resubmit banner) */
-.approved-banner { background: #f0fdf4 !important; color: #15803d !important; border-color: #bbf7d0 !important; }
+.approved-banner { background: var(--positive-bg, #f0fdf4) !important; color: var(--positive-ink, #15803d) !important; border-color: var(--positive-border, #bbf7d0) !important; }
 
 /* diff extras */
 .diff-when { font-style: normal; font-size: 11px; color: var(--text-light, #94a3b8); margin-left: 4px; }
@@ -1505,7 +1514,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 .aq-tabs { display: flex; gap: 4px; border-bottom: 1.5px solid var(--border); margin-bottom: 16px; flex-wrap: wrap; }
 .aq-tab { display: inline-flex; align-items: center; gap: 7px; padding: 10px 16px; font-size: 14px; font-weight: 600; color: var(--text-muted); background: none; border: none; border-bottom: 2.5px solid transparent; margin-bottom: -1.5px; cursor: pointer; transition: color .12s, border-color .12s; white-space: nowrap; }
 .aq-tab:hover { color: var(--text); }
-.aq-tab.active { color: var(--brand, #0f766e); border-bottom-color: var(--brand, #0f766e); }
+.aq-tab.active { color: var(--primary-ink, #0f766e); border-bottom-color: var(--brand, #0f766e); }
 .aq-tab-count { font-size: 11px; font-weight: 800; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 999px; padding: 0 7px; line-height: 1.7; }
 .aq-tab.active .aq-tab-count { background: var(--brand, #0f766e); color: #fff; border-color: transparent; }
 
@@ -1528,10 +1537,10 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 .approve-card { padding: 18px 20px; display: flex; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
 
 .approve-icon { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.listing-icon { background: #fef9c3; color: #a16207; }
-.program-icon { background: #ecfdf5; color: #059669; }
-.payout-icon { background: #fef3c7; color: #b45309; }
-.withdrawal-icon { background: #eff6ff; color: #1d4ed8; }
+.listing-icon { background: var(--warning-bg, #fef9c3); color: var(--warning-ink, #a16207); }
+.program-icon { background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #059669); }
+.payout-icon { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #b45309); }
+.withdrawal-icon { background: var(--info-bg, #eff6ff); color: var(--info-ink, #1d4ed8); }
 
 .approve-body { flex: 1; min-width: 0; }
 .approve-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
@@ -1548,43 +1557,43 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 
 /* type badge */
 .type-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
-.type-listing { background: #fef9c3; color: #92400e; }
-.type-program { background: #dcfce7; color: #14532d; }
-.type-payout { background: #fef3c7; color: #92400e; }
-.type-withdrawal { background: #e0f2fe; color: #075985; }
+.type-listing { background: var(--warning-bg, #fef9c3); color: var(--warning-ink, #92400e); }
+.type-program { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #14532d); }
+.type-payout { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); }
+.type-withdrawal { background: var(--info-bg, #e0f2fe); color: var(--info-ink, #075985); }
 
 /* provider row */
 .approve-provider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.provider-chip { font-size: 12px; font-weight: 600; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; padding: 2px 8px; border-radius: 4px; }
+.provider-chip { font-size: 12px; font-weight: 600; color: var(--info-ink, #1d4ed8); background: var(--info-bg, #eff6ff); border: 1px solid var(--info-border, #bfdbfe); padding: 2px 8px; border-radius: 4px; }
 .submitted-age { font-size: 12px; color: var(--text-muted); }
 
 /* inline admin note */
-.inline-admin-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px; margin-bottom: 4px; padding: 8px 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 12px; color: #9a3412; }
+.inline-admin-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px; margin-bottom: 4px; padding: 8px 12px; background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); border-radius: 8px; font-size: 12px; color: var(--warning-ink, #9a3412); }
 
 .meta-pill { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 7px; font-size: 12px; font-weight: 500; color: var(--text); }
 
 /* resubmit banner */
-.resubmit-banner { display: flex; align-items: center; gap: 8px; padding: 8px 18px; background: #eff6ff; border: 1px solid #bfdbfe; border-bottom: none; border-radius: 12px 12px 0 0; font-size: 12px; font-weight: 600; color: #1d4ed8; }
+.resubmit-banner { display: flex; align-items: center; gap: 8px; padding: 8px 18px; background: var(--info-bg, #eff6ff); border: 1px solid var(--info-border, #bfdbfe); border-bottom: none; border-radius: 12px 12px 0 0; font-size: 12px; font-weight: 600; color: var(--info-ink, #1d4ed8); }
 
 /* diff toggle */
-.diff-toggle { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 12px; font-weight: 600; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
-.diff-toggle:hover { background: #dbeafe; }
+.diff-toggle { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--info-ink, #1d4ed8); background: var(--info-bg, #eff6ff); border: 1px solid var(--info-border, #bfdbfe); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.diff-toggle:hover { background: var(--info-bg, #dbeafe); }
 
 /* diff table */
 .diff-table { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
-.diff-row { display: grid; grid-template-columns: 110px 1fr 16px 1fr; gap: 6px; align-items: center; background: #f9fafb; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 12px; }
+.diff-row { display: grid; grid-template-columns: 110px 1fr 16px 1fr; gap: 6px; align-items: center; background: var(--surface-hover, #f9fafb); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 12px; }
 .diff-field { font-weight: 600; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
 .diff-before, .diff-after { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .diff-val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
 .diff-arrow { color: var(--text-muted); flex-shrink: 0; }
 .diff-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; flex-shrink: 0; }
-.diff-tag.before { background: #fee2e2; color: #991b1b; }
-.diff-tag.after { background: #dcfce7; color: #166534; }
+.diff-tag.before { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #991b1b); }
+.diff-tag.after { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #166534); }
 
 /* uniform card detail block (payout KYC fields / withdrawal note) */
 .req-detail { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--text-muted); line-height: 1.5; margin-top: 4px; }
 .req-detail b { color: var(--text); font-weight: 600; }
-.req-doc { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--brand, #0f766e); margin-top: 8px; }
+.req-doc { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--primary-ink, #0f766e); margin-top: 8px; }
 
 /* modals */
 .btn-icon { padding: 6px; border-radius: 6px; color: var(--text-muted); background: transparent; border: 0; cursor: pointer; }
@@ -1599,14 +1608,14 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
 .field-label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; display: block; margin-bottom: 6px; }
 .modal-body textarea { width: 100%; font: inherit; font-size: 14px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); resize: vertical; box-sizing: border-box; }
 .modal-body textarea:focus { outline: none; border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,0.15); }
-.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; background: #f9fafb; border-top: 1px solid var(--border); flex-shrink: 0; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; background: var(--surface-hover, #f9fafb); border-top: 1px solid var(--border); flex-shrink: 0; }
 
 /* preview modal */
 .modal-preview { max-width: 760px; max-height: 90vh; display: flex; flex-direction: column; }
 .preview-tabs { display: flex; gap: 2px; padding: 0 16px; background: var(--bg); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .preview-tab { display: flex; align-items: center; gap: 6px; padding: 10px 14px; font-size: 13px; font-weight: 500; color: var(--text-muted); background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer; margin-bottom: -1px; transition: color 0.15s, border-color 0.15s; white-space: nowrap; }
 .preview-tab:hover { color: var(--text); }
-.preview-tab.active { color: #0f172a; border-bottom-color: #0f172a; font-weight: 600; }
+.preview-tab.active { color: var(--text, #0f172a); border-bottom-color: #0f172a; font-weight: 600; }
 .preview-body { overflow-y: auto; flex: 1; }
 
 .preview-provider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }

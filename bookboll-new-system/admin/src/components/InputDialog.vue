@@ -30,16 +30,16 @@ function cancel() { resolveInput(null) }
   <Teleport to="body">
     <Transition name="idlg-fade">
       <div v-if="open" class="idlg-backdrop" @click.self="cancel">
-        <div class="idlg-panel" role="dialog" aria-modal="true">
+        <div class="idlg-panel" v-dialog="cancel" role="dialog" aria-modal="true">
           <div class="idlg-header">
             <div class="idlg-title">{{ inputState.title }}</div>
-            <button class="idlg-close" @click="cancel"><X :size="18" /></button>
+            <button class="idlg-close" aria-label="Close dialog" @click="cancel"><X :size="18" /></button>
           </div>
           <p v-if="inputState.message" class="idlg-message">{{ inputState.message }}</p>
-          <label v-if="inputState.label" class="idlg-label">{{ inputState.label }}</label>
+          <label v-if="inputState.label" class="idlg-label" for="dashboard-prompt-field">{{ inputState.label }}</label>
           <textarea
             v-if="inputState.multiline"
-            ref="fieldEl"
+            id="dashboard-prompt-field" ref="fieldEl"
             v-model="value"
             :class="{ 'input-invalid': showError && invalid }"
             :placeholder="inputState.placeholder"
@@ -79,15 +79,15 @@ function cancel() { resolveInput(null) }
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
 }
 .idlg-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.idlg-title { font-size: 16px; font-weight: 700; color: #0f172a; }
+.idlg-title { font-size: 16px; font-weight: 700; color: var(--text, #0f172a); }
 .idlg-close { color: var(--text-light, #94a3b8); border: none; background: none; cursor: pointer; padding: 2px; border-radius: 6px; }
-.idlg-close:hover { color: #0f172a; background: #f1f5f9; }
+.idlg-close:hover { color: var(--text, #0f172a); background: var(--bg, #f1f5f9); }
 .idlg-message { font-size: 13px; color: var(--text-muted, #64748b); line-height: 1.5; margin: 0 0 14px; }
-.idlg-label { display: block; font-size: 13px; font-weight: 500; color: #334155; margin-bottom: 6px; }
+.idlg-label { display: block; font-size: 13px; font-weight: 500; color: var(--text-secondary, #334155); margin-bottom: 6px; }
 .idlg-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .idlg-btn { padding: 9px 18px; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
-.idlg-cancel { background: var(--surface, #ffffff); border-color: var(--border, #e2e8f0); color: #334155; }
-.idlg-cancel:hover { background: #f8fafc; }
+.idlg-cancel { background: var(--surface, #ffffff); border-color: var(--border, #e2e8f0); color: var(--text-secondary, #334155); }
+.idlg-cancel:hover { background: var(--surface-hover, #f8fafc); }
 .idlg-submit { background: #0f766e; color: #fff; }
 .idlg-submit:hover { background: #0d635c; }
 

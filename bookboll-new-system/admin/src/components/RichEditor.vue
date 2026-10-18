@@ -136,16 +136,16 @@ function addLink() {
 
 <style scoped>
 .re { border: 1.5px solid var(--border, #e2e8f0); border-radius: 12px; overflow: hidden; background: var(--surface, #ffffff); }
-.re-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 7px 8px; border-bottom: 1px solid var(--border, #e2e8f0); background: #f8fafc; }
+.re-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 7px 8px; border-bottom: 1px solid var(--border, #e2e8f0); background: var(--surface-hover, #f8fafc); }
 .re-group { display: flex; align-items: center; gap: 2px; }
 .re-sep { width: 1px; align-self: stretch; background: var(--border, #e2e8f0); margin: 3px 5px; }
-.re-btn { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; border-radius: 7px; color: #475569; cursor: pointer; }
-.re-btn:hover { background: var(--border, #e2e8f0); color: #0f172a; }
+.re-btn { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; border-radius: 7px; color: var(--text-secondary, #475569); cursor: pointer; }
+.re-btn:hover { background: var(--border, #e2e8f0); color: var(--text, #0f172a); }
 .re-pop { position: relative; }
 .re-swatches { position: absolute; top: 36px; left: 0; z-index: 20; display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; padding: 8px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 10px; box-shadow: 0 10px 30px rgba(15,23,42,.16); width: 150px; }
 .re-swatch { width: 22px; height: 22px; border-radius: 6px; border: 1px solid rgba(15,23,42,.12); cursor: pointer; padding: 0; }
 .re-swatch:hover { transform: scale(1.12); }
-.re-swatch-none { background: #fff !important; color: var(--text-light, #94a3b8); font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.re-swatch-none { background: var(--surface, #fff) !important; color: var(--text-light, #94a3b8); font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
 /* "Custom colour" tile — a rainbow chip that opens the native picker for any colour. */
 .re-swatch-custom { position: relative; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 14px; font-weight: 800; overflow: hidden;
   background: conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); border-color: rgba(15,23,42,.18); }

@@ -116,7 +116,7 @@ async function save() {
   <div class="page" @input="markDirty">
     <div class="page-header">
       <div>
-        <div class="page-title">Tracking</div>
+        <h1 class="page-title">Tracking</h1>
         <div class="page-subtitle">Connect Meta, Google Tag Manager &amp; Google Analytics to your website</div>
       </div>
     </div>
@@ -139,33 +139,33 @@ async function save() {
       <!-- Meta Pixel -->
       <div class="trk-field">
         <div class="trk-field-head">
-          <label class="trk-label">Meta Pixel ID</label>
+          <label class="trk-label" for="tracking-meta">Meta Pixel ID</label>
           <span v-if="metaState==='ok'" class="trk-chip ok"><Check :size="12" /> Valid</span>
           <span v-else-if="metaState==='bad'" class="trk-chip bad"><AlertTriangle :size="12" /> Numbers only</span>
         </div>
-        <input v-model="f.meta_pixel" class="trk-input" :class="{ bad: metaState==='bad' }" placeholder="e.g. 1234567890123456" inputmode="numeric" autocomplete="off" spellcheck="false" />
+        <input id="tracking-meta" v-model="f.meta_pixel" class="trk-input" :class="{ bad: metaState==='bad' }" placeholder="e.g. 1234567890123456" inputmode="numeric" autocomplete="off" spellcheck="false" />
         <p class="trk-hint">Meta Events Manager → Data sources → your pixel → <b>Settings</b>. A 15–16 digit number.</p>
       </div>
 
       <!-- GA4 -->
       <div class="trk-field">
         <div class="trk-field-head">
-          <label class="trk-label">Google Analytics 4 — Measurement ID</label>
+          <label class="trk-label" for="tracking-ga">Google Analytics 4 — Measurement ID</label>
           <span v-if="ga4State==='ok'" class="trk-chip ok"><Check :size="12" /> Valid</span>
           <span v-else-if="ga4State==='bad'" class="trk-chip bad"><AlertTriangle :size="12" /> Format G-XXXXXXX</span>
         </div>
-        <input v-model="f.ga4" class="trk-input" :class="{ bad: ga4State==='bad' }" placeholder="G-XXXXXXXXXX" autocomplete="off" spellcheck="false" />
+        <input id="tracking-ga" v-model="f.ga4" class="trk-input" :class="{ bad: ga4State==='bad' }" placeholder="G-XXXXXXXXXX" autocomplete="off" spellcheck="false" />
         <p class="trk-hint">Google Analytics → Admin → Data streams → your web stream → <b>Measurement ID</b>.</p>
       </div>
 
       <!-- GTM -->
       <div class="trk-field">
         <div class="trk-field-head">
-          <label class="trk-label">Google Tag Manager — Container ID</label>
+          <label class="trk-label" for="tracking-gtm">Google Tag Manager — Container ID</label>
           <span v-if="gtmState==='ok'" class="trk-chip ok"><Check :size="12" /> Valid</span>
           <span v-else-if="gtmState==='bad'" class="trk-chip bad"><AlertTriangle :size="12" /> Format GTM-XXXXXX</span>
         </div>
-        <input v-model="f.gtm" class="trk-input" :class="{ bad: gtmState==='bad' }" placeholder="GTM-XXXXXXX" autocomplete="off" spellcheck="false" />
+        <input id="tracking-gtm" v-model="f.gtm" class="trk-input" :class="{ bad: gtmState==='bad' }" placeholder="GTM-XXXXXXX" autocomplete="off" spellcheck="false" />
         <p class="trk-hint">Tag Manager → your container → the <b>GTM-XXXXXXX</b> ID at the top.</p>
       </div>
 
@@ -174,7 +174,7 @@ async function save() {
         <summary><Code2 :size="15" /> Advanced — custom &lt;head&gt; code</summary>
         <div class="trk-adv-body">
           <p class="trk-hint">Paste any extra tags/scripts (TikTok pixel, LinkedIn Insight, verification meta, etc.). Added to the <code>&lt;head&gt;</code> of {{ isPlatformMode ? 'the marketplace' : 'your storefront' }} only.</p>
-          <textarea v-model="f.head" class="trk-textarea" rows="6" spellcheck="false" placeholder="&lt;!-- e.g. --&gt;&#10;&lt;script&gt; /* your snippet */ &lt;/script&gt;"></textarea>
+          <textarea aria-label="Custom head code" v-model="f.head" class="trk-textarea" rows="6" spellcheck="false" placeholder="&lt;!-- e.g. --&gt;&#10;&lt;script&gt; /* your snippet */ &lt;/script&gt;"></textarea>
           <div class="trk-warn"><AlertTriangle :size="14" /> Only paste code from sources you trust — it runs on your live site.</div>
         </div>
       </details>
@@ -206,10 +206,10 @@ async function save() {
 <style scoped>
 .trk-scope { display: flex; align-items: flex-start; gap: 11px; border-radius: 14px; padding: 14px 16px; font-size: 13.5px; line-height: 1.55; margin-bottom: 16px; }
 .trk-scope svg { flex-shrink: 0; margin-top: 1px; }
-.trk-scope.prov { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
-.trk-scope.prov svg { color: #059669; }
-.trk-scope.plat { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
-.trk-scope.plat svg { color: #2563eb; }
+.trk-scope.prov { background: var(--positive-bg, #ecfdf5); border: 1px solid var(--positive-border, #a7f3d0); color: var(--positive-ink, #065f46); }
+.trk-scope.prov svg { color: var(--positive-ink, #059669); }
+.trk-scope.plat { background: var(--info-bg, #eff6ff); border: 1px solid var(--info-border, #bfdbfe); color: var(--info-ink, #1e40af); }
+.trk-scope.plat svg { color: var(--info-ink, #2563eb); }
 .trk-scope code { background: rgba(15,23,42,.07); padding: 1px 6px; border-radius: 5px; font-size: 12.5px; font-weight: 700; }
 
 .trk-card { display: flex; flex-direction: column; gap: 22px; max-width: 680px; padding: 22px 24px; }
@@ -218,8 +218,8 @@ async function save() {
 .trk-field-head { display: flex; align-items: center; gap: 10px; }
 .trk-label { font-size: 13.5px; font-weight: 700; color: var(--text, #0f172a); }
 .trk-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; }
-.trk-chip.ok { color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; }
-.trk-chip.bad { color: #b45309; background: #fffbeb; border: 1px solid #fde68a; }
+.trk-chip.ok { color: var(--positive-ink, #15803d); background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0); }
+.trk-chip.bad { color: var(--warning-ink, #b45309); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); }
 .trk-input { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 11px 13px; font-size: 15px; font-family: inherit; outline: none; background: var(--card-bg, #fff); color: var(--text, #0f172a); }
 .trk-input:focus { border-color: var(--primary, #0f766e); }
 .trk-input.bad { border-color: #f59e0b; }
@@ -232,20 +232,20 @@ async function save() {
 .trk-adv-body { padding: 4px 0 12px; display: flex; flex-direction: column; gap: 8px; }
 .trk-textarea { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 11px 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.5; resize: vertical; outline: none; background: var(--card-bg, #fff); color: var(--text, #0f172a); }
 .trk-textarea:focus { border-color: var(--primary, #0f766e); }
-.trk-warn { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: #b45309; }
+.trk-warn { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--warning-ink, #b45309); }
 
 .trk-summary { background: var(--bg, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px 16px; }
 .trk-summary-h { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted, #64748b); margin-bottom: 10px; }
 .trk-tags { display: flex; flex-wrap: wrap; gap: 8px; }
-.trk-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 999px; padding: 4px 11px; }
+.trk-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--primary-ink, #0f766e); background: var(--primary-soft, #f0fdfa); border: 1px solid var(--primary-border, #99f6e4); border-radius: 999px; padding: 4px 11px; }
 .trk-none { font-size: 13px; color: var(--text-muted, #94a3b8); }
 .trk-summary-note { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-muted, #94a3b8); margin: 10px 0 0; }
 
-.trk-migrate { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.5; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 11px 13px; }
+.trk-migrate { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.5; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 10px; padding: 11px 13px; }
 .trk-migrate code { background: rgba(146,64,14,.1); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
 
 .trk-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.trk-open { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 700; color: var(--primary, #0f766e); text-decoration: none; }
+.trk-open { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 700; color: var(--primary-ink, #0f766e); text-decoration: none; }
 .trk-open:hover { text-decoration: underline; }
 .trk-save { display: inline-flex; align-items: center; gap: 8px; }
 .trk-spin { animation: trkspin 1s linear infinite; }

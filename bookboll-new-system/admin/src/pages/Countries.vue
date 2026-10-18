@@ -400,14 +400,16 @@ function cityCountLabel(country) {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page admin-workspace countries-workspace">
     <div class="page-header">
       <div>
-        <div class="page-title">Countries &amp; Cities</div>
+        <h1 class="page-title">Countries &amp; Cities</h1>
         <div class="page-subtitle">Enable countries &amp; cities, and set each country's commission rates</div>
       </div>
     </div>
 
+    <div class="geo-guide"><div><MapPin :size="22" /><strong>Market availability</strong><span>Enable countries and cities for location selection.</span></div><div><Percent :size="22" /><strong>Local commission</strong><span>Set listing, membership and event rates per country.</span></div><div><Award :size="22" /><strong>Country rewards</strong><span>Configure how points are earned and redeemed.</span></div></div>
+    <div class="workspace-section-heading"><h2>Find a market</h2><span>{{ countryTotal }} matching countries</span></div>
     <!-- Search bar -->
     <div class="search-bar">
       <Search :size="15" class="search-icon" />
@@ -426,13 +428,13 @@ function cityCountLabel(country) {
         v-for="country in countries"
         :key="country.id"
         class="country-row-wrap"
-        :class="{ inactive: country.status !== 'active' }"
+        :class="{ inactive: country.status !== 'active', expanded: expanded.has(country.id) }"
       >
         <!-- Country header row -->
-        <div class="country-row" @click="toggle(country.id)">
+        <div class="country-row" role="button" tabindex="0" :aria-expanded="expanded.has(country.id)" @keydown.enter.self.prevent="toggle(country.id)" @keydown.space.self.prevent="toggle(country.id)" @click="toggle(country.id)">
           <!-- Checkbox -->
           <div
-            class="cb-wrap"
+            class="cb-wrap" role="checkbox" tabindex="0" :aria-label="`Enable ${country.name}`" :aria-checked="country.status === 'active'" @keydown.space.stop.prevent="toggleCountry(country)" @keydown.enter.stop.prevent="toggleCountry(country)"
             @click.stop="toggleCountry(country)"
             :title="country.status === 'active' ? 'Disable country' : 'Enable country'"
           >
@@ -445,14 +447,14 @@ function cityCountLabel(country) {
           <div class="iso-badge">{{ country.iso_code }}</div>
 
           <!-- Name -->
-          <div class="country-name">{{ country.name }}</div>
+          <div class="country-name">{{ country.name }}<small>{{ country.status === 'active' ? 'Enabled' : 'Disabled' }}</small></div>
 
           <!-- Meta -->
           <div class="country-meta">
             <span v-if="country.currency_code" class="meta-pill">{{ country.currency_code }}</span>
             <span class="meta-pill city-count">
               <MapPin :size="10" />
-              {{ cityCountLabel(country) }}
+              {{ cityCountLabel(country) }} cities
             </span>
           </div>
 
@@ -613,7 +615,7 @@ function cityCountLabel(country) {
     <!-- ── Loyalty program editor (per country) ─────────────────────────── -->
     <Teleport to="body">
       <div v-if="loyaltyCountry" class="ly-backdrop" @click.self="closeLoyalty">
-        <div class="ly-modal">
+        <div class="ly-modal" v-dialog>
           <div class="ly-head">
             <div>
               <div class="ly-title"><Award :size="17" />Loyalty Program — {{ loyaltyCountry.name }}</div>
@@ -625,7 +627,7 @@ function cityCountLabel(country) {
                 <ToggleLeft v-else :size="22" class="toggle-off" />
                 <span>{{ lForm.is_active ? 'Active' : 'Inactive' }}</span>
               </button>
-              <button class="ly-x" @click="closeLoyalty"><X :size="18" /></button>
+              <button class="ly-x" @click="closeLoyalty" aria-label="Close"><X :size="18" /></button>
             </div>
           </div>
 
@@ -758,11 +760,11 @@ function cityCountLabel(country) {
   display: flex; align-items: center; gap: 12px; padding: 12px 16px;
   cursor: pointer; user-select: none;
 }
-.country-row:hover { background: #fafafa; }
+.country-row:hover { background: var(--surface-hover, #fafafa); }
 
 .iso-badge {
   font-size: 11px; font-weight: 700; padding: 3px 7px; border-radius: 5px;
-  background: #f1f5f9; color: #475569; letter-spacing: .04em; flex-shrink: 0;
+  background: var(--bg, #f1f5f9); color: var(--text-secondary, #475569); letter-spacing: .04em; flex-shrink: 0;
   min-width: 34px; text-align: center;
 }
 
@@ -774,7 +776,7 @@ function cityCountLabel(country) {
   background: var(--bg); color: var(--text-muted); border: 1px solid var(--border);
   display: inline-flex; align-items: center; gap: 4px;
 }
-.city-count { color: var(--primary); background: #f0fdf4; border-color: #bbf7d0; }
+.city-count { color: var(--primary-ink); background: var(--positive-bg, #f0fdf4); border-color: var(--positive-border, #bbf7d0); }
 
 .expand-btn {
   color: var(--text-muted); transition: transform 0.2s; flex-shrink: 0;
@@ -784,7 +786,7 @@ function cityCountLabel(country) {
 
 /* Cities panel */
 .cities-panel {
-  border-top: 1px solid var(--border); background: #fafafa; padding: 14px 18px 18px;
+  border-top: 1px solid var(--border); background: var(--surface-hover, #fafafa); padding: 14px 18px 18px;
 }
 .cities-panel-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -792,7 +794,7 @@ function cityCountLabel(country) {
   letter-spacing: .05em; margin-bottom: 12px;
 }
 .link-btn {
-  font-size: 12px; color: var(--primary); font-weight: 500; padding: 0;
+  font-size: 12px; color: var(--primary-ink); font-weight: 500; padding: 0;
   background: none; border: none; cursor: pointer; text-decoration: underline;
 }
 .link-btn.muted { color: var(--text-muted); }
@@ -815,7 +817,7 @@ function cityCountLabel(country) {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 10px; cursor: pointer;
 }
-.city-top:hover { background: #f0fdf4; }
+.city-top:hover { background: var(--positive-bg, #f0fdf4); }
 .city-name { flex: 1; }
 
 /* Service module pill row */
@@ -826,12 +828,12 @@ function cityCountLabel(country) {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 10px; font-weight: 600; padding: 2px 6px;
   border-radius: 4px; border: none; cursor: pointer;
-  background: #dcfce7; color: #15803d;
+  background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #15803d);
   transition: opacity 0.1s, background 0.15s;
   letter-spacing: 0.01em; line-height: 1.4;
 }
 .mod-pill.mod-off {
-  background: #fee2e2; color: #991b1b;
+  background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #991b1b);
   text-decoration: line-through; text-decoration-color: #ef4444;
 }
 .mod-pill:hover:not(:disabled) { opacity: 0.75; }
@@ -842,25 +844,25 @@ function cityCountLabel(country) {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 10px; font-weight: 600; padding: 2px 6px;
   border-radius: 4px; border: none; cursor: pointer;
-  background: #dcfce7; color: #15803d;
+  background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #15803d);
   transition: opacity 0.1s, background 0.15s;
   letter-spacing: 0.01em; line-height: 1.4;
 }
 .mod-pill.mod-off {
-  background: #fee2e2; color: #991b1b;
+  background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #991b1b);
   text-decoration: line-through; text-decoration-color: #ef4444;
 }
 .mod-pill:hover:not(:disabled) { opacity: 0.75; }
 .mod-pill:disabled { opacity: 0.4; cursor: wait; }
 
-.saved-flash { color: var(--primary); flex-shrink: 0; animation: fadeout 1.2s ease forwards; }
+.saved-flash { color: var(--primary-ink); flex-shrink: 0; animation: fadeout 1.2s ease forwards; }
 @keyframes fadeout { 0% { opacity:1 } 80% { opacity:1 } 100% { opacity:0 } }
 
 .no-cities { font-size: 13px; color: var(--text-muted); padding: 8px 0; }
 
 /* Commission rates section */
 .commission-section {
-  background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
   padding: 14px 16px; margin-bottom: 16px;
 }
 .commission-section-title {
@@ -887,7 +889,7 @@ function cityCountLabel(country) {
 .commission-status { display: flex; align-items: center; padding-bottom: 2px; }
 .cr-hint { font-size: 12px; color: var(--text-muted); }
 .cr-saving { font-size: 12px; color: var(--text-muted); font-style: italic; }
-.cr-saved { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--primary); font-weight: 600; }
+.cr-saved { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--primary-ink); font-weight: 600; }
 .commission-note { font-size: 12px; color: var(--text-muted); margin-top: 10px; line-height: 1.5; }
 
 .empty-state {
@@ -898,15 +900,15 @@ function cityCountLabel(country) {
 /* ── Loyalty section (in expanded country panel) ──────────────────────────── */
 .loyalty-section {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
   padding: 14px 16px; margin-bottom: 16px; flex-wrap: wrap;
 }
 .loyalty-left { min-width: 0; }
 .loyalty-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ly-status-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; }
-.ly-status-toggle.on { background: #dcfce7; color: #166534; }
+.ly-status-toggle.on { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #166534); }
 .ly-status-toggle.on:hover { background: #bbf7d0; }
-.ly-status-toggle.off { background: #f1f5f9; color: var(--text-muted, #64748b); }
+.ly-status-toggle.off { background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); }
 .ly-status-toggle.off:hover { background: var(--border, #e2e8f0); }
 .loyalty-sum-text { font-size: 13px; color: var(--text); }
 .loyalty-sum-text.muted { color: var(--text-muted); }
@@ -919,22 +921,22 @@ function cityCountLabel(country) {
 .ly-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; }
 .ly-head-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .ly-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; font-weight: 600; background: none; border: none; color: var(--text); }
-.toggle-on { color: #10b981; }
+.toggle-on { color: var(--positive-ink, #10b981); }
 .toggle-off { color: var(--text-light, #94a3b8); }
-.ly-x { width: 32px; height: 32px; border-radius: 8px; border: none; background: #f1f5f9; color: #475569; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.ly-x { width: 32px; height: 32px; border-radius: 8px; border: none; background: var(--bg, #f1f5f9); color: var(--text-secondary, #475569); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .ly-x:hover { background: var(--border, #e2e8f0); }
-.ly-x.danger { background: transparent; color: #dc2626; width: auto; height: auto; padding: 6px; }
-.ly-x.danger:hover { background: #fef2f2; }
+.ly-x.danger { background: transparent; color: var(--danger-ink, #dc2626); width: auto; height: auto; padding: 6px; }
+.ly-x.danger:hover { background: var(--danger-bg, #fef2f2); }
 .ly-body { padding: 18px 22px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
 .ly-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-.ly-card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 700; color: var(--text); background: #f8fafc; }
+.ly-card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 700; color: var(--text); background: var(--surface-hover, #f8fafc); }
 .ly-card-body { padding: 16px; }
 .ly-rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 @media (max-width: 640px) { .ly-rules-grid { grid-template-columns: 1fr; } }
 .ly-invalid { border-color: #ef4444 !important; }
-.ly-err { font-size: 12px; color: #dc2626; margin-top: 4px; }
+.ly-err { font-size: 12px; color: var(--danger-ink, #dc2626); margin-top: 4px; }
 .ly-hint { font-size: 11.5px; color: var(--text-light, #94a3b8); margin-top: 4px; line-height: 1.45; }
-.ly-empty-tiers { text-align: center; padding: 24px; color: var(--text-muted); font-size: 13px; background: #fafafa; border-radius: 8px; }
+.ly-empty-tiers { text-align: center; padding: 24px; color: var(--text-muted); font-size: 13px; background: var(--surface-hover, #fafafa); border-radius: 8px; }
 .ly-tier-row { display: flex; align-items: flex-start; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--border); }
 .ly-tier-row:last-child { border-bottom: none; }
 .ly-tier-preview { min-width: 88px; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 5px; justify-content: center; flex-shrink: 0; margin-top: 22px; }

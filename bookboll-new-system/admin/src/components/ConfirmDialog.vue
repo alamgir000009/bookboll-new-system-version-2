@@ -10,7 +10,7 @@ const open = computed(() => !!confirmState.value)
   <Teleport to="body">
     <Transition name="cd-fade">
       <div v-if="open" class="cd-backdrop" @click.self="resolveConfirm(false)">
-        <div class="cd-panel" role="alertdialog" aria-modal="true">
+        <div class="cd-panel" v-dialog="() => resolveConfirm(false)" role="alertdialog" aria-modal="true">
           <div class="cd-icon" :class="confirmState.danger ? 'cd-icon-danger' : 'cd-icon-neutral'">
             <TriangleAlert v-if="confirmState.danger" :size="22" />
             <HelpCircle v-else :size="22" />
@@ -51,16 +51,16 @@ const open = computed(() => !!confirmState.value)
   padding: 26px 24px 20px;
   width: 100%; max-width: 420px;
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
-  text-align: center;
+  text-align: start;
 }
 .cd-icon {
   width: 52px; height: 52px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  margin: 0 auto 14px;
+  margin: 0 0 16px;
 }
-.cd-icon-danger  { background: #fef2f2; color: #dc2626; }
-.cd-icon-neutral { background: #ecfeff; color: #0891b2; }
-.cd-title { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+.cd-icon-danger  { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #dc2626); }
+.cd-icon-neutral { background: var(--info-bg, #ecfeff); color: var(--info-ink, #0891b2); }
+.cd-title { font-size: 17px; font-weight: 700; color: var(--text, #0f172a); margin-bottom: 6px; }
 .cd-message { font-size: 13.5px; color: var(--text-muted, #64748b); line-height: 1.5; margin-bottom: 22px; }
 .cd-actions { display: flex; gap: 10px; }
 /* Three-choice variant: stacked, extra (primary) → confirm → cancel */
@@ -73,8 +73,8 @@ const open = computed(() => !!confirmState.value)
   font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid transparent;
   transition: all 0.15s;
 }
-.cd-cancel { background: var(--surface, #ffffff); border-color: var(--border, #e2e8f0); color: #334155; }
-.cd-cancel:hover { background: #f8fafc; }
+.cd-cancel { background: var(--surface, #ffffff); border-color: var(--border, #e2e8f0); color: var(--text-secondary, #334155); }
+.cd-cancel:hover { background: var(--surface-hover, #f8fafc); }
 .cd-confirm { background: #0f766e; color: #fff; }
 .cd-confirm:hover { background: #0d635c; }
 .cd-confirm-danger { background: #dc2626; color: #fff; }

@@ -1,10 +1,13 @@
 <script setup>
+import ExportDialog from '../components/ExportDialog.vue'
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { fetchExportPages } from '../lib/exportPages.js'
 import { fetchPaymentsDashboard } from '../lib/payments.js'
+import { isStripeOnlinePayment, stripeInvoiceUrl, stripeInvoiceTitle } from '../lib/stripeInvoice.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
-import { Search, Download, DollarSign, TrendingUp, Wallet, RotateCcw, Check, X, Building2, SlidersHorizontal, ChevronUp, ChevronDown, ArrowUpDown, Eye, Printer, ChevronRight, GraduationCap, CalendarDays, Loader } from 'lucide-vue-next'
+import { Search, Download, DollarSign, TrendingUp, Wallet, RotateCcw, Check, X, Building2, SlidersHorizontal, ChevronUp, ChevronDown, ArrowUpDown, Eye, Printer, ChevronRight, GraduationCap, CalendarDays, Loader, FileText } from 'lucide-vue-next'
 import MultiSelect from '../components/MultiSelect.vue'
 import FilterBar from '../components/FilterBar.vue'
 import { bookingKind } from '../lib/bookingMeta.js'
@@ -18,7 +21,7 @@ import { pushToast } from '../lib/toast.js'
 
 const router = useRouter()
 
-const { isSuperAdmin, can } = useCurrentUser()
+const { isSuperAdmin, isCountryAdmin, can } = useCurrentUser()
 const canExport = computed(() => can(CAP.EXPORT_PAYMENTS))
 const { isPremium, requirePremium } = usePremium()   // exports are a Premium feature for providers
 
@@ -34,7 +37,7 @@ const adminUsers = ref([])
 const subscriptions = ref([])
 const programs = ref([])
 const loading = ref(false)
-const serverStats = ref({ total: [], to_bookboll: [], to_provider: [], pending: 0 })
+const serverStats = ref({ total: [], to_bookboll: [], to_provider: [], pending: 0, pending_amount: [] })
 const filterOptionCurrencies = ref([])
 const filterOptionRecipients = ref([])
 
@@ -98,12 +101,8 @@ function csvParam(arr) {
   return arr.map(String).join(',')
 }
 
-let searchTimer
-async function load() {
-  loading.value = true
-  const res = await fetchPaymentsDashboard({
-    page: pmtPage.value,
-    records_per_page: pmtPerPage.value,
+function paymentQuery() {
+  return {
     search: search.value.trim() || undefined,
     status: csvParam(statusFilter.value),
     method: csvParam(methodFilter.value),
@@ -113,6 +112,7 @@ async function load() {
     currency: csvParam(currencyFilter.value),
     location_id: csvParam(locationFilter.value),
     listing_id: csvParam(listingFilter.value),
+    program_id: csvParam(programFilter.value),
     country_id: csvParam(filterCountry.value),
     city_id: csvParam(filterCity.value),
     amount_min: amountMin.value !== '' ? amountMin.value : undefined,
@@ -121,7 +121,13 @@ async function load() {
     to_date: dateTo.value || undefined,
     sort: sortKey.value,
     sort_dir: sortDir.value,
-  })
+  }
+}
+
+let searchTimer
+async function load() {
+  loading.value = true
+  const res = await fetchPaymentsDashboard({ ...paymentQuery(), page: pmtPage.value, records_per_page: pmtPerPage.value })
   loading.value = false
 
   if (!res.success) {
@@ -366,16 +372,29 @@ function clearAllFilters() {
 const paginatedPayments = computed(() => payments.value)
 
 // ── Export ────────────────────────────────────────────────────────────────────
+const exportBusy = ref(false)
 const showExportModal = ref(false)
-function doExport(useFilters) {
-  // Export current page rows for now; full export stays on the Premium/old path later.
-  const rows = payments.value
+async function doExport(useFilters) {
+  if (!canExport.value) return
+  if (!requirePremium('exports')) { showExportModal.value = false; return }
+  if (exportBusy.value) return
+  exportBusy.value = true
+  try {
+  const { rows, lookups } = await fetchExportPages(fetchPaymentsDashboard, useFilters ? paymentQuery() : {}, 'payments')
+  if (!rows.length) { pushToast('No payments to export.', 'info'); return }
+  const find = (key, id) => (lookups[key] || []).find(r => String(r.id) === String(id))
+  const booking = r => find('bookings', r.booking_id)
+  const subscription = r => find('subscriptions', r.subscription_id)
+  const program = r => find('programs', subscription(r)?.program_id)
+  const exportCustomer = r => r.customer_name || (r.source_type === 'subscription' ? subscription(r)?.customer_name : find('customers', booking(r)?.customer_id)?.full_name) || '—'
+  const exportSource = r => r.source_type === 'subscription' ? program(r)?.name || 'Subscription' : find('listings', booking(r)?.listing_id)?.name || r.listing_name || '—'
+  const exportVenue = r => find('locations', r.source_type === 'subscription' ? program(r)?.location_id : booking(r)?.location_id)?.name || r.location_name || '—'
   downloadCSV(rows, [
     { label: 'ID',         key: 'id' },
     { label: 'Date',       fn: r => (r.paid_at || r.created_at || '').slice(0,10) },
-    { label: 'Customer',   fn: r => paymentCustomer(r) },
-    { label: 'Source',     fn: r => paymentSource(r) },
-    { label: 'Location',   fn: r => paymentLocation(r) },
+    { label: 'Customer',   fn: r => exportCustomer(r) },
+    { label: 'Source',     fn: r => exportSource(r) },
+    { label: 'Venue',   fn: r => exportVenue(r) },
     { label: 'Type',       fn: r => typeLabel(r.payment_type) },
     { label: 'Recipient',  fn: r => isBookbollRecipient(r.recipient) ? 'Bookboll' : 'Provider' },
     { label: 'Method',     fn: r => methodLabel(r.method) },
@@ -384,6 +403,7 @@ function doExport(useFilters) {
     { label: 'Status',     fn: r => statusLabel(r.status) },
   ], 'payments')
   showExportModal.value = false
+  } catch (e) { pushToast(e.message, 'error') } finally { exportBusy.value = false }
 }
 
 const totals = computed(() => ({
@@ -391,6 +411,9 @@ const totals = computed(() => ({
   toBookboll: serverStats.value.to_bookboll || [],
   toProvider: serverStats.value.to_provider || [],
   pending:    serverStats.value.pending || 0,
+  // Per-currency pending/uncollected amounts when the API provides them; the
+  // count alone cannot be shown as money.
+  pendingAmount: Array.isArray(serverStats.value.pending_amount) ? serverStats.value.pending_amount : [],
 }))
 const kpiLines = (arr) => (arr && arr.length) ? arr : ['—']
 
@@ -466,14 +489,14 @@ function printReceipt(p) {
   if (!w) return
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${esc(paymentRef(p))}</title>
     <style>
-      *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:28px;}
+      *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text, #0f172a);margin:0;padding:28px;}
       .r-wrap{max-width:400px;margin:0 auto;}
       .r-top{text-align:center;border-bottom:2px solid #0f172a;padding-bottom:14px;margin-bottom:16px;}
       .r-biz{font-size:20px;font-weight:800;}
       .r-sub{font-size:12px;color:var(--text-muted, #64748b);margin-top:2px;}
       .r-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted, #64748b);margin:0 0 10px;}
       .r-amount{text-align:center;font-size:30px;font-weight:900;margin:6px 0 4px;}
-      .r-paid{text-align:center;display:inline-block;width:100%;color:#166534;font-weight:800;font-size:13px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:18px;}
+      .r-paid{text-align:center;display:inline-block;width:100%;color:var(--positive-ink, #166534);font-weight:800;font-size:13px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:18px;}
       table{width:100%;border-collapse:collapse;font-size:13.5px;}
       td{padding:7px 0;border-bottom:1px solid #eef2f6;vertical-align:top;}
       td.k{color:var(--text-muted, #64748b);width:42%;} td.v{text-align:right;font-weight:600;}
@@ -487,6 +510,13 @@ function printReceipt(p) {
       <div class="r-foot">This is a computer-generated receipt.<br>Thank you for your booking.</div>
     </div><script>window.onload=function(){window.print()}<\/script></body></html>`)
   w.document.close()
+}
+
+// ── Stripe invoice (online payments) — opens Stripe's hosted invoice/receipt,
+// which has its own print/download controls. Nothing is generated locally.
+function openStripeInvoice(p) {
+  const url = stripeInvoiceUrl(p)
+  if (url) window.open(url, '_blank', 'noopener')
 }
 
 // ── Mark-as-paid / Accept payment ────────────────────────────────────────────
@@ -514,32 +544,38 @@ function openMarkPaid(payment) {
 </script>
 
 <template>
+  <ExportDialog :open="showExportModal" title="Export payments" noun="payments" :filtered-count="pmtTotal" :busy="exportBusy" @close="showExportModal = false" @export="doExport" />
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">Payments</div>
+        <h1 class="page-title">Payments</h1>
         <div class="page-subtitle">{{ isSuperAdmin ? 'All financial transactions and reconciliation' : 'Your incoming payments and settlement status' }}</div>
       </div>
-      <button v-if="canExport" class="btn btn-secondary" @click="requirePremium('exports') && (showExportModal = true)"><Download :size="16" />Export<span v-if="!isPremium" class="prem-lock">Premium</span></button>
+      <button v-if="canExport" class="btn btn-secondary" @click="showExportModal = true"><Download :size="16" />Export<span v-if="!isPremium" class="prem-lock">Premium</span></button>
     </div>
 
     <!-- KPI cards -->
     <div class="grid grid-4">
       <div class="card kpi">
-        <div class="kpi-top"><div class="kpi-label">Total Collected</div><div class="kpi-icon" style="background:#d1fae5;color:#065f46"><DollarSign :size="18" /></div></div>
+        <div class="kpi-top"><div class="kpi-label">GMV amount</div><div class="kpi-icon" style="background: var(--positive-bg);color: var(--positive-ink)"><DollarSign :size="18" /></div></div>
         <div class="kpi-value kpi-multi"><div v-for="l in kpiLines(totals.total)" :key="l">{{ l }}</div></div>
+        <div class="fin-help">Gross value of all recorded payments.</div>
       </div>
       <div v-if="isSuperAdmin" class="card kpi">
-        <div class="kpi-top"><div class="kpi-label">Bookboll Revenue</div><div class="kpi-icon" style="background:#ccfbf1;color:#0f766e"><TrendingUp :size="18" /></div></div>
+        <div class="kpi-top"><div class="kpi-label">Bookboll’s amount</div><div class="kpi-icon" style="background: var(--primary-soft);color: var(--primary-ink)"><TrendingUp :size="18" /></div></div>
         <div class="kpi-value kpi-multi"><div v-for="l in kpiLines(totals.toBookboll)" :key="l">{{ l }}</div></div>
+        <div class="fin-help">Platform fees and operated-venue receipts recorded for Bookboll.</div>
       </div>
       <div class="card kpi">
-        <div class="kpi-top"><div class="kpi-label">{{ isSuperAdmin ? 'Provider Revenue' : 'Your Revenue' }}</div><div class="kpi-icon" style="background:#dbeafe;color:#1e40af"><Wallet :size="18" /></div></div>
+        <div class="kpi-top"><div class="kpi-label">{{ isSuperAdmin ? 'Provider’s amount' : 'Your amount' }}</div><div class="kpi-icon" style="background: var(--info-bg);color: var(--info-ink)"><Wallet :size="18" /></div></div>
         <div class="kpi-value kpi-multi"><div v-for="l in kpiLines(totals.toProvider)" :key="l">{{ l }}</div></div>
+        <div v-if="isSuperAdmin" class="fin-help">Recorded for providers · legacy recipient labels, not a Bookboll payable.</div>
       </div>
       <div class="card kpi">
-        <div class="kpi-top"><div class="kpi-label">Pending Payments</div><div class="kpi-icon" style="background:#fef3c7;color:#92400e"><RotateCcw :size="18" /></div></div>
-        <div class="kpi-value">{{ totals.pending }}</div>
+        <div class="kpi-top"><div class="kpi-label">Pending / uncollected amount</div><div class="kpi-icon" style="background: var(--warning-bg);color: var(--warning-ink)"><RotateCcw :size="18" /></div></div>
+        <div v-if="totals.pendingAmount.length" class="kpi-value kpi-multi"><div v-for="l in totals.pendingAmount" :key="l">{{ l }}</div></div>
+        <div v-else class="kpi-value">—</div>
+        <div class="fin-help">{{ totals.pending.toLocaleString() }} pending payments{{ totals.pendingAmount.length ? '' : ' · amount not provided by the API yet' }}</div>
       </div>
     </div>
 
@@ -666,17 +702,17 @@ function openMarkPaid(payment) {
           <div class="filter-group">
             <label class="filter-label">Amount Range</label>
             <div class="range-pair">
-              <input v-model="amountMin" type="number" placeholder="Min" class="range-input" />
+              <input aria-label="Minimum amount" v-model="amountMin" type="number" placeholder="Min" class="range-input" />
               <span class="range-sep">—</span>
-              <input v-model="amountMax" type="number" placeholder="Max" class="range-input" />
+              <input aria-label="Maximum amount" v-model="amountMax" type="number" placeholder="Max" class="range-input" />
             </div>
           </div>
           <div class="filter-group">
             <label class="filter-label">Date Range</label>
             <div class="range-pair">
-              <input v-model="dateFrom" type="date" class="range-input date-input" />
+              <input aria-label="Payment start date" v-model="dateFrom" type="date" class="range-input date-input" />
               <span class="range-sep">—</span>
-              <input v-model="dateTo" type="date" class="range-input date-input" />
+              <input aria-label="Payment end date" v-model="dateTo" type="date" class="range-input date-input" />
             </div>
           </div>
           <div class="filter-group sort-group">
@@ -799,6 +835,7 @@ function openMarkPaid(payment) {
                 <div class="row-actions">
                   <button class="btn-icon" title="View transaction details" @click="openDetail(p)"><Eye :size="16" /></button>
                   <button v-if="p.status === 'paid'" class="btn-icon" title="Print receipt" @click="printReceipt(p)"><Printer :size="16" /></button>
+                  <button v-if="isStripeOnlinePayment(p)" class="btn-icon" :class="{ 'is-disabled': !stripeInvoiceUrl(p) }" :disabled="!stripeInvoiceUrl(p)" :title="stripeInvoiceTitle(p)" :aria-label="stripeInvoiceTitle(p)" @click="openStripeInvoice(p)"><FileText :size="16" /></button>
                   <button v-if="canMarkPaid(p)" class="btn btn-primary btn-sm act-accept" title="Accept payment" @click="openMarkPaid(p)"><Check :size="13" />Accept</button>
                 </div>
               </td>
@@ -816,7 +853,7 @@ function openMarkPaid(payment) {
 
     <!-- ── Payment detail drawer ─────────────────────────────────────────── -->
     <div v-if="detailPayment" class="drawer-backdrop" @click.self="closeDetail">
-      <div class="pay-drawer">
+      <div class="pay-drawer" v-dialog="closeDetail" aria-label="Payment details">
         <div class="pd-head">
           <div class="pd-head-main">
             <div class="pd-ref mono">{{ paymentRef(detailPayment) }}</div>
@@ -826,7 +863,7 @@ function openMarkPaid(payment) {
               <span class="badge" :class="statusBadge(detailPayment.status)">{{ statusLabel(detailPayment.status) }}</span>
             </div>
           </div>
-          <button class="btn-icon" @click="closeDetail"><X :size="18"/></button>
+          <button class="btn-icon" @click="closeDetail" aria-label="Close"><X :size="18"/></button>
         </div>
 
         <div class="pd-body">
@@ -883,6 +920,7 @@ function openMarkPaid(payment) {
 
         <div class="pd-foot">
           <button v-if="detailPayment.status === 'paid'" class="btn btn-secondary" @click="printReceipt(detailPayment)"><Printer :size="15"/>Print receipt</button>
+          <button v-if="isStripeOnlinePayment(detailPayment)" class="btn btn-secondary" :disabled="!stripeInvoiceUrl(detailPayment)" :title="stripeInvoiceTitle(detailPayment)" @click="openStripeInvoice(detailPayment)"><FileText :size="15"/>Stripe invoice</button>
           <button v-if="canMarkPaid(detailPayment)" class="btn btn-primary" @click="openMarkPaid(detailPayment)"><Check :size="15"/>Accept payment</button>
           <button class="btn btn-secondary" @click="closeDetail">Close</button>
         </div>
@@ -894,25 +932,7 @@ function openMarkPaid(payment) {
       @close="bookingModalId = null; collectPmtId = null; load()" />
 
     <!-- ── Export modal ──────────────────────────────────────────────────── -->
-    <div v-if="showExportModal" class="modal-backdrop" @click.self="showExportModal=false">
-      <div class="modal" style="max-width:400px">
-        <div class="modal-header">
-          <div class="modal-title">Export Payments</div>
-          <button class="btn-icon" @click="showExportModal=false"><X :size="18"/></button>
-        </div>
-        <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
-          <button class="export-choice-btn" @click="doExport(true)">
-            <Download :size="16"/>
-            <div><strong>Export with filters</strong><br><span>{{ pmtTotal }} payments</span></div>
-          </button>
-          <button class="export-choice-btn" @click="doExport(false)">
-            <Download :size="16"/>
-            <div><strong>Export current page</strong><br><span>{{ payments.length }} payments</span></div>
-          </button>
-        </div>
-        <div class="modal-footer"><button class="btn btn-secondary" @click="showExportModal=false">Cancel</button></div>
-      </div>
-    </div>
+
   </div>
 </template>
 
@@ -921,8 +941,8 @@ function openMarkPaid(payment) {
 @keyframes spin { to { transform: rotate(360deg); } }
 /* ── Export modal ─────────────────────────────────────────────────────────── */
 .export-choice-btn { display:flex;align-items:center;gap:14px;padding:13px 16px;background:var(--bg);border:1.5px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;width:100%;transition:all .15s; }
-.export-choice-btn:hover { border-color:var(--primary);background:#f0f9ff; }
-.export-choice-btn svg { color:var(--primary);flex-shrink:0; }
+.export-choice-btn:hover { border-color:var(--primary);background:var(--info-bg, #f0f9ff); }
+.export-choice-btn svg { color:var(--primary-ink);flex-shrink:0; }
 .export-choice-btn strong { font-size:13.5px;color:var(--text); }
 .export-choice-btn span { font-size:12px;color:var(--text-muted); }
 
@@ -944,7 +964,7 @@ function openMarkPaid(payment) {
 .btn-clear-all {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500;
-  background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; cursor: pointer;
+  background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #991b1b); border: 1px solid var(--danger-border, #fca5a5); cursor: pointer;
   transition: background .15s;
 }
 .btn-clear-all:hover { background: #fecaca; }
@@ -989,7 +1009,7 @@ function openMarkPaid(payment) {
   background: var(--bg); border: 1px solid var(--border);
   color: var(--text-muted); cursor: pointer; transition: all .15s;
 }
-.sort-pill:hover { border-color: var(--primary); color: var(--primary); }
+.sort-pill:hover { border-color: var(--primary); color: var(--primary-ink); }
 .sort-pill.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .sort-idle { opacity: .4; }
 
@@ -999,7 +1019,7 @@ function openMarkPaid(payment) {
 
 /* ── Table ────────────────────────────────────────────────────────────────── */
 .th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
-.th-sort:hover { color: var(--primary); }
+.th-sort:hover { color: var(--primary-ink); }
 .th-sort-icon { margin-left: 3px; vertical-align: middle; color: var(--text-muted); }
 .th-sort-icon.idle { opacity: .35; }
 
@@ -1013,10 +1033,10 @@ function openMarkPaid(payment) {
   padding: 1px 6px; border-radius: 99px;
   font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
 }
-.source-chip.sub { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
-.source-chip.booking { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.source-chip.sub { background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #065f46); border: 1px solid var(--positive-border, #a7f3d0); }
+.source-chip.booking { background: var(--info-bg, #eff6ff); color: var(--info-ink, #1e40af); border: 1px solid var(--info-border, #bfdbfe); }
 
-.row-sub td { background: #f9fffe; }
+.row-sub td { background: var(--primary-soft); }
 
 .method-chip {
   display: inline-flex; align-items: center;
@@ -1024,11 +1044,11 @@ function openMarkPaid(payment) {
   font-size: 12px; font-weight: 500;
   background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
 }
-.method-chip.online { background: #ccfbf1; color: #0f766e; border-color: #99f6e4; }
-.method-chip.cash   { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
-.method-chip.card   { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
-.method-chip.cheque { background: #fefce8; color: #854d0e; border-color: #fde68a; }
-.method-chip.wire_transfer { background: #fdf4ff; color: #7e22ce; border-color: #e9d5ff; }
+.method-chip.online { background: var(--primary-soft, #ccfbf1); color: var(--primary-ink, #0f766e); border-color: var(--primary-border, #99f6e4); }
+.method-chip.cash   { background: var(--positive-bg, #f0fdf4); color: var(--positive-ink, #166534); border-color: var(--positive-border, #bbf7d0); }
+.method-chip.card   { background: var(--info-bg, #eff6ff); color: var(--info-ink, #1d4ed8); border-color: var(--info-border, #bfdbfe); }
+.method-chip.cheque { background: var(--warning-bg, #fefce8); color: var(--warning-ink, #854d0e); border-color: var(--warning-border, #fde68a); }
+.method-chip.wire_transfer { background: var(--purple-bg, #fdf4ff); color: var(--purple-ink, #7e22ce); border-color: var(--purple-border, #e9d5ff); }
 
 .confirm-summary { background: var(--bg); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .confirm-row { display: flex; justify-content: space-between; font-size: 14px; }
@@ -1036,11 +1056,12 @@ function openMarkPaid(payment) {
 
 .btn-icon { padding: 6px; border-radius: 6px; color: var(--text-muted); background: transparent; border: 0; cursor: pointer; }
 .btn-icon:hover { background: var(--bg); color: var(--text); }
+.btn-icon:disabled, .btn-icon.is-disabled { opacity: .4; cursor: not-allowed; background: transparent; }
 
 /* Clickable rows → open detail drawer */
 .pay-row { cursor: pointer; transition: background .1s; }
-.pay-row:hover td { background: #f1f5f9; }
-.row-sub.pay-row:hover td { background: #eefcf8; }
+.pay-row:hover td { background: var(--bg, #f1f5f9); }
+.row-sub.pay-row:hover td { background: var(--surface-hover); }
 
 /* ── Payment detail drawer ──────────────────────────────────────────────────── */
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; justify-content: flex-end; z-index: 60; }
@@ -1059,13 +1080,13 @@ function openMarkPaid(payment) {
 .pd-field b { font-size: 13.5px; color: var(--text); font-weight: 600; word-break: break-word; }
 .pd-ledger { display: flex; flex-direction: column; gap: 6px; }
 .pd-ledger-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; }
-.pd-ledger-row.current { border-color: var(--primary); background: #f0f9ff; }
+.pd-ledger-row.current { border-color: var(--primary); background: var(--info-bg, #f0f9ff); }
 .pd-ledger-amt { font-weight: 700; color: var(--text); }
 .pd-ledger-date { color: var(--text-muted); font-size: 12px; }
-.pd-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); background: #f9fafb; flex-wrap: wrap; }
+.pd-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); background: var(--surface-hover, #f9fafb); flex-wrap: wrap; }
 /* "Go deeper" link inside a drawer section */
-.pd-deeper { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; width: 100%; justify-content: center; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface, #ffffff); font-size: 13px; font-weight: 700; color: var(--primary); cursor: pointer; transition: border-color .12s, background .12s; }
-.pd-deeper:hover { border-color: var(--primary); background: #f0f9ff; }
+.pd-deeper { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; width: 100%; justify-content: center; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: 10px; background: var(--surface, #ffffff); font-size: 13px; font-weight: 700; color: var(--primary-ink); cursor: pointer; transition: border-color .12s, background .12s; }
+.pd-deeper:hover { border-color: var(--primary); background: var(--info-bg, #f0f9ff); }
 .pd-deeper > svg:last-child { color: var(--text-light, #94a3b8); }
 /* Row action icons */
 .actions-cell { white-space: nowrap; }

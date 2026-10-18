@@ -170,7 +170,7 @@ onMounted(load)
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">Audit Logs</div>
+        <h1 class="page-title">Audit Logs</h1>
         <div class="page-subtitle">Complete record of admin actions for accountability</div>
       </div>
       <button class="btn btn-secondary" :disabled="exporting" @click="exportLogs">

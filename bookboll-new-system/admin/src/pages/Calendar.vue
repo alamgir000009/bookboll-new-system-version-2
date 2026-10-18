@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import AdminAppDownloadButton from '../components/AdminAppDownloadButton.vue'
 import { ChevronLeft, ChevronRight, Plus, CalendarDays, MapPin, X, Users, Mail, Phone, Clock, GraduationCap, GripVertical, Lock } from 'lucide-vue-next'
 import { useCurrentUser, activeUserId } from '../lib/currentUser.js'
 import { CAP } from '../lib/permissions.js'
@@ -13,13 +14,9 @@ import { CalendarX, CalendarClock } from 'lucide-vue-next'
 import { createTouchReorder } from '../lib/touchReorder.js'
 import { generateProgramSessions, windDownMap } from '../lib/programSessions.js'
 import { pushToast } from '../lib/toast.js'
+import { localCalendarDate as ymd } from '../lib/calendarDate.js'
 
 const { isProviderScoped, currentOwnerUserId, can, scopeLocations, scopePrograms } = useCurrentUser()
-
-// Local "YYYY-MM-DD" (NOT toISOString, which shifts the date in non-UTC timezones).
-function ymd(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
 
 const bookings  = ref([])
 const listings  = ref([])
@@ -614,10 +611,13 @@ function hasPendingPayment(bk) {
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">Calendar</div>
+        <h1 class="page-title">Calendar</h1>
         <div class="page-subtitle">Booking schedule by location &amp; listing</div>
       </div>
-      <button v-if="canBook" class="btn btn-primary" @click="openQuickBooking"><Plus :size="16" />Quick Booking</button>
+      <div class="cal-head-actions">
+        <AdminAppDownloadButton />
+        <button v-if="canBook" class="btn btn-primary" @click="openQuickBooking"><Plus :size="16" />Quick Booking</button>
+      </div>
     </div>
 
     <div class="card cal-card">
@@ -625,28 +625,28 @@ function hasPendingPayment(bk) {
       <div class="cal-toolbar">
         <div class="date-nav">
           <template v-if="view === 'day'">
-            <button class="btn-icon" @click="shift(-1)"><ChevronLeft :size="18" /></button>
+            <button class="btn-icon" aria-label="Previous day" @click="shift(-1)"><ChevronLeft :size="18" /></button>
             <label class="date-label date-picker" title="Jump to a date">
               <CalendarDays :size="15" />{{ formattedDate }}
               <input type="date" v-model="selectedDate" class="date-picker-input" />
             </label>
-            <button class="btn-icon" @click="shift(1)"><ChevronRight :size="18" /></button>
+            <button class="btn-icon" aria-label="Next day" @click="shift(1)"><ChevronRight :size="18" /></button>
           </template>
           <template v-else-if="view === 'week'">
-            <button class="btn-icon" @click="shiftWeek(-1)"><ChevronLeft :size="18" /></button>
+            <button class="btn-icon" aria-label="Previous week" @click="shiftWeek(-1)"><ChevronLeft :size="18" /></button>
             <label class="date-label date-picker" title="Jump to a date">
               <CalendarDays :size="15" />{{ weekLabel }}
               <input type="date" v-model="selectedDate" class="date-picker-input" />
             </label>
-            <button class="btn-icon" @click="shiftWeek(1)"><ChevronRight :size="18" /></button>
+            <button class="btn-icon" aria-label="Next week" @click="shiftWeek(1)"><ChevronRight :size="18" /></button>
           </template>
           <template v-else>
-            <button class="btn-icon" @click="shiftMonth(-1)"><ChevronLeft :size="18" /></button>
+            <button class="btn-icon" aria-label="Previous month" @click="shiftMonth(-1)"><ChevronLeft :size="18" /></button>
             <label class="date-label date-picker" title="Jump to a date">
               <CalendarDays :size="15" />{{ monthLabel }}
               <input type="date" v-model="selectedDate" class="date-picker-input" />
             </label>
-            <button class="btn-icon" @click="shiftMonth(1)"><ChevronRight :size="18" /></button>
+            <button class="btn-icon" aria-label="Next month" @click="shiftMonth(1)"><ChevronRight :size="18" /></button>
           </template>
         </div>
         <div class="cal-controls" style="display:flex;gap:10px;align-items:center;">
@@ -853,10 +853,10 @@ function hasPendingPayment(bk) {
 
       <!-- crowded-slot chooser: the "N bookings" block lists its bookings here -->
       <div v-if="groupSheet" class="cal-group-back" @click.self="groupSheet = null">
-        <div class="cal-group-sheet">
+        <div class="cal-group-sheet" v-dialog="() => groupSheet = null" :aria-label="groupSheet.label">
           <div class="cal-group-head">
             <b>{{ groupSheet.label }}</b>
-            <button class="cal-group-x" @click="groupSheet = null"><X :size="18" /></button>
+            <button class="cal-group-x" @click="groupSheet = null" aria-label="Close"><X :size="18" /></button>
           </div>
           <div class="cal-group-list">
             <button v-for="bk in groupSheet.items" :key="bk.id" type="button" class="cal-group-row" @click="pickFromGroup(bk)">
@@ -891,7 +891,7 @@ function hasPendingPayment(bk) {
       <!-- Program session → subscribers/attendees -->
       <Teleport to="body">
         <div v-if="sessionModal" class="sess-backdrop" @click.self="closeSession">
-          <div class="sess-panel">
+          <div class="sess-panel" v-dialog>
             <div class="sess-header">
               <div>
                 <div class="sess-title"><GraduationCap :size="16" />{{ sessionModal.program?.name || sessionModal.bk.notes || 'Program Session' }}</div>
@@ -900,7 +900,7 @@ function hasPendingPayment(bk) {
                   · {{ new Date(sessionModal.bk.booking_date + 'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) }}
                 </div>
               </div>
-              <button class="sess-close" @click="closeSession"><X :size="18" /></button>
+              <button class="sess-close" @click="closeSession" aria-label="Close"><X :size="18" /></button>
             </div>
             <div class="sess-body">
               <div v-if="sessionModal.loading" class="sess-empty">Loading attendees…</div>
@@ -957,6 +957,8 @@ function hasPendingPayment(bk) {
 </template>
 
 <style scoped>
+.cal-head-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 600px) { .cal-head-actions { width: 100%; }.cal-head-actions :deep(.btn) { flex: 1 1 auto; justify-content: center; } }
 /* ── Shared ───────────────────────────────────────────────────────────────── */
 .cal-card { padding: 0; overflow: hidden; }
 
@@ -999,7 +1001,7 @@ function hasPendingPayment(bk) {
 /* Granularity toggle (day view) */
 .gran-toggle { display: flex; background: var(--bg); border-radius: 8px; padding: 3px; border: 1px solid var(--border); }
 .gran-toggle button { padding: 6px 11px; border-radius: 6px; font-size: 12.5px; font-weight: 500; color: var(--text-muted); }
-.gran-toggle button.active { background: var(--surface, #ffffff); color: var(--primary); box-shadow: var(--shadow-sm); }
+.gran-toggle button.active { background: var(--surface, #ffffff); color: var(--primary-ink); box-shadow: var(--shadow-sm); }
 
 /* Toolbar controls wrap on phones instead of overflowing off-screen. */
 @media (max-width: 600px) {
@@ -1030,7 +1032,7 @@ function hasPendingPayment(bk) {
   font-weight: 700; font-size: 13px;
   display: flex; align-items: center; gap: 5px;
 }
-.th-pin { color: var(--primary); flex-shrink: 0; }
+.th-pin { color: var(--primary-ink); flex-shrink: 0; }
 .th-listings { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .th-lst { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); }
 .th-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
@@ -1055,7 +1057,7 @@ function hasPendingPayment(bk) {
   border-bottom: 1px solid var(--border);
   transition: background 0.1s;
 }
-.cal-td-slot:hover { background: #f8fafc; }
+.cal-td-slot:hover { background: var(--surface-hover, #f8fafc); }
 /* Finer granularity → shorter rows so the day fits comfortably */
 .cal-table.gran-30 .cal-td-slot,
 .cal-table.gran-30 .cal-td-gutter { height: 46px; }
@@ -1081,7 +1083,7 @@ function hasPendingPayment(bk) {
   overflow-x: auto;
 }
 .slot-chips::-webkit-scrollbar { height: 3px; }
-.slot-chips::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 2px; }
+.slot-chips::-webkit-scrollbar-thumb { background: var(--border, #e5e7eb); border-radius: 2px; }
 
 /* Booking chip: white card with colored left accent */
 .bk-chip {
@@ -1093,7 +1095,7 @@ function hasPendingPayment(bk) {
   overflow: hidden;
   cursor: pointer;
   background: var(--surface, #ffffff);
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border, #e5e7eb);
   transition: box-shadow 0.12s;
   position: relative;
 }
@@ -1161,11 +1163,11 @@ function hasPendingPayment(bk) {
   cursor: grab; user-select: none;
 }
 .day-col-head:active { cursor: grabbing; }
-.col-grip { color: #cbd5e1; flex-shrink: 0; }
+.col-grip { color: var(--text-light, #cbd5e1); flex-shrink: 0; }
 .col-grip-tap { display: inline-flex; align-items: center; padding: 6px 4px; margin: -6px -2px; touch-action: none; }
 .day-col-head:hover .col-grip { color: var(--text-light, #94a3b8); }
 .day-col.col-dragging { opacity: .5; }
-.day-col.col-dragover .day-col-head { box-shadow: inset 3px 0 0 var(--primary); background: #eef2ff; }
+.day-col.col-dragover .day-col-head { box-shadow: inset 3px 0 0 var(--primary); background: var(--info-bg, #eef2ff); }
 .day-col-body { position: relative; }
 .day-col-body.is-bookable { cursor: copy; }
 
@@ -1174,8 +1176,8 @@ function hasPendingPayment(bk) {
   position: absolute; left: 2px; right: 2px; z-index: 2;
   display: flex; flex-direction: column; justify-content: center; gap: 2px;
   padding: 4px 10px; border-radius: 8px; cursor: pointer; overflow: hidden;
-  background: repeating-linear-gradient(45deg, #eef2ff, #eef2ff 8px, #e0e7ff 8px, #e0e7ff 16px);
-  border: 1.5px solid #a5b4fc; color: #3730a3; text-align: left;
+  background: repeating-linear-gradient(45deg, var(--info-bg, #eef2ff), var(--info-bg, #eef2ff) 8px, #e0e7ff 8px, #e0e7ff 16px);
+  border: 1.5px solid #a5b4fc; color: var(--purple-ink, #3730a3); text-align: left;
 }
 .day-event-group:hover { border-color: #6366f1; }
 .deg-count { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 800; }
@@ -1194,7 +1196,7 @@ function hasPendingPayment(bk) {
 .cgr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .cgr-name { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cgr-sub { font-size: 12px; color: var(--text-muted); }
-.cgr-pay { font-size: 11px; font-weight: 700; color: #b45309; background: #fef3c7; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.cgr-pay { font-size: 11px; font-weight: 700; color: var(--warning-ink, #b45309); background: var(--warning-bg, #fef3c7); padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
 @media (max-width: 640px) {
   /* Phone: chooser becomes a bottom sheet */
   .cal-group-back { align-items: flex-end; padding: 0; }
@@ -1209,19 +1211,19 @@ function hasPendingPayment(bk) {
 .day-sd-chip {
   position: absolute; top: 0; left: 0; right: 0;
   display: flex; align-items: center; gap: 5px; padding: 4px 10px;
-  font-size: 11px; font-weight: 700; color: #4338ca; background: #eef2ff;
-  border-bottom: 1px solid #c7d2fe;
+  font-size: 11px; font-weight: 700; color: var(--purple-ink, #4338ca); background: var(--info-bg, #eef2ff);
+  border-bottom: 1px solid var(--purple-border, #c7d2fe);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.day-sd-chip.closed { color: #b91c1c; background: #fef2f2; border-bottom-color: #fecaca; }
+.day-sd-chip.closed { color: var(--danger-ink, #b91c1c); background: var(--danger-bg, #fef2f2); border-bottom-color: var(--danger-border, #fecaca); }
 
 /* Month-view special-day marker */
 .month-sd {
   display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
   padding: 1px 5px; margin-top: 2px; border-radius: 5px;
-  font-size: 10px; font-weight: 700; color: #4338ca; background: #eef2ff;
+  font-size: 10px; font-weight: 700; color: var(--purple-ink, #4338ca); background: var(--info-bg, #eef2ff);
 }
-.month-sd.closed { color: #b91c1c; background: #fef2f2; }
+.month-sd.closed { color: var(--danger-ink, #b91c1c); background: var(--danger-bg, #fef2f2); }
 .month-sd-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Only the hovered slot lights up (see .day-hover-band), not the whole column. */
 
@@ -1250,7 +1252,7 @@ function hasPendingPayment(bk) {
 .sess-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 18px 20px 14px; border-bottom: 1px solid var(--border); }
 .sess-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
 .sess-sub { font-size: 12.5px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; margin-top: 4px; }
-.sess-close { width: 32px; height: 32px; border-radius: 8px; border: none; background: #f1f5f9; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-muted, #64748b); }
+.sess-close { width: 32px; height: 32px; border-radius: 8px; border: none; background: var(--bg, #f1f5f9); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-muted, #64748b); }
 .sess-close:hover { background: var(--border, #e2e8f0); }
 .sess-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .sess-count { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); margin-bottom: 14px; }
@@ -1263,14 +1265,14 @@ function hasPendingPayment(bk) {
 .sess-contact { font-size: 11.5px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
 .sess-contact span { display: inline-flex; align-items: center; gap: 3px; }
 .sess-badge { font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 99px; }
-.sess-link { display: inline-block; margin-top: 14px; font-size: 13px; font-weight: 600; color: var(--primary); }
-.sess-cancel-btn { display: flex; align-items: center; gap: 6px; margin-top: 12px; padding: 8px 12px; width: 100%; justify-content: center; border: 1px solid #fecaca; background: #fef2f2; color: #dc2626; border-radius: 9px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .12s; }
-.sess-cancel-btn:hover { background: #fee2e2; }
+.sess-link { display: inline-block; margin-top: 14px; font-size: 13px; font-weight: 600; color: var(--primary-ink); }
+.sess-cancel-btn { display: flex; align-items: center; gap: 6px; margin-top: 12px; padding: 8px 12px; width: 100%; justify-content: center; border: 1px solid var(--danger-border, #fecaca); background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #dc2626); border-radius: 9px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .12s; }
+.sess-cancel-btn:hover { background: var(--danger-bg, #fee2e2); }
 
 /* Gridlines */
 .day-gridline {
   position: absolute; left: 0; right: 0; height: 0;
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid var(--border, #f1f5f9);
 }
 .day-gridline.is-hour { border-top-color: var(--border); }
 
@@ -1315,7 +1317,7 @@ function hasPendingPayment(bk) {
   border-bottom: 2px solid var(--border); border-right: 1px solid var(--border);
   text-align: center; min-width: 110px;
 }
-.week-th-day.today { background: #f0fdf4; }
+.week-th-day.today { background: var(--positive-bg, #f0fdf4); }
 .week-day-name { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
 .week-day-num {
   font-size: 18px; font-weight: 700; color: var(--text);
@@ -1335,7 +1337,7 @@ function hasPendingPayment(bk) {
   border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
   vertical-align: top; min-height: 64px;
 }
-.week-td-day.today { background: #fafff7; }
+.week-td-day.today { background: var(--primary-soft); }
 
 .week-chip {
   display: flex; align-items: stretch; position: relative;
@@ -1367,9 +1369,9 @@ function hasPendingPayment(bk) {
   border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
   transition: background 0.1s;
 }
-.month-cell:hover { background: #f8fafc; }
-.month-cell.other-month { background: #fafafa; }
-.month-cell.today { background: #f0fdf4; }
+.month-cell:hover { background: var(--surface-hover, #f8fafc); }
+.month-cell.other-month { background: var(--surface-hover, #fafafa); }
+.month-cell.today { background: var(--positive-bg, #f0fdf4); }
 .month-day-num { font-size: 13px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
 .month-cell.today .month-day-num {
   width: 24px; height: 24px; background: var(--primary); color: #fff;
@@ -1381,11 +1383,11 @@ function hasPendingPayment(bk) {
   display: flex; align-items: center; gap: 4px;
   border-radius: 3px; padding: 1px 5px;
   font-size: 11px; font-weight: 500; color: var(--text);
-  background: #f3f4f6;
+  background: var(--bg, #f3f4f6);
   overflow: hidden;
   cursor: pointer;
 }
-.month-event:hover { background: #e5e7eb; }
+.month-event:hover { background: var(--border, #e5e7eb); }
 .me-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c); flex-shrink: 0; }
 .me-prog-icon { color: var(--c); flex-shrink: 0; }
 .ev-prog-icon { vertical-align: -2px; margin-right: 3px; opacity: .92; }

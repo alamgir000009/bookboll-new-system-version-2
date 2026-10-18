@@ -102,7 +102,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDoc))
   width: 28px; height: 28px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
   background: var(--surface, #ffffff); color: var(--text-muted, #64748b); cursor: pointer;
 }
-.cfx-btn:hover, .cfx-btn.on { border-color: var(--primary, #0f766e); color: var(--primary, #0f766e); }
+.cfx-btn:hover, .cfx-btn.on { border-color: var(--primary, #0f766e); color: var(--primary-ink, #0f766e); }
 .cfx-dot { position: absolute; top: -3px; right: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--primary, #0f766e); border: 2px solid var(--surface, #ffffff); }
 .cfx-panel {
   position: absolute; right: 0; top: 34px; z-index: 60; width: 240px;
@@ -119,6 +119,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDoc))
   width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--border, #e2e8f0);
   border-radius: 8px; background: var(--surface, #ffffff); font-size: 13px; color: var(--text, #0f172a);
 }
-.cfx-reset { border: none; background: none; color: var(--primary, #0f766e); font-size: 12.5px; font-weight: 700; cursor: pointer; padding: 2px 0; text-align: left; }
+.cfx-reset { border: none; background: none; color: var(--primary-ink, #0f766e); font-size: 12.5px; font-weight: 700; cursor: pointer; padding: 2px 0; text-align: left; }
 .cfx-reset:hover { text-decoration: underline; }
 </style>

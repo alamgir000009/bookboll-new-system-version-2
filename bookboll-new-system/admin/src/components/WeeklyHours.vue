@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { Copy, X as XIcon, Sun, Plus as PlusIcon, Pencil, TriangleAlert as AlertTriangle, CalendarClock, CalendarPlus } from 'lucide-vue-next'
 import { fmt12, fmtRange12 } from '../lib/slots'
 import { markDirty } from '../lib/unsavedGuard.js'
+import { askConfirm } from '../lib/confirm.js'
 
 const props = defineProps({
   modelValue: { type: Array, required: true },
@@ -12,7 +13,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'edit-location-schedule', 'create-special-day'])
 
-const view = ref('grid')
+const view = ref('hours')
 
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
 const DAY_LABELS = { 0: 'Sunday', 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday' }
@@ -138,9 +139,14 @@ function updatePeriod(dayIndex, pIdx, key, value) {
   }))
 }
 
-function clone(dayIndex) {
+async function clone(dayIndex) {
   const src = rows.value.find(r => r.day_of_week === dayIndex)
   if (!src) return
+  if (!await askConfirm({
+    title: `Copy ${DAY_LABELS[dayIndex]} to all days?`,
+    message: 'This replaces the hours for the other six days in this form. Your venue or listing is updated only when you save.',
+    confirmText: 'Copy to all days', cancelText: 'Keep current hours', danger: false,
+  })) return
   markDirty()
   emit('update:modelValue', DAY_ORDER.map(i => ({
     ...src, day_of_week: i, periods: src.periods.map(p => ({ ...p })),
@@ -268,8 +274,8 @@ function dayTimesSummary(row) {
 
           <div class="row-head-right">
             <div class="row-actions">
-              <button type="button" class="mini-btn" @click="setTwentyFour(r.day_of_week)"><Sun :size="12" />24h</button>
-              <button type="button" class="mini-btn" @click="clone(r.day_of_week)"><Copy :size="12" />Clone</button>
+              <button type="button" class="mini-btn" :aria-label="`Open ${DAY_LABELS[r.day_of_week]} for 24 hours`" @click="setTwentyFour(r.day_of_week)"><Sun :size="12" />24h</button>
+              <button type="button" class="mini-btn" :aria-label="`Copy ${DAY_LABELS[r.day_of_week]} to all days`" @click="clone(r.day_of_week)"><Copy :size="12" />Copy to all</button>
             </div>
           </div>
         </div>
@@ -277,11 +283,11 @@ function dayTimesSummary(row) {
         <!-- Open day → period editor -->
         <div v-if="effectiveRow(r.day_of_week)?.is_open" class="periods-list">
           <div v-for="(p, pIdx) in r.periods" :key="pIdx" class="period-row">
-            <select :value="p.open_time" @change="e => updatePeriod(r.day_of_week, pIdx, 'open_time', e.target.value)">
+            <select :aria-label="`${DAY_LABELS[r.day_of_week]} opening time ${pIdx + 1}`" :value="p.open_time" @change="e => updatePeriod(r.day_of_week, pIdx, 'open_time', e.target.value)">
               <option v-for="t in TIMES" :key="t" :value="t">{{ fmt12(t) }}</option>
             </select>
             <span class="to">to</span>
-            <select :value="p.close_time" @change="e => updatePeriod(r.day_of_week, pIdx, 'close_time', e.target.value)">
+            <select :aria-label="`${DAY_LABELS[r.day_of_week]} closing time ${pIdx + 1}`" :value="p.close_time" @change="e => updatePeriod(r.day_of_week, pIdx, 'close_time', e.target.value)">
               <option v-for="t in TIMES" :key="t" :value="t">{{ fmt12(t) }}</option>
             </select>
             <button v-if="r.periods.length > 1" type="button" class="period-remove" @click="removePeriod(r.day_of_week, pIdx)" title="Remove this period">
@@ -302,6 +308,7 @@ function dayTimesSummary(row) {
 
     <!-- ═══════════════════════════════  GRID VIEW  ═════════════════════════════ -->
     <div v-else class="grid-scroll-wrap">
+      <p class="grid-mobile-hint">Swipe across to see every day. Tap a cell to change its availability.</p>
 
       <!-- Grid resolution selector -->
       <div class="grid-step-bar">
@@ -312,7 +319,7 @@ function dayTimesSummary(row) {
         </div>
       </div>
 
-    <div class="grid-view">
+    <div class="grid-view" :style="{ minWidth: `${Math.max(900, 56 + 7 * colsPerHour * 44)}px` }">
 
       <!-- Day headers (each spans colsPerHour slot columns) -->
       <div class="grid-head" :style="gridColsStyle">
@@ -324,6 +331,7 @@ function dayTimesSummary(row) {
           <div class="day-toggle">
             <label class="switch">
               <input type="checkbox"
+                :aria-label="`${DAY_LABELS[r.day_of_week]} open`"
                 :checked="effectiveRow(r.day_of_week)?.is_open"
                 @change="e => toggleOpen(r.day_of_week, e.target.checked)" />
               <span class="slider"></span>
@@ -351,9 +359,11 @@ function dayTimesSummary(row) {
         <div v-for="group in hourGroups" :key="group.label" class="slot-row" :style="gridColsStyle">
           <div class="time-label">{{ fmt12(group.label) }}</div>
           <template v-for="r in rows" :key="r.day_of_week">
-            <div
+            <button type="button"
               v-for="(slot, ci) in group.slots" :key="r.day_of_week + slot"
               class="slot-cell"
+              :aria-label="`${DAY_LABELS[r.day_of_week]} ${fmt12(slot)}${slotLocked(r.day_of_week, slot) ? ', venue closed' : ''}`"
+              :aria-pressed="slotIsOpen(r.day_of_week, slot) && !slotLocked(r.day_of_week, slot)"
               :class="{
                 'slot-half': ci > 0,
                 open:        slotIsOpen(r.day_of_week, slot),
@@ -361,7 +371,7 @@ function dayTimesSummary(row) {
               }"
               :title="slotLocked(r.day_of_week, slot) ? 'Location is closed at this time — edit the location schedule to open it' : ''"
               @click="toggleSlot(r.day_of_week, slot)"
-            ></div>
+            ></button>
           </template>
         </div>
       </div>
@@ -378,8 +388,9 @@ function dayTimesSummary(row) {
     </div><!-- end grid-scroll-wrap -->
 
     <!-- Location-closed slot → explain the two ways to make it bookable -->
+    <Teleport to="body">
     <div v-if="lockModal" class="wh-modal-backdrop" @click.self="lockModal = false">
-      <div class="wh-modal" role="dialog" aria-modal="true">
+      <div class="wh-modal" v-dialog="() => lockModal = false" role="dialog" aria-modal="true">
         <button type="button" class="wh-modal-x" @click="lockModal = false" aria-label="Close"><XIcon :size="18" /></button>
         <div class="wh-modal-ic"><CalendarClock :size="24" /></div>
         <h3 class="wh-modal-title">That time is outside the location's hours</h3>
@@ -390,33 +401,34 @@ function dayTimesSummary(row) {
         </div>
       </div>
     </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .wh-shell { display: flex; flex-direction: column; gap: 14px; }
-.wh-no-parent { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 9px; font-size: 12.5px; color: #9a3412; line-height: 1.5; }
+.wh-no-parent { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); border-radius: 9px; font-size: 12.5px; color: var(--warning-ink, #9a3412); line-height: 1.5; }
 .wh-no-parent svg { flex-shrink: 0; margin-top: 1px; }
 .wh-np-body { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 
 /* "Edit location schedule" button on the no-parent banner */
-.wh-lock-edit { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; font-size: 12px; font-weight: 600; border: 1px solid var(--primary); color: var(--primary); background: #f0fdfa; border-radius: 7px; white-space: nowrap; cursor: pointer; }
+.wh-lock-edit { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; font-size: 12px; font-weight: 600; border: 1px solid var(--primary); color: var(--primary-ink); background: var(--primary-soft, #f0fdfa); border-radius: 7px; white-space: nowrap; cursor: pointer; }
 .wh-lock-edit:hover { background: var(--primary); color: #fff; }
 
 /* Location-closed slot explainer modal */
 .wh-modal-backdrop { position: fixed; inset: 0; z-index: 5000; background: rgba(15, 23, 42, .5); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .wh-modal { position: relative; width: 100%; max-width: 420px; background: var(--surface, #ffffff); border-radius: 16px; padding: 26px 24px 22px; box-shadow: 0 24px 60px rgba(0, 0, 0, .28); text-align: center; }
 .wh-modal-x { position: absolute; top: 12px; right: 12px; display: inline-flex; padding: 5px; border-radius: 7px; color: var(--text-muted); background: none; border: none; cursor: pointer; }
-.wh-modal-x:hover { background: #f1f5f9; color: var(--text); }
-.wh-modal-ic { width: 52px; height: 52px; border-radius: 14px; background: #f0fdfa; color: var(--primary); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+.wh-modal-x:hover { background: var(--bg, #f1f5f9); color: var(--text); }
+.wh-modal-ic { width: 52px; height: 52px; border-radius: 14px; background: var(--primary-soft, #f0fdfa); color: var(--primary-ink); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
 .wh-modal-title { font-size: 17px; font-weight: 700; margin: 0 0 8px; color: var(--text); }
 .wh-modal-text { font-size: 13.5px; line-height: 1.55; color: var(--text-muted); margin: 0 0 20px; }
 .wh-modal-actions { display: flex; flex-direction: column; gap: 9px; }
 .wh-modal-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 11px 16px; font-size: 13.5px; font-weight: 600; border-radius: 10px; border: 1px solid var(--border); background: var(--surface, #ffffff); color: var(--text); cursor: pointer; transition: all .15s; }
-.wh-modal-btn:hover { background: #f8fafc; border-color: #cbd5e1; }
+.wh-modal-btn:hover { background: var(--surface-hover, #f8fafc); border-color: var(--border-strong, #cbd5e1); }
 .wh-modal-btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .wh-modal-btn.primary:hover { background: var(--primary-dark, #0d9488); }
-.view-toggle { align-self: flex-end; display: inline-flex; background: #f1f5f9; border-radius: 8px; padding: 3px; }
+.view-toggle { align-self: flex-end; display: inline-flex; background: var(--bg, #f1f5f9); border-radius: 8px; padding: 3px; }
 .vt-btn { padding: 6px 14px; font-size: 13px; font-weight: 500; border-radius: 6px; color: var(--text-muted); }
 .vt-btn.active { background: var(--surface, #ffffff); color: var(--text); box-shadow: var(--shadow-sm); }
 
@@ -424,36 +436,36 @@ function dayTimesSummary(row) {
 .hours-list { display: flex; flex-direction: column; gap: 8px; }
 .hour-row { background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; transition: box-shadow 0.15s; }
 .hour-row:not(.closed):hover { box-shadow: 0 1px 6px rgba(0,0,0,.06); }
-.hour-row.closed { background: #f8fafc; }
+.hour-row.closed { background: var(--surface-hover, #f8fafc); }
 
 .hour-row-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 14px; gap: 10px; }
 .row-head-right { display: flex; align-items: center; gap: 10px; }
 .day-check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .day-check input { width: auto; accent-color: var(--primary); }
 .day-name { font-weight: 600; font-size: 14px; }
-.inherit-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: #0369a1; background: #e0f2fe; border: 1px solid #bae6fd; border-radius: 5px; padding: 2px 8px; }
+.inherit-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--info-ink, #0369a1); background: var(--info-bg, #e0f2fe); border: 1px solid var(--info-border, #bae6fd); border-radius: 5px; padding: 2px 8px; }
 .row-actions { display: flex; gap: 6px; }
 .mini-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface, #ffffff); color: var(--text); white-space: nowrap; }
 .mini-btn:hover { background: var(--bg); }
 
 .inherit-body { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 0 14px 12px; }
-.inherit-hint { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #0369a1; }
+.inherit-hint { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--info-ink, #0369a1); }
 .inherit-hint strong { font-family: 'SF Mono', Monaco, monospace; font-size: 12px; }
-.customize-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; font-size: 12px; font-weight: 500; border: 1px solid var(--primary); color: var(--primary); border-radius: 7px; background: #f0fdfa; }
+.customize-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; font-size: 12px; font-weight: 500; border: 1px solid var(--primary); color: var(--primary-ink); border-radius: 7px; background: var(--primary-soft, #f0fdfa); }
 .customize-btn:hover { background: var(--primary); color: #fff; }
 
 .periods-list { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 8px; }
 .reset-inherit-row { display: flex; }
 .reset-inherit-btn { font-size: 12px; color: var(--text-muted); text-decoration: underline; background: none; border: none; padding: 2px 0; cursor: pointer; }
-.reset-inherit-btn:hover { color: var(--primary); }
+.reset-inherit-btn:hover { color: var(--primary-ink); }
 
 .period-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .period-row select { width: 100px; padding: 7px 10px; font-size: 13px; }
 .to { color: var(--text-muted); font-size: 13px; flex-shrink: 0; }
-.period-remove { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; flex-shrink: 0; }
-.period-remove:hover { background: #fee2e2; }
-.add-period-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; color: var(--primary); background: transparent; align-self: flex-start; margin-top: 2px; }
-.add-period-btn:hover { background: #f0fdfa; border-color: var(--primary); }
+.period-remove { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #dc2626); border: 1px solid var(--danger-border, #fecaca); flex-shrink: 0; }
+.period-remove:hover { background: var(--danger-bg, #fee2e2); }
+.add-period-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; color: var(--primary-ink); background: transparent; align-self: flex-start; margin-top: 2px; }
+.add-period-btn:hover { background: var(--primary-soft, #f0fdfa); border-color: var(--primary); }
 .closed-label { padding: 8px 14px 12px; font-size: 13px; color: var(--text-muted); font-style: italic; }
 
 /* ── GRID VIEW ──────────────────────────────────────────────────── */
@@ -463,9 +475,9 @@ function dayTimesSummary(row) {
 /* Resolution selector */
 .grid-step-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .grid-step-label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
-.grid-step-toggle { display: inline-flex; background: #f1f5f9; border-radius: 8px; padding: 3px; }
+.grid-step-toggle { display: inline-flex; background: var(--bg, #f1f5f9); border-radius: 8px; padding: 3px; }
 .grid-step-toggle button { padding: 5px 12px; border-radius: 6px; font-size: 12.5px; font-weight: 500; color: var(--text-muted); border: none; background: none; cursor: pointer; }
-.grid-step-toggle button.active { background: var(--surface, #ffffff); color: var(--primary); box-shadow: var(--shadow-sm); }
+.grid-step-toggle button.active { background: var(--surface, #ffffff); color: var(--primary-ink); box-shadow: var(--shadow-sm); }
 
 /* Header + sub-header + body share a column template (set inline per resolution) */
 .grid-head, .grid-sub-head, .slot-row {
@@ -474,7 +486,7 @@ function dayTimesSummary(row) {
 }
 
 .grid-head { border-bottom: 1px solid var(--border); }
-.grid-corner { background: #fafafa; border-right: 1px solid var(--border); }
+.grid-corner { background: var(--surface-hover, #fafafa); border-right: 1px solid var(--border); }
 .grid-day-head {
   grid-column: span 2;
   padding: 9px 6px;
@@ -483,7 +495,7 @@ function dayTimesSummary(row) {
   background: var(--surface, #ffffff);
 }
 .day-toggle { display: flex; align-items: center; gap: 6px; }
-.day-short { font-size: 11.5px; font-weight: 800; letter-spacing: .06em; color: var(--primary); }
+.day-short { font-size: 11.5px; font-weight: 800; letter-spacing: .06em; color: var(--primary-ink); }
 .day-actions { display: flex; gap: 2px; justify-content: center; opacity: .35; transition: opacity .12s; }
 .grid-day-head:hover .day-actions { opacity: 1; }
 .tiny { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px; border-radius: 4px; background: transparent; color: var(--text-muted); }
@@ -492,19 +504,19 @@ function dayTimesSummary(row) {
 .switch { position: relative; width: 28px; height: 16px; flex-shrink: 0; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .switch .slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 999px; transition: .2s; cursor: pointer; }
-.switch .slider::before { content: ''; position: absolute; width: 12px; height: 12px; top: 2px; left: 2px; background: var(--surface, #ffffff); border-radius: 50%; transition: .2s; }
+.switch .slider::before { content: ''; position: absolute; width: 12px; height: 12px; top: 2px; left: 2px; background: #fff; border-radius: 50%; transition: .2s; }
 .switch input:checked + .slider { background: var(--primary); }
 .switch input:checked + .slider::before { transform: translateX(12px); }
 
 /* Sub-header */
-.grid-sub-head { border-bottom: 1px solid var(--border); background: #fafafa; }
-.grid-corner-sm { border-right: 1px solid var(--border); background: #fafafa; }
+.grid-sub-head { border-bottom: 1px solid var(--border); background: var(--surface-hover, #fafafa); }
+.grid-corner-sm { border-right: 1px solid var(--border); background: var(--surface-hover, #fafafa); }
 .sub-label { padding: 3px 0; font-size: 9px; font-weight: 600; color: var(--text-muted); text-align: center; letter-spacing: .04em; border-left: 2px solid var(--border); }
-.sub-half { border-left: 1px dashed #d1d5db; }
+.sub-half { border-left: 1px dashed var(--border-strong, #d1d5db); }
 
 /* Body */
 .grid-body { max-height: 440px; overflow-y: auto; }
-.slot-row { border-bottom: 1px solid #f0f4f8; }
+.slot-row { border-bottom: 1px solid var(--border); }
 .slot-row:last-child { border-bottom: none; }
 .time-label {
   padding: 0 6px; font-size: 10px; font-family: 'SF Mono', Monaco, monospace;
@@ -512,25 +524,25 @@ function dayTimesSummary(row) {
   display: flex; align-items: center; justify-content: flex-end; min-height: 20px; white-space: nowrap;
 }
 .slot-cell {
-  min-height: 20px; border-left: 2px solid var(--border); cursor: pointer; transition: background .1s;
-  background: #f8fafc;
+  min-height: 28px; border: 0; border-left: 2px solid var(--border); border-radius: 0; padding: 0; cursor: pointer; transition: background .1s;
+  background: var(--surface-hover, #f8fafc);
 }
-.slot-cell.slot-half { border-left: 1px dashed #d1d5db; }
+.slot-cell.slot-half { border-left: 1px dashed var(--border-strong, #d1d5db); }
 .slot-cell.open { background: var(--primary); }
 .slot-cell.open:hover { background: var(--primary-dark, #0d9488); }
-.slot-cell:not(.open):not(.locked):hover { background: #e8fdf8; }
+.slot-cell:not(.open):not(.locked):hover { background: var(--primary-soft); }
 /* Location is closed at this time → same base as Available, with diagonal
    stripes to read as "blocked". Still clickable (opens the explainer modal).
    Listed after .open so out-of-bounds open slots also read as blocked. */
 .slot-cell.locked {
-  background-color: #f8fafc;
+  background-color: var(--surface-hover, #f8fafc);
   background-image: repeating-linear-gradient(45deg, transparent 0, transparent 5px, rgba(100, 116, 139, .28) 5px, rgba(100, 116, 139, .28) 7px);
   cursor: pointer;
 }
-.slot-cell.locked:hover { background-color: #eef2f6; }
+.slot-cell.locked:hover { background-color: var(--surface-hover); }
 
 /* Legend */
-.grid-legend { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--border); background: #fafafa; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
+.grid-legend { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--border); background: var(--surface-hover, #fafafa); font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
 .dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
 .dot.open { background: var(--primary); }
 .dot.avail { background: var(--border, #e2e8f0); }
@@ -542,4 +554,34 @@ function dayTimesSummary(row) {
   .grid-day-head { padding: 6px 3px; }
   .day-times { display: none; }
 }
+.wh-shell { container-type: inline-size; }
+@container (min-width: 620px) {
+  .hour-row { display: grid; grid-template-columns: 138px minmax(0,1fr) auto; align-items: start; gap: 14px; padding: 14px; }
+  .hour-row-head { display: contents; }
+  .day-check { grid-column: 1; grid-row: 1; min-height: 34px; }
+  .row-head-right { grid-column: 3; grid-row: 1; }
+  .periods-list, .closed-label { grid-column: 2; grid-row: 1; padding: 0; }
+  .closed-label { align-self: center; }
+}
+@media (max-width: 760px) {
+  .mini-btn, .add-period-btn, .vt-btn, .period-row select { min-height: 44px; }
+  .period-row select { flex: 1; min-width: 0; width: 110px; }
+  .hour-row-head { padding: 10px; gap: 6px; }
+  .day-check { gap: 6px; min-height: 44px; }
+  .day-check input { width: 18px; height: 18px; }
+  .row-head-right { margin-inline-start: auto; }
+  .mini-btn { padding: 5px 8px; }
+  .periods-list { padding: 0 10px 10px; }
+  .period-remove { width: 44px; height: 44px; }
+  .period-row:has(.period-remove) .period-remove { margin-inline-start: auto; }
+  .slot-cell { min-height: 44px; }
+  .day-actions { opacity: 1; }
+  .tiny { width: 36px; height: 40px; }
+  .grid-step-bar { flex-wrap: wrap; }
+  .grid-step-toggle button { min-height: 44px; }
+}
+.grid-mobile-hint { margin: 0 0 12px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.wh-modal { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.wh-modal-x { min-width: 44px; min-height: 44px; }
+.slot-cell:focus-visible { outline: 3px solid var(--text); outline-offset: -3px; }
 </style>

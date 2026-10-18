@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import CookieConsent from './components/CookieConsent.vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { canAccessPage } from './lib/permissions.js'
 import { User, Menu, X, ChevronRight, ChevronDown, LogOut, Moon, Sun } from 'lucide-vue-next'
@@ -7,6 +8,8 @@ import { NAV_GROUPS } from './lib/navGroups.js'
 import { useCurrentUser } from './lib/currentUser.js'
 import PublishNag from './components/PublishNag.vue'
 import SetupCoach from './components/SetupCoach.vue'
+import AppDownloadCard from './components/AppDownloadCard.vue'
+import { appPromptContext, insideInstalledApp } from './lib/mobileApps.js'
 import { adminTheme, toggleAdminTheme } from './lib/adminTheme.js'
 import { authUser, signOut, needsAccountChoice } from './lib/auth.js'
 import AccountPicker from './pages/AccountPicker.vue'
@@ -25,6 +28,28 @@ import { useHead } from '@unhead/vue'
 const route = useRoute()
 const router = useRouter()
 const sidebarOpen = ref(false)
+const menuButton = ref(null)
+const closeMenuButton = ref(null)
+watch(sidebarOpen, async open => {
+  await nextTick()
+  if (open) closeMenuButton.value?.focus()
+  else menuButton.value?.focus()
+})
+function drawerKeydown(event) {
+  if (event.key === 'Escape') { sidebarOpen.value = false; return }
+  if (event.key !== 'Tab') return
+  const targets = [...event.currentTarget.querySelectorAll('a[href], button:not([disabled])')]
+  const first = targets[0], last = targets.at(-1)
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+}
+let desktopMedia
+function closeDrawerOnDesktop(event) { if (event.matches) sidebarOpen.value = false }
+onMounted(() => {
+  desktopMedia = window.matchMedia('(min-width: 901px)')
+  desktopMedia.addEventListener('change', closeDrawerOnDesktop)
+})
+onUnmounted(() => desktopMedia?.removeEventListener('change', closeDrawerOnDesktop))
 const countryFilter = ref('All Countries')
 
 // Admin-dashboard branding (super-admin-configured logo + accent colour). Loaded
@@ -52,10 +77,7 @@ watch(() => route.query.plan_checkout, async (session) => {
 // Shell: auth (login) or admin dashboard.
 const area = computed(() => route.meta?.area || 'customer')
 
-// Scope the admin dark theme to the admin area only: `adm-shell` on <html> mirrors
-// the `cust-shell` class CustomerLayout adds on mount, so the two smart-invert
-// themes never overlap (customer storefront and auth pages are untouched by
-// adm-dark, and navigating admin↔customer swaps the shells cleanly).
+// Apply the dashboard palette only while its shell is active.
 watch(area, (a) => {
   if (typeof document !== 'undefined') document.documentElement.classList.toggle('adm-shell', a === 'admin')
 }, { immediate: true })
@@ -101,11 +123,17 @@ function businessNameFor(u) {
 }
 
 const currentBusinessName = computed(() => businessNameFor(currentUser.value))
+const appCardVisible = ref(false)
+const appContext = computed(() => appPromptContext({ audience: 'admin', path: route.path, signedIn: !!authUser.value && !!currentUser.value && !needsAccountChoice.value, businessUser: isProviderScoped.value }))
+const appDownloadCard = ref(null)
+const appDownloadAvailable = ref(false)
+onMounted(() => { appDownloadAvailable.value = !insideInstalledApp(window, navigator) })
+provide('adminAppDownload', {
+  available: computed(() => !!appContext.value && appDownloadAvailable.value),
+  open: () => appDownloadCard.value?.open(),
+})
 
-// Grouped nav for the two-tier rail: each group is one rail icon; hovering it reveals
-// a flyout with that group's pages, CLICKING it opens the group's landing page
-// (/nav/<key> — its pages as cards). NAV_GROUPS lives in lib/navGroups.js so the
-// landing page renders from the same source of truth.
+// Sidebar groups and their directory pages share one navigation definition.
 // Groups visible to the active role: Home always; single-link groups drop if their page
 // isn't accessible; grouped ones keep only accessible pages and drop if empty.
 const groups = computed(() =>
@@ -126,28 +154,12 @@ const activeGroupKey = computed(() => {
   return ''
 })
 
+const expandedGroup = ref('')
+watch(activeGroupKey, key => { expandedGroup.value = key }, { immediate: true })
+function toggleNavGroup(key) { expandedGroup.value = expandedGroup.value === key ? '' : key }
+
 // Account menu (top-right of the topbar).
 const accountOpen = ref(false)
-
-// Hover flyout state (desktop). The flyout is position:fixed (so the rail's own
-// overflow can't clip it) and gets its top/left from the hovered button's rect.
-// A short close delay lets the pointer cross the gap into the panel.
-const hoverKey = ref('')
-const flyoutStyle = ref({})
-let hoverTimer = null
-function positionFlyout(ev) {
-  const host = ev?.currentTarget
-  const btn = host?.matches?.('.rail-btn') ? host : host?.querySelector?.('.rail-btn')
-  if (!btn) return  // flyout's own mouseenter — keep the current position
-  const r = btn.getBoundingClientRect()
-  const top = Math.min(r.top, window.innerHeight - 360)
-  flyoutStyle.value = { top: Math.max(8, top) + 'px', left: (r.right + 10) + 'px' }
-}
-function openGroup(k, ev) { clearTimeout(hoverTimer); hoverKey.value = k; positionFlyout(ev) }
-function closeGroup() { clearTimeout(hoverTimer); hoverTimer = setTimeout(() => { hoverKey.value = '' }, 140) }
-// The sub-nav (flyout) is hover-only: mouseenter opens it, mouseleave closes it.
-// Clicking a grouped rail button does nothing — only the flyout items navigate.
-function goAndClose() { hoverKey.value = ''; sidebarOpen.value = false }
 
 // Block direct navigation to pages the active role can't access (and redirect if
 // a role switch makes the current page off-limits). Waits until the user context
@@ -198,45 +210,41 @@ const initials = computed(() => {
 
   <!-- Admin dashboard shell -->
   <div v-else class="app" :style="adminBrandVars">
-    <!-- Icon rail (desktop): each group shows an icon + label; hover reveals its pages -->
-    <aside class="rail">
-      <router-link to="/admin" class="rail-brand" :class="{ 'has-logo-img': adminBrand.logo }" title="Bookboll"
-        :style="adminBrand.logo ? { backgroundImage: `url(${adminBrand.logo})`, backgroundSize: 'cover', backgroundPosition: 'center' } : adminLogoSquareStyle">
-        <BrandMark v-if="!adminBrand.logo" />
+    <!-- Labeled desktop navigation; groups open by click and keyboard. -->
+    <aside class="rail" aria-label="Dashboard navigation">
+      <router-link to="/admin" class="rail-home">
+        <span class="rail-brand" :style="adminLogoSquareStyle"><img v-if="adminBrand.logo" :src="adminBrand.logo" alt="" /><BrandMark v-else /></span>
+        <span class="rail-wordmark">Bookboll<small>for Business</small></span>
       </router-link>
-      <nav class="rail-nav">
-        <div v-for="g in groups" :key="g.key" class="rail-group" @mouseenter="g.items && openGroup(g.key, $event)" @mouseleave="closeGroup">
-          <!-- Single-link group -->
-          <router-link v-if="g.to" :to="g.to" class="rail-btn" :class="{ active: activeGroupKey===g.key }">
-            <component :is="g.icon" :size="27" />
-            <span class="rail-label">{{ g.label }}</span>
+      <nav class="rail-nav" aria-label="Main navigation">
+        <div v-for="g in groups" :key="g.key" class="rail-group">
+          <router-link v-if="g.to" :to="g.to" class="rail-btn" :class="{ active: activeGroupKey === g.key }">
+            <component :is="g.icon" :size="20" /><span class="rail-label">{{ g.label }}</span>
           </router-link>
-          <!-- Group: hover flies out its pages; CLICK opens the group's landing page -->
-          <router-link v-else :to="`/nav/${g.key}`" class="rail-btn" :class="{ active: activeGroupKey===g.key, open: hoverKey===g.key }" @click="goAndClose">
-            <component :is="g.icon" :size="27" />
-            <span class="rail-label">{{ g.label }}</span>
-          </router-link>
-          <!-- Flyout (fixed-position so the rail's overflow can't clip it) -->
-          <div v-if="g.items && hoverKey===g.key" class="flyout" :style="flyoutStyle" @mouseenter="openGroup(g.key, $event)" @mouseleave="closeGroup">
-            <div class="flyout-title">{{ g.label }}</div>
-            <router-link v-for="item in g.items" :key="item.path" :to="item.path" class="flyout-item" active-class="active" @click="goAndClose">
-              <component :is="item.icon" :size="18" />
-              <span>{{ item.label }}</span>
-            </router-link>
-          </div>
+          <template v-else>
+            <button type="button" class="rail-btn" :class="{ active: activeGroupKey === g.key }"
+              :aria-expanded="expandedGroup === g.key" :aria-controls="'nav-' + g.key" @click="toggleNavGroup(g.key)">
+              <component :is="g.icon" :size="20" /><span class="rail-label">{{ g.label }}</span>
+              <ChevronDown :size="15" class="rail-chevron" :class="{ expanded: expandedGroup === g.key }" />
+            </button>
+            <div v-if="expandedGroup === g.key" :id="'nav-' + g.key" class="rail-subnav">
+              <router-link v-for="item in g.items" :key="item.path" :to="item.path" active-class="active">{{ item.label }}</router-link>
+            </div>
+          </template>
         </div>
       </nav>
+      <div class="rail-business"><span class="rail-business-avatar">{{ initials }}</span><div><strong>{{ currentBusinessName || currentUser?.full_name || 'Your workspace' }}</strong><small>{{ roleLabel[role] || role }}</small></div></div>
     </aside>
 
     <!-- Mobile drawer: full grouped list -->
-    <aside :class="['drawer', { open: sidebarOpen }]">
+    <aside :class="['drawer', { open: sidebarOpen }]" :inert="!sidebarOpen" role="dialog" :aria-modal="sidebarOpen || undefined" aria-label="Dashboard navigation" @keydown="drawerKeydown">
       <div class="brand">
         <div class="brand-mark" :class="{ 'has-logo-img': adminBrand.logo }"
           :style="adminBrand.logo ? { backgroundImage: `url(${adminBrand.logo})`, backgroundSize: 'cover', backgroundPosition: 'center' } : adminLogoSquareStyle">
           <BrandMark v-if="!adminBrand.logo" />
         </div>
-        <div class="brand-text"><div class="brand-name">Bookboll</div><div class="brand-sub">Admin Portal</div></div>
-        <button class="close-btn" @click="sidebarOpen=false"><X :size="18" /></button>
+        <div class="brand-text"><div class="brand-name">Bookboll</div><div class="brand-sub">for Business</div></div>
+        <button ref="closeMenuButton" class="close-btn" aria-label="Close navigation" @click="sidebarOpen=false"><X :size="18" /></button>
       </div>
       <nav class="drawer-nav">
         <template v-for="g in groups" :key="g.key">
@@ -261,9 +269,9 @@ const initials = computed(() => {
       </div>
     </aside>
 
-    <div class="main">
+    <div class="main" :inert="sidebarOpen">
       <header class="topbar">
-        <button class="menu-btn" @click="sidebarOpen=true"><Menu :size="20" /></button>
+        <button ref="menuButton" class="menu-btn" aria-label="Open navigation" :aria-expanded="sidebarOpen" @click="sidebarOpen=true"><Menu :size="20" /></button>
         <div class="breadcrumb">
           <template v-for="(c, i) in crumbs" :key="i">
             <ChevronRight v-if="i" :size="14" />
@@ -312,9 +320,10 @@ const initials = computed(() => {
       <main class="content">
         <PublishNag />
         <router-view />
+        <AppDownloadCard ref="appDownloadCard" :visit-key="route.path" :account-id="currentUser?.id" audience="admin" :context="appContext" :blocked="sidebarOpen || accountOpen" @visibility-change="appCardVisible = $event" />
       </main>
       <!-- Floating setup guide (providers): one step at a time, bottom-right -->
-      <SetupCoach />
+      <SetupCoach v-show="!sidebarOpen && !appCardVisible" />
     </div>
 
     <div v-if="sidebarOpen" class="overlay" @click="sidebarOpen=false"></div>
@@ -322,17 +331,18 @@ const initials = computed(() => {
     <!-- Global feedback hosts (mounted once) -->
     <ToastHost />
     <ConfirmDialog />
-    <UpgradeModal />
+    <Teleport to="body"><div :style="adminBrandVars"><UpgradeModal /></div></Teleport>
     <InputDialog />
     <CustomerDetailModal />
   </div>
+  <CookieConsent scope="admin" />
 </template>
 
 
 <style scoped>
 .app { display: flex; min-height: 100vh; background: var(--bg, #f8fafc); }
 
-/* ── Icon rail (desktop): bigger icons + labels ───────────────────────── */
+/* Desktop navigation layout; dashboardTheme.css supplies its appearance. */
 .rail { width: 104px; flex-shrink: 0; background: var(--surface, #ffffff); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   position: sticky; top: 0; height: 100vh; padding: 14px 0; z-index: 30; overflow-y: auto; }
@@ -340,27 +350,13 @@ const initials = computed(() => {
 .rail-brand { width: 46px; height: 46px; border-radius: 13px; background: linear-gradient(135deg, var(--brand-accent, #14b8a6), var(--brand, #0f766e)); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; text-decoration: none; margin-bottom: 12px; flex-shrink: 0; overflow: hidden; }
 .rail-nav { flex: 1; display: flex; flex-direction: column; gap: 12px; width: 100%; align-items: center; }
 .rail-group { position: relative; width: 100%; display: flex; justify-content: center; }
-/* Icon+label rest color rides --text-muted so DARK MODE (which overrides that
-   var) renders them light and readable — the old fixed #aab4c4 inverted to a
-   near-invisible dark gray. Hover goes to full --text: darker in light mode,
-   BRIGHTER (near-white) in dark mode. */
+/* Theme tokens keep navigation readable in either palette. */
 .rail-btn { width: 92px; padding: 12px 4px; border-radius: 14px; border: none; background: none; color: var(--text-muted, #64748b); display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; transition: background .12s, color .12s; text-decoration: none; }
-.rail-btn:hover, .rail-btn.open { background: #f1f5f9; color: var(--text, #0f172a); }
-.rail-btn.active { background: #f0fdfa; color: var(--brand, #0f766e); }
+.rail-btn:hover, .rail-btn.open { background: var(--bg, #f1f5f9); color: var(--text, #0f172a); }
+.rail-btn.active { background: var(--primary-soft, #f0fdfa); color: var(--primary-ink, #0f766e); }
 .rail-btn.active::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--brand, #0f766e); }
 .rail-label { font-size: 12px; font-weight: 500; line-height: 1.2; text-align: center; }
 
-/* Flyout panel (hover) — fixed so the rail's overflow can't clip it; top/left set inline */
-.flyout { position: fixed; z-index: 50; min-width: 216px;
-  background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(15,23,42,.16); padding: 8px; }
-.flyout::before { content: ''; position: absolute; left: -14px; top: 0; width: 14px; height: 100%; }  /* hover bridge across the gap */
-.flyout-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-light, #94a3b8); padding: 6px 10px 8px; }
-.flyout-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; font-size: 14px; font-weight: 600; color: #334155; text-decoration: none; cursor: pointer; border: none; background: none; width: 100%; text-align: left; }
-.flyout-item:hover { background: #f1f5f9; color: #0f172a; }
-.flyout-item.active { background: #f0fdfa; color: var(--brand, #0f766e); }
-.flyout-item svg { flex-shrink: 0; color: var(--text-light, #94a3b8); }
-.flyout-item:hover svg, .flyout-item.active svg { color: inherit; }
 /* ── Account menu (top-right) ─────────────────────────────────────────── */
 .acct { position: relative; }
 .acct-btn { display: inline-flex; align-items: center; gap: 8px; padding: 5px 8px 5px 5px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface, #ffffff); cursor: pointer; max-width: 220px; }
@@ -371,10 +367,10 @@ const initials = computed(() => {
 .acct-chev.rot { transform: rotate(180deg); }
 .acct-menu { position: absolute; inset-inline-end: 0; top: calc(100% + 8px); z-index: 60; min-width: 220px; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 16px 40px rgba(15,23,42,.16); padding: 8px; }
 .acct-head { padding: 6px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
-.acct-head-name { font-size: 13.5px; font-weight: 700; color: #0f172a; }
+.acct-head-name { font-size: 13.5px; font-weight: 700; color: var(--text, #0f172a); }
 .acct-head-role { font-size: 11.5px; color: var(--text-light, #94a3b8); margin-top: 2px; }
-.acct-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 9px 10px; border: none; background: none; border-radius: 9px; font-size: 14px; font-weight: 600; color: #334155; cursor: pointer; }
-.acct-item:hover { background: #fef2f2; color: #ef4444; }
+.acct-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 9px 10px; border: none; background: none; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--text-secondary, #334155); cursor: pointer; }
+.acct-item:hover { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #ef4444); }
 .acct-backdrop { position: fixed; inset: 0; z-index: 55; }
 
 /* ── Mobile drawer (full grouped list) ────────────────────────────────── */
@@ -382,23 +378,23 @@ const initials = computed(() => {
 .brand { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--border); }
 .brand-mark { width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, var(--brand-accent, #14b8a6), var(--brand, #0f766e)); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; overflow: hidden; }
 .brand-text { flex: 1; min-width: 0; }
-.brand-name { color: #0f172a; font-weight: 800; font-size: 16px; }
+.brand-name { color: var(--text, #0f172a); font-weight: 800; font-size: 16px; }
 .brand-sub { font-size: 11px; color: var(--text-light, #94a3b8); }
 .close-btn { color: var(--text-muted, #64748b); padding: 6px; }
 .drawer-nav { flex: 1; padding: 12px 10px; overflow-y: auto; }
 .nav-section { margin-bottom: 14px; }
 .nav-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-light, #94a3b8); padding: 0 12px 6px; font-weight: 700; }
 .nav-section-link { display: block; text-decoration: none; }
-.nav-section-link:hover { color: var(--primary); }
-.nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 9px; font-size: 14px; font-weight: 600; color: #334155; margin-bottom: 2px; text-decoration: none; }
-.nav-item:hover { background: #f1f5f9; }
-.nav-item.active { background: #f0fdfa; color: var(--brand, #0f766e); }
+.nav-section-link:hover { color: var(--primary-ink); }
+.nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--text-secondary, #334155); margin-bottom: 2px; text-decoration: none; }
+.nav-item:hover { background: var(--bg, #f1f5f9); }
+.nav-item.active { background: var(--primary-soft, #f0fdfa); color: var(--primary-ink, #0f766e); }
 .drawer-foot { display: flex; align-items: center; gap: 10px; padding: 12px; border-top: 1px solid var(--border); }
 .avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #f59e0b, #d97706); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
-.user-name { color: #0f172a; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-name { color: var(--text, #0f172a); font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .user-role { font-size: 11px; color: var(--text-light, #94a3b8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .signout-btn { flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--text-light, #94a3b8); padding: 6px; border-radius: 8px; display: flex; align-items: center; }
-.signout-btn:hover { background: #fef2f2; color: #ef4444; }
+.signout-btn:hover { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #ef4444); }
 
 /* ── Main + topbar ────────────────────────────────────────────────────── */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -407,10 +403,10 @@ const initials = computed(() => {
 .breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
 .crumb-dim { color: var(--text-muted); font-weight: 400; }
 .crumb-link { color: var(--text-muted); font-weight: 400; text-decoration: none; border-radius: 6px; }
-.crumb-link:hover { color: var(--primary); text-decoration: underline; }
+.crumb-link:hover { color: var(--primary-ink); text-decoration: underline; }
 .crumb-cur { color: var(--text); }
 .top-actions { margin-inline-start: auto; display: flex; align-items: center; gap: 12px; }
-.role-switcher { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; color: var(--text-muted); max-width: 320px; }
+.role-switcher { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-hover, #f8fafc); color: var(--text-muted); max-width: 320px; }
 .role-switcher select { border: none; padding: 0; width: auto; font-size: 13px; color: var(--text); background: transparent; max-width: 280px; }
 .role-switcher select:focus { box-shadow: none; }
 .icon-btn { padding: 8px; border-radius: 8px; color: var(--text-muted); position: relative; transition: all 0.15s; }
@@ -455,58 +451,7 @@ const initials = computed(() => {
 }
 </style>
 
-<!-- Global (non-scoped) dark theme for the ADMIN dashboard — same smart-invert
-     approach as the customer storefront (CustomerLayout.vue): invert + hue-rotate(180)
-     flips light↔dark while preserving brand hues; media is re-inverted back to normal.
-     Only the admin shell is themed: `adm-shell` is toggled on <html> by the area
-     watcher above, so the customer storefront (cust-shell) and auth pages never
-     double-invert. -->
 <style>
-/* CRITICAL: the invert filter must sit on the ROOT element. A CSS filter on any
-   lower element (like .app) makes that element the containing block for every
-   position:fixed descendant — modals, drawers, toasts and flyouts all stop pinning
-   to the viewport and fall to the bottom of the DOCUMENT. The root element is
-   exempt from that rule, so fixed overlays keep working under the root filter.
-   Backgrounds are set LIGHT here because the root filter inverts them to dark. */
-/* Dark palette works through the invert: the PAGE is pure white pre-invert →
-   FULL BLACK in dark mode; cards (--surface/--card, off-white pre-invert) invert
-   to a lighter charcoal that floats on the black page; muted text/icons and
-   borders use darker pre-invert grays so they invert BRIGHTER and stay readable.
-   Set on the ROOT so body-teleported modals inherit the same palette. */
-html.adm-dark.adm-shell {
-  filter: invert(1) hue-rotate(180deg);
-  background: #ffffff;               /* page → pure black */
-  --surface: #e4e7eb;                /* cards → lighter charcoal (~#191c1e) */
-  --card: #e4e7eb;
-  --bg: #f2f3f5;                     /* secondary surfaces → near-black inset */
-  --border: #c4cbd3;                 /* borders → visible slate (~#2c343b) */
-  --text-muted: #33404d;             /* muted text → light gray (~#b2bfcc) */
-  --text-light: #45525f;             /* light text → readable gray (~#a0adba) */
-}
-html.adm-dark.adm-shell body { background: #ffffff; }
-html.adm-dark .app { background: #ffffff; }
-
-/* Media counter-invert: photos, videos and live previews (the Brand storefront
-   iframe + the Customers email-preview iframe render real, self-themed content)
-   show their natural colors. Covers all <img>-based tiles (.img-tile etc.). */
-html.adm-dark .app img,
-html.adm-dark .app video,
-html.adm-dark .app iframe { filter: invert(1) hue-rotate(180deg); }
-
-/* Cover divs that paint photos via background-image (no inner <img> to catch):
-   Home location thumbs, Blog/WebsiteBlog covers, Banners image + icon previews,
-   Brand logo preview. Each holds only an SVG placeholder icon when empty, so a
-   single counter-invert is safe (no nested media to triple-invert). */
-html.adm-dark .app .hm-loc-thumb,
-html.adm-dark .app .blogadm-thumb,
-html.adm-dark .app .blogadm-cover,
-html.adm-dark .app .bn-img,
-html.adm-dark .app .bn-icon-prev,
-html.adm-dark .app .wl-logo-prev { filter: invert(1) hue-rotate(180deg); }
-
-/* Uploaded admin-dashboard logo (background-image on the brand square) — counter-invert
-   so it shows natural colours in dark mode. Only when an image is actually set: the
-   glyph fallback uses a gradient + inline <svg> and must invert with the shell. */
-html.adm-dark .app .brand-mark.has-logo-img,
-html.adm-dark .app .rail-brand.has-logo-img { filter: invert(1) hue-rotate(180deg); }
+@import './dashboardTheme.css';
+@import './workspaceReview.css';
 </style>

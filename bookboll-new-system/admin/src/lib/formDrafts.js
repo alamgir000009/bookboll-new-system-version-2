@@ -11,7 +11,10 @@
 const PREFIX = 'bb_draft_'
 
 export function saveFormDraft(key, data) {
-  try { localStorage.setItem(PREFIX + key, JSON.stringify({ at: Date.now(), data })) } catch { /* storage full/blocked */ }
+  try {
+    localStorage.setItem(PREFIX + key, JSON.stringify({ at: Date.now(), data }))
+    return true
+  } catch { return false }
 }
 
 /** → { at, data } or null */

@@ -158,7 +158,7 @@ function ago(ts) {
   display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
   border-bottom: 1px solid var(--border, #eef2f6); font-size: 14px; font-weight: 800; color: var(--text, #0f172a);
 }
-.ab-clear { background: none; border: none; color: var(--primary, #0f766e); font-weight: 700; font-size: 12.5px; cursor: pointer; }
+.ab-clear { background: none; border: none; color: var(--primary-ink, #0f766e); font-weight: 700; font-size: 12.5px; cursor: pointer; }
 .ab-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 30px 20px; color: var(--text-light, #94a3b8); text-align: center; }
 .ab-empty span { font-size: 14px; font-weight: 700; color: var(--text-muted, #64748b); }
 .ab-empty small { font-size: 12.5px; }

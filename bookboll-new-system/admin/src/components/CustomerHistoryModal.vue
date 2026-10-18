@@ -124,7 +124,7 @@ const stats = computed(() => ({
 <template>
   <Teleport to="body">
     <div v-if="customerId" class="chm-backdrop" @click.self="emit('close')">
-      <div class="chm-panel">
+      <div class="chm-panel" v-dialog="() => emit('close')">
 
         <!-- Header -->
         <div class="chm-header">
@@ -132,7 +132,7 @@ const stats = computed(() => ({
             <div class="chm-title">Customer Booking History</div>
             <div v-if="!isBookbollSide" class="chm-subtitle">Showing bookings at your business only</div>
           </div>
-          <button class="chm-close" @click="emit('close')"><X :size="18" /></button>
+          <button class="chm-close" @click="emit('close')" aria-label="Close"><X :size="18" /></button>
         </div>
 
         <div v-if="loading" class="chm-loading"><Loader :size="20" class="chm-spin" />Loading…</div>
@@ -234,13 +234,13 @@ const stats = computed(() => ({
   padding: 18px 20px 14px; border-bottom: 1px solid var(--border, #e2e8f0); flex-shrink: 0;
 }
 .chm-header-left { display: flex; flex-direction: column; gap: 3px; }
-.chm-title { font-size: 17px; font-weight: 700; color: #0f172a; }
+.chm-title { font-size: 17px; font-weight: 700; color: var(--text, #0f172a); }
 .chm-subtitle { font-size: 12px; color: var(--text-light, #94a3b8); }
 .chm-close {
-  width: 32px; height: 32px; border-radius: 8px; border: none; background: #f1f5f9;
+  width: 32px; height: 32px; border-radius: 8px; border: none; background: var(--bg, #f1f5f9);
   display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-muted, #64748b);
 }
-.chm-close:hover { background: var(--border, #e2e8f0); color: #0f172a; }
+.chm-close:hover { background: var(--border, #e2e8f0); color: var(--text, #0f172a); }
 
 .chm-loading {
   flex: 1; display: flex; align-items: center; justify-content: center;
@@ -252,7 +252,7 @@ const stats = computed(() => ({
 /* Customer card */
 .chm-customer-card {
   display: flex; align-items: flex-start; gap: 14px;
-  padding: 16px 20px; border-bottom: 1px solid #f1f5f9; flex-shrink: 0;
+  padding: 16px 20px; border-bottom: 1px solid var(--border, #f1f5f9); flex-shrink: 0;
 }
 .chm-avatar {
   width: 48px; height: 48px; border-radius: 50%; background: #0f172a; color: #fff;
@@ -260,7 +260,7 @@ const stats = computed(() => ({
   font-size: 16px; font-weight: 700; flex-shrink: 0;
 }
 .chm-customer-info { display: flex; flex-direction: column; gap: 4px; }
-.chm-customer-name { font-size: 15px; font-weight: 700; color: #0f172a; }
+.chm-customer-name { font-size: 15px; font-weight: 700; color: var(--text, #0f172a); }
 .chm-customer-meta {
   display: flex; gap: 14px; flex-wrap: wrap;
   font-size: 12px; color: var(--text-muted, #64748b);
@@ -271,7 +271,7 @@ const stats = computed(() => ({
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600;
 }
-.chm-points-badge { background: #f0fdf4; color: #15803d; }
+.chm-points-badge { background: var(--positive-bg, #f0fdf4); color: var(--positive-ink, #15803d); }
 
 /* Stats */
 .chm-stats-row {
@@ -279,26 +279,26 @@ const stats = computed(() => ({
   border-bottom: 1px solid var(--border, #e2e8f0); flex-shrink: 0;
 }
 .chm-stat {
-  padding: 12px 10px; text-align: center; border-right: 1px solid #f1f5f9;
+  padding: 12px 10px; text-align: center; border-right: 1px solid var(--border, #f1f5f9);
 }
 .chm-stat:last-child { border-right: none; }
-.chm-stat-val { font-size: 14px; font-weight: 700; color: #0f172a; }
+.chm-stat-val { font-size: 14px; font-weight: 700; color: var(--text, #0f172a); }
 .chm-stat-lbl { font-size: 11px; color: var(--text-light, #94a3b8); margin-top: 2px; text-transform: uppercase; letter-spacing: .04em; }
 
 /* Filters */
 .chm-filters {
   display: flex; gap: 10px; padding: 12px 20px;
-  border-bottom: 1px solid #f1f5f9; flex-shrink: 0;
+  border-bottom: 1px solid var(--border, #f1f5f9); flex-shrink: 0;
 }
 .chm-search-wrap { flex: 1; }
 .chm-search {
   width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
-  font-size: 13px; color: #0f172a; background: #f8fafc; box-sizing: border-box;
+  font-size: 13px; color: var(--text, #0f172a); background: var(--surface-hover, #f8fafc); box-sizing: border-box;
 }
 .chm-search:focus { outline: none; border-color: #3b82f6; background: var(--surface, #ffffff); }
 .chm-select {
   padding: 8px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
-  font-size: 13px; color: #0f172a; background: #f8fafc; cursor: pointer;
+  font-size: 13px; color: var(--text, #0f172a); background: var(--surface-hover, #f8fafc); cursor: pointer;
 }
 
 /* Empty */
@@ -314,31 +314,31 @@ const stats = computed(() => ({
   border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px;
   cursor: pointer; transition: all .15s; background: var(--surface, #ffffff);
 }
-.chm-bk-card:hover { border-color: #94a3b8; background: #f8fafc; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.chm-bk-card:hover { border-color: #94a3b8; background: var(--surface-hover, #f8fafc); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
 .chm-bk-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.chm-bk-ref { font-size: 12px; font-weight: 700; color: #0f172a; font-family: 'SF Mono', Monaco, monospace; }
-.chm-bk-amount { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 8px; }
+.chm-bk-ref { font-size: 12px; font-weight: 700; color: var(--text, #0f172a); font-family: 'SF Mono', Monaco, monospace; }
+.chm-bk-amount { font-size: 17px; font-weight: 700; color: var(--text, #0f172a); margin-bottom: 8px; }
 .chm-bk-meta {
   display: flex; flex-direction: column; gap: 3px;
   font-size: 12.5px; color: var(--text-muted, #64748b); margin-bottom: 10px;
 }
 .chm-bk-meta span { display: flex; align-items: center; gap: 4px; }
-.chm-bk-footer { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid #f1f5f9; }
+.chm-bk-footer { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border, #f1f5f9); }
 .chm-bk-date { font-size: 12px; color: var(--text-light, #94a3b8); margin-left: auto; }
-.chm-bk-cta { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: #3b82f6; }
+.chm-bk-cta { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--info-ink, #3b82f6); }
 
 /* Status chips */
 .chm-status-chip {
   display: inline-flex; align-items: center;
   padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; text-transform: capitalize;
 }
-.chm-status-confirmed  { background: #dbeafe; color: #1e40af; }
-.chm-status-completed  { background: #d1fae5; color: #065f46; }
-.chm-status-cancelled  { background: #f1f5f9; color: #475569; }
-.chm-status-pending    { background: #fef3c7; color: #92400e; }
-.chm-status-paid       { background: #d1fae5; color: #065f46; }
-.chm-status-deposit    { background: #dbeafe; color: #1e40af; }
-.chm-status-noshow     { background: #fee2e2; color: #991b1b; }
-.chm-status-skipped    { background: #f1f5f9; color: var(--text-muted, #64748b); }
-.chm-status-neutral    { background: #f1f5f9; color: var(--text-muted, #64748b); }
+.chm-status-confirmed  { background: var(--info-bg, #dbeafe); color: var(--info-ink, #1e40af); }
+.chm-status-completed  { background: var(--positive-bg, #d1fae5); color: var(--positive-ink, #065f46); }
+.chm-status-cancelled  { background: var(--bg, #f1f5f9); color: var(--text-secondary, #475569); }
+.chm-status-pending    { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); }
+.chm-status-paid       { background: var(--positive-bg, #d1fae5); color: var(--positive-ink, #065f46); }
+.chm-status-deposit    { background: var(--info-bg, #dbeafe); color: var(--info-ink, #1e40af); }
+.chm-status-noshow     { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #991b1b); }
+.chm-status-skipped    { background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); }
+.chm-status-neutral    { background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); }
 </style>

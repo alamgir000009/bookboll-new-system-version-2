@@ -35,6 +35,14 @@
  */
 
 // ── classification ────────────────────────────────────────────────────────────
+// Legacy skipped payments are provider-created calendar blocks for their own
+// customers. Membership schedule rows are a different kind of calendar block.
+export function isProviderSlotBlock(b) {
+  return bookingKind(b) !== 'membership' && (b?.record_purpose === 'provider_slot_block' || b?.payment_method === 'payment_skipped' || b?.payment_status === 'skipped')
+}
+export function isCommercialBooking(b) {
+  return bookingKind(b) !== 'membership' && !isProviderSlotBlock(b) && !['cancelled','canceled'].includes(b?.booking_status)
+}
 export function bookingKind(b) {
   const o = b?.origin || ''
   if (o === 'class_program') return 'membership'
@@ -44,6 +52,7 @@ export function bookingKind(b) {
 
 export function bookingChannel(b) {
   const o = b?.origin || ''
+  if (isProviderSlotBlock(b)) return 'manual'
   if (o === 'provider_site') return 'provider_site'
   if (o === 'manual_admin' || o === 'manual') return 'manual'
   if (o === 'class_program') return 'auto'

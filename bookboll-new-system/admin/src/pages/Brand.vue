@@ -7,7 +7,10 @@
  * /api/admin/site-settings, scoped to the caller's own business.
  */
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { loadSiteSettings, saveSiteSettings } from '../lib/siteSettings.js'
+import { useRoute } from 'vue-router'
+import { BRAND_PALETTES } from '../lib/brandPalettes.js'
+import { loadSiteSettings, saveSiteSettings, loadPublicSitePages } from '../lib/siteSettings.js'
+import { WEBSITE_SECTIONS, readWebsiteSections, withWebsiteSections, websiteSectionMismatches } from '../lib/websiteSections.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useToast } from '../lib/toast.js'
@@ -22,7 +25,7 @@ import { adminBrand, DEFAULT_ADMIN_PRIMARY, saveAdminBrand } from '../lib/adminB
 import {
   Globe2, Upload, Image as ImageIcon, Copy, ExternalLink, Check, X,
   Loader, Store, Dumbbell, Trophy, GraduationCap, Home, Newspaper, Plus, ArrowRight, CircleCheck,
-  Search, Monitor, Smartphone, RefreshCw, Link2, ShieldCheck, CreditCard, Sparkles, Lock, Languages, LayoutDashboard,
+  Search, Monitor, Smartphone, RefreshCw, Link2, ShieldCheck, CreditCard, Sparkles, Lock, Languages, LayoutDashboard, Settings, Images, MapPin, Mail,
 } from 'lucide-vue-next'
 
 const { currentOwnerUserId, currentUsername, isSuperAdmin, role: actorRole, allUsers } = useCurrentUser()
@@ -110,7 +113,41 @@ async function toggleWhitelabel() {
 const username = ref('')
 const previewDevice = ref('desktop')   // 'desktop' | 'mobile'
 const iframeKey = ref(0)               // bump to reload the preview iframe
-const showPreview = ref(false)         // load the (heavy) storefront iframe on demand
+const websiteTab = ref('branding')
+const websiteTabs = computed(() => [
+  { key: 'branding', label: 'Branding', icon: Store },
+  ...(!isPlatformMode.value ? [
+    { key: 'sections', label: 'Sections', icon: LayoutDashboard },
+    { key: 'content', label: 'Pages & content', icon: Newspaper },
+  ] : []),
+  { key: 'settings', label: 'Site settings', icon: Settings },
+])
+const route = useRoute()
+watch([() => route.query.tab, websiteTabs], ([tab, tabs]) => {
+  if (tabs.some(item => item.key === tab)) websiteTab.value = tab
+}, { immediate: true })
+
+const sectionGroups = [
+  { name: 'Bookings & discovery', description: 'Help visitors find something to book.', keys: ['hero', 'listings', 'programs'] },
+  { name: 'Your business', description: 'Introduce your business and help people reach you.', keys: ['about', 'blog', 'locations', 'contact'] },
+]
+const sectionTools = {
+  hero: { icon: Images, to: '/banners', action: 'Edit banners' },
+  listings: { icon: Dumbbell, to: '/listings', action: 'Manage listings' },
+  programs: { icon: GraduationCap, to: '/memberships', action: 'Manage programs' },
+  about: { icon: Store, page: 'about', action: 'Edit introduction' },
+  blog: { icon: Newspaper, to: '/website-blog', action: 'Manage posts' },
+  locations: { icon: MapPin, to: '/listings', action: 'Manage locations' },
+  contact: { icon: Mail, page: 'contact', action: 'Edit contact details' },
+}
+const sectionCount = computed(() => WEBSITE_SECTIONS.filter(({ key }) => sections.value[key]).length)
+const sectionByKey = key => WEBSITE_SECTIONS.find(section => section.key === key)
+function sectionContentHint(key) {
+  if (key === 'listings' && venuesCount.value === 0) return 'Add a listing for this section to appear.'
+  if (key === 'programs' && programsCount.value === 0) return 'Add a program for this section to appear.'
+  if (key === 'blog' && postsCount.value === 0) return 'Publish a post for this section to appear.'
+  return ''
+}
 
 // How much content the provider has on their site — drives the "What shows on your site"
 // section (each module shows live + a count, or a CTA to add the first one).
@@ -129,10 +166,10 @@ async function loadModuleCounts() {
 
 // Modules shown on the storefront, with their live state + where to add the first one.
 const siteModules = computed(() => [
-  { key: 'venues',   icon: Dumbbell,       name: 'Venue booking', count: venuesCount.value,
-    desc: 'Customers find a space and book a slot.', addTo: '/listings', addLabel: 'Add a venue' },
+  { key: 'venues',   icon: Dumbbell,       name: 'Listings', count: venuesCount.value,
+    desc: 'Customers browse your listings and book a time.', addTo: '/listings', addLabel: 'Add a listing' },
   { key: 'programs', icon: GraduationCap,  name: 'Memberships',   count: programsCount.value,
-    desc: 'Gym, class & academy programs people subscribe to.', addTo: '/listings', addLabel: 'Add a program' },
+    desc: 'Gym, class & academy programs people subscribe to.', addTo: '/memberships', addLabel: 'Add a program' },
   { key: 'blog',     icon: Newspaper,      name: 'Blog',          count: postsCount.value,
     desc: 'Articles & updates that bring visitors to your site.', addTo: '/website-blog', addLabel: 'Write a post' },
 ])
@@ -145,6 +182,65 @@ const pages = ref({
   about: { text: '', hero_title: '', hero_sub: '', hero_image: '' },
   contact: { phone: '', whatsapp: '', email: '', address: '', maps_url: '', hours: '', hero_title: '', hero_sub: '', hero_image: '' },
 })
+const sections = ref(readWebsiteSections())
+const sectionsSaving = ref(false)
+const sectionsVerification = ref('checking') // checking | applied | mismatch | unavailable
+const sectionsMismatched = ref([])
+const sectionsStatus = computed(() => {
+  if (sectionsDirty.value) return 'Unsaved changes'
+  if (sectionsVerification.value === 'checking') return 'Checking website…'
+  if (sectionsVerification.value === 'applied') return 'Saved and applied'
+  if (sectionsVerification.value === 'mismatch') return 'Saved · not applied to website'
+  return 'Saved · website check unavailable'
+})
+const sectionsDirty = computed(() => {
+  const saved = readWebsiteSections(pages.value)
+  return WEBSITE_SECTIONS.some(({ key }) => sections.value[key] !== saved[key])
+})
+async function checkWebsiteSections() {
+  const checkingOwnerId = ownerId.value
+  if (!checkingOwnerId || isPlatformMode.value) return false
+  sectionsVerification.value = 'checking'
+  const publicSite = await loadPublicSitePages(checkingOwnerId)
+  if (ownerId.value !== checkingOwnerId) return false
+  if (!publicSite.success) {
+    sectionsVerification.value = 'unavailable'
+    return false
+  }
+  sectionsMismatched.value = websiteSectionMismatches(pages.value, publicSite.pages)
+  sectionsVerification.value = sectionsMismatched.value.length ? 'mismatch' : 'applied'
+  return sectionsVerification.value === 'applied'
+}
+// Read back the persisted flags before marking the draft saved. A backend that
+// strips unknown page fields must not report a successful visibility change.
+async function confirmSectionsSaved(nextPages) {
+  const stored = await loadSiteSettings()
+  const expected = readWebsiteSections(nextPages)
+  const actual = readWebsiteSections(stored.settings?.site_pages)
+  if (!stored.success || WEBSITE_SECTIONS.some(({ key }) => actual[key] !== expected[key])) {
+    toast.error('Could not verify your section settings. Your changes are still here — please try saving again.')
+    return false
+  }
+  pages.value = withWebsiteSections(pages.value, expected)
+  iframeKey.value++
+  if (!await checkWebsiteSections()) {
+    toast.error(sectionsVerification.value === 'mismatch'
+      ? 'Settings saved, but the website has not applied them. See Website sections for details.'
+      : 'Settings saved. Could not verify the public website — please check again.')
+    return false
+  }
+  return true
+}
+async function saveSections() {
+  if (!ownerId.value || sectionsSaving.value || saving.value || pagesSaving.value || heroBgUploading.value) return
+  sectionsSaving.value = true
+  const nextPages = withWebsiteSections(pages.value, { ...sections.value })
+  try {
+    const res = await saveSiteSettings({ site_pages: nextPages })
+    if (!res.success) { toast.error(res.message || 'Could not save sections.'); return }
+    if (await confirmSectionsSaved(nextPages)) toast.success('Website sections saved.')
+  } finally { sectionsSaving.value = false }
+}
 // Page-banner image upload (shared by both page modals)
 const heroUploading = ref(false)
 const heroInput = ref(null)
@@ -164,6 +260,7 @@ async function onHeroPick(e) {
 const heroBgInput = ref(null)
 const heroBgUploading = ref(false)
 async function onHeroBgPick(e) {
+  if (pagesSaving.value || sectionsSaving.value || saving.value) return
   const file = e.target?.files?.[0]
   if (!file) return
   heroBgUploading.value = true
@@ -175,21 +272,25 @@ async function onHeroBgPick(e) {
   await saveHomeHero('Hero background saved — it\'s live on your homepage.')
 }
 async function removeHeroBg() {
+  if (pagesSaving.value || sectionsSaving.value || saving.value || heroBgUploading.value) return
   pages.value.home.hero_image = ''
   await saveHomeHero('Hero background removed — your homepage uses your brand colors again.')
 }
 async function saveHomeHero(okMsg) {
   if (!ownerId.value) return
-  const res = await saveSiteSettings({ site_pages: pages.value })
-  if (!res.success) toast.error(res.message || 'Could not save.')
-  else toast.success(okMsg)
+  pagesSaving.value = true
+  try {
+    const res = await saveSiteSettings({ site_pages: pages.value })
+    if (!res.success) toast.error(res.message || 'Could not save.')
+    else toast.success(okMsg)
+  } finally { pagesSaving.value = false }
 }
 
 const aboutLive = computed(() => !!pages.value.about.text.trim())
 const contactLive = computed(() => ['phone', 'whatsapp', 'email', 'address', 'maps_url', 'hours']
   .some(k => String(pages.value.contact[k] || '').trim()))
 async function savePages() {
-  if (!ownerId.value) return
+  if (!ownerId.value || pagesSaving.value || sectionsSaving.value || saving.value || heroBgUploading.value) return
   pagesSaving.value = true
   const res = await saveSiteSettings({ site_pages: pages.value })
   pagesSaving.value = false
@@ -203,6 +304,8 @@ async function savePages() {
 // ── load ────────────────────────────────────────────────────────────────────────
 async function load() {
   loading.value = true
+  sectionsVerification.value = 'checking'
+  sectionsMismatched.value = []
   // Marketplace (platform) mode → Laravel settings (brand_* / admin_*).
   if (isPlatformMode.value) {
     const res = await fetchSettings()
@@ -253,15 +356,19 @@ async function load() {
     const sp = data.site_pages || {}
     const hero = (h) => ({ hero_title: String(h?.hero_title || ''), hero_sub: String(h?.hero_sub || ''), hero_image: String(h?.hero_image || '') })
     pages.value = {
-      home: { hero_image: String(sp.home?.hero_image || '') },
-      about: { text: String(sp.about?.text || ''), ...hero(sp.about) },
+      ...sp,
+      home: { ...sp.home, hero_image: String(sp.home?.hero_image || '') },
+      about: { ...sp.about, text: String(sp.about?.text || ''), ...hero(sp.about) },
       contact: {
+        ...sp.contact,
         phone: String(sp.contact?.phone || ''), whatsapp: String(sp.contact?.whatsapp || ''),
         email: String(sp.contact?.email || ''), address: String(sp.contact?.address || ''),
         maps_url: String(sp.contact?.maps_url || ''), hours: String(sp.contact?.hours || ''),
         ...hero(sp.contact),
       },
     }
+    sections.value = readWebsiteSections(pages.value)
+    await checkWebsiteSections()
   }
   await loadModuleCounts()
   loading.value = false
@@ -330,6 +437,7 @@ function resetAdminPrimary() { f.admin_primary = ''; persistAdminBrand() }
 
 // ── save ──────────────────────────────────────────────────────────────────────
 async function save() {
+  if (saving.value || sectionsSaving.value || pagesSaving.value || heroBgUploading.value) return
   // Marketplace (platform) mode → Laravel settings + dual-write Supabase.
   if (isPlatformMode.value) {
     saving.value = true
@@ -379,9 +487,12 @@ async function save() {
   }
   // Languages go in the same save — there is no pre-migration column to dodge.
   patch.brand_languages = f.brand_languages?.length ? f.brand_languages : []
+  const nextPages = sectionsDirty.value ? withWebsiteSections(pages.value, { ...sections.value }) : null
+  if (nextPages) patch.site_pages = nextPages
   const res = await saveSiteSettings(patch)
+  if (!res.success) { saving.value = false; toast.error(res.message || 'Could not save.'); return }
+  if (nextPages && !await confirmSectionsSaved(nextPages)) { saving.value = false; return }
   saving.value = false
-  if (!res.success) { toast.error(res.message || 'Could not save.'); return }
   toast.success('White-label site saved.')
 }
 
@@ -416,8 +527,8 @@ function openMarketplace() { window.open(siteOrigin.value + '/', '_blank') }
 // f.brand_custom_domain/status stay loaded here for the address CTA + SEO snippet.
 
 // ── Preview iframe ──────────────────────────────────────────────────────────────
-const iframeSrc = computed(() => isPlatformMode.value ? (siteOrigin.value + '/') : previewById.value)
-function reloadPreview() { showPreview.value = true; iframeKey.value++ }
+const iframeSrc = computed(() => isPlatformMode.value ? (siteOrigin.value + '/?preview=1') : previewById.value)
+function reloadPreview() { iframeKey.value++ }
 
 // ── SEO snippet preview ─────────────────────────────────────────────────────────
 const seoTitle = computed(() => f.brand_meta_title?.trim() || f.brand_name?.trim() || (isPlatformMode.value ? 'Bookboll' : 'Your business'))
@@ -436,18 +547,18 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 </script>
 
 <template>
-  <div class="page">
+  <div class="page website-page">
     <div class="page-header">
       <div>
-        <div class="page-title">{{ isPlatformMode ? 'Bookboll Marketplace' : 'My Website' }}</div>
-        <div class="page-subtitle">{{ isPlatformMode ? 'Brand the main customer-facing marketplace — logo, name, tagline and colors.' : 'Your own branded booking site — only your venues, programs and events, on your own web address.' }}</div>
+        <h1 class="page-title">{{ isPlatformMode ? 'Bookboll Marketplace' : 'My Website' }}</h1>
+        <div class="page-subtitle">{{ isPlatformMode ? 'Manage the marketplace brand and appearance.' : 'Make your website feel like your business.' }}</div>
       </div>
       <div v-if="!loading && (ownerId || isPlatformMode)" class="wl-head-actions">
         <button v-if="!isPlatformMode" class="wl-btn" :class="f.brand_enabled ? 'wl-btn-ghost' : 'wl-btn-publish'" :disabled="publishing" @click="setPublished(!f.brand_enabled)">
           <Loader v-if="publishing" :size="15" class="spin" /><Globe2 v-else-if="!f.brand_enabled" :size="15" />
           {{ publishing ? '…' : (f.brand_enabled ? 'Unpublish' : 'Publish my site') }}
         </button>
-        <button class="wl-btn wl-btn-primary" :disabled="saving || !canSave" @click="save">
+        <button class="wl-btn wl-btn-primary" :disabled="saving || sectionsSaving || pagesSaving || heroBgUploading || !canSave" @click="save">
           <Loader v-if="saving" :size="15" class="spin" /><Check v-else :size="15" />
           {{ saving ? 'Saving…' : 'Save changes' }}
         </button>
@@ -464,10 +575,17 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
     <div v-else-if="loading" class="wl-empty"><Loader :size="22" class="spin" /> Loading…</div>
 
     <div v-else class="wl-layout">
+      <nav class="wl-tabs" aria-label="Website settings sections">
+        <button v-for="tab in websiteTabs" :key="tab.key" type="button" :aria-pressed="websiteTab === tab.key"
+          :class="{ active: websiteTab === tab.key }" @click="websiteTab = tab.key">
+          <component :is="tab.icon" :size="17" />{{ tab.label }}
+          <span v-if="tab.key === 'sections' && sectionsVerification === 'mismatch'" class="wl-tab-alert" title="Website settings need attention" aria-label="Needs attention">!</span>
+        </button>
+      </nav>
       <!-- ── Settings ── -->
-      <div class="wl-col wl-settings">
+      <div class="wl-col wl-settings" :class="`wl-tab-${websiteTab}`">
         <!-- Marketplace note (platform mode) -->
-        <div v-if="isPlatformMode" class="wl-card">
+        <div v-if="isPlatformMode" v-show="websiteTab === 'branding'" class="wl-card">
           <div class="wl-card-title">Public marketplace</div>
           <div class="wl-card-sub">This is the main Bookboll site every customer sees by default. Your changes here apply to the whole marketplace.</div>
           <div class="wl-linkrow">
@@ -479,7 +597,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 
         <!-- Your website — status, address, publish, branding, domain. One clean
              column: rows separated by hairlines, no boxes-inside-boxes. -->
-        <div v-if="!isPlatformMode" class="wl-card wl-site">
+        <div v-if="!isPlatformMode" v-show="websiteTab === 'branding'" class="wl-card wl-site">
           <div class="wl-site-head">
             <div class="wl-card-title">Your website</div>
             <span class="wl-state" :class="{ on: f.brand_enabled }"><span class="wl-state-dot"></span>{{ f.brand_enabled ? 'Live' : 'Draft' }}</span>
@@ -523,7 +641,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
         </div>
 
         <!-- Identity -->
-        <div class="wl-card">
+        <div v-show="websiteTab === 'branding'" class="wl-card wl-identity">
           <div class="wl-card-title">Logo &amp; name</div>
 
           <div class="wl-logo-row">
@@ -552,11 +670,11 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
               <div class="wl-herobg-label">Homepage hero background <em>(optional)</em></div>
               <div class="wl-herobg-hint">Shown behind your name &amp; tagline at the top of your homepage. Without one, your brand colors are used.</div>
               <div class="wl-herobg-btns">
-                <button class="wl-btn wl-btn-soft" :disabled="heroBgUploading" @click="heroBgInput?.click()">
+                <button class="wl-btn wl-btn-soft" :disabled="heroBgUploading || pagesSaving || sectionsSaving || saving" @click="heroBgInput?.click()">
                   <Loader v-if="heroBgUploading" :size="15" class="spin" /><Upload v-else :size="15" />
                   {{ heroBgUploading ? 'Uploading…' : (pages.home.hero_image ? 'Replace image' : 'Upload image') }}
                 </button>
-                <button v-if="pages.home.hero_image" class="wl-btn wl-btn-ghost" @click="removeHeroBg">Remove</button>
+                <button v-if="pages.home.hero_image" class="wl-btn wl-btn-ghost" :disabled="heroBgUploading || pagesSaving || sectionsSaving || saving" @click="removeHeroBg">Remove</button>
               </div>
               <input ref="heroBgInput" type="file" accept="image/*" hidden @change="onHeroBgPick" />
             </div>
@@ -573,8 +691,18 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
         </div>
 
         <!-- Colors -->
-        <div class="wl-card">
+        <div v-show="websiteTab === 'branding'" class="wl-card wl-palette">
           <div class="wl-card-title">Brand colors</div>
+          <template v-if="!isPlatformMode">
+            <p class="wl-card-sub">Try Qatar’s burgundy, desert sands or oasis greens. You can also use your own colours.</p>
+            <div class="wl-brand-presets" aria-label="Brand colour palettes">
+              <button v-for="palette in BRAND_PALETTES" :key="palette.name" type="button"
+                :aria-pressed="f.brand_primary === palette.primary && f.brand_accent === palette.accent"
+                @click="f.brand_primary = palette.primary; f.brand_accent = palette.accent">
+                <span :style="{ background: palette.primary }"></span><span :style="{ background: palette.accent }"></span>{{ palette.name }}
+              </button>
+            </div>
+          </template>
           <div class="wl-colors">
             <div class="wl-color">
               <span class="wl-label">Primary</span>
@@ -596,7 +724,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 
         <!-- ── Admin dashboard branding (platform mode) — the INTERNAL back-office
              chrome, separate from the marketplace brand above. -->
-        <div v-if="isPlatformMode" class="wl-card wl-admincard">
+        <div v-if="isPlatformMode" v-show="websiteTab === 'branding'" class="wl-card wl-admincard">
           <div class="wl-card-title"><LayoutDashboard :size="14" style="vertical-align:-2px" /> Admin dashboard</div>
           <div class="wl-card-sub">The logo &amp; accent colour of the internal dashboard your team uses — separate from the customer marketplace above. Changes here apply instantly.</div>
 
@@ -647,19 +775,61 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 
         <!-- Home banners moved to their own page (My Website → Home banners / /banners) -->
 
-        <!-- Sections are AUTO-DERIVED from your content (no manual toggles): each appears once
-             the provider adds its first item. Empty modules get a CTA to add the first one.
-             Events and Bookboll's loyalty/profiles never appear on a white-label site. -->
-        <div v-if="!isPlatformMode" class="wl-card">
-          <div class="wl-card-title"><Sparkles :size="14" style="vertical-align:-2px" /> What shows on your site</div>
-          <div class="wl-card-sub">Each section turns on automatically once you add content. Add your first to switch it on:</div>
+        <section v-if="!isPlatformMode" v-show="websiteTab === 'sections'" class="wl-card wl-sections" aria-labelledby="website-sections-title">
+          <div class="wl-sections-heading"><div><h2 id="website-sections-title" class="wl-card-title">Build your homepage</h2><p class="wl-card-sub">Choose what to show, then add or edit its content.</p></div><span>{{ sectionCount }} of {{ WEBSITE_SECTIONS.length }} enabled</span></div>
+          <div class="wl-section-groups">
+          <section v-for="group in sectionGroups" :key="group.name" class="wl-section-group">
+            <header><h3>{{ group.name }}</h3><p>{{ group.description }}</p></header>
+            <div class="wl-section-list">
+              <div v-for="key in group.keys" :key="key" class="wl-section-row" :class="{ 'is-hidden': !sections[key] }">
+                <span class="wl-section-icon"><component :is="sectionTools[key].icon" :size="20" /></span>
+                <span class="wl-section-copy">
+                  <label class="wl-section-name" :for="`section-switch-${key}`" :id="`section-name-${key}`">{{ sectionByKey(key).name }}</label>
+                  <span class="wl-section-desc" :id="`section-desc-${key}`">{{ sectionByKey(key).description }}</span>
+                  <span v-if="sections[key] && sectionContentHint(key)" class="wl-section-content-hint">{{ sectionContentHint(key) }}</span>
+                  <router-link v-if="sectionTools[key].to" :to="sectionTools[key].to" class="wl-section-edit">{{ sectionTools[key].action }}<ArrowRight :size="12" /></router-link>
+                  <button v-else type="button" class="wl-section-edit" @click="pageModal = sectionTools[key].page">{{ sectionTools[key].action }}<ArrowRight :size="12" /></button>
+                </span>
+                <label class="wl-section-control" :for="`section-switch-${key}`">
+                  <span class="wl-section-state">{{ sections[key] ? 'Enabled' : 'Hidden' }}</span>
+                  <span class="wl-section-switch">
+                    <input :id="`section-switch-${key}`" type="checkbox" role="switch" v-model="sections[key]"
+                      :aria-labelledby="`section-name-${key}`" :aria-describedby="`section-desc-${key}`"
+                      :disabled="sectionsSaving || saving || pagesSaving || heroBgUploading" />
+                    <span aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </section>
+          </div>
+          <p class="wl-hint">Hidden sections keep their content. Enabled sections appear once you add content. These switches do not remove your booking pages or venue details.</p>
+          <div v-if="sectionsVerification === 'mismatch' || sectionsVerification === 'unavailable'" class="wl-section-notice" role="alert">
+            <strong>{{ sectionsVerification === 'mismatch' ? 'Your website has not applied these settings' : 'We could not check your website' }}</strong>
+            <p v-if="sectionsVerification === 'mismatch'">Your choices are saved, but these sections still have different visibility on the website: {{ sectionsMismatched.map(section => section.name).join(', ') }}. Bookboll needs to update the website settings connection.</p>
+            <p v-else>Your choices are saved. Check again to confirm what visitors see.</p>
+            <button type="button" class="wl-btn wl-btn-ghost" :disabled="sectionsSaving || saving" @click="checkWebsiteSections">Check website again</button>
+          </div>
+          <div class="wl-section-actions">
+            <span role="status">{{ sectionsStatus }}</span>
+            <button type="button" class="wl-btn wl-btn-primary" :disabled="!sectionsDirty || sectionsSaving || saving || pagesSaving || heroBgUploading" @click="saveSections">
+              <Loader v-if="sectionsSaving" :size="15" class="spin" /><Check v-else :size="15" />
+              {{ sectionsSaving ? 'Saving…' : 'Save sections' }}
+            </button>
+          </div>
+        </section>
+
+        <!-- Content management is separate from homepage visibility. -->
+        <div v-if="!isPlatformMode" v-show="websiteTab === 'content'" class="wl-card wl-content">
+          <div class="wl-card-title"><Sparkles :size="14" style="vertical-align:-2px" /> Website content</div>
+          <div class="wl-card-sub">Manage your pages, listings and updates. Use Website sections to control their homepage visibility.</div>
           <div class="wl-mods">
             <!-- Simple pages: live as soon as they have content, edited right here -->
             <div class="wl-mod2" :class="{ on: aboutLive }">
               <span class="wl-mod-ico"><Newspaper :size="16" /></span>
               <div class="wl-mod-body">
                 <div class="wl-mod-name">About us
-                  <span v-if="aboutLive" class="wl-mod-on"><CircleCheck :size="12" /> Showing</span>
+                  <span v-if="aboutLive" class="wl-mod-on"><CircleCheck :size="12" /> Page ready</span>
                   <span v-else class="wl-mod-off">Not showing yet</span>
                 </div>
                 <div class="wl-mod-desc">A few lines about your business.</div>
@@ -672,7 +842,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
               <span class="wl-mod-ico"><Store :size="16" /></span>
               <div class="wl-mod-body">
                 <div class="wl-mod-name">Contact us
-                  <span v-if="contactLive" class="wl-mod-on"><CircleCheck :size="12" /> Showing</span>
+                  <span v-if="contactLive" class="wl-mod-on"><CircleCheck :size="12" /> Page ready</span>
                   <span v-else class="wl-mod-off">Not showing yet</span>
                 </div>
                 <div class="wl-mod-desc">Phone, WhatsApp, email &amp; directions.</div>
@@ -686,7 +856,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
               <div class="wl-mod-body">
                 <div class="wl-mod-name">
                   {{ m.name }}
-                  <span v-if="m.count > 0" class="wl-mod-on"><CircleCheck :size="12" /> Showing · {{ m.count }}</span>
+                  <span v-if="m.count > 0" class="wl-mod-on"><CircleCheck :size="12" /> {{ m.count }} added</span>
                   <span v-else class="wl-mod-off">Not showing yet</span>
                 </div>
                 <div class="wl-mod-desc">{{ m.desc }}</div>
@@ -699,7 +869,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
         </div>
 
         <!-- Languages (provider storefront only) — one dropdown + compact code pills -->
-        <div v-if="!isPlatformMode" class="wl-card">
+        <div v-if="!isPlatformMode" v-show="websiteTab === 'settings'" class="wl-card">
           <div class="wl-card-title"><Languages :size="14" style="vertical-align:-2px" /> Site languages</div>
           <div class="wl-card-sub">Pick the languages your site offers — leave empty to offer all {{ SUPPORTED_LOCALES.length }}. Everything is translated automatically.</div>
           <div class="wl-lang-row" data-no-translate>
@@ -713,7 +883,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
         </div>
 
         <!-- SEO -->
-        <div class="wl-card">
+        <div v-show="websiteTab === 'settings'" class="wl-card">
           <div class="wl-card-title"><Search :size="14" style="vertical-align:-2px" /> Search engine listing (SEO)</div>
           <div class="wl-card-sub">How your {{ isPlatformMode ? 'marketplace' : 'site' }} appears in Google. Leave blank to use your name &amp; tagline.</div>
           <label class="wl-field">
@@ -733,12 +903,12 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 
         <!-- Custom domain now lives on its own page: My Website → Custom domain (/website-domain) -->
 
-        <div class="wl-save">
+        <div v-show="websiteTab === 'branding' || websiteTab === 'settings'" class="wl-save">
           <button v-if="!isPlatformMode" class="wl-btn" :class="f.brand_enabled ? 'wl-btn-ghost' : 'wl-btn-publish'" :disabled="publishing" @click="setPublished(!f.brand_enabled)">
             <Loader v-if="publishing" :size="16" class="spin" /><Globe2 v-else-if="!f.brand_enabled" :size="16" />
             {{ publishing ? '…' : (f.brand_enabled ? 'Unpublish site' : 'Publish my site') }}
           </button>
-          <button class="wl-btn wl-btn-primary" :disabled="saving || !canSave" @click="save">
+          <button class="wl-btn wl-btn-primary" :disabled="saving || sectionsSaving || pagesSaving || heroBgUploading || !canSave" @click="save">
             <Loader v-if="saving" :size="16" class="spin" /><Check v-else :size="16" />
             {{ saving ? 'Saving…' : 'Save changes' }}
           </button>
@@ -746,37 +916,35 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
       </div>
 
       <!-- ── Live preview (real storefront, at the bottom) ── -->
-      <div class="wl-preview-bottom">
+      <section class="wl-preview-bottom" aria-labelledby="site-preview-title">
         <div class="wl-preview-head">
-          <div class="wl-preview-label">Live preview</div>
+          <div>
+            <h2 id="site-preview-title" class="wl-preview-label">Live preview</h2>
+            <p class="wl-preview-description">Your saved {{ isPlatformMode ? 'marketplace' : 'website' }}. Save changes, then refresh to see the latest version.</p>
+          </div>
           <div class="wl-preview-tools">
             <div class="wl-device-toggle">
-              <button :class="{ on: previewDevice === 'desktop' }" @click="previewDevice = 'desktop'" title="Desktop"><Monitor :size="14" /></button>
-              <button :class="{ on: previewDevice === 'mobile' }" @click="previewDevice = 'mobile'" title="Mobile"><Smartphone :size="14" /></button>
+              <button type="button" :class="{ on: previewDevice === 'desktop' }" :aria-pressed="previewDevice === 'desktop'" @click="previewDevice = 'desktop'" title="Desktop preview"><Monitor :size="16" /><span>Desktop</span></button>
+              <button type="button" :class="{ on: previewDevice === 'mobile' }" :aria-pressed="previewDevice === 'mobile'" @click="previewDevice = 'mobile'" title="Mobile preview"><Smartphone :size="16" /><span>Mobile</span></button>
             </div>
             <button class="wl-icon-btn" title="Reload preview" @click="reloadPreview"><RefreshCw :size="15" /></button>
             <button class="wl-icon-btn" :title="isPlatformMode ? 'Open site' : openSiteLabel" @click="isPlatformMode ? openMarketplace() : openPreview()"><ExternalLink :size="15" /></button>
           </div>
         </div>
         <div class="wl-frame-wrap" :class="previewDevice">
-          <iframe v-if="showPreview" :key="iframeKey" :src="iframeSrc" class="wl-frame" title="Storefront preview" loading="lazy"></iframe>
-          <button v-else class="wl-frame-load" @click="showPreview = true">
-            <Globe2 :size="22" /><span>Load live preview</span>
-            <em>Opens your real {{ isPlatformMode ? 'marketplace' : 'site' }} in a frame</em>
-          </button>
+          <iframe :key="iframeKey" :src="iframeSrc" class="wl-frame" title="Storefront preview" loading="eager"></iframe>
         </div>
-        <div class="wl-preview-note">Live view of your real {{ isPlatformMode ? 'marketplace' : 'site' }}. Save your changes, then reload the preview to see them.</div>
-      </div>
+      </section>
     </div>
 
     <!-- About page editor — one box of text, that's the whole setup -->
     <div v-if="pageModal === 'about'" class="modal-backdrop" @click.self="pageModal = ''">
-      <div class="modal wl-page-modal">
+      <div class="modal wl-page-modal" v-dialog="() => pageModal = ''">
         <div class="modal-header"><div class="modal-title">About us</div>
-          <button class="wl-icon-btn" @click="pageModal = ''"><X :size="16" /></button></div>
+          <button class="wl-icon-btn" @click="pageModal = ''" aria-label="Close"><X :size="16" /></button></div>
         <div class="modal-body">
           <p class="wl-pm-hint">Tell customers who you are — 2 or 3 short paragraphs is perfect. It goes live the moment you save.</p>
-          <textarea v-model="pages.about.text" rows="8" class="wl-input wl-textarea"
+          <textarea v-model="pages.about.text" rows="8" aria-label="About your business" class="wl-input wl-textarea"
             placeholder="We're a family-run sports club in Doha, open since 2015…"></textarea>
 
           <!-- Page banner (optional) — shared shape for both page modals -->
@@ -806,9 +974,9 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 
     <!-- Contact page editor — fill any field; empty ones simply don't show -->
     <div v-if="pageModal === 'contact'" class="modal-backdrop" @click.self="pageModal = ''">
-      <div class="modal wl-page-modal">
+      <div class="modal wl-page-modal" v-dialog="() => pageModal = ''">
         <div class="modal-header"><div class="modal-title">Contact us</div>
-          <button class="wl-icon-btn" @click="pageModal = ''"><X :size="16" /></button></div>
+          <button class="wl-icon-btn" @click="pageModal = ''" aria-label="Close"><X :size="16" /></button></div>
         <div class="modal-body">
           <p class="wl-pm-hint">Fill in what you have — empty fields just don't appear on the page.</p>
           <div class="wl-pm-grid">
@@ -863,17 +1031,17 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 .wl-settings > .wl-save { break-inside: avoid; column-span: all; margin-top: 2px; }
 
 /* SEO snippet preview */
-.wl-textarea { height: auto; padding: 10px 12px; resize: vertical; line-height: 1.45; font-family: inherit; }
+.wl-input.wl-textarea { height: auto; min-height: 100px; padding: 10px 12px; resize: vertical; line-height: 1.45; font-family: inherit; }
 .seo-snippet { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
-.seo-snip-url { font-size: 12px; color: #3c4043; }
-.seo-snip-title { font-size: 16px; color: #1a0dab; font-weight: 500; margin-top: 2px; line-height: 1.3; }
-.seo-snip-desc { font-size: 12.5px; color: #4d5156; margin-top: 3px; line-height: 1.45; }
+.seo-snip-url { font-size: 12px; color: var(--text-muted); }
+.seo-snip-title { font-size: 16px; color: var(--primary-ink); font-weight: 500; margin-top: 2px; line-height: 1.3; }
+.seo-snip-desc { font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.45; }
 
 /* Custom domain */
 .dom-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
 .dom-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
-.dom-badge.ok { background: #dcfce7; color: #15803d; }
-.dom-badge.pending { background: #dbeafe; color: #1d4ed8; }
+.dom-badge.ok { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #15803d); }
+.dom-badge.pending { background: var(--info-bg, #dbeafe); color: var(--info-ink, #1d4ed8); }
 .dns-box { margin-top: 12px; padding: 12px 14px; border: 1px dashed var(--border); border-radius: 10px; background: var(--surface, #ffffff); }
 .dns-title { font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
 .dns-rec { display: flex; gap: 10px; font-size: 13px; padding: 3px 0; }
@@ -884,35 +1052,57 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 /* Live preview (real iframe) */
 .wl-preview-bottom { background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
 .wl-preview-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
-.wl-preview-tools { display: flex; align-items: center; gap: 8px; }
+.wl-preview-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wl-preview-description { margin: 6px 0 0; max-width: 65ch; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.wl-preview-head .wl-preview-label { margin: 0; }
+.wl-preview-tools .wl-icon-btn { width: 40px; height: 40px; }
 .wl-device-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.wl-device-toggle button { width: 34px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--surface, #ffffff); color: var(--text-muted); border: none; cursor: pointer; }
-.wl-device-toggle button.on { background: #0f766e; color: #fff; }
-.wl-frame-wrap { background: #f1f5f9; border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; justify-content: center; }
-.wl-frame-wrap.desktop .wl-frame { width: 100%; height: 600px; }
-.wl-frame-wrap.mobile .wl-frame { width: 390px; max-width: 100%; height: 680px; border-radius: 22px; box-shadow: 0 6px 24px rgba(0,0,0,.12); }
-.wl-frame { border: 1px solid var(--border); border-radius: 10px; background: var(--surface, #ffffff); }
-.wl-frame-load { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 320px; border: 1.5px dashed var(--border); border-radius: 12px; background: var(--surface, #ffffff); color: var(--text-muted); cursor: pointer; }
-.wl-frame-load:hover { border-color: #14b8a6; color: #0f766e; }
-.wl-frame-load span { font-size: 14px; font-weight: 700; color: var(--text); }
-.wl-frame-load em { font-size: 12px; font-style: normal; }
+.wl-device-toggle button { min-width: 40px; min-height: 40px; padding: 8px 12px; gap: 7px; display: flex; align-items: center; justify-content: center; background: var(--surface, #ffffff); color: var(--text-muted); border: none; cursor: pointer; font-size: 12px; font-weight: 600; }
+.wl-device-toggle button.on { background: var(--primary); color: #fff; }
+.wl-frame-wrap { background: var(--bg, #f1f5f9); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; justify-content: center; }
+.wl-frame-wrap.desktop .wl-frame { width: 100%; height: clamp(680px, 78vh, 960px); }
+.wl-frame-wrap.mobile .wl-frame { width: 390px; max-width: 100%; height: 844px; border-radius: 22px; box-shadow: 0 6px 24px rgba(0,0,0,.12); }
+.wl-frame { display: block; min-width: 0; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--surface, #ffffff); }
+@media (max-width: 480px) { .wl-device-toggle button span { display: none; } }
 
 .wl-card { background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
 .wl-card-title { font-size: 14.5px; font-weight: 800; color: var(--text); }
 .wl-card-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+.wl-sections h2 { margin: 0; }
+.wl-sections > p { line-height: 1.6; }
+.wl-section-list { margin-top: 14px; }
+.wl-section-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.wl-section-copy { display: grid; gap: 4px; min-width: 0; }
+.wl-section-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.wl-section-desc { font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+.wl-section-control { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.wl-section-state { font-size: 11.5px; color: var(--text-muted); }
+.wl-section-switch { position: relative; display: grid; place-items: center; width: 44px; height: 44px; }
+.wl-section-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.wl-section-switch > span { pointer-events: none; width: 42px; height: 24px; border-radius: 20px; background: var(--text-muted); position: relative; }
+.wl-section-switch > span::before { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.wl-section-switch input:checked + span { background: #0f766e; }
+.wl-section-switch input:checked + span::before { transform: translateX(18px); }
+.wl-section-switch input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 4px; }
+.wl-section-switch input:disabled + span { opacity: .5; }
+.wl-section-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
+.wl-section-actions > span { font-size: 12px; color: var(--text-muted); }
+.wl-section-notice { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-inline-start: 3px solid #d97706; border-radius: 8px; background: var(--bg); color: var(--text); font-size: 12.5px; line-height: 1.6; }
+.wl-section-notice p { margin: 5px 0 10px; color: var(--text-muted); }
+@media (max-width: 480px) { .wl-section-row { gap: 10px; } .wl-section-state { display: none; } }
 
 .wl-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .wl-switch { position: relative; display: inline-block; width: 46px; height: 26px; flex-shrink: 0; }
 .wl-switch input { opacity: 0; width: 0; height: 0; }
 .wl-slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 999px; transition: .2s; }
-.wl-slider::before { content: ''; position: absolute; height: 20px; width: 20px; left: 3px; top: 3px; background: var(--surface, #ffffff); border-radius: 50%; transition: .2s; }
+.wl-slider::before { content: ''; position: absolute; height: 20px; width: 20px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
 .wl-switch input:checked + .wl-slider { background: #0f766e; }
 .wl-switch input:checked + .wl-slider::before { transform: translateX(20px); }
 
 .wl-linkrow { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text-muted); }
 .wl-link { flex: 1; min-width: 0; font-weight: 700; color: var(--text); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-icon-btn { width: 32px; height: 32px; border: 1px solid var(--border); background: var(--surface, #ffffff); border-radius: 8px; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.wl-icon-btn:hover { border-color: #14b8a6; color: #0f766e; }
+.wl-icon-btn:hover { border-color: #14b8a6; color: var(--primary-ink, #0f766e); }
 .wl-hint { font-size: 12px; color: var(--text-muted); margin-top: 10px; line-height: 1.5; }
 .wl-hint code { background: var(--bg); padding: 1px 5px; border-radius: 5px; font-size: 11.5px; }
 
@@ -922,8 +1112,8 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 .wl-sub-input { border-top-right-radius: 0; border-bottom-right-radius: 0; text-align: right; }
 .wl-sub-suffix { display: flex; align-items: center; padding: 0 12px; background: var(--bg); border: 1px solid var(--border); border-left: none; border-radius: 0 9px 9px 0; font-size: 13px; color: var(--text-muted); font-weight: 600; }
 .wl-sub-status { display: flex; align-items: center; gap: 5px; font-size: 12.5px; margin-top: 8px; color: var(--text-muted); }
-.wl-sub-status.ok { color: #0f766e; }
-.wl-sub-status.taken, .wl-sub-status.invalid { color: #dc2626; }
+.wl-sub-status.ok { color: var(--primary-ink, #0f766e); }
+.wl-sub-status.taken, .wl-sub-status.invalid { color: var(--danger-ink, #dc2626); }
 
 .wl-field { display: block; margin-top: 14px; }
 .wl-label { display: block; font-size: 12.5px; font-weight: 700; color: var(--text-muted); margin-bottom: 6px; }
@@ -944,7 +1134,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 .wl-herobg-label em { font-weight: 500; color: var(--text-muted); font-style: normal; }
 .wl-herobg-hint { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
 .wl-herobg-btns { display: flex; gap: 8px; flex-wrap: wrap; }
-.wl-warn { font-size: 11.5px; color: #b45309; }
+.wl-warn { font-size: 11.5px; color: var(--warning-ink, #b45309); }
 
 /* Collapse-proof: minmax(0,1fr) tracks + min-width:0 so the hex input can
    never blow the grid past the (narrow, multi-column) card width; the swatch
@@ -966,7 +1156,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 .wl-admin-mark.img { background-size: cover; background-position: center; }
 .wl-admin-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
 .wl-admin-txt b { color: #fff; font-size: 14px; font-weight: 800; }
-.wl-admin-txt span { color: #94a3b8; font-size: 10.5px; }
+.wl-admin-txt span { color: var(--text-light, #94a3b8); font-size: 10.5px; }
 .wl-admin-btn { background: var(--adm); color: #fff; font-size: 12px; font-weight: 700; padding: 7px 13px; border-radius: 8px; }
 .wl-admin-hint { font-size: 11.5px; color: var(--text-muted); }
 .wl-admin-colors { margin-top: 16px; }
@@ -978,30 +1168,30 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 .wl-admin-custom span { width: 20px; height: 20px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
 
 .wl-auto { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
-.wl-auto-row { display: flex; align-items: center; gap: 11px; padding: 10px 0; border-top: 1px solid #f1f5f9; }
-.wl-mod { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid #f1f5f9; }
+.wl-auto-row { display: flex; align-items: center; gap: 11px; padding: 10px 0; border-top: 1px solid var(--border, #f1f5f9); }
+.wl-mod { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border, #f1f5f9); }
 .wl-mod:first-of-type { margin-top: 6px; }
 .wl-mod-info { display: flex; align-items: center; gap: 11px; min-width: 0; }
-.wl-mod-ico { width: 34px; height: 34px; border-radius: 9px; background: #f0fdfa; color: #0f766e; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.wl-mod-ico { width: 34px; height: 34px; border-radius: 9px; background: var(--primary-soft, #f0fdfa); color: var(--primary-ink, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .wl-mod-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
 .wl-mod-desc { font-size: 12px; color: var(--text-muted); }
 
 /* Publish state badge */
-.wl-live { display: inline-flex; align-items: center; margin-left: 8px; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; color: var(--text-muted, #64748b); vertical-align: 2px; }
-.wl-live.on { background: #dcfce7; color: #15803d; }
+.wl-live { display: inline-flex; align-items: center; margin-left: 8px; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); vertical-align: 2px; }
+.wl-live.on { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #15803d); }
 
 /* "What shows on your site" — actionable module rows */
 /* Site languages — dropdown + compact code pills */
 .wl-lang-row { margin-top: 12px; max-width: 320px; }
 .wl-lang-minis { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
-.wl-lang-mini { font-size: 10.5px; font-weight: 800; letter-spacing: .03em; color: var(--primary); background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 6px; padding: 2px 7px; }
-.wl-lang-mini.locked { color: var(--text-muted, #64748b); background: #f1f5f9; border-color: var(--border, #e2e8f0); }
+.wl-lang-mini { font-size: 10.5px; font-weight: 800; letter-spacing: .03em; color: var(--primary-ink); background: var(--primary-soft, #f0fdfa); border: 1px solid var(--primary-border, #99f6e4); border-radius: 6px; padding: 2px 7px; }
+.wl-lang-mini.locked { color: var(--text-muted, #64748b); background: var(--bg, #f1f5f9); border-color: var(--border, #e2e8f0); }
 .wl-lang-mini.all { color: var(--text-muted, #64748b); background: transparent; border-style: dashed; }
 
 /* Own-domain recruitment CTA */
-.wl-domain-cta { display: flex; align-items: center; gap: 11px; margin-top: 14px; padding: 11px 13px; border: 1.5px dashed #cbd5e1; border-radius: 12px; text-decoration: none; color: var(--text); transition: border-color .12s, background .12s; }
-.wl-domain-cta:hover { border-color: var(--primary); background: #f0fdfa; }
-.wl-domain-cta-ico { width: 32px; height: 32px; border-radius: 9px; background: #f0fdfa; color: var(--primary); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.wl-domain-cta { display: flex; align-items: center; gap: 11px; margin-top: 14px; padding: 11px 13px; border: 1.5px dashed var(--border-strong, #cbd5e1); border-radius: 12px; text-decoration: none; color: var(--text); transition: border-color .12s, background .12s; }
+.wl-domain-cta:hover { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); }
+.wl-domain-cta-ico { width: 32px; height: 32px; border-radius: 9px; background: var(--primary-soft, #f0fdfa); color: var(--primary-ink); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .wl-domain-cta-txt { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .wl-domain-cta-txt b { font-size: 13.5px; font-weight: 800; }
 .wl-domain-cta-txt small { font-size: 12px; color: var(--text-muted); }
@@ -1009,20 +1199,20 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 
 .wl-mods { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .wl-mod2 { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
-.wl-mod2.on { background: #f0fdfa; border-color: #99f6e4; }
+.wl-mod2.on { background: var(--primary-soft, #f0fdfa); border-color: var(--primary-border, #99f6e4); }
 .wl-mod-body { flex: 1; min-width: 0; }
-.wl-mod-on { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; font-size: 11px; font-weight: 800; color: #15803d; }
+.wl-mod-on { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; font-size: 11px; font-weight: 800; color: var(--positive-ink, #15803d); }
 .wl-mod-off { margin-left: 8px; font-size: 11px; font-weight: 700; color: var(--text-light, #94a3b8); }
 .wl-mod-add { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; padding: 8px 13px; border-radius: 9px; background: var(--primary, #0f766e); color: #fff; font-size: 12.5px; font-weight: 800; text-decoration: none; white-space: nowrap; }
 .wl-mod-add:hover { filter: brightness(.94); }
 .wl-mod-add.ghost { background: var(--surface, #ffffff); color: var(--text-muted); border: 1px solid var(--border); }
-.wl-mod-add.ghost:hover { border-color: var(--primary, #0f766e); color: var(--primary, #0f766e); filter: none; }
+.wl-mod-add.ghost:hover { border-color: var(--primary, #0f766e); color: var(--primary-ink, #0f766e); filter: none; }
 
 .wl-btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-radius: 9px; font-size: 13.5px; font-weight: 700; cursor: pointer; border: 1px solid transparent; }
 .wl-btn:disabled { opacity: .55; cursor: not-allowed; }
 .wl-btn-primary { background: #0f766e; color: #fff; }
 .wl-btn-primary:hover:not(:disabled) { background: #0d5e58; }
-.wl-btn-soft { background: #f0fdfa; color: #0f766e; border-color: #99f6e4; }
+.wl-btn-soft { background: var(--primary-soft, #f0fdfa); color: var(--primary-ink, #0f766e); border-color: var(--primary-border, #99f6e4); }
 .wl-btn-ghost { background: var(--surface, #ffffff); color: var(--text-muted); border-color: var(--border); }
 .wl-save { display: flex; justify-content: flex-end; gap: 10px; }
 .wl-head-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -1038,12 +1228,12 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 .wl-mock-logo { display: flex; align-items: center; gap: 8px; }
 .wl-mock-logo-mark { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--ba), var(--bp)); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12px; }
 .wl-mock-logo-img { width: 30px; height: 30px; border-radius: 8px; background-size: cover; background-position: center; box-shadow: 0 0 0 1px var(--border); }
-.wl-mock-name { font-weight: 800; font-size: 15px; color: #0f172a; }
-.wl-mock-pill { font-size: 11.5px; font-weight: 700; color: #475569; border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; padding: 4px 10px; }
+.wl-mock-name { font-weight: 800; font-size: 15px; color: var(--text, #0f172a); }
+.wl-mock-pill { font-size: 11.5px; font-weight: 700; color: var(--text-secondary, #475569); border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; padding: 4px 10px; }
 .wl-mock-nav { display: flex; gap: 4px; padding: 0 10px; border-bottom: 1px solid #eef2f6; }
 .wl-mock-navlink { display: flex; align-items: center; gap: 5px; padding: 9px 10px; font-size: 12px; font-weight: 700; color: var(--text-light, #94a3b8); border-bottom: 3px solid transparent; }
 .wl-mock-navlink.active { color: var(--bp); border-bottom-color: var(--ba); }
-.wl-mock-body { padding: 14px; background: #f8fafc; }
+.wl-mock-body { padding: 14px; background: var(--surface-hover, #f8fafc); }
 .wl-mock-hero { border-radius: 12px; padding: 18px; background: linear-gradient(135deg, var(--bp), var(--ba)); color: #fff; }
 .wl-mock-hero-title { font-size: 18px; font-weight: 900; }
 .wl-mock-hero-sub { font-size: 12.5px; opacity: .92; margin-top: 3px; }
@@ -1052,7 +1242,7 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 .wl-mock-card { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px; }
 .wl-mock-card-img { height: 52px; border-radius: 8px; background: color-mix(in srgb, var(--bp) 12%, white); color: var(--bp); display: flex; align-items: center; justify-content: center; }
 .wl-mock-card-tag { display: inline-block; font-size: 10.5px; font-weight: 800; color: var(--bp); background: color-mix(in srgb, var(--bp) 14%, white); padding: 3px 8px; border-radius: 999px; }
-.wl-mock-card-name { font-size: 13px; font-weight: 800; color: #0f172a; margin-top: 8px; }
+.wl-mock-card-name { font-size: 13px; font-weight: 800; color: var(--text, #0f172a); margin-top: 8px; }
 .wl-mock-card-price { font-size: 12px; font-weight: 700; color: var(--bp); margin-top: 2px; }
 .wl-mock-card-link { font-size: 12px; font-weight: 800; color: var(--bp); margin-top: 6px; }
 .wl-preview-note { text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 10px; }
@@ -1106,31 +1296,52 @@ function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(
 .wl-wlb-name { font-size: 13.5px; font-weight: 800; color: var(--text); display: flex; align-items: center; gap: 8px; }
 .wl-wlb-desc { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }
 .wl-switch.busy { opacity: .5; pointer-events: none; }
-.wl-wlb .prem-lock { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #92400e; background: #fef3c7; border-radius: 999px; padding: 2px 8px; }
+.wl-wlb .prem-lock { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fef3c7); border-radius: 999px; padding: 2px 8px; }
 
 /* ── "Your website" card: clean single column ── */
 .wl-site-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.wl-state { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; padding: 4px 11px; border-radius: 999px; background: #f1f5f9; color: var(--text-muted, #64748b); }
-.wl-state.on { background: #dcfce7; color: #15803d; }
+.wl-state { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; padding: 4px 11px; border-radius: 999px; background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); }
+.wl-state.on { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #15803d); }
 .wl-state-dot { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; }
 .wl-state.on .wl-state-dot { background: #22c55e; }
 .wl-addr { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 11px 13px; background: var(--bg); border: 1px solid var(--border); border-radius: 11px; }
-.wl-addr-ico { color: var(--primary); flex-shrink: 0; }
+.wl-addr-ico { color: var(--primary-ink); flex-shrink: 0; }
 .wl-addr-host { flex: 1; min-width: 0; font-weight: 800; font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-publish { width: 100%; justify-content: center; margin-top: 12px; height: 44px; font-size: 14.5px; }
 .wl-pub-hint { font-size: 12px; color: var(--text-muted); margin-top: 8px; text-align: center; line-height: 1.5; }
-.wl-live-strip { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 13px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; font-size: 13px; font-weight: 600; color: #166534; }
+.wl-live-strip { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 13px; background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0); border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--positive-ink, #166534); }
 .wl-live-strip svg { flex-shrink: 0; }
 .wl-live-strip span { flex: 1; min-width: 0; }
-.wl-unpub { flex-shrink: 0; background: none; border: none; font-size: 12.5px; font-weight: 800; color: #16a34a; text-decoration: underline; cursor: pointer; padding: 4px; }
-.wl-hr { height: 1px; background: #f1f5f9; margin: 14px 0; }
+.wl-unpub { flex-shrink: 0; background: none; border: none; font-size: 12.5px; font-weight: 800; color: var(--positive-ink, #16a34a); text-decoration: underline; cursor: pointer; padding: 4px; }
+.wl-hr { height: 1px; background: var(--bg, #f1f5f9); margin: 14px 0; }
 .wl-row { display: flex; align-items: center; gap: 12px; }
 .wl-row-txt { flex: 1; min-width: 0; }
 .wl-row-name { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 800; color: var(--text); flex-wrap: wrap; }
 .wl-row-name-sub { font-style: normal; font-weight: 600; color: var(--text-muted); font-size: 12px; }
-.wl-row-name svg { color: var(--primary); }
+.wl-row-name svg { color: var(--primary-ink); }
 .wl-row-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.45; }
 .wl-row-link { text-decoration: none; border-radius: 10px; margin: -6px; padding: 6px; }
 .wl-row-link:hover { background: var(--bg); }
 .wl-row-arrow { color: var(--text-light, #94a3b8); flex-shrink: 0; }
+.wl-sections-heading { display:flex; align-items:start; justify-content:space-between; flex-wrap:wrap; gap:12px; padding-bottom:22px; }
+.wl-brand-presets { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 20px; }
+.wl-brand-presets button { display:flex; align-items:center; gap:4px; min-height:44px; padding:9px 12px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text); font:inherit; font-size:13px; cursor:pointer; }
+.wl-brand-presets button[aria-pressed=true] { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary); }
+.wl-brand-presets button:focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+.wl-brand-presets button span { width:12px; height:20px; border-radius:3px; }.wl-brand-presets button span + span { margin-right:5px; }
+.wl-sections-heading > span { font-size:12px; color:var(--primary-ink); background:var(--primary-soft); padding:6px 10px; border-radius:6px; }
+.wl-sections { container-type:inline-size; }
+.wl-section-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px; }
+@container(max-width:780px) { .wl-section-groups { grid-template-columns:minmax(0,1fr); } }
+.wl-section-group header { padding:14px 16px; background:var(--bg); border-radius:8px; }
+.wl-section-group h3 { font-size:14px; margin:0; color:var(--text); }.wl-section-group header p { margin:4px 0 0; font-size:12px; color:var(--text-muted); }
+.wl-sections .wl-section-row { padding:20px 0; gap:16px; cursor:default; align-items:start; }
+.wl-section-icon { flex-shrink:0; padding:9px; background:var(--primary-soft); color:var(--primary-ink); border-radius:8px; display:flex; }
+.wl-section-row.is-hidden .wl-section-icon { background:var(--bg); color:var(--text-muted); }
+.wl-section-edit { display:inline-flex; align-items:center; gap:6px; align-self:start; border:0; padding:5px 0; margin-top:3px; background:none; color:var(--primary-ink); font:inherit; font-size:12px; font-weight:650; cursor:pointer; text-decoration:none; }
+.wl-section-edit:hover { text-decoration:underline; }.wl-section-edit:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+.wl-section-content-hint { font-size:12px; color:var(--text-muted); line-height:1.5; }
+.wl-section-control { min-height:44px; cursor:pointer; flex-shrink:0; }.wl-sections .wl-section-state { font-size:12px; min-width:48px; }
+.wl-sections .wl-section-actions { padding-top:20px; border-top:1px solid var(--border); }
+@media(max-width:600px) { .wl-sections .wl-section-row { gap:10px; }.wl-section-icon { display:none; }.wl-sections .wl-section-state { display:block; min-width:0; font-size:11px; }.wl-section-control { flex-direction:column-reverse; gap:5px; }.wl-section-edit { min-height:40px; } }
 </style>

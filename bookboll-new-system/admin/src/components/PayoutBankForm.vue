@@ -114,7 +114,7 @@ defineProps({
 
 <style scoped>
 .payout-bank-fields { display:flex; flex-direction:column; gap:0; }
-.req { color:#ef4444; }
+.req { color:var(--danger-ink, #ef4444); }
 .form-opt { font-size:11px; font-weight:400; color:var(--text-muted); margin-left:4px; }
 .form-hint { font-size:12px; color:var(--text-muted); margin-top:4px; }
 .payout-select {
@@ -124,7 +124,7 @@ defineProps({
 .payout-select:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(59,130,246,.1); }
 .mono-input { font-family:'SF Mono',Monaco,monospace; font-size:13px; letter-spacing:.04em; }
 .field-error input, .field-error select { border-color:#ef4444 !important; }
-.field-err-msg { font-size:12px; color:#dc2626; margin-top:4px; display:flex; align-items:center; gap:4px; }
+.field-err-msg { font-size:12px; color:var(--danger-ink, #dc2626); margin-top:4px; display:flex; align-items:center; gap:4px; }
 .field-err-msg::before { content:'⚠'; font-size:11px; }
 
 /* Phone: keep inputs/selects at 16px (avoid iOS auto-zoom) + 44px touch targets */

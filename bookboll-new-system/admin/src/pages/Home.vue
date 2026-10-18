@@ -12,6 +12,7 @@ import { brandPreviewUrl, brandSiteUrl, providerSlug } from '../lib/brand.js'
 import { pushToast } from '../lib/toast.js'
 import { loadOverview } from '../lib/overview.js'
 import { fmt12, fmtRange12 } from '../lib/slots.js'
+import FeatureSearch from '../components/FeatureSearch.vue'
 import {
   LayoutDashboard, Calendar, Building2, Users, Wallet, Ticket, Globe as Globe2,
   CalendarDays, BookOpen, SquareCheck as CheckSquare, Settings, ScrollText, UsersRound,
@@ -57,7 +58,7 @@ function openSite() {
 
 // Guidance cards — filtered by what the current role can actually open.
 const ALL_CARDS = [
-  { to: '/listings', icon: Building2, title: 'Venues & Programs', desc: 'Add courts, set hours & prices, and create membership programs — all in one place.' },
+  { to: '/listings', icon: Building2, title: 'Listings & programs', desc: 'Manage your locations, listings, prices and membership programs.' },
   { to: '/calendar', icon: Calendar, title: 'Calendar', desc: 'See every booking and class session across your venues at a glance.' },
   { to: '/bookings', icon: BookOpen, title: 'Bookings', desc: 'Review, edit and manage incoming reservations.' },
   { to: '/customers', icon: Users, title: 'Customers', desc: 'Your customer CRM — profiles, history and loyalty.' },
@@ -74,6 +75,12 @@ const ALL_CARDS = [
   { to: '/settings', icon: Settings, title: 'Settings', desc: 'Platform, policies, commissions and more.' },
 ]
 const cards = computed(() => ALL_CARDS.filter(c => canAccessPage(c.to, role.value, currentOverrides.value)))
+const cardGroups = computed(() => [
+  { title: 'Day to day', icon: Calendar, paths: ['/calendar', '/bookings', '/listings', '/customers', '/subscriptions', '/special-days'] },
+  { title: 'Money & growth', icon: Wallet, paths: ['/payments', '/wallet', '/promocodes'] },
+  { title: 'Business & administration', icon: Settings, paths: ['/team', '/approvals', '/moderation', '/countries', '/audit-logs', '/settings'] },
+].map(group => ({ ...group, cards: group.paths.map(path => cards.value.find(card => card.to === path)).filter(Boolean) }))
+  .filter(group => group.cards.length))
 
 // ── Live setup guide (providers) — real completion states, not a static list ───
 const route = useRoute()
@@ -150,7 +157,7 @@ onMounted(loadLocations)
 </script>
 
 <template>
-  <div>
+  <div class="page home-page">
     <!-- Greeting -->
     <div class="hm-hero">
       <div>
@@ -158,6 +165,8 @@ onMounted(loadLocations)
         <p>{{ isProvider ? 'Manage your venues, members and website — everything in one place.' : 'Your control center for the whole Bookboll platform.' }}</p>
       </div>
     </div>
+
+    <FeatureSearch />
 
     <!-- Provider website tools -->
     <div v-if="isProvider" class="hm-site">
@@ -180,10 +189,10 @@ onMounted(loadLocations)
          at a time, dismissible) — mounted app-wide in App.vue. -->
 
     <!-- Navigation / guidance grid -->
-    <div class="hm-section">
-      <div class="hm-section-head"><Sparkles :size="16" /> Where to go</div>
+    <section v-for="group in cardGroups" :key="group.title" class="hm-section" :aria-label="group.title">
+      <h2 class="hm-section-head"><component :is="group.icon" :size="18" /> {{ group.title }}</h2>
       <div class="hm-grid">
-        <router-link v-for="c in cards" :key="c.to" :to="c.to" class="hm-card">
+        <router-link v-for="c in group.cards" :key="c.to" :to="c.to" class="hm-card">
           <div class="hm-card-ic"><component :is="c.icon" :size="20" /></div>
           <div class="hm-card-body">
             <div class="hm-card-title">{{ c.title }}</div>
@@ -192,7 +201,7 @@ onMounted(loadLocations)
           <ArrowRight :size="16" class="hm-card-arrow" />
         </router-link>
       </div>
-    </div>
+    </section>
 
     <!-- Locations (providers): each venue, its schedule & the services/listings inside -->
     <div v-if="isProvider" class="hm-section">
@@ -274,104 +283,104 @@ onMounted(loadLocations)
 
 <style scoped>
 .hm { padding: 28px 32px 48px; max-width: 1200px; }
-.hm-hero h1 { font-size: 26px; font-weight: 900; color: #0f172a; margin: 0; }
+.hm-hero h1 { font-size: 26px; font-weight: 900; color: var(--text, #0f172a); margin: 0; }
 .hm-hero p { font-size: 15px; color: var(--text-muted, #64748b); margin: 6px 0 0; }
 
 /* Provider website card */
 .hm-site { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
   margin-top: 22px; padding: 18px 20px; border: 1px solid var(--border); border-radius: 16px;
-  background: linear-gradient(120deg, #f0fdfa, #ffffff); }
+  background: linear-gradient(120deg, var(--primary-soft, #f0fdfa), var(--surface, #ffffff)); }
 .hm-site-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .hm-site-ic { width: 44px; height: 44px; border-radius: 12px; background: var(--brand, #0f766e); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.hm-site-title { font-size: 14px; font-weight: 800; color: #0f172a; }
-.hm-site-url { font-size: 13.5px; color: var(--brand, #0f766e); font-weight: 600; word-break: break-all; }
+.hm-site-title { font-size: 14px; font-weight: 800; color: var(--text, #0f172a); }
+.hm-site-url { font-size: 13.5px; color: var(--primary-ink, #0f766e); font-weight: 600; word-break: break-all; }
 .hm-site-url.muted { color: var(--text-light, #94a3b8); font-weight: 500; }
 .hm-site-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.hm-btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface, #ffffff); color: #0f172a; font-size: 13.5px; font-weight: 700; cursor: pointer; text-decoration: none; }
+.hm-btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface, #ffffff); color: var(--text, #0f172a); font-size: 13.5px; font-weight: 700; cursor: pointer; text-decoration: none; }
 .hm-btn:hover { border-color: var(--brand-accent, #14b8a6); }
 .hm-btn-primary { background: var(--brand, #0f766e); color: #fff; border-color: transparent; }
 
 /* Sections */
 .hm-section { margin-top: 30px; }
 .hm-section-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted, #64748b); margin-bottom: 14px; }
-.hm-section-head svg { color: var(--brand, #0f766e); }
+.hm-section-head svg { color: var(--primary-ink, #0f766e); }
 
 /* Setup guide (live checklist) */
-.hm-guide-count { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--brand, #0f766e); text-transform: none; letter-spacing: 0; }
+.hm-guide-count { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--primary-ink, #0f766e); text-transform: none; letter-spacing: 0; }
 .hm-guide-bar { height: 6px; border-radius: 999px; background: var(--border, #e2e8f0); overflow: hidden; margin-bottom: 14px; }
 .hm-guide-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #2dd4bf, var(--brand, #0f766e)); transition: width .3s; }
 .hm-steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
 .hm-step { display: flex; align-items: center; gap: 12px; padding: 13px 15px; border: 1.5px solid var(--border); border-radius: 12px; background: var(--surface, #ffffff); text-decoration: none; transition: border-color .12s, transform .12s, box-shadow .12s; }
 .hm-step:hover { border-color: var(--brand-accent, #14b8a6); transform: translateY(-1px); }
 .hm-step.next { border-color: var(--brand, #0f766e); box-shadow: 0 8px 22px rgba(15,118,110,.1); }
-.hm-step.done { background: #fafcfb; }
+.hm-step.done { background: var(--surface-hover, #fafcfb); }
 .hm-step.done .hm-step-label b { color: var(--text-muted, #64748b); }
-.hm-step-n { width: 26px; height: 26px; border-radius: 50%; background: #f0fdfa; color: var(--brand, #0f766e); font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.hm-step-n.ok { background: #dcfce7; color: #16a34a; }
+.hm-step-n { width: 26px; height: 26px; border-radius: 50%; background: var(--primary-soft, #f0fdfa); color: var(--primary-ink, #0f766e); font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.hm-step-n.ok { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #16a34a); }
 .hm-step-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.hm-step-label b { font-size: 14px; font-weight: 700; color: #0f172a; }
+.hm-step-label b { font-size: 14px; font-weight: 700; color: var(--text, #0f172a); }
 .hm-step-label small { font-size: 12px; color: var(--text-light, #94a3b8); line-height: 1.4; }
 .hm-step-next { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #fff; background: var(--brand, #0f766e); border-radius: 999px; padding: 2px 8px; margin-inline-start: 6px; vertical-align: 2px; font-style: normal; }
-.hm-step-arrow { color: #cbd5e1; flex-shrink: 0; }
-.hm-step:hover .hm-step-arrow { color: var(--brand, #0f766e); }
+.hm-step-arrow { color: var(--text-light, #cbd5e1); flex-shrink: 0; }
+.hm-step:hover .hm-step-arrow { color: var(--primary-ink, #0f766e); }
 .hm-step-share-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* Guidance grid */
 .hm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .hm-card { display: flex; align-items: flex-start; gap: 13px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface, #ffffff); text-decoration: none; transition: border-color .12s, box-shadow .12s, transform .12s; }
 .hm-card:hover { border-color: var(--brand-accent, #14b8a6); box-shadow: 0 8px 22px rgba(15,23,42,.07); transform: translateY(-2px); }
-.hm-card-ic { width: 40px; height: 40px; border-radius: 11px; background: #f1f5f9; color: var(--brand, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.hm-card-ic { width: 40px; height: 40px; border-radius: 11px; background: var(--bg, #f1f5f9); color: var(--primary-ink, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .hm-card-body { flex: 1; min-width: 0; }
-.hm-card-title { font-size: 14.5px; font-weight: 800; color: #0f172a; }
+.hm-card-title { font-size: 14.5px; font-weight: 800; color: var(--text, #0f172a); }
 .hm-card-desc { font-size: 13px; color: var(--text-muted, #64748b); line-height: 1.45; margin-top: 3px; }
-.hm-card-arrow { color: #cbd5e1; flex-shrink: 0; margin-top: 9px; }
-.hm-card:hover .hm-card-arrow { color: var(--brand, #0f766e); }
+.hm-card-arrow { color: var(--text-light, #cbd5e1); flex-shrink: 0; margin-top: 9px; }
+.hm-card:hover .hm-card-arrow { color: var(--primary-ink, #0f766e); }
 
 /* Locations showcase */
-.hm-loc-manage { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: var(--brand, #0f766e); text-decoration: none; text-transform: none; letter-spacing: 0; }
+.hm-loc-manage { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: var(--primary-ink, #0f766e); text-decoration: none; text-transform: none; letter-spacing: 0; }
 .hm-loc-manage:hover { text-decoration: underline; }
 .hm-loc-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 32px 16px; border: 1px dashed var(--border); border-radius: 14px; color: var(--text-light, #94a3b8); font-size: 14px; text-align: center; }
-.hm-loc-empty svg { color: #cbd5e1; }
+.hm-loc-empty svg { color: var(--text-light, #cbd5e1); }
 .hm-loc-list { display: flex; flex-direction: column; gap: 10px; }
 .hm-loc { border: 1px solid var(--border); border-radius: 14px; background: var(--surface, #ffffff); overflow: hidden; transition: border-color .12s, box-shadow .12s; }
 .hm-loc.open { border-color: var(--brand-accent, #14b8a6); box-shadow: 0 8px 22px rgba(15,23,42,.06); }
 .hm-loc-head { width: 100%; display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: none; border: none; cursor: pointer; text-align: left; }
-.hm-loc-head:hover { background: #f8fafc; }
-.hm-loc-thumb { width: 46px; height: 46px; border-radius: 11px; background: #f1f5f9; background-size: cover; background-position: center; color: var(--brand, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.hm-loc-head:hover { background: var(--surface-hover, #f8fafc); }
+.hm-loc-thumb { width: 46px; height: 46px; border-radius: 11px; background: var(--bg, #f1f5f9); background-size: cover; background-position: center; color: var(--primary-ink, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .hm-loc-main { flex: 1; min-width: 0; }
-.hm-loc-name { font-size: 15px; font-weight: 800; color: #0f172a; }
+.hm-loc-name { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .hm-loc-meta { font-size: 12.5px; color: var(--text-muted, #64748b); margin-top: 2px; }
 .hm-loc-meta span { display: inline-flex; align-items: center; gap: 4px; }
 .hm-loc-meta svg { color: var(--text-light, #94a3b8); }
 .hm-loc-counts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
-.hm-loc-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; color: #475569; background: #f1f5f9; border-radius: 999px; padding: 2px 9px; }
+.hm-loc-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; color: var(--text-secondary, #475569); background: var(--bg, #f1f5f9); border-radius: 999px; padding: 2px 9px; }
 .hm-loc-chev { color: var(--text-light, #94a3b8); flex-shrink: 0; transition: transform .18s; }
 .hm-loc.open .hm-loc-chev { transform: rotate(180deg); }
 .hm-loc-body { padding: 4px 16px 18px; border-top: 1px solid var(--border); }
 .hm-loc-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 22px; margin-top: 14px; }
 .hm-loc-block-h { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted, #64748b); margin-bottom: 10px; }
-.hm-loc-block-h svg { color: var(--brand, #0f766e); }
+.hm-loc-block-h svg { color: var(--primary-ink, #0f766e); }
 /* Schedule */
 .hm-sched { display: flex; flex-direction: column; gap: 2px; }
-.hm-sched-row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; padding: 4px 0; border-bottom: 1px dashed #f1f5f9; }
+.hm-sched-row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; padding: 4px 0; border-bottom: 1px dashed var(--border, #f1f5f9); }
 .hm-sched-row.closed { color: var(--text-light, #94a3b8); }
-.hm-sched-day { width: 42px; font-weight: 800; color: #334155; flex-shrink: 0; }
+.hm-sched-day { width: 42px; font-weight: 800; color: var(--text-secondary, #334155); flex-shrink: 0; }
 .hm-sched-row.closed .hm-sched-day { color: var(--text-light, #94a3b8); }
-.hm-sched-times { color: #0f172a; font-weight: 600; }
-.hm-sched-closed { color: #cbd5e1; font-weight: 600; }
+.hm-sched-times { color: var(--text, #0f172a); font-weight: 600; }
+.hm-sched-closed { color: var(--text-light, #cbd5e1); font-weight: 600; }
 /* Services */
 .hm-svc-list { display: flex; flex-direction: column; gap: 7px; }
 .hm-svc { display: flex; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; text-decoration: none; background: var(--surface, #ffffff); }
-.hm-svc:hover { border-color: var(--brand-accent, #14b8a6); background: #f8fafc; }
-.hm-svc-name { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hm-svc-name svg { color: var(--brand, #0f766e); flex-shrink: 0; }
-.hm-svc-tag { font-size: 10.5px; font-weight: 800; color: #475569; background: #f1f5f9; border-radius: 999px; padding: 2px 8px; text-transform: capitalize; flex-shrink: 0; }
-.hm-svc-tag.prog { color: #7c3aed; background: #f3e8ff; }
+.hm-svc:hover { border-color: var(--brand-accent, #14b8a6); background: var(--surface-hover, #f8fafc); }
+.hm-svc-name { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 700; color: var(--text, #0f172a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-svc-name svg { color: var(--primary-ink, #0f766e); flex-shrink: 0; }
+.hm-svc-tag { font-size: 10.5px; font-weight: 800; color: var(--text-secondary, #475569); background: var(--bg, #f1f5f9); border-radius: 999px; padding: 2px 8px; text-transform: capitalize; flex-shrink: 0; }
+.hm-svc-tag.prog { color: var(--purple-ink, #7c3aed); background: var(--purple-bg, #f3e8ff); }
 .hm-svc-status { font-size: 10.5px; font-weight: 800; flex-shrink: 0; }
-.hm-svc-status.on { color: #16a34a; }
+.hm-svc-status.on { color: var(--positive-ink, #16a34a); }
 .hm-svc-status.off { color: var(--text-light, #94a3b8); }
 .hm-svc-empty { font-size: 13px; color: var(--text-light, #94a3b8); display: flex; align-items: center; gap: 8px; }
-.hm-svc-add { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: var(--brand, #0f766e); text-decoration: none; }
+.hm-svc-add { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: var(--primary-ink, #0f766e); text-decoration: none; }
 .hm-svc-add:hover { text-decoration: underline; }
 
 @media (max-width: 600px) {

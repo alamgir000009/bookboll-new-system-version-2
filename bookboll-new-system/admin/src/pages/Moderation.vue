@@ -378,13 +378,13 @@ async function restoreCommunity(c) {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page moderation-page">
     <div class="page-header">
       <div>
-        <div class="page-title">Event Moderation</div>
-        <div class="page-subtitle">{{ isPlatformAdmin ? 'Review player-hosted events and take down indecent or spam listings' : 'Review player-hosted events at your venues and take down anything inappropriate' }}</div>
+        <h1 class="page-title">Event moderation</h1>
+        <div class="page-subtitle">{{ isPlatformAdmin ? 'Review player-hosted events and take down inappropriate or spam events' : 'Review player-hosted events at your venues and take down anything inappropriate' }}</div>
       </div>
-      <button class="mod-refresh" :disabled="loading" @click="load" title="Refresh"><RefreshCw :size="15" :class="{ spin: loading }" /></button>
+      <button class="mod-refresh" :disabled="loading" @click="load" aria-label="Refresh events" title="Refresh"><RefreshCw :size="17" :class="{ spin: loading }" /></button>
     </div>
 
     <!-- section toggle: user-hosted events vs communities (platform admins) -->
@@ -394,17 +394,17 @@ async function restoreCommunity(c) {
     </div>
 
     <!-- stat chips double as quick filters -->
-    <div class="mod-stats">
-      <button class="mod-stat" :class="{ on: tab === 'all' }" @click="tab = 'all'">
-        <span class="mod-stat-n">{{ counts.all }}</span><span class="mod-stat-l">Total</span>
+    <div class="mod-stats" role="group" aria-label="Filter by moderation status">
+      <button class="mod-stat" :aria-pressed="tab === 'all'" :class="{ on: tab === 'all' }" @click="tab = 'all'">
+        <span class="mod-stat-n">{{ counts.all }}</span><span class="mod-stat-l">{{ section === 'communities' ? 'All communities' : 'All events' }}</span>
       </button>
-      <button class="mod-stat active" :class="{ on: tab === 'active' }" @click="tab = 'active'">
+      <button class="mod-stat active" :aria-pressed="tab === 'active'" :class="{ on: tab === 'active' }" @click="tab = 'active'">
         <span class="mod-stat-n">{{ counts.active }}</span><span class="mod-stat-l">Live</span>
       </button>
-      <button class="mod-stat flagged" :class="{ on: tab === 'flagged' }" @click="tab = 'flagged'">
+      <button class="mod-stat flagged" :aria-pressed="tab === 'flagged'" :class="{ on: tab === 'flagged' }" @click="tab = 'flagged'">
         <span class="mod-stat-n">{{ counts.flagged }}</span><span class="mod-stat-l">Flagged</span>
       </button>
-      <button class="mod-stat removed" :class="{ on: tab === 'removed' }" @click="tab = 'removed'">
+      <button class="mod-stat removed" :aria-pressed="tab === 'removed'" :class="{ on: tab === 'removed' }" @click="tab = 'removed'">
         <span class="mod-stat-n">{{ counts.removed }}</span><span class="mod-stat-l">Removed</span>
       </button>
     </div>
@@ -418,15 +418,17 @@ async function restoreCommunity(c) {
       search-placeholder="Search event, host, sport or venue…"
     />
 
+    <div class="mod-results-heading"><h2>{{ section === 'communities' ? 'Communities' : 'Events' }}</h2><span aria-live="polite">{{ loading ? 'Loading…' : (section === 'communities' ? commFiltered.length : filtered.length) + ' results' }}</span><button v-if="search || filterCountry.length || filterCity.length || tab !== 'all'" type="button" @click="search = ''; filterCountry = []; filterCity = []; tab = 'all'">Clear filters</button></div>
+
     <!-- states -->
     <div v-if="loading" class="mod-msg">Loading events…</div>
 
     <!-- COMMUNITIES section -->
     <template v-else-if="section === 'communities'">
-      <div v-if="!commFiltered.length" class="empty-state">
+      <div v-if="!commFiltered.length" class="mod-empty">
         <Flag :size="32" />
-        <div class="empty-title">{{ tab === 'removed' ? 'Nothing removed' : tab === 'flagged' ? 'Nothing flagged' : 'No communities to review' }}</div>
-        <div class="empty-sub">Customer-created communities will appear here as they’re created.</div>
+        <div class="mod-empty-title">{{ tab === 'removed' ? 'Nothing removed' : tab === 'flagged' ? 'Nothing flagged' : 'No communities to review' }}</div>
+        <div class="mod-empty-sub">Customer-created communities will appear here as they’re created.</div>
       </div>
       <div v-else class="mod-list">
         <div v-for="c in commFiltered" :key="c.id" class="mod-card card" :class="'is-' + c.moderation_status">
@@ -467,12 +469,12 @@ async function restoreCommunity(c) {
       </div>
     </template>
 
-    <div v-else-if="!filtered.length" class="empty-state">
+    <div v-else-if="!filtered.length" class="mod-empty">
       <Flag :size="32" />
-      <div class="empty-title">
+      <div class="mod-empty-title">
         {{ tab === 'removed' ? 'Nothing removed' : tab === 'flagged' ? 'Nothing flagged' : 'No events to review' }}
       </div>
-      <div class="empty-sub">
+      <div class="mod-empty-sub">
         {{ search || filterCountry.length || filterCity.length
           ? 'No events match your search. Try clearing the filters.'
           : tab === 'flagged' ? 'Flag an event to keep an eye on it before deciding.'
@@ -544,8 +546,8 @@ async function restoreCommunity(c) {
     <!-- detail modal -->
     <Teleport to="body">
       <div v-if="detail" class="mod-overlay" @click.self="closeDetail">
-        <div class="mod-modal">
-          <button class="mod-modal-x" @click="closeDetail"><X :size="18" /></button>
+        <div class="mod-modal" v-dialog="closeDetail">
+          <button class="mod-modal-x" @click="closeDetail" aria-label="Close"><X :size="18" /></button>
 
           <div class="mod-modal-head">
             <span class="mod-type" :class="{ tourn: detail.game_type === 'tournament' }">{{ typeLabel(detail) }}</span>
@@ -604,7 +606,7 @@ async function restoreCommunity(c) {
     <!-- fullscreen image lightbox -->
     <Teleport to="body">
       <div v-if="lbOpen" class="mod-lb" @click.self="closeLb">
-        <button class="mod-lb-x" @click="closeLb"><X :size="22" /></button>
+        <button class="mod-lb-x" @click="closeLb" aria-label="Close"><X :size="22" /></button>
         <button v-if="lbList.length > 1" class="mod-lb-nav left" @click.stop="lbPrev"><ChevronLeft :size="28" /></button>
         <img :src="lbList[lbIdx]" class="mod-lb-img" :alt="`Photo ${lbIdx + 1}`" />
         <button v-if="lbList.length > 1" class="mod-lb-nav right" @click.stop="lbNext"><ChevronRight :size="28" /></button>
@@ -616,20 +618,20 @@ async function restoreCommunity(c) {
 
 <style scoped>
 .mod-refresh { width: 38px; height: 38px; border: 1px solid var(--border); background: var(--surface, #ffffff); border-radius: 9px; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
-.mod-refresh:hover:not(:disabled) { border-color: #14b8a6; color: #0f766e; }
+.mod-refresh:hover:not(:disabled) { border-color: #14b8a6; color: var(--primary-ink, #0f766e); }
 .spin { animation: modspin 1s linear infinite; }
 @keyframes modspin { to { transform: rotate(360deg); } }
 
 /* stat chips */
 .mod-stats { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .mod-stat { display: flex; flex-direction: column; align-items: flex-start; min-width: 92px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface, #ffffff); cursor: pointer; transition: all .15s; }
-.mod-stat:hover { border-color: #cbd5e1; }
+.mod-stat:hover { border-color: var(--border-strong, #cbd5e1); }
 .mod-stat.on { border-color: #0f766e; box-shadow: 0 0 0 1px #0f766e inset; }
 .mod-stat-n { font-size: 22px; font-weight: 800; color: var(--text); line-height: 1; }
 .mod-stat-l { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-top: 4px; }
-.mod-stat.active .mod-stat-n { color: #059669; }
-.mod-stat.flagged .mod-stat-n { color: #d97706; }
-.mod-stat.removed .mod-stat-n { color: #dc2626; }
+.mod-stat.active .mod-stat-n { color: var(--positive-ink, #059669); }
+.mod-stat.flagged .mod-stat-n { color: var(--warning-ink, #d97706); }
+.mod-stat.removed .mod-stat-n { color: var(--danger-ink, #dc2626); }
 
 /* toolbar */
 .mod-toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
@@ -641,7 +643,7 @@ async function restoreCommunity(c) {
 .mod-sections { display: flex; gap: 8px; margin-bottom: 14px; }
 .mod-section { display: inline-flex; align-items: center; gap: 7px; font: inherit; font-size: 13.5px; font-weight: 800; padding: 9px 18px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--surface, #ffffff); color: var(--text-muted, #64748b); cursor: pointer; }
 .mod-section.on { background: var(--text, #0f172a); color: var(--surface, #ffffff); border-color: var(--text, #0f172a); }
-.mod-section-n { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; font-size: 11px; background: #fee2e2; color: #be123c; }
+.mod-section-n { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; font-size: 11px; background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #be123c); }
 .mod-section.on .mod-section-n { background: rgba(255,255,255,.25); color: inherit; }
 
 /* list */
@@ -650,7 +652,7 @@ async function restoreCommunity(c) {
 .mod-card.is-removed { opacity: .82; }
 .mod-card.is-removed .mod-cover img { filter: grayscale(.5); }
 
-.mod-cover { position: relative; width: 132px; flex-shrink: 0; border-radius: 12px; overflow: hidden; background: #f1f5f9; }
+.mod-cover { position: relative; width: 132px; flex-shrink: 0; border-radius: 12px; overflow: hidden; background: var(--bg, #f1f5f9); }
 .mod-cover.clickable { cursor: zoom-in; }
 .mod-cover img { width: 100%; height: 100%; object-fit: cover; display: block; min-height: 120px; }
 .mod-cover-blank { width: 100%; height: 100%; min-height: 120px; display: flex; align-items: center; justify-content: center; color: var(--text-light, #94a3b8); }
@@ -658,20 +660,20 @@ async function restoreCommunity(c) {
 
 .mod-body { flex: 1; min-width: 0; }
 .mod-row1 { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-.mod-type { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #0f766e; background: #ccfbf1; padding: 2px 9px; border-radius: 999px; }
-.mod-type.tourn { color: #7c3aed; background: #ede9fe; }
+.mod-type { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--primary-ink, #0f766e); background: var(--primary-soft, #ccfbf1); padding: 2px 9px; border-radius: 999px; }
+.mod-type.tourn { color: var(--purple-ink, #7c3aed); background: var(--purple-bg, #ede9fe); }
 .mod-title { font-size: 16px; font-weight: 700; color: var(--text); margin: 0; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mod-status { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; padding: 3px 9px; border-radius: 999px; }
-.mod-status.active { color: #166534; background: #dcfce7; }
-.mod-status.flagged { color: #9a3412; background: #ffedd5; }
-.mod-status.removed { color: #991b1b; background: #fee2e2; }
+.mod-status.active { color: var(--positive-ink, #166534); background: var(--positive-bg, #dcfce7); }
+.mod-status.flagged { color: var(--warning-ink, #9a3412); background: var(--warning-bg, #ffedd5); }
+.mod-status.removed { color: var(--danger-ink, #991b1b); background: var(--danger-bg, #fee2e2); }
 
 .mod-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12.5px; color: var(--text); margin-top: 9px; }
 .mod-meta span { display: inline-flex; align-items: center; gap: 5px; }
 .mod-meta .mod-dim { color: var(--text-muted); }
 
 .mod-host { font-size: 13px; color: var(--text-muted); margin-top: 9px; display: flex; align-items: center; gap: 7px; }
-.mod-host-link { color: #0f766e; font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 3px; }
+.mod-host-link { color: var(--primary-ink, #0f766e); font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 3px; }
 .mod-host-link:hover { text-decoration: underline; }
 .mod-wa { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: #25d366; color: #fff; }
 .mod-wa.inline { width: auto; height: auto; gap: 5px; padding: 4px 9px; border-radius: 7px; font-size: 12.5px; font-weight: 700; text-decoration: none; }
@@ -679,8 +681,8 @@ async function restoreCommunity(c) {
 .mod-desc { font-size: 13px; color: var(--text); line-height: 1.5; margin: 9px 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 .mod-flagbox { display: flex; gap: 9px; align-items: flex-start; margin-top: 11px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; }
-.mod-flagbox.flagged { background: #fff7ed; color: #9a3412; }
-.mod-flagbox.removed { background: #fef2f2; color: #991b1b; }
+.mod-flagbox.flagged { background: var(--warning-bg, #fff7ed); color: var(--warning-ink, #9a3412); }
+.mod-flagbox.removed { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #991b1b); }
 .mod-flagbox b { display: block; font-weight: 800; }
 .mod-flagbox span { display: block; margin-top: 1px; }
 .mod-flagbox small { display: block; margin-top: 3px; opacity: .8; }
@@ -689,23 +691,23 @@ async function restoreCommunity(c) {
 .mod-btn { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; font-weight: 700; padding: 8px 13px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface, #ffffff); color: var(--text); cursor: pointer; transition: all .15s; }
 .mod-btn:hover { background: var(--bg); }
 .mod-btn.ghost { color: var(--text-muted); }
-.mod-btn.warn { border-color: #fed7aa; color: #c2410c; background: #fff7ed; }
-.mod-btn.warn:hover { background: #ffedd5; }
-.mod-btn.danger { border-color: #fecaca; color: #dc2626; background: #fef2f2; }
-.mod-btn.danger:hover { background: #fee2e2; }
-.mod-btn.ok { border-color: #bbf7d0; color: #15803d; background: #f0fdf4; }
-.mod-btn.ok:hover { background: #dcfce7; }
+.mod-btn.warn { border-color: var(--warning-border, #fed7aa); color: var(--warning-ink, #c2410c); background: var(--warning-bg, #fff7ed); }
+.mod-btn.warn:hover { background: var(--warning-bg, #ffedd5); }
+.mod-btn.danger { border-color: var(--danger-border, #fecaca); color: var(--danger-ink, #dc2626); background: var(--danger-bg, #fef2f2); }
+.mod-btn.danger:hover { background: var(--danger-bg, #fee2e2); }
+.mod-btn.ok { border-color: var(--positive-border, #bbf7d0); color: var(--positive-ink, #15803d); background: var(--positive-bg, #f0fdf4); }
+.mod-btn.ok:hover { background: var(--positive-bg, #dcfce7); }
 
 /* detail modal */
 .mod-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.55); display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; z-index: 1000; overflow-y: auto; }
 .mod-modal { position: relative; width: 100%; max-width: 640px; background: var(--surface, #ffffff); border-radius: 16px; padding: 24px; box-shadow: 0 24px 60px rgba(0,0,0,.25); }
-.mod-modal-x { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 8px; border: none; background: #f1f5f9; color: #475569; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.mod-modal-x { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 8px; border: none; background: var(--bg, #f1f5f9); color: var(--text-secondary, #475569); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .mod-modal-x:hover { background: var(--border, #e2e8f0); }
 .mod-modal-head { display: flex; align-items: center; gap: 9px; }
 .mod-modal-title { font-size: 21px; font-weight: 800; color: var(--text); margin: 10px 0 16px; padding-right: 40px; }
 
 .mod-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-bottom: 18px; }
-.mod-thumb { padding: 0; border: none; border-radius: 10px; overflow: hidden; cursor: zoom-in; aspect-ratio: 4/3; background: #f1f5f9; }
+.mod-thumb { padding: 0; border: none; border-radius: 10px; overflow: hidden; cursor: zoom-in; aspect-ratio: 4/3; background: var(--bg, #f1f5f9); }
 .mod-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .mod-noimg { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 13px; background: var(--bg); padding: 12px; border-radius: 10px; margin-bottom: 18px; }
 
@@ -771,4 +773,22 @@ async function restoreCommunity(c) {
   /* refresh button → 40px tap target */
   .mod-refresh { width: 40px; height: 40px; }
 }
+
+.moderation-page { max-width:1280px; margin-inline:auto; }
+.moderation-page .page-header { display:grid; grid-template-columns:minmax(0,1fr) 44px; align-items:start; gap:16px; }
+.moderation-page .page-subtitle { max-width:680px; line-height:1.6; }
+.moderation-page .mod-refresh { width:44px; height:44px; flex:none; }
+.moderation-page .mod-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:24px 0; }
+.moderation-page .mod-stat { min-width:0; padding:18px; border-radius:10px; gap:6px; }
+.moderation-page .mod-stat.on { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary) inset; background:var(--primary-soft); }
+.moderation-page .mod-stat-l { font-size:13px; }
+.mod-results-heading { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:20px 0 14px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+.mod-results-heading h2 { font-size:17px; color:var(--text); margin:0; }
+.mod-results-heading span { color:var(--text-muted); font-size:13px; }
+.mod-results-heading button { margin-inline-start:auto; min-height:44px; padding:8px 12px; border:1px solid var(--border); background:var(--surface); border-radius:8px; color:var(--primary-ink); }
+.mod-empty { min-height:300px; padding:48px 24px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; border:1px solid var(--border); border-radius:12px; background:var(--surface); }
+.mod-empty > svg { color:var(--primary-ink); width:40px; height:40px; }
+.mod-empty-title { font-size:18px; font-weight:600; color:var(--text); }
+.mod-empty-sub { color:var(--text-muted); font-size:14px; line-height:1.7; max-width:420px; }
+@media(max-width:600px) { .moderation-page .mod-stats { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } .moderation-page .mod-stat { padding:16px; } .mod-empty { min-height:260px; padding:32px 20px; } }
 </style>

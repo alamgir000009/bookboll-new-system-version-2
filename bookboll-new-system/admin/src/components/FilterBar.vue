@@ -15,7 +15,7 @@
  *   </FilterBar>
  */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { Search, SlidersHorizontal } from 'lucide-vue-next'
+import { Search, SlidersHorizontal, X } from 'lucide-vue-next'
 import MultiSelectDropdown from './MultiSelectDropdown.vue'
 
 const props = defineProps({
@@ -75,14 +75,15 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
     <div class="lf-search-wrap">
       <div class="search lf-search">
         <Search :size="16" />
-        <input v-model="searchVal" :placeholder="searchPlaceholder" />
-        <button type="button" class="lf-filter-btn" :class="{ on: open || activeCount }" @click.stop="open = !open" title="Filters">
+        <input v-model="searchVal" :placeholder="searchPlaceholder" :aria-label="searchPlaceholder" />
+        <button type="button" class="lf-filter-btn" :class="{ on: open || activeCount }" @click.stop="open = !open" title="Filters" :aria-expanded="open" aria-label="Filters">
           <SlidersHorizontal :size="16" />
           <span v-if="activeCount" class="lf-filter-n">{{ activeCount }}</span>
         </button>
       </div>
 
-      <div v-if="open" class="lf-panel" @click.stop>
+      <div v-if="open" class="lf-panel" @click.stop @keydown.esc.stop="open = false">
+        <div class="lf-panel-head"><strong>Filter results</strong><button type="button" class="btn-icon" aria-label="Close filters" @click="open = false"><X :size="18" /></button></div>
         <div class="lf-selects">
           <div v-if="showCountry" class="lf-field">
             <label>{{ countryLabel }}</label>
@@ -101,7 +102,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
         <div class="lf-panel-foot">
           <button v-if="activeCount" type="button" class="lf-clear" @click="clearAll">Clear all</button>
           <span v-else></span>
-          <button type="button" class="btn btn-primary btn-sm" @click="open = false">Done</button>
+          <button type="button" class="btn btn-primary btn-sm" @click="open = false">Show results</button>
         </div>
       </div>
     </div>

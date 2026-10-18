@@ -47,7 +47,7 @@ async function load() {
 }
 onMounted(load)
 watch(currentOwnerUserId, load)
-watch(cfg, () => { if (!loading.value) markDirty() }, { deep: true })
+watch(cfg, () => { if (!loading.value) markDirty() }, { deep: true, flush: 'sync' })
 
 const validation = computed(() => validateSmtpConfig(cfg.value))
 const connected = computed(() => isSmtpConfigured(cfg.value))
@@ -128,7 +128,7 @@ async function save() {
       <div class="card es-card">
         <div class="es-enable">
           <label class="es-switch">
-            <input type="checkbox" v-model="cfg.enabled" />
+            <input type="checkbox" aria-label="Send emails from my own address" v-model="cfg.enabled" />
             <span class="es-slider"></span>
           </label>
           <div class="es-enable-txt">
@@ -196,7 +196,7 @@ async function save() {
               <span>SMTP password / API key</span>
               <div class="es-pass">
                 <input class="es-input" :class="{ bad: err('password') }" :type="showPassword ? 'text' : 'password'" v-model="cfg.password" placeholder="••••••••••••" autocomplete="new-password" />
-                <button type="button" class="es-eye" @click="showPassword = !showPassword"><component :is="showPassword ? EyeOff : Eye" :size="15" /></button>
+                <button type="button" class="es-eye" :aria-label="showPassword ? 'Hide password' : 'Show password'" @click="showPassword = !showPassword"><component :is="showPassword ? EyeOff : Eye" :size="15" /></button>
               </div>
               <em v-if="err('password')" class="es-err">{{ err('password') }}</em>
             </label>
@@ -213,7 +213,7 @@ async function save() {
           <!-- Test -->
           <div class="es-section"><Send :size="14" /> Send a test</div>
           <div class="es-test">
-            <input class="es-input" v-model.trim="testTo" placeholder="you@example.com" spellcheck="false" />
+            <input class="es-input" aria-label="Test email recipient" v-model.trim="testTo" placeholder="you@example.com" spellcheck="false" />
             <button class="btn btn-secondary" :disabled="testing" @click="runTest">
               <Loader v-if="testing" :size="14" class="es-spin" /><Send v-else :size="14" /> {{ testing ? 'Sending…' : 'Send test email' }}
             </button>
@@ -233,7 +233,7 @@ async function save() {
 @keyframes esspin { to { transform: rotate(360deg); } }
 
 .es-platform { display: flex; gap: 14px; align-items: flex-start; padding: 18px 20px; }
-.es-platform svg { color: var(--primary); flex-shrink: 0; margin-top: 2px; }
+.es-platform svg { color: var(--primary-ink); flex-shrink: 0; margin-top: 2px; }
 .es-platform p { font-size: 13px; color: var(--text-muted); margin: 4px 0 0; }
 
 /* Uses strip */
@@ -241,12 +241,12 @@ async function save() {
 @media (max-width: 640px) { .es-uses { grid-template-columns: 1fr; } }
 .es-use { display: flex; gap: 11px; align-items: flex-start; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 12px; padding: 13px 15px; }
 .es-use-ic { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.es-use-ic.amber { background: #fef3c7; color: #b45309; }
-.es-use-ic.teal { background: #ccfbf1; color: #0f766e; }
+.es-use-ic.amber { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #b45309); }
+.es-use-ic.teal { background: var(--primary-soft, #ccfbf1); color: var(--primary-ink, #0f766e); }
 .es-use b { font-size: 13.5px; display: block; }
 .es-use small { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
-.es-opt { font-style: normal; font-weight: 700; color: #b45309; }
-.es-req { font-style: normal; font-weight: 700; color: #0f766e; }
+.es-opt { font-style: normal; font-weight: 700; color: var(--warning-ink, #b45309); }
+.es-req { font-style: normal; font-weight: 700; color: var(--primary-ink, #0f766e); }
 
 .es-card { padding: 4px 20px 18px; }
 
@@ -256,14 +256,15 @@ async function save() {
 .es-enable-txt b { font-size: 14px; }
 .es-enable-txt small { display: block; font-size: 12px; color: var(--text-muted); }
 .es-status { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; padding: 4px 10px; border-radius: 999px; flex-shrink: 0; }
-.es-status.ok { color: #166534; background: #dcfce7; }
-.es-status.off { color: var(--text-muted, #64748b); background: #f1f5f9; }
+.es-status.ok { color: var(--positive-ink, #166534); background: var(--positive-bg, #dcfce7); }
+.es-status.off { color: var(--text-muted, #64748b); background: var(--bg, #f1f5f9); }
 
 /* Switch */
 .es-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
-.es-switch input { opacity: 0; width: 0; height: 0; }
+.es-switch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+.es-switch:has(input:focus-visible) { outline: 2px solid var(--primary-ink); outline-offset: 4px; border-radius: 12px; }
 .es-slider { position: absolute; inset: 0; border-radius: 999px; background: var(--border, #e2e8f0); transition: background .15s; cursor: pointer; }
-.es-slider::before { content: ""; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; border-radius: 50%; background: var(--surface, #ffffff); box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
+.es-slider::before { content: ""; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
 .es-switch input:checked + .es-slider { background: var(--primary); }
 .es-switch input:checked + .es-slider::before { transform: translateX(18px); }
 
@@ -271,8 +272,8 @@ async function save() {
 .es-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .es-presets-l { font-size: 12px; font-weight: 700; color: var(--text-muted); margin-right: 3px; }
 .es-preset { border: 1.5px solid var(--border); background: var(--surface, #ffffff); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
-.es-preset:hover { border-color: var(--primary); color: var(--primary); }
-.es-preset.active { border-color: var(--primary); background: #f0fdfa; color: var(--primary); }
+.es-preset:hover { border-color: var(--primary); color: var(--primary-ink); }
+.es-preset.active { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); color: var(--primary-ink); }
 .es-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin-top: 8px; }
 
 .es-section { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 18px 0 10px; }
@@ -283,8 +284,8 @@ async function save() {
 .es-field > span { font-size: 11.5px; font-weight: 700; color: var(--text-muted); }
 .es-input { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13.5px; background: var(--surface, #ffffff); font-family: inherit; }
 .es-input:focus { outline: none; border-color: var(--primary); }
-.es-input.bad { border-color: #f87171; background: #fef2f2; }
-.es-err { font-size: 11.5px; color: #dc2626; }
+.es-input.bad { border-color: #f87171; background: var(--danger-bg, #fef2f2); }
+.es-err { font-size: 11.5px; color: var(--danger-ink, #dc2626); }
 .es-pass { position: relative; }
 .es-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: none; background: transparent; color: var(--text-light, #94a3b8); cursor: pointer; padding: 4px; display: inline-flex; }
 .es-eye:hover { color: var(--text); }
@@ -299,7 +300,7 @@ async function save() {
 
 .es-test { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .es-test .es-input { max-width: 300px; }
-.es-verified { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #166534; margin-top: 8px; }
+.es-verified { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--positive-ink, #166534); margin-top: 8px; }
 
 .es-foot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin-top: 14px; }
 

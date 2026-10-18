@@ -2,7 +2,7 @@
  * plan.js — the provider's own subscription and paid add-ons, on our Laravel backend.
  *
  * Two things a provider pays Bookboll for:
- *   • Premium — $59/month or $588/year, with a free trial (Stripe subscription)
+ *   • Premium — $588/year, no free trial (Stripe subscription)
  *   • Custom domain — a one-time $119 setup fee (Stripe one-off payment)
  *
  * Both were simulated in the Supabase dashboard. Now every one of these calls ends
@@ -17,10 +17,10 @@ export function fetchPlan() {
 }
 
 /** Start a Premium checkout. Returns { url } to redirect the browser to. */
-export function startPlanCheckout({ billing = 'yearly', promoCode = null, returnPath = null } = {}) {
+export function startPlanCheckout({ promoCode = null, returnPath = null } = {}) {
   return apiFetch('/admin/plan/checkout', {
     method: 'POST',
-    body: { billing, promo_code: promoCode || null, return_path: returnPath || null },
+    body: { billing: 'yearly', promo_code: promoCode || null, return_path: returnPath || null },
   })
 }
 

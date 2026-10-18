@@ -12,6 +12,7 @@
  */
 import { ref, computed } from 'vue'
 import { fetchSettings, updateSettings } from './settings.js'
+import { adminTheme } from './adminTheme.js'
 
 export const DEFAULT_ADMIN_PRIMARY = '#0f766e'   // Bookboll teal (matches --primary)
 
@@ -57,6 +58,9 @@ export const adminBrandVars = computed(() => {
     '--primary':        c,
     '--primary-dark':   `color-mix(in srgb, ${c}, #000 16%)`,
     '--primary-light':  `color-mix(in srgb, ${c}, #fff 22%)`,
+    '--primary-ink':    `color-mix(in srgb, ${c}, ${adminTheme.value === 'dark' ? '#fff 60%' : '#000 18%'})`,
+    '--primary-soft':   `color-mix(in srgb, ${c} ${adminTheme.value === 'dark' ? '18%' : '9%'}, var(--surface))`,
+    '--primary-border': `color-mix(in srgb, ${c} ${adminTheme.value === 'dark' ? '38%' : '28%'}, var(--surface))`,
     '--brand':          c,
     '--brand-accent':   `color-mix(in srgb, ${c}, #fff 18%)`,
     '--sidebar-active': `color-mix(in srgb, ${c}, #fff 18%)`,

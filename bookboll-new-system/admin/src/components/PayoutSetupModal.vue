@@ -28,16 +28,16 @@ const isBookings = computed(() => props.purpose === 'bookings')
 const walletLabel = computed(() => WALLET_PURPOSE_LABELS[props.purpose] || 'wallet')
 const title = computed(() => props.pending
   ? 'Payout method under review'
-  : isBookings.value ? '"Everything paid online" needs a payout method' : 'Set up your Membership wallet')
+  : isBookings.value ? 'Full payment online needs a payout method' : 'Set up your Membership wallet')
 const body = computed(() => props.pending
   ? `Your ${walletLabel.value} wallet's payout method has been submitted and is awaiting Bookboll approval. ${isBookings.value ? 'Full online payment unlocks' : 'You can create membership programs'} as soon as it's approved.`
   : isBookings.value
-    ? 'The customer pays the full amount online — that money has to reach your bank, so a payout method is required.'
+    ? 'The customer pays the full amount online. Bookboll deducts its commission and credits your share to your Bookings wallet, so a payout method is required.'
     : 'You must set up a payout method for your Membership wallet to create membership programs.')
 const note = computed(() => props.pending
   ? 'Approval usually doesn’t take long — you can check its status in your wallet anytime.'
   : isBookings.value
-    ? 'Not ready? The online-deposit option needs no payout method — the deposit covers the fee, the rest is paid at your venue.'
+    ? 'You can also use deposit + on arrival without connected payouts. Bookboll keeps the online deposit as its fee; you collect the remaining amount. Commission also applies when payouts are connected. Paid Premium halves the standard commission on your own-website bookings.'
     : 'Choose Stripe Connect for automatic payouts, or the Bookboll Wallet to hold a balance and withdraw.')
 
 async function goSetup() {
@@ -53,7 +53,7 @@ async function goSetup() {
 
 <template>
   <div v-if="open" class="psm-backdrop" @click.self="emit('close')">
-    <div class="psm-card">
+    <div class="psm-card" v-dialog="() => emit('close')">
       <button class="psm-x" @click="emit('close')" aria-label="Close"><X :size="18" /></button>
       <div class="psm-ic"><Wallet :size="26" /></div>
       <h3 class="psm-title">{{ title }}</h3>
@@ -61,7 +61,7 @@ async function goSetup() {
       <div class="psm-note"><ShieldCheck :size="15" /><span>{{ note }}</span></div>
       <div class="psm-actions">
         <button class="psm-btn" @click="goSetup">{{ pending ? 'View wallet status' : 'Set up payout method' }} <ArrowRight :size="16" /></button>
-        <button v-if="isBookings && !pending" class="psm-btn-ghost" @click="emit('fallback'); emit('close')">Enable online deposit instead — no payout needed</button>
+        <button v-if="isBookings && !pending" class="psm-btn-ghost" @click="emit('fallback'); emit('close')">Review deposit + on arrival instead</button>
         <button v-else class="psm-btn-ghost" @click="emit('close')">Not now</button>
       </div>
     </div>
@@ -71,12 +71,12 @@ async function goSetup() {
 <style scoped>
 .psm-backdrop { position: fixed; inset: 0; z-index: 4200; background: rgba(15,23,42,.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .psm-card { position: relative; width: 100%; max-width: 440px; background: var(--surface, #ffffff); border-radius: 18px; padding: 28px 26px; box-shadow: 0 24px 60px rgba(0,0,0,.4); text-align: center; }
-.psm-x { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 50%; border: none; background: #f1f5f9; color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.psm-x:hover { background: var(--border, #e2e8f0); color: #0f172a; }
-.psm-ic { width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 14px; background: color-mix(in srgb, var(--primary, #0f766e) 12%, #fff); color: var(--primary, #0f766e); display: flex; align-items: center; justify-content: center; }
+.psm-x { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.psm-x:hover { background: var(--border, #e2e8f0); color: var(--text, #0f172a); }
+.psm-ic { width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 14px; background: color-mix(in srgb, var(--primary, #0f766e) 12%, #fff); color: var(--primary-ink, #0f766e); display: flex; align-items: center; justify-content: center; }
 .psm-title { font-size: 19px; font-weight: 800; color: var(--text, #0f172a); margin: 0 0 8px; }
 .psm-body { font-size: 14px; color: var(--text-muted, #64748b); line-height: 1.55; margin: 0 0 14px; }
-.psm-note { display: flex; align-items: flex-start; gap: 8px; text-align: left; font-size: 12.5px; line-height: 1.5; color: #166534; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px 12px; }
+.psm-note { display: flex; align-items: flex-start; gap: 8px; text-align: left; font-size: 12.5px; line-height: 1.5; color: var(--positive-ink, #166534); background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0); border-radius: 10px; padding: 10px 12px; }
 .psm-note svg { flex-shrink: 0; margin-top: 1px; }
 /* Stacked: the ghost option carries a full sentence, so each button gets its own row */
 .psm-actions { display: flex; flex-direction: column; gap: 9px; margin-top: 20px; }

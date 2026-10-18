@@ -98,9 +98,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
   background: var(--surface, #ffffff); cursor: pointer; transition: border-color .15s, box-shadow .15s;
   font-size: 13.5px; color: var(--text-muted); text-align: left;
 }
-.cp-trigger:hover { border-color: #cbd5e1; }
+.cp-trigger:hover { border-color: var(--border-strong, #cbd5e1); }
 .cp-trigger.open { border-color: var(--primary, #0891b2); box-shadow: 0 0 0 3px rgba(8,145,178,.12); }
-.cp-trigger-icon { color: var(--primary, #0891b2); flex-shrink: 0; }
+.cp-trigger-icon { color: var(--primary-ink, #0891b2); flex-shrink: 0; }
 .cp-trigger-label { flex: 1; }
 .cp-caret { color: var(--text-light, #94a3b8); transition: transform .18s; flex-shrink: 0; }
 .cp-caret.rot { transform: rotate(180deg); }
@@ -126,20 +126,20 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
   padding: 9px 10px; border: none; background: transparent; border-radius: 8px;
   cursor: pointer; text-align: left; transition: background .12s;
 }
-.cp-opt:hover { background: #f0fdfa; }
+.cp-opt:hover { background: var(--primary-soft, #f0fdfa); }
 .cp-opt-main { flex: 1; min-width: 0; }
 .cp-opt-name { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cp-opt-sub { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 .cp-opt-badge {
   font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 6px; flex-shrink: 0;
-  background: #f1f5f9; color: #475569; border: 1px solid var(--border);
+  background: var(--bg, #f1f5f9); color: var(--text-secondary, #475569); border: 1px solid var(--border);
 }
-.cp-opt-badge.warn { background: #fffbeb; color: #b45309; border-color: #fde68a; }
-.cp-opt-badge.danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-.cp-opt-right { font-size: 12.5px; font-weight: 600; color: #0f766e; flex-shrink: 0; white-space: nowrap; }
+.cp-opt-badge.warn { background: var(--warning-bg, #fffbeb); color: var(--warning-ink, #b45309); border-color: var(--warning-border, #fde68a); }
+.cp-opt-badge.danger { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #b91c1c); border-color: var(--danger-border, #fecaca); }
+.cp-opt-right { font-size: 12.5px; font-weight: 600; color: var(--primary-ink, #0f766e); flex-shrink: 0; white-space: nowrap; }
 .cp-opt-add {
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
-  width: 24px; height: 24px; border-radius: 7px; background: #ecfdf5; color: #0f766e;
+  width: 24px; height: 24px; border-radius: 7px; background: var(--positive-bg, #ecfdf5); color: var(--primary-ink, #0f766e);
 }
 .cp-opt:hover .cp-opt-add { background: #0f766e; color: #fff; }
 
@@ -148,8 +148,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 .cp-addnew {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   padding: 11px; border: none; border-top: 1px dashed var(--border);
-  background: #f8fafc; color: var(--primary, #0891b2); font-size: 13px; font-weight: 600;
+  background: var(--surface-hover, #f8fafc); color: var(--primary-ink, #0891b2); font-size: 13px; font-weight: 600;
   cursor: pointer; flex-shrink: 0; transition: background .12s;
 }
-.cp-addnew:hover { background: #f0fdfa; }
+.cp-addnew:hover { background: var(--primary-soft, #f0fdfa); }
 </style>

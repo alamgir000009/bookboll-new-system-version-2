@@ -180,11 +180,11 @@ function resolvedCell(day, slot) {
 }
 
 function cellStyle(day, slot) {
-  if (!slotInOpen(day, slot)) return { background: '#f8fafc', color: '#cbd5e1', cursor: 'default' }
+  if (!slotInOpen(day, slot)) return { background: 'var(--surface-hover)', color: 'var(--text-muted)', cursor: 'not-allowed' }
   const { group } = resolvedCell(day, slot)
-  if (!group) return props.pattern === 'B' ? { background: '#fff', color: '#cbd5e1' } : { background: '#fff' }
+  if (!group) return props.pattern === 'B' ? { background: 'var(--surface)', color: 'var(--text-muted)' } : { background: 'var(--surface)' }
   const col = groupColor(group)
-  return { background: col + '22', borderLeft: `3px solid ${col}`, color: col }
+  return { background: col + '22', borderLeft: `3px solid ${col}`, color: 'var(--text)' }
 }
 
 function cellLabel(day, slot) {
@@ -439,6 +439,22 @@ function onMouseDown(day, slot) {
 }
 function onMouseEnter(day, slot) { if (painting.value) paintCell(day, slot, paintMode.value) }
 function onMouseUp() { painting.value = false }
+function startPointerPaint(event, day, slot) {
+  if (event.pointerType !== 'mouse') return
+  event.preventDefault()
+  onMouseDown(day, slot)
+}
+function continuePointerPaint(event, day, slot) {
+  if (event.pointerType === 'mouse') onMouseEnter(day, slot)
+}
+function activateCell(event, day, slot) {
+  // Mouse presses paint immediately and support dragging. Touch and keyboard
+  // activate on click so swiping the grid never changes prices accidentally.
+  if (event.detail === 0 || event.pointerType !== 'mouse') {
+    onMouseDown(day, slot)
+    onMouseUp()
+  }
+}
 
 function addGroup() {
   markDirty()
@@ -520,24 +536,24 @@ function fillDay(day) {
         <div class="gc-header">
           <div class="gc-title">
             <span class="gc-dot" :style="{background: groupColor(g)}"></span>
-            <input class="gc-name-input" :value="g.name" @input="e => updateGroup(g.id, {name: e.target.value})" />
+            <input class="gc-name-input" aria-label="Pricing group name" :value="g.name" @input="e => updateGroup(g.id, {name: e.target.value})" />
           </div>
-          <button type="button" class="icon-del" @click.stop="removeGroup(g.id)"><Trash2 :size="16" /></button>
+          <button type="button" class="icon-del" :aria-label="`Remove ${g.name}`" @click.stop="removeGroup(g.id)"><Trash2 :size="16" /></button>
         </div>
         <div class="form-group">
           <label class="form-label">Price per Hour ({{ currency }})</label>
-          <input type="number" :value="g.price" @input="e => updateGroup(g.id, {price: Number(e.target.value)})" />
+          <input type="number" aria-label="Group price per hour" min="0" :value="g.price" @input="e => updateGroup(g.id, {price: Number(e.target.value)})" />
         </div>
         <div class="grid grid-2">
           <div class="form-group">
             <label class="form-label">Start Time</label>
-            <select :value="g.start_time" @change="e => updateGroup(g.id, {start_time: e.target.value})">
+            <select aria-label="Group start time" :value="g.start_time" @change="e => updateGroup(g.id, {start_time: e.target.value})">
               <option v-for="t in ALL_TIMES" :key="t" :value="t">{{ fmt12(t) }}</option>
             </select>
           </div>
           <div class="form-group">
             <label class="form-label">End Time</label>
-            <select :value="g.end_time" @change="e => updateGroup(g.id, {end_time: e.target.value})">
+            <select aria-label="Group end time" :value="g.end_time" @change="e => updateGroup(g.id, {end_time: e.target.value})">
               <option v-for="t in ALL_TIMES" :key="t" :value="t">{{ fmt12(t) }}</option>
             </select>
           </div>
@@ -547,7 +563,7 @@ function fillDay(day) {
           <div class="day-chips">
             <button v-for="d in DAY_ORDER" :key="d" type="button" class="day-chip"
                     :class="{selected: groupHasDay(g, d)}"
-                    :style="groupHasDay(g, d) ? { background: groupColor(g), borderColor: groupColor(g), color: '#fff' } : {}"
+                    :aria-pressed="groupHasDay(g, d)"
                     @click="toggleGroupDay(g, d)">{{ DAY_NAME[d] }}</button>
           </div>
         </div>
@@ -566,7 +582,7 @@ function fillDay(day) {
     <div v-if="pattern==='B'" class="pg-toolbar">
       <div class="price-input">
         <label>Price ({{ currency }})</label>
-        <input type="number" v-model.number="directPriceInput" placeholder="Enter price"
+        <input type="number" aria-label="Price to apply to slots" v-model.number="directPriceInput" placeholder="Enter price"
                :class="{'price-err': priceInputError}"
                @input="priceInputError = false"
                style="width: 140px;" />
@@ -575,23 +591,27 @@ function fillDay(day) {
       </div>
     </div>
 
-    <div class="grid-wrap" @mouseup="onMouseUp" @mouseleave="onMouseUp">
+    <p class="pg-scroll-hint">Swipe across for all days. Tap a time to apply the selected price.</p>
+    <div class="grid-wrap" @pointerup="onMouseUp" @pointerleave="onMouseUp" @pointercancel="onMouseUp">
       <div class="grid-head">
         <div></div>
         <div v-for="d in DAY_ORDER" :key="d" class="grid-day">
           {{ DAY_SHORT[d] }}
-          <button type="button" class="fill-btn" @click="fillDay(d)" title="Fill whole day">fill</button>
+          <button type="button" class="fill-btn" @click="fillDay(d)" :aria-label="`Apply price to all ${DAY_NAME[d]} times`" title="Fill whole day">Apply all</button>
         </div>
       </div>
       <div v-for="slot in slots" :key="slot" class="grid-row">
         <div class="grid-time">{{ fmt12(slot) }}</div>
-        <div v-for="d in DAY_ORDER" :key="d" class="grid-cell"
+        <button type="button" v-for="d in DAY_ORDER" :key="d" class="grid-cell"
+             :disabled="!slotInOpen(d, slot)"
+             :aria-label="`${DAY_NAME[d]} ${fmt12(slot)}, ${slotInOpen(d, slot) ? currency + ' ' + (cellLabel(d, slot) || basePrice) : 'closed'}`"
              :class="{faded: isFaded(d, slot)}"
              :style="cellStyle(d, slot)"
-             @mousedown.prevent="onMouseDown(d, slot)"
-             @mouseenter="onMouseEnter(d, slot)">
+             @pointerdown="startPointerPaint($event, d, slot)"
+             @pointerenter="continuePointerPaint($event, d, slot)"
+             @click="activateCell($event, d, slot)">
           {{ cellLabel(d, slot) }}
-        </div>
+        </button>
       </div>
     </div>
   </div>
@@ -601,7 +621,7 @@ function fillDay(day) {
 .pg { border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: var(--surface, #ffffff); }
 
 .pg-top { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-bottom: 14px; }
-.view-toggle { display: inline-flex; background: #f1f5f9; border-radius: 8px; padding: 3px; }
+.view-toggle { display: inline-flex; background: var(--bg, #f1f5f9); border-radius: 8px; padding: 3px; }
 .vt-btn { padding: 6px 14px; font-size: 13px; font-weight: 500; border-radius: 6px; color: var(--text-muted); }
 .vt-btn.active { background: var(--surface, #ffffff); color: var(--text); box-shadow: var(--shadow-sm); }
 
@@ -611,8 +631,8 @@ function fillDay(day) {
 .tool.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 .price-input { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .price-input label { color: var(--text-muted); }
-.price-err { border-color: #b91c1c !important; background: #fef2f2 !important; }
-.price-err-msg { color: #b91c1c; font-size: 12px; }
+.price-err { border-color: #b91c1c !important; background: var(--danger-bg, #fef2f2) !important; }
+.price-err-msg { color: var(--danger-ink, #b91c1c); font-size: 12px; }
 .price-hint { color: var(--text-muted); font-size: 12px; }
 
 .groups-list { display: flex; flex-direction: column; gap: 14px; }
@@ -622,27 +642,43 @@ function fillDay(day) {
 .clear-painted { margin-right: auto; }
 .clear-btn { color: var(--error); }
 .gc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-.gc-title { display: flex; align-items: center; gap: 10px; flex: 1; }
+.gc-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .gc-dot { width: 12px; height: 12px; border-radius: 50%; }
-.gc-name-input { width: auto; flex: 1; max-width: 240px; padding: 6px 10px; font-size: 15px; font-weight: 600; border: 1px solid transparent; background: transparent; }
+.gc-name-input { width: auto; min-width: 0; flex: 1; max-width: 240px; padding: 6px 10px; font-size: 15px; font-weight: 600; border: 1px solid transparent; background: transparent; }
 .gc-name-input:hover, .gc-name-input:focus { border-color: var(--border); background: var(--surface, #ffffff); }
 .icon-del { padding: 6px; border-radius: 6px; color: var(--error); }
-.icon-del:hover { background: #fee2e2; }
+.icon-del:hover { background: var(--danger-bg, #fee2e2); }
 .day-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .day-chip { padding: 6px 14px; font-size: 13px; font-weight: 500; border: 1px solid var(--border); border-radius: 999px; background: var(--surface, #ffffff); color: var(--text-muted); transition: all 0.15s; }
-.day-chip:hover:not(.selected) { border-color: var(--primary); color: var(--primary); }
+.day-chip:hover:not(.selected) { border-color: var(--primary); color: var(--primary-ink); }
 .empty-groups { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 14px; border: 1px dashed var(--border); border-radius: 8px; }
 
 .grid-wrap { border: 1px solid var(--border); border-radius: 6px; overflow: auto; user-select: none; max-height: 480px; }
 .grid-head, .grid-row { display: grid; grid-template-columns: 60px repeat(7, minmax(60px, 1fr)); }
 .grid-head { background: var(--bg); position: sticky; top: 0; z-index: 2; }
 .grid-day { padding: 8px; font-size: 12px; font-weight: 600; text-align: center; color: var(--text-muted); border-left: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.fill-btn { font-size: 10px; color: var(--primary); background: none; padding: 1px 4px; border-radius: 3px; }
-.fill-btn:hover { background: #ccfbf1; }
+.fill-btn { font-size: 10px; color: var(--primary-ink); background: none; padding: 1px 4px; border-radius: 3px; }
+.fill-btn:hover { background: var(--primary-soft, #ccfbf1); }
 .grid-row { border-top: 1px solid var(--border); }
 .grid-time { padding: 4px 8px; font-size: 11px; font-family: 'SF Mono', Monaco, monospace; color: var(--text-muted); background: var(--bg); text-align: right; position: sticky; left: 0; z-index: 1; }
-.grid-cell { border-left: 1px solid var(--border); min-height: 26px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; cursor: pointer; transition: opacity 0.1s; }
+.grid-cell { border: 0; border-radius: 0; border-left: 1px solid var(--border); padding: 0; min-height: 30px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; cursor: pointer; transition: opacity 0.1s; }
 .grid-cell:hover { opacity: 0.75; }
-.grid-cell.faded { color: #cbd5e1 !important; font-weight: 400; }
-.grid-cell.faded:hover { color: var(--primary) !important; background: #f0fdfa !important; }
+.grid-cell.faded { color: var(--text-muted) !important; font-weight: 400; }
+.grid-cell.faded:hover { color: var(--primary-ink) !important; background: var(--primary-soft, #f0fdfa) !important; }
+.day-chip.selected { color: var(--primary-ink); background: var(--primary-soft); border-color: var(--primary); }
+.pg-scroll-hint { color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.grid-head, .grid-row { min-width: 620px; }
+.grid-cell:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
+@media (max-width: 760px) {
+  .pg { padding: 12px; }
+  .pg-top { justify-content: space-between; flex-wrap: wrap; }
+  .group-card { padding: 12px; }
+  .gc-dot { flex-shrink: 0; }
+  .pg :is(.vt-btn,.day-chip,.icon-del,.fill-btn) { min-height: 44px; }
+  .icon-del { min-width: 44px; flex-shrink: 0; }
+  .price-input { flex-wrap: wrap; min-width: 0; }
+  .price-hint, .price-err-msg { flex-basis: 100%; }
+  .grid-cell { min-height: 44px; }
+  .grid-time { display: flex; align-items: center; font-size: 10px; padding: 4px; }
+}
 </style>

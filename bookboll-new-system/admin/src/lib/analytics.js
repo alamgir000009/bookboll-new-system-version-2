@@ -15,7 +15,7 @@ const EMPTY = {
 
 export async function loadAnalytics() {
   const res = await apiFetch('/admin/dashboard/analytics')
-  if (!res.success) return { ...EMPTY }
+  if (!res.success) return { ...EMPTY, error: res.message || 'Analytics could not be loaded.' }
   const d = res.data || {}
   return {
     bookings: d.bookings || [],

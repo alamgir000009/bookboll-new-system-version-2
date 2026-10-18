@@ -12,6 +12,7 @@ import { useCurrentUser } from '../lib/currentUser.js'
 import { usePremium } from '../lib/premium.js'
 import { loadAllPosts, savePost, deletePost, slugify, fmtPostDate, renderMarkdown, sanitizeHtml } from '../lib/blog.js'
 import { uploadImage, imageUploadConfigured } from '../lib/imageUpload.js'
+import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
 import RichEditor from '../components/RichEditor.vue'
 import { Plus, Pencil, Trash2, Eye, X, Loader2, ImagePlus, ExternalLink, FileText, Check, Newspaper } from 'lucide-vue-next'
 
@@ -64,8 +65,10 @@ function liveUrl(p) {
   return `${origin}/blog/${p.slug}${b}`
 }
 
-function newPost() { form.value = blank(); tagsInput.value = ''; slugTouched.value = false; formErr.value = ''; showPreview.value = false; view.value = 'edit' }
-function editPost(p) {
+watch([form, tagsInput], () => { if (view.value === 'edit') markDirty() }, { deep: true, flush: 'sync' })
+async function closeEditor() { if (await confirmDiscardIfDirty()) view.value = 'list' }
+function newPost() { clearDirty(); form.value = blank(); tagsInput.value = ''; slugTouched.value = false; formErr.value = ''; showPreview.value = false; view.value = 'edit' }
+function editPost(p) { clearDirty();
   const body = p.body || ''
   const htmlBody = /<\/?[a-z][\s\S]*>/i.test(body) ? body : renderMarkdown(body)
   form.value = { ...p, body: htmlBody, tags: p.tags || [] }
@@ -102,7 +105,7 @@ async function save(publish) {
   // gone). It hid the real cause of every save failure behind a migration that does
   // not exist here.
   if (res.error) { formErr.value = res.error; return }
-  await load(); view.value = 'list'
+  clearDirty(); await load(); view.value = 'list'
 }
 
 async function remove(p) {
@@ -119,7 +122,7 @@ async function remove(p) {
     <template v-if="needsProvider">
       <div class="page-header">
         <div>
-          <div class="page-title">Blog</div>
+          <h1 class="page-title">Blog</h1>
           <div class="page-subtitle">Write posts that appear on your own website to attract customers</div>
         </div>
       </div>
@@ -130,8 +133,8 @@ async function remove(p) {
     <template v-else-if="view === 'list'">
       <div class="page-header">
         <div>
-          <div class="page-title">Blog</div>
-          <div class="page-subtitle">Articles shown on your own website at <code>/blog</code>. Your site’s Blog menu appears once you publish one.</div>
+          <h1 class="page-title">Blog</h1>
+          <div class="page-subtitle">Share news, stories and useful tips. Your Blog page appears when you publish your first post.</div>
         </div>
         <button class="btn btn-primary" @click="requirePremium('blog') && newPost()"><Plus :size="16" /> New post<span v-if="!isPremium" class="prem-lock">Premium</span></button>
       </div>
@@ -166,8 +169,8 @@ async function remove(p) {
     <template v-else>
       <div class="page-header">
         <div>
-          <button class="blogadm-back" @click="view = 'list'"><X :size="15" /> Close</button>
-          <div class="page-title">{{ form.id ? 'Edit post' : 'New post' }}</div>
+          <button class="blogadm-back" @click="closeEditor"><X :size="15" /> Close</button>
+          <h1 class="page-title">{{ form.id ? 'Edit post' : 'New post' }}</h1>
         </div>
         <div class="blogadm-head-actions">
           <button class="btn btn-secondary" @click="showPreview = !showPreview"><Eye :size="15" /> {{ showPreview ? 'Hide' : 'Preview' }}</button>
@@ -183,13 +186,13 @@ async function remove(p) {
       <div class="blogadm-grid">
         <div class="blogadm-form">
           <label class="blogadm-l">Title</label>
-          <input v-model="form.title" class="blogadm-in" placeholder="5 tips to get the most out of your membership" @input="onTitle" />
+          <input aria-label="Post title" v-model="form.title" class="blogadm-in" placeholder="5 tips to get the most out of your membership" @input="onTitle" />
 
-          <label class="blogadm-l">Slug</label>
-          <div class="blogadm-slugrow"><span>/blog/</span><input v-model="form.slug" class="blogadm-in" placeholder="membership-tips" @input="slugTouched = true" /></div>
+          <label class="blogadm-l">Page address</label>
+          <div class="blogadm-slugrow"><span>/blog/</span><input aria-label="Page address" v-model="form.slug" class="blogadm-in" placeholder="membership-tips" @input="slugTouched = true" /></div>
 
           <label class="blogadm-l">Excerpt <span class="blogadm-opt">shown on cards & in search</span></label>
-          <textarea v-model="form.excerpt" class="blogadm-in" rows="2" placeholder="A short summary…"></textarea>
+          <textarea aria-label="Post summary" v-model="form.excerpt" class="blogadm-in" rows="2" placeholder="A short summary…"></textarea>
 
           <label class="blogadm-l">Body</label>
           <RichEditor v-model="form.body" placeholder="Write your article — use the toolbar to format, color and link text…" />
@@ -213,17 +216,17 @@ async function remove(p) {
           <button v-if="form.cover_image" class="blogadm-rm" @click="form.cover_image = ''">Remove image</button>
 
           <label class="blogadm-l">Author</label>
-          <input v-model="form.author_name" class="blogadm-in" :placeholder="brand.name || 'Your business'" />
+          <input aria-label="Author" v-model="form.author_name" class="blogadm-in" :placeholder="brand.name || 'Your business'" />
 
           <label class="blogadm-l">Tags <span class="blogadm-opt">comma-separated</span></label>
-          <input v-model="tagsInput" class="blogadm-in" placeholder="tips, fitness, dubai" />
+          <input aria-label="Tags" v-model="tagsInput" class="blogadm-in" placeholder="tips, fitness, dubai" />
 
           <details class="blogadm-seo">
-            <summary>SEO overrides</summary>
+            <summary>Search engine appearance</summary>
             <label class="blogadm-l">Meta title</label>
-            <input v-model="form.meta_title" class="blogadm-in" :placeholder="form.title" />
+            <input aria-label="Search title" v-model="form.meta_title" class="blogadm-in" :placeholder="form.title" />
             <label class="blogadm-l">Meta description</label>
-            <textarea v-model="form.meta_description" class="blogadm-in" rows="2" :placeholder="form.excerpt"></textarea>
+            <textarea aria-label="Search description" v-model="form.meta_description" class="blogadm-in" rows="2" :placeholder="form.excerpt"></textarea>
           </details>
         </aside>
       </div>
@@ -232,49 +235,49 @@ async function remove(p) {
 </template>
 
 <style scoped>
-.page-subtitle code, .blogadm-warn code { background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+.page-subtitle code, .blogadm-warn code { background: var(--bg, #f1f5f9); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 .blogadm-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .blogadm-back { background: none; border: none; color: var(--text-muted, #64748b); font-weight: 700; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 0 0 6px; }
 .btn:disabled { opacity: .6; cursor: not-allowed; }
 .spin { animation: bspin 1s linear infinite; } @keyframes bspin { to { transform: rotate(360deg); } }
-.blogadm-warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 13.5px; padding: 11px 14px; border-radius: 10px; margin-bottom: 14px; }
+.blogadm-warn { background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); color: var(--warning-ink, #92400e); font-size: 13.5px; padding: 11px 14px; border-radius: 10px; margin-bottom: 14px; }
 .blogadm-empty { text-align: center; color: var(--text-light, #94a3b8); padding: 50px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .blogadm-pick { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 60px 20px; color: var(--text-light, #94a3b8); }
-.blogadm-pick h3 { margin: 6px 0 0; color: #0f172a; }
+.blogadm-pick h3 { margin: 6px 0 0; color: var(--text, #0f172a); }
 .blogadm-pick p { max-width: 380px; font-size: 13.5px; }
 
 .blogadm-list { display: flex; flex-direction: column; gap: 8px; }
 .blogadm-row { display: flex; align-items: center; gap: 14px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 12px 14px; }
-.blogadm-thumb { width: 56px; height: 44px; flex-shrink: 0; border-radius: 9px; background: #f1f5f9; background-size: cover; background-position: center; color: var(--text-light, #94a3b8); display: flex; align-items: center; justify-content: center; }
+.blogadm-thumb { width: 56px; height: 44px; flex-shrink: 0; border-radius: 9px; background: var(--bg, #f1f5f9); background-size: cover; background-position: center; color: var(--text-light, #94a3b8); display: flex; align-items: center; justify-content: center; }
 .blogadm-main { flex: 1; min-width: 0; }
-.blogadm-title { font-size: 15px; font-weight: 800; color: #0f172a; }
+.blogadm-title { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .blogadm-meta { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-light, #94a3b8); margin-top: 3px; flex-wrap: wrap; }
 .blogadm-badge { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; }
-.blogadm-badge.published { background: #dcfce7; color: #15803d; }
-.blogadm-badge.draft { background: #f1f5f9; color: var(--text-muted, #64748b); }
+.blogadm-badge.published { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #15803d); }
+.blogadm-badge.draft { background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); }
 .blogadm-slug { font-family: ui-monospace, monospace; }
 .blogadm-actions { display: flex; gap: 6px; }
-.blogadm-ic { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; display: flex; align-items: center; justify-content: center; cursor: pointer; text-decoration: none; }
-.blogadm-ic:hover { border-color: var(--primary); color: var(--primary); }
-.blogadm-ic.danger:hover { border-color: #fecaca; color: #dc2626; background: #fef2f2; }
+.blogadm-ic { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); display: flex; align-items: center; justify-content: center; cursor: pointer; text-decoration: none; }
+.blogadm-ic:hover { border-color: var(--primary); color: var(--primary-ink); }
+.blogadm-ic.danger:hover { border-color: var(--danger-border, #fecaca); color: var(--danger-ink, #dc2626); background: var(--danger-bg, #fef2f2); }
 
 .blogadm-grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; }
-.blogadm-l { display: block; font-size: 12.5px; font-weight: 800; color: #334155; margin: 14px 0 5px; }
+.blogadm-l { display: block; font-size: 12.5px; font-weight: 800; color: var(--text-secondary, #334155); margin: 14px 0 5px; }
 .blogadm-l:first-child { margin-top: 0; }
 .blogadm-opt { font-weight: 600; color: var(--text-light, #94a3b8); font-size: 11px; }
-.blogadm-in { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: #0f172a; font-family: inherit; }
+.blogadm-in { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: var(--text, #0f172a); font-family: inherit; }
 .blogadm-in:focus { outline: none; border-color: var(--primary); }
 .blogadm-slugrow { display: flex; align-items: center; gap: 6px; }
 .blogadm-slugrow span { font-size: 13px; color: var(--text-light, #94a3b8); font-family: ui-monospace, monospace; }
 .blogadm-preview { margin-top: 16px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 18px; background: var(--surface, #ffffff); position: relative; }
 .blogadm-preview-tag { position: absolute; top: -9px; left: 14px; background: #0f172a; color: #fff; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; padding: 2px 8px; border-radius: 999px; }
 .blogadm-side { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 16px; height: fit-content; }
-.blogadm-cover { width: 100%; height: 130px; border-radius: 10px; background: #f1f5f9; background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: var(--text-light, #94a3b8); }
+.blogadm-cover { width: 100%; height: 130px; border-radius: 10px; background: var(--bg, #f1f5f9); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: var(--text-light, #94a3b8); }
 .blogadm-upload { width: 100%; justify-content: center; margin-top: 10px; cursor: pointer; }
 .blogadm-rm { width: 100%; margin-top: 6px; background: none; border: none; color: var(--text-light, #94a3b8); font-size: 12.5px; font-weight: 700; cursor: pointer; }
-.blogadm-rm:hover { color: #dc2626; }
+.blogadm-rm:hover { color: var(--danger-ink, #dc2626); }
 .blogadm-seo { margin-top: 14px; border-top: 1px solid #eef2f6; padding-top: 12px; }
-.blogadm-seo summary { font-size: 12.5px; font-weight: 800; color: #334155; cursor: pointer; }
+.blogadm-seo summary { font-size: 12.5px; font-weight: 800; color: var(--text-secondary, #334155); cursor: pointer; }
 @media (max-width: 820px) { .blogadm-grid { grid-template-columns: 1fr; } }
 
 /* Phone (≤600px): 360px-wide fixes — no desktop impact */

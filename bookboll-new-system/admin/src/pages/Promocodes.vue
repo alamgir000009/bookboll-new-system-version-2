@@ -518,15 +518,15 @@ function usagePercent(c) {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page admin-workspace promos-workspace">
     <div class="page-header">
       <div>
-        <div class="page-title">Promocodes</div>
+        <h1 class="page-title">Promo codes</h1>
         <div class="page-subtitle">
-          {{ isPlatformAdmin ? 'Platform-wide and provider discount codes' : 'Manage your venue discount codes' }}
+          {{ isPlatformAdmin ? 'Platform-wide and provider discount codes' : 'Create discount codes and track how customers use them.' }}
         </div>
       </div>
-      <button v-if="canManagePromos" class="btn btn-primary" @click="requirePremium('promocodes') && openNew()"><Plus :size="16" />New Promocode<span v-if="!isPremium" class="prem-lock">Premium</span></button>
+      <button v-if="canManagePromos" class="btn btn-primary" @click="requirePremium('promocodes') && openNew()"><Plus :size="16" />New promo code<span v-if="!isPremium" class="prem-lock">Premium</span></button>
     </div>
 
     <!-- Toolbar -->
@@ -550,15 +550,14 @@ function usagePercent(c) {
       </div>
     </FilterBar>
 
+    <div v-if="isPlatformAdmin" class="promo-type-tabs" aria-label="Discount funding"><button :aria-pressed="filterTab === 'all'" @click="filterTab = 'all'">All codes</button><button :aria-pressed="filterTab === 'bookboll'" @click="filterTab = 'bookboll'"><ShieldCheck :size="16" />Bookboll fee</button><button :aria-pressed="filterTab === 'provider'" @click="filterTab = 'provider'"><Store :size="16" />Provider share</button></div>
     <!-- Architecture info banner (platform admins) -->
     <div v-if="isPlatformAdmin" class="arch-banner">
-      <ShieldCheck :size="14" class="arch-icon bookboll" />
-      <span><strong>Bookboll Fee codes</strong> deduct from the platform commission (Bookboll absorbs the cost).</span>
-      <span class="arch-sep">·</span>
-      <Store :size="14" class="arch-icon provider" />
-      <span><strong>Provider Share codes</strong> deduct from the provider's offline collection (provider absorbs the cost).</span>
+      <div><ShieldCheck :size="17" class="arch-icon bookboll" /><span><strong>Bookboll fee</strong>Discount funded by Bookboll’s commission.</span></div>
+      <div><Store :size="17" class="arch-icon provider" /><span><strong>Provider share</strong>Discount funded by the provider’s offline collection.</span></div>
     </div>
 
+    <div class="workspace-section-heading"><h2>Discount codes</h2><span>{{ loading ? 'Loading…' : `${promoTotal} results` }}</span></div>
     <!-- Cards -->
     <div class="promo-grid">
       <div
@@ -575,16 +574,16 @@ function usagePercent(c) {
           </div>
           <span
             class="badge"
-            :class="isExpired(c) ? 'badge-danger' : c.status === 'active' ? 'badge-success' : 'badge-neutral'"
+            :class="isExpired(c) ? 'badge-error' : c.status === 'active' ? 'badge-success' : 'badge-neutral'"
           >{{ isExpired(c) ? 'Expired' : c.status }}</span>
         </div>
 
         <!-- Code -->
-        <div class="pc-code" @click="copy(c.code)" :title="copied === c.code ? 'Copied!' : 'Click to copy'">
+        <button type="button" class="pc-code" :aria-label="`Copy code ${c.code}`" @click="copy(c.code)" :title="copied === c.code ? 'Copied!' : 'Click to copy'">
           <span>{{ c.code }}</span>
           <Check v-if="copied === c.code" :size="14" class="copy-check" />
           <Copy v-else :size="14" />
-        </div>
+        </button>
 
         <!-- Description -->
         <div v-if="c.description" class="pc-desc">{{ c.description }}</div>
@@ -642,9 +641,9 @@ function usagePercent(c) {
         <EmptyState
           v-if="!search && filterTab === 'all' && !filterCountry.length && !filterCity.length"
           :icon="Ticket"
-          title="No promocodes yet"
+          title="No promo codes yet"
           message="Create your first discount code to run a promotion for your customers."
-          :action-label="canManagePromos ? 'New Promocode' : ''"
+          :action-label="canManagePromos ? 'New promo code' : ''"
           @action="openNew"
         />
         <EmptyState
@@ -668,13 +667,13 @@ function usagePercent(c) {
     <!-- ── Modal ────────────────────────────────────────────────────────────── -->
     <teleport to="body">
     <div v-if="showModal" class="bb-drawer-backdrop" style="z-index:3000" @click.self="requestClose">
-      <div class="bb-drawer" @input="markDirty" @change="markDirty">
+      <div class="bb-drawer" v-dialog="requestClose" @input="markDirty" @change="markDirty">
         <div class="bb-drawer-header">
           <div>
-            <div class="bb-drawer-title">{{ editing ? 'Edit Promocode' : 'New Promocode' }}</div>
+            <div class="bb-drawer-title">{{ editing ? 'Edit promo code' : 'New promo code' }}</div>
             <div class="bb-drawer-subtitle">Set the discount, what it applies to, and who can use it</div>
           </div>
-          <button class="bb-drawer-close" @click="requestClose"><X :size="18" /></button>
+          <button class="bb-drawer-close" @click="requestClose" aria-label="Close"><X :size="18" /></button>
         </div>
 
         <div class="bb-drawer-body">
@@ -824,7 +823,7 @@ function usagePercent(c) {
               <div v-if="form.target_emails.length" class="cust-chips">
                 <span v-for="em in form.target_emails" :key="em" class="cust-chip">
                   <span class="cust-chip-txt">{{ customerNameForEmail(em) || em }}<em v-if="customerNameForEmail(em)"> · {{ em }}</em></span>
-                  <button type="button" @click="removeEmail(em)"><X :size="12" /></button>
+                  <button type="button" @click="removeEmail(em)" :aria-label="`Remove ${em}`"><X :size="12" /></button>
                 </span>
               </div>
               <!-- search box -->
@@ -898,10 +897,10 @@ function usagePercent(c) {
 
     <!-- ── Usage / redemptions drawer ─────────────────────────────────────── -->
     <div v-if="usageCode" class="modal-backdrop" @click.self="closeUsage">
-      <div class="modal modal-lg">
+      <div class="modal modal-lg" v-dialog>
         <div class="modal-header">
           <div class="modal-title"><BarChart3 :size="18" />Usage — <span class="mono" style="font-family:monospace">{{ usageCode.code }}</span></div>
-          <button class="btn-icon" @click="closeUsage"><X :size="18" /></button>
+          <button class="btn-icon" @click="closeUsage" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <div class="usage-stats">
@@ -922,7 +921,7 @@ function usagePercent(c) {
                   <td>{{ r.customer_name || r.customer_email || '—' }}</td>
                   <td><span class="source-chip" :class="r.source_type === 'subscription' ? 'sub' : 'booking'">{{ r.source_type === 'subscription' ? 'Membership' : 'Booking' }}</span></td>
                   <td style="text-align:right">{{ r.currency }} {{ Number(r.order_amount).toLocaleString() }}</td>
-                  <td style="text-align:right;font-weight:700;color:#059669">− {{ r.currency }} {{ Number(r.discount_amount).toLocaleString() }}</td>
+                  <td style="text-align:right;font-weight:700;color: var(--positive-ink)">− {{ r.currency }} {{ Number(r.discount_amount).toLocaleString() }}</td>
                 </tr>
               </tbody>
             </table>
@@ -955,12 +954,12 @@ function usagePercent(c) {
 .arch-banner {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 10px 16px; margin-bottom: 4px;
-  background: #f8fafc; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border); border-radius: 10px;
   font-size: 13px; color: var(--text-muted); line-height: 1.5;
 }
 .arch-banner strong { color: var(--text); }
-.arch-icon.bookboll { color: #4f46e5; flex-shrink: 0; }
-.arch-icon.provider { color: #059669; flex-shrink: 0; }
+.arch-icon.bookboll { color: var(--purple-ink, #4f46e5); flex-shrink: 0; }
+.arch-icon.provider { color: var(--positive-ink, #059669); flex-shrink: 0; }
 .arch-sep { color: var(--border); font-size: 16px; }
 
 /* ── Card grid ────────────────────────────────────────────────────────────────── */
@@ -987,8 +986,8 @@ function usagePercent(c) {
   padding: 3px 9px; border-radius: 99px;
   font-size: 11px; font-weight: 600;
 }
-.pc-recipient.bookboll { background: #ede9fe; color: #4f46e5; }
-.pc-recipient.provider  { background: #d1fae5; color: #059669; }
+.pc-recipient.bookboll { background: var(--purple-bg, #ede9fe); color: var(--purple-ink, #4f46e5); }
+.pc-recipient.provider  { background: var(--positive-bg, #d1fae5); color: var(--positive-ink, #059669); }
 
 /* Code */
 .pc-code {
@@ -999,14 +998,14 @@ function usagePercent(c) {
   letter-spacing: .06em; cursor: pointer; color: var(--text);
   transition: border-color .12s, color .12s;
 }
-.pc-code:hover { border-color: var(--primary); color: var(--primary); }
-.copy-check { color: #16a34a; }
+.pc-code:hover { border-color: var(--primary); color: var(--primary-ink); }
+.copy-check { color: var(--positive-ink, #16a34a); }
 
 /* Description */
 .pc-desc { font-size: 13px; color: var(--text-muted); line-height: 1.4; }
 
 /* Discount */
-.pc-discount { font-size: 24px; font-weight: 800; color: var(--primary); line-height: 1; }
+.pc-discount { font-size: 24px; font-weight: 800; color: var(--primary-ink); line-height: 1; }
 
 /* Scope pills */
 .pc-pills { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1014,9 +1013,9 @@ function usagePercent(c) {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 500;
 }
-.pill-scope    { background: #f1f5f9; color: #475569; }
-.pill-location { background: #fef9c3; color: #854d0e; }
-.pill-audience { background: #ede9fe; color: #6d28d9; }
+.pill-scope    { background: var(--bg, #f1f5f9); color: var(--text-secondary, #475569); }
+.pill-location { background: var(--warning-bg, #fef9c3); color: var(--warning-ink, #854d0e); }
+.pill-audience { background: var(--purple-bg, #ede9fe); color: var(--purple-ink, #6d28d9); }
 
 /* Usage drawer */
 .usage-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
@@ -1027,8 +1026,8 @@ function usagePercent(c) {
 .usage-table th { text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .usage-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); }
 .source-chip { display: inline-flex; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
-.source-chip.sub { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
-.source-chip.booking { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.source-chip.sub { background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #065f46); border: 1px solid var(--positive-border, #a7f3d0); }
+.source-chip.booking { background: var(--info-bg, #eff6ff); color: var(--info-ink, #1e40af); border: 1px solid var(--info-border, #bfdbfe); }
 @media (max-width: 560px) { .usage-stats { grid-template-columns: 1fr 1fr; } }
 
 /* Creator */
@@ -1038,7 +1037,7 @@ function usagePercent(c) {
 .pc-usage-wrap { display: flex; flex-direction: column; gap: 4px; }
 .pc-usage-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
 .pc-usage-label strong { color: var(--text); }
-.pc-usage-bar { height: 4px; background: #e5e7eb; border-radius: 99px; overflow: hidden; }
+.pc-usage-bar { height: 4px; background: var(--border, #e5e7eb); border-radius: 99px; overflow: hidden; }
 .pc-usage-fill { height: 100%; border-radius: 99px; transition: width .3s; }
 
 /* Meta */
@@ -1056,13 +1055,13 @@ function usagePercent(c) {
   text-transform: uppercase; letter-spacing: .07em;
   padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-bottom: 14px;
 }
-.req { color: #ef4444; }
+.req { color: var(--danger-ink, #ef4444); }
 .form-opt { font-size: 11px; font-weight: 400; color: var(--text-muted); margin-left: 4px; }
 .form-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; }
 .form-error {
   display: flex; align-items: center; gap: 7px;
-  padding: 10px 13px; background: #fef2f2; border: 1px solid #fecaca;
-  border-radius: 8px; font-size: 13px; color: #dc2626; margin-top: 12px;
+  padding: 10px 13px; background: var(--danger-bg, #fef2f2); border: 1px solid var(--danger-border, #fecaca);
+  border-radius: 8px; font-size: 13px; color: var(--danger-ink, #dc2626); margin-top: 12px;
 }
 
 /* Recipient picker */
@@ -1073,14 +1072,14 @@ function usagePercent(c) {
   border: 1.5px solid var(--border); background: var(--bg);
   cursor: pointer; text-align: left; transition: all .15s; width: 100%;
 }
-.recipient-btn:hover  { border-color: #94a3b8; background: #f8fafc; }
-.recipient-btn.active { border-color: var(--primary); background: #f0f9ff; }
+.recipient-btn:hover  { border-color: #94a3b8; background: var(--surface-hover, #f8fafc); }
+.recipient-btn.active { border-color: var(--primary); background: var(--info-bg, #f0f9ff); }
 .rb-icon {
   width: 36px; height: 36px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.rb-icon.bookboll { background: #ede9fe; color: #4f46e5; }
-.rb-icon.provider  { background: #d1fae5; color: #059669; }
+.rb-icon.bookboll { background: var(--purple-bg, #ede9fe); color: var(--purple-ink, #4f46e5); }
+.rb-icon.provider  { background: var(--positive-bg, #d1fae5); color: var(--positive-ink, #059669); }
 .rb-text { flex: 1; }
 .rb-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
 .rb-desc  { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
@@ -1097,10 +1096,10 @@ function usagePercent(c) {
 /* Provider note */
 .recipient-note {
   display: flex; align-items: flex-start; gap: 8px;
-  padding: 11px 14px; background: #f0fdf4; border: 1px solid #bbf7d0;
-  border-radius: 9px; font-size: 13px; color: #166534;
+  padding: 11px 14px; background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0);
+  border-radius: 9px; font-size: 13px; color: var(--positive-ink, #166534);
 }
-.recipient-note svg { color: #16a34a; flex-shrink: 0; margin-top: 1px; }
+.recipient-note svg { color: var(--positive-ink, #16a34a); flex-shrink: 0; margin-top: 1px; }
 
 /* Applicable picker */
 .applicable-picker { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -1111,7 +1110,7 @@ function usagePercent(c) {
   cursor: pointer; flex: 1; min-width: 130px;
   transition: border-color .12s, background .12s;
 }
-.ap-option:has(input:checked) { border-color: var(--primary); background: #f0f9ff; }
+.ap-option:has(input:checked) { border-color: var(--primary); background: var(--info-bg, #f0f9ff); }
 .ap-option input { margin-top: 2px; flex-shrink: 0; accent-color: var(--primary); }
 .ap-title { font-size: 13px; font-weight: 600; color: var(--text); display: block; }
 .ap-desc  { font-size: 11.5px; color: var(--text-muted); display: block; margin-top: 2px; line-height: 1.3; }
@@ -1121,20 +1120,20 @@ function usagePercent(c) {
 /* Searchable customer picker */
 .cust-picker { border: 1px solid var(--border); border-radius: 10px; padding: 8px; background: var(--bg); }
 .cust-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.cust-chip { display: inline-flex; align-items: center; gap: 6px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 12.5px; font-weight: 600; }
+.cust-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--info-bg, #eff6ff); color: var(--info-ink, #1d4ed8); border: 1px solid var(--info-border, #bfdbfe); border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 12.5px; font-weight: 600; }
 .cust-chip-txt em { color: var(--text-muted, #64748b); font-style: normal; font-weight: 500; }
-.cust-chip button { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 50%; border: none; background: #dbeafe; color: #1d4ed8; cursor: pointer; }
+.cust-chip button { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 50%; border: none; background: var(--info-bg, #dbeafe); color: var(--info-ink, #1d4ed8); cursor: pointer; }
 .cust-chip button:hover { background: #1d4ed8; color: #fff; }
 .cust-search { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); }
 .cust-search input { flex: 1; border: none; outline: none; font: inherit; font-size: 14px; background: transparent; color: var(--text); }
 .cust-matches { margin-top: 6px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface, #ffffff); }
 .cust-match { display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left; padding: 8px 11px; border: none; border-bottom: 1px solid var(--border); background: var(--surface, #ffffff); cursor: pointer; }
 .cust-match:last-child { border-bottom: none; }
-.cust-match:hover { background: #f8fafc; }
+.cust-match:hover { background: var(--surface-hover, #f8fafc); }
 .cust-match-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
 .cust-match-email { font-size: 12px; color: var(--text-muted); }
 .cust-none { padding: 9px 11px; font-size: 13px; color: var(--text-muted); }
-.cust-add-raw { border: none; background: none; color: var(--primary); font-weight: 700; cursor: pointer; font-size: 13px; }
+.cust-add-raw { border: none; background: none; color: var(--primary-ink); font-weight: 700; cursor: pointer; font-size: 13px; }
 
 /* Code input (was inline style — moved to a class so phone media can override) */
 .code-input { text-transform: uppercase; font-family: monospace; font-size: 14px; letter-spacing: .05em; }

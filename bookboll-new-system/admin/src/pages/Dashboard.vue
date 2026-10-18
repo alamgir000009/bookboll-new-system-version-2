@@ -1,6 +1,8 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
 import { loadAnalytics } from '../lib/analytics.js'
+import { bookingFrequency } from '../lib/bookingFrequency.js'
+import { dateRangeError } from '../lib/finance.js'
 import {
   DollarSign, BookOpen, Users, Building2, TrendingUp, ArrowUpRight, Clock,
   CircleCheck as CheckCircle2, TriangleAlert as AlertTriangle, Calendar,
@@ -17,7 +19,7 @@ import { downloadCSV } from '../lib/useExport.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { runNotificationSweep } from '../customer/notificationSweep.js'
 import { CAP, ROLE_INFO } from '../lib/permissions.js'
-import { kindOptions, channelOptions, matchKind, matchChannel, kindLabel, channelLabel, bookingKind, bookingChannel } from '../lib/bookingMeta.js'
+import { kindOptions, channelOptions, matchKind, matchChannel, kindLabel, channelLabel, bookingKind, bookingChannel, isProviderSlotBlock, isCommercialBooking } from '../lib/bookingMeta.js'
 import { fmt12, fmtRange12 } from '../lib/slots.js'
 
 const { role, isSuperAdmin, isCountryAdmin, currentOwnerUserId, currentCountryId,
@@ -33,7 +35,8 @@ const isViewOnly = computed(() => role.value === 'guard' || role.value === 'prov
 
 const roleInfo = computed(() => ROLE_INFO[role.value] || { label: role.value, tagline: '' })
 const firstName = computed(() => (currentUser.value?.full_name || '').split(' ')[0] || 'there')
-const today = new Date().toISOString().slice(0, 10)
+const now = new Date()
+const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 const bookings   = ref([])
@@ -51,6 +54,7 @@ const subPayments = ref([])        // paid membership billing rows (booking_paym
 const games = ref([])              // hosted events (platform events analytics)
 const gameJoins = ref([])          // seat requests per event
 const loading    = ref(true)
+const loadError  = ref('')
 
 const ownedLocationIds = computed(() => {
   if (viewMode.value === 'platform') return null // no restriction
@@ -111,6 +115,7 @@ const scopedBookings = computed(() => {
 async function load() {
   loading.value = true
   const d = await loadAnalytics()
+  loadError.value = d.error || ''
   bookings.value    = d.bookings
   customers.value   = d.customers
   providers.value   = d.providers
@@ -170,7 +175,7 @@ function sumByCurrency(list, valueFn) {
 }
 // Turn grouped totals into a headline string + optional "+ QAR 2,000 · +EGP 500" sub.
 function moneyMulti(groups) {
-  if (!groups.length) return { value: 'AED 0', sub: '' }
+  if (!groups.length) return { value: '—', sub: '' }
   const value = `${groups[0].currency} ${money(groups[0].amount)}`
   const sub = groups.slice(1).map(g => `+ ${g.currency} ${money(g.amount)}`).join(' · ')
   return { value, sub }
@@ -201,7 +206,9 @@ const RANGE_OPTIONS = [
   { value: '30d',   label: 'Last 30 days' },
   { value: 'month', label: 'This month' },
   { value: '90d',   label: 'Last 90 days' },
+  { value: 'custom', label: 'Custom dates' },
 ]
+const activityDateError = computed(() => fRange.value === 'custom' ? dateRangeError(fDateFrom.value, fDateTo.value) : '')
 const STATUS_OPTIONS = ['confirmed', 'completed', 'pending', 'cancelled', 'no_show']
   .map(v => ({ value: v, label: v.replace('_', ' ') }))
 // The Revenue chart hard-excludes cancelled — don't offer an option that can
@@ -274,7 +281,7 @@ const extraFilterCount = computed(() =>
   (fLocations.value.length ? 1 : 0) + (fStatuses.value.length ? 1 : 0) +
   (fPayments.value.length ? 1 : 0) + (fKinds.value.length ? 1 : 0) + (fChannels.value.length ? 1 : 0) + (fMethods.value.length ? 1 : 0) +
   (fPrograms.value.length ? 1 : 0) + (fSports.value.length ? 1 : 0) +
-  (fRange.value !== 'all' ? 1 : 0) + (fDateFrom.value ? 1 : 0) + (fDateTo.value ? 1 : 0))
+  (fRange.value !== 'all' || fDateFrom.value || fDateTo.value ? 1 : 0))
 const filtersActive = computed(() =>
   extraFilterCount.value > 0 || fCountries.value.length > 0 || fCities.value.length > 0 || !!fSearch.value.trim())
 function clearFilters() {
@@ -284,19 +291,24 @@ function clearFilters() {
   fDateFrom.value = ''; fDateTo.value = ''; fRange.value = 'all'
 }
 
-// Quick Range and custom Date From/To are ALTERNATIVE ways to pick a period —
-// choosing one clears the other so they can't silently intersect (e.g. 'Today'
-// AND a last-month From narrowing to nothing).
-watch(fRange, r => { if (r !== 'all') { fDateFrom.value = ''; fDateTo.value = '' } })
-watch([fDateFrom, fDateTo], ([f, t]) => { if (f || t) fRange.value = 'all' })
+// Explicit handlers keep the period selector and both sets of date inputs in
+// sync without watchers resetting a date while the other field is being edited.
+function setActivityPeriod() {
+  if (fRange.value !== 'custom') { fDateFrom.value=''; fDateTo.value=''; return }
+  const start=new Date(`${today}T00:00:00`);start.setDate(start.getDate()-29)
+  if (!fDateFrom.value) fDateFrom.value=ymd(start)
+  if (!fDateTo.value) fDateTo.value=today
+}
+function useCustomDates() { fRange.value='custom' }
 
 // Page filters WITHOUT the membership default-exclusion — charts whose own Type
 // override selects 'Membership session' read this, so the page-level exclusion
 // can't make that option permanently empty.
 const filteredBookingsAll = computed(() => {
+  if (activityDateError.value) return []
   let list = scopedBookings.value
   const q = fSearch.value.trim().toLowerCase()
-  if (q) list = list.filter(b => locationName(b.location_id).toLowerCase().includes(q) || (b.id || '').toLowerCase().includes(q))
+  if (q) list = list.filter(b => locationName(b.location_id).toLowerCase().includes(q) || String(b.id || '').toLowerCase().includes(q))
   if (fCountries.value.length) { const s = new Set(fCountries.value); list = list.filter(b => s.has(locCountry(b.location_id))) }
   if (fCities.value.length)    { const s = new Set(fCities.value);    list = list.filter(b => s.has(locCity(b.location_id))) }
   if (fLocations.value.length) { const s = new Set(fLocations.value); list = list.filter(b => s.has(b.location_id)) }
@@ -306,9 +318,9 @@ const filteredBookingsAll = computed(() => {
   if (fChannels.value.length)  list = list.filter(b => matchChannel(b, fChannels.value))
   if (fMethods.value.length)   list = list.filter(b => fMethods.value.includes(b.payment_method))
   const from = rangeStartISO()
-  if (from) list = list.filter(b => (b.booking_date || '') >= from)
-  if (fDateFrom.value) list = list.filter(b => (b.booking_date || '') >= fDateFrom.value)
-  if (fDateTo.value)   list = list.filter(b => (b.booking_date || '') <= fDateTo.value)
+  if (from) list = list.filter(b => String(b.booking_date || '').slice(0,10) >= from && String(b.booking_date || '').slice(0,10) <= today)
+  if (fDateFrom.value) list = list.filter(b => String(b.booking_date || '').slice(0,10) >= fDateFrom.value)
+  if (fDateTo.value)   list = list.filter(b => String(b.booking_date || '').slice(0,10) <= fDateTo.value)
   return list
 })
 
@@ -371,6 +383,7 @@ function chartData(id) {
   const f = cf(id)
   // A chart explicitly asking for membership rows starts from the unstripped set.
   let list = f.kinds?.includes('membership') ? filteredBookingsAll.value : filteredBookings.value
+  if (['revenue','revsrc','bookings','status','methods','top','newcust'].includes(id)) list = list.filter(b => !isProviderSlotBlock(b))
   if (f.locations?.length) { const s = new Set(f.locations); list = list.filter(b => s.has(b.location_id)) }
   if (f.statuses?.length) { const s = new Set(f.statuses); list = list.filter(b => s.has(b.booking_status)) }
   if (f.payments?.length) { const s = new Set(f.payments); list = list.filter(b => s.has(b.payment_status || 'pending')) }
@@ -406,6 +419,7 @@ function computeBuckets(start, end) {
   return buckets
 }
 const chartBuckets = computed(() => {
+  if (activityDateError.value) return []
   const end = fDateTo.value || today
   let start = fDateFrom.value || rangeStartISO()
   if (!start) { const d = new Date(end + 'T00:00:00'); d.setDate(d.getDate() - 29); start = ymd(d) }
@@ -414,10 +428,12 @@ const chartBuckets = computed(() => {
 })
 // A chart with its own Period override gets its own buckets.
 function bucketsFor(id) {
+  if (activityDateError.value) return []
   const r = cf(id).range
   if (!r) return chartBuckets.value
-  const start = rangeStartFor(r) || today
-  return computeBuckets(start, today)
+  const start = [rangeStartFor(r), fDateFrom.value, rangeStartISO()].filter(Boolean).sort().at(-1) || today
+  const end = fDateTo.value && fDateTo.value < today ? fDateTo.value : today
+  return start > end ? [] : computeBuckets(start, end)
 }
 function bucketize(list, dateFn, valFn = () => 1, bks = chartBuckets.value) {
   const out = bks.map(b => ({ label: b.label, value: 0 }))
@@ -471,7 +487,7 @@ const membershipRevenueRows = computed(() => {
   if (fCities.value.length)    { const sel = new Set(fCities.value);    rows = rows.filter(r => sel.has(locCity(r.location_id))) }
   if (fCountries.value.length) { const sel = new Set(fCountries.value); rows = rows.filter(r => sel.has(locCountry(r.location_id))) }
   const memFrom = rangeStartISO()
-  if (memFrom) rows = rows.filter(r => r.date >= memFrom)
+  if (memFrom) rows = rows.filter(r => r.date >= memFrom && r.date <= today)
   if (fDateFrom.value) rows = rows.filter(r => r.date >= fDateFrom.value)
   if (fDateTo.value)   rows = rows.filter(r => r.date <= fDateTo.value)
   return rows
@@ -504,7 +520,7 @@ watch(chartCurrencies, (list) => { if (list.length && !list.includes(chartCurren
 const revenueTrend = computed(() => {
   const bkts = bucketsFor('revenue')
   const base = bucketize(
-    chartData('revenue').filter(b => b.booking_status !== 'cancelled' && bookingCurrency(b) === chartCurrency.value),
+    chartData('revenue').filter(b => isCommercialBooking(b) && bookingCurrency(b) === chartCurrency.value),
     b => b.booking_date, b => b.total, bkts)
   const mem = bucketize(
     memChartRows('revenue', { kindGated: true }).filter(r => r.currency === chartCurrency.value),
@@ -515,7 +531,7 @@ const revenueTrend = computed(() => {
 const sourceSlices = computed(() => {
   let venue = 0, event = 0
   for (const b of chartData('revsrc')) {
-    if (b.booking_status === 'cancelled' || bookingCurrency(b) !== chartCurrency.value) continue
+    if (!isCommercialBooking(b) || bookingCurrency(b) !== chartCurrency.value) continue
     if (bookingKind(b) === 'event') event += Number(b.total) || 0
     else venue += Number(b.total) || 0
   }
@@ -543,7 +559,7 @@ const bookingsTrend = computed(() => bucketize(chartData('bookings'), b => b.boo
 const newCustomersTrend = computed(() => {
   const first = new Map()
   for (const b of chartData('newcust')) {
-    if (!b.customer_id) continue
+    if (!b.customer_id || !isCommercialBooking(b)) continue
     const d = (b.created_at || '').slice(0, 10) || b.booking_date
     if (!first.has(b.customer_id) || d < first.get(b.customer_id)) first.set(b.customer_id, d)
   }
@@ -595,7 +611,7 @@ const topListings = computed(() => {
     if (!b.listing_id) continue
     const e = acc.get(b.listing_id) || { count: 0, rev: 0, cur: bookingCurrency(b) }
     e.count++
-    if (b.booking_status !== 'cancelled') e.rev += Number(b.total) || 0
+    if (isCommercialBooking(b)) e.rev += Number(b.total) || 0
     acc.set(b.listing_id, e)
   }
   return [...acc.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 6)
@@ -707,16 +723,15 @@ function mergeCurrencyGroups(groups, rows) {
 
 const platformKpis = computed(() => {
   const list = filteredBookings.value
-  const revenue = moneyMulti(mergeCurrencyGroups(sumByCurrency(list, x => x.total), membershipRevenueInView.value))
-  const commission = moneyMulti(sumByCurrency(list, x => x.commission_amount))
-  const activeCustomers = (isSuperAdmin.value && !filtersActive.value)
-    ? customers.value.length
-    : new Set(list.map(b => b.customer_id).filter(Boolean)).size
+  const commercial = list.filter(isCommercialBooking)
+  const revenue = moneyMulti(mergeCurrencyGroups(sumByCurrency(commercial, x => x.total), membershipRevenueInView.value))
+  const frequency = bookingFrequency(list)
+  const average = loading.value ? 'Loading…' : loadError.value ? 'Unavailable' : frequency.average == null ? '—' : `${frequency.average.toLocaleString(undefined,{maximumFractionDigits:2})}×`
   return [
-    { label: 'Total Revenue',       value: revenue.value,    sub: revenue.sub,    icon: DollarSign, color: '#0f766e', bg: '#ccfbf1' },
-    { label: 'Total Bookings',      value: list.length,                          icon: BookOpen,   color: '#3b82f6', bg: '#dbeafe' },
-    { label: 'Active Customers',    value: activeCustomers,                      icon: Users,      color: '#f59e0b', bg: '#fef3c7' },
-    { label: 'Platform Commission', value: commission.value, sub: commission.sub, icon: TrendingUp, color: '#10b981', bg: '#d1fae5' },
+    { label: 'Booking & membership value', value: revenue.value, sub: revenue.sub, note:'Gross sales value, not Bookboll earnings', icon: DollarSign, color: 'var(--info-ink)', bg: 'var(--info-bg)' },
+    { label: 'Customer bookings', value: loading.value ? 'Loading…' : loadError.value ? 'Unavailable' : frequency.bookings, note:'Confirmed or completed venue bookings with an identified customer', icon: BookOpen, color: 'var(--info-ink)', bg: 'var(--info-bg)' },
+    { label: 'Booking customers', value: loading.value ? 'Loading…' : loadError.value ? 'Unavailable' : frequency.customers, note:'Distinct customers in those confirmed venue bookings', icon: Users, color: 'var(--warning-ink)', bg: 'var(--warning-bg)' },
+    { label: 'Bookings per customer', value:average, sub: !loading.value && !loadError.value && frequency.repeatRate != null ? `${frequency.repeatRate.toLocaleString(undefined,{maximumFractionDigits:1})}% booked more than once` : '', note:loadError.value ? 'Analytics could not be loaded. Please retry.' : `${bookings.value.length >= 5000 ? 'Loaded history · ' : ''}Confirmed venue bookings ÷ booking customers in this period`, icon: Repeat, color: 'var(--positive-ink)', bg: 'var(--positive-bg)' },
   ]
 })
 const pendingApprovals = computed(() =>
@@ -737,14 +752,14 @@ const pendingPayoutApprovals = computed(() => {
 // ── Business KPIs (provider / facility admin) ─────────────────────────────────
 const myWallet = computed(() => wallets.value.find(w => w.owner_user_id === currentOwnerUserId.value))
 const businessKpis = computed(() => {
-  const revenue = moneyMulti(mergeCurrencyGroups(sumByCurrency(filteredBookings.value, x => x.total), membershipRevenueInView.value))
+  const revenue = moneyMulti(mergeCurrencyGroups(sumByCurrency(filteredBookings.value.filter(isCommercialBooking), x => x.total), membershipRevenueInView.value))
   const myListings = listings.value.filter(l => ownedLocationIds.value?.has(l.location_id))
   const myPrograms = programs.value.filter(p => p.owner_user_id === currentOwnerUserId.value)
   return [
-    { label: 'My Revenue',        value: revenue.value, sub: revenue.sub,   icon: DollarSign, color: '#0f766e', bg: '#ccfbf1' },
-    { label: 'My Bookings',       value: filteredBookings.value.length,  icon: BookOpen,   color: '#3b82f6', bg: '#dbeafe' },
-    { label: 'Active Listings',   value: myListings.filter(l => l.status === 'active').length, icon: MapPin, color: '#7c3aed', bg: '#f5f3ff' },
-    { label: 'Wallet Available',  value: `${myWallet.value?.currency || 'AED'} ${money(myWallet.value?.available_balance)}`, icon: WalletIcon, color: '#059669', bg: '#ecfdf5' },
+    { label: 'My Revenue',        value: revenue.value, sub: revenue.sub,   icon: DollarSign, color: 'var(--info-ink)', bg: 'var(--info-bg)' },
+    { label: 'My Bookings',       value: filteredBookings.value.length,  icon: BookOpen,   color: 'var(--info-ink)', bg: 'var(--info-bg)' },
+    { label: 'Active Listings',   value: myListings.filter(l => l.status === 'active').length, icon: MapPin, color: 'var(--purple-ink)', bg: 'var(--purple-bg)' },
+    { label: 'Wallet Available',  value: `${myWallet.value?.currency || 'AED'} ${money(myWallet.value?.available_balance)}`, icon: WalletIcon, color: 'var(--positive-ink)', bg: 'var(--positive-bg)' },
   ]
 })
 
@@ -778,10 +793,10 @@ const membershipKpis = computed(() => {
   const netNew = startedThisMonth - cancelledThisMonth
   const cur = membershipCurrency.value
   return [
-    { label: 'Active members',       value: paid.length,                    icon: UserCheck,  color: '#059669', bg: '#ecfdf5' },
-    { label: 'MRR',                  value: `${cur} ${money(mrr)}`,          icon: Repeat,     color: '#0891b2', bg: '#ecfeff' },
-    { label: 'In trial',             value: inTrial.length,                  icon: Clock,      color: '#b45309', bg: '#fffbeb' },
-    { label: 'Net new (this month)', value: (netNew > 0 ? '+' : '') + netNew, icon: Sparkles,   color: '#7c3aed', bg: '#f5f3ff' },
+    { label: 'Active members',       value: paid.length,                    icon: UserCheck,  color: 'var(--positive-ink)', bg: 'var(--positive-bg)' },
+    { label: 'MRR',                  value: `${cur} ${money(mrr)}`,          icon: Repeat,     color: 'var(--info-ink)', bg: 'var(--info-bg)' },
+    { label: 'In trial',             value: inTrial.length,                  icon: Clock,      color: 'var(--warning-ink)', bg: 'var(--warning-bg)' },
+    { label: 'Net new (this month)', value: (netNew > 0 ? '+' : '') + netNew, icon: Sparkles,   color: 'var(--purple-ink)', bg: 'var(--purple-bg)' },
   ]
 })
 
@@ -793,20 +808,20 @@ const upcomingToday = computed(() => {
 })
 const pendingPaymentBookings = computed(() =>
   filteredBookings.value.filter(b => {
-    if (b.booking_status === 'cancelled' || b.payment_method === 'payment_skipped') return false
+    if (b.booking_status === 'cancelled' || isProviderSlotBlock(b)) return false
     const ps = b.payment_status
     return !ps || ps === 'pending' || ps === 'deposit_paid'
   })
 )
 const opsKpis = computed(() => {
   const base = [
-    { label: "Today's Bookings", value: todaysBookings.value.length, icon: Calendar,  color: '#3b82f6', bg: '#dbeafe' },
-    { label: 'Upcoming Today',   value: upcomingToday.value.length,  icon: Clock,     color: '#d97706', bg: '#fef3c7' },
+    { label: "Today's Bookings", value: todaysBookings.value.length, icon: Calendar,  color: 'var(--info-ink)', bg: 'var(--info-bg)' },
+    { label: 'Upcoming Today',   value: upcomingToday.value.length,  icon: Clock,     color: 'var(--warning-ink)', bg: 'var(--warning-bg)' },
   ]
   if (can(CAP.ACCEPT_PAYMENTS)) {
-    base.push({ label: 'Awaiting Payment', value: pendingPaymentBookings.value.length, icon: CreditCard, color: '#dc2626', bg: '#fef2f2' })
+    base.push({ label: 'Awaiting Payment', value: pendingPaymentBookings.value.length, icon: CreditCard, color: 'var(--danger-ink)', bg: 'var(--danger-bg)' })
   }
-  base.push({ label: 'Total Bookings', value: filteredBookings.value.length, icon: BookOpen, color: '#10b981', bg: '#d1fae5' })
+  base.push({ label: 'Total Bookings', value: filteredBookings.value.length, icon: BookOpen, color: 'var(--positive-ink)', bg: 'var(--positive-bg)' })
   return base
 })
 
@@ -823,12 +838,12 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
     <!-- Header with role-aware greeting -->
     <div class="page-header">
       <div>
-        <div class="page-title">Welcome back, {{ firstName }}</div>
+        <h1 class="page-title">Business analytics</h1>
         <div class="page-subtitle">
           <span class="role-pill" :style="{ background: roleInfo.bg, color: roleInfo.color }">
             <ShieldCheck :size="12" />{{ roleInfo.label }}
           </span>
-          {{ roleInfo.tagline }}
+          Bookings, revenue and customer activity for the selected period.
         </div>
       </div>
       <router-link v-if="can(CAP.MANAGE_BOOKINGS)" to="/bookings" class="btn btn-primary"><Plus :size="16" />New Booking</router-link>
@@ -883,27 +898,40 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
         </div>
         <div class="dash-ff">
           <label>Quick Range</label>
-          <select v-model="fRange">
+          <select v-model="fRange" @change="setActivityPeriod">
             <option v-for="r in RANGE_OPTIONS" :key="r.value" :value="r.value">{{ r.label }}</option>
           </select>
         </div>
         <div class="dash-ff">
           <label>Date From</label>
-          <input type="date" v-model="fDateFrom" />
+          <input type="date" v-model="fDateFrom" aria-label="Filter start date" :max="fDateTo || undefined" @input="useCustomDates" />
         </div>
         <div class="dash-ff">
           <label>Date To</label>
-          <input type="date" v-model="fDateTo" />
+          <input type="date" v-model="fDateTo" aria-label="Filter end date" :min="fDateFrom || undefined" @input="useCustomDates" />
         </div>
       </div>
       <template #actions>
-        <button v-if="canExport" type="button" class="btn btn-secondary" :disabled="!filteredBookings.length" @click="exportBookings">
+        <label class="analytics-period">Period<select v-model="fRange" aria-label="Analytics period" @change="setActivityPeriod"><option v-for="r in RANGE_OPTIONS" :key="r.value" :value="r.value">{{ r.label }}</option></select></label>
+        <button v-if="canExport" type="button" class="btn btn-secondary" :disabled="!!activityDateError || !filteredBookings.length" @click="exportBookings">
           <Download :size="15" /> Export CSV
         </button>
       </template>
     </FilterBar>
-    <div v-if="filtersActive" class="dt-note">Showing {{ filteredBookings.length.toLocaleString() }} of {{ scopedBookings.length.toLocaleString() }} bookings</div>
+    <div v-if="fRange === 'custom'" class="analytics-custom-dates" aria-label="Custom analytics dates">
+      <label>From<input v-model="fDateFrom" type="date" aria-label="Analytics start date" :max="fDateTo || undefined" :aria-invalid="!!activityDateError" /></label>
+      <label>To<input v-model="fDateTo" type="date" aria-label="Analytics end date" :min="fDateFrom || undefined" :aria-invalid="!!activityDateError" /></label>
+      <span>Includes both dates · applies to this activity view and CSV export.</span>
+    </div>
+    <p v-if="activityDateError" class="fin-error" role="alert">{{ activityDateError }}</p>
+    <div v-if="filtersActive && !activityDateError" class="dt-note">Showing {{ filteredBookings.length.toLocaleString() }} of {{ scopedBookings.length.toLocaleString() }} bookings</div>
+    <p v-if="bookings.length >= 5000" class="activity-coverage"><strong>Partial history</strong> Figures use {{ bookings.length.toLocaleString() }} loaded bookings. Older records may be missing.</p>
+    <div v-if="loadError" class="analytics-load-error" role="alert">
+      <span>{{ loadError }}</span>
+      <button type="button" class="btn btn-secondary" :disabled="loading" @click="load">Retry</button>
+    </div>
 
+    <template v-if="!activityDateError">
     <!-- ════════════════ PLATFORM (super / country admin) ════════════════ -->
     <template v-if="viewMode === 'platform'">
       <div class="grid grid-4">
@@ -912,16 +940,17 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
             <div class="kpi-icon" :style="{ background: kpi.bg, color: kpi.color }"><component :is="kpi.icon" :size="18" /></div>
           </div>
           <div class="kpi-value">{{ kpi.value }}</div>
-          <div v-if="kpi.sub" class="kpi-sub" :title="kpi.sub">{{ kpi.sub }}</div>
+          <div v-if="kpi.sub" class="kpi-sub" :class="{ 'kpi-commission-currencies': kpi.note }" :title="kpi.sub">{{ kpi.sub }}</div>
+          <div v-if="kpi.note" class="kpi-note" :class="{ 'kpi-note-warning': kpi.incomplete }">{{ kpi.note }}</div>
         </div>
       </div>
 
       <!-- ── Charts (all driven by the filters above) ── -->
-      <div class="viz-section-head"><span class="viz-section-title">Bookings &amp; revenue</span><span class="viz-section-sub">Revenue combines venue bookings, events and membership billing</span></div>
+      <div class="viz-section-head"><span class="viz-section-title">Bookings &amp; sales value</span><span class="viz-section-sub">Gross booking and membership value; excludes slot blocks and cancelled bookings</span></div>
       <div class="viz-grid">
         <div class="card viz-card">
           <div class="viz-head">
-            <div><div class="viz-title">Revenue</div><div class="viz-sub">{{ rangeLabelFor('revenue') }} · all sources · excludes cancelled</div></div>
+            <div><div class="viz-title">Sales value</div><div class="viz-sub">{{ rangeLabelFor('revenue') }} · all sources · excludes cancelled</div></div>
             <div class="viz-tools">
               <div v-if="chartCurrencies.length > 1" class="viz-chips">
                 <button v-for="c in chartCurrencies" :key="c" type="button" :class="{ on: chartCurrency === c }" @click="chartCurrency = c">{{ c }}</button>
@@ -932,8 +961,8 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
           <TrendChart :points="revenueTrend" mode="line" :prefix="chartCurrency + ' '" :color="'#0d9488'" />
         </div>
         <div class="card viz-card">
-          <div class="viz-head"><div><div class="viz-title">Revenue by source</div><div class="viz-sub">Venues vs events vs memberships · {{ chartCurrency }}</div></div><ChartFilter v-model="chartFilters.revsrc" :dims="['range', 'venue', 'kind', 'channel']" :venue-options="locationOptions" :kind-options="KIND_OPTIONS" :channel-options="CHANNEL_OPTIONS" /></div>
-          <DonutChart :slices="sourceSlices" center-label="Revenue" />
+          <div class="viz-head"><div><div class="viz-title">Sales value by source</div><div class="viz-sub">Venues vs events vs memberships · {{ chartCurrency }}</div></div><ChartFilter v-model="chartFilters.revsrc" :dims="['range', 'venue', 'kind', 'channel']" :venue-options="locationOptions" :kind-options="KIND_OPTIONS" :channel-options="CHANNEL_OPTIONS" /></div>
+          <DonutChart :slices="sourceSlices" center-label="Sales value" />
         </div>
         <div class="card viz-card">
           <div class="viz-head"><div><div class="viz-title">Bookings</div><div class="viz-sub">{{ rangeLabelFor('bookings') }}</div></div><ChartFilter v-model="chartFilters.bookings" :venue-options="locationOptions" :status-options="STATUS_OPTIONS" :payment-options="PAYMENT_OPTIONS" :kind-options="KIND_OPTIONS" :channel-options="CHANNEL_OPTIONS" /></div>
@@ -948,7 +977,7 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
           <DonutChart :slices="methodSlices" center-label="Bookings" />
         </div>
         <div class="card viz-card">
-          <div class="viz-head"><div><div class="viz-title">Top listings</div><div class="viz-sub">By bookings · revenue alongside</div></div><ChartFilter v-model="chartFilters.top" :venue-options="locationOptions" :status-options="STATUS_OPTIONS" :payment-options="PAYMENT_OPTIONS" :kind-options="KIND_OPTIONS" :channel-options="CHANNEL_OPTIONS" /></div>
+          <div class="viz-head"><div><div class="viz-title">Top listings</div><div class="viz-sub">By bookings · sales value alongside</div></div><ChartFilter v-model="chartFilters.top" :venue-options="locationOptions" :status-options="STATUS_OPTIONS" :payment-options="PAYMENT_OPTIONS" :kind-options="KIND_OPTIONS" :channel-options="CHANNEL_OPTIONS" /></div>
           <HBarChart :rows="topListings" suffix=" bookings" :color="'#0d9488'" />
         </div>
         <div class="card viz-card">
@@ -1060,11 +1089,11 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
 
       <!-- Quick actions -->
       <div class="quick-row">
-        <router-link to="/bookings" class="quick-card"><div class="qc-icon" style="background:#dbeafe;color:#2563eb"><BookOpen :size="18"/></div>Bookings</router-link>
-        <router-link to="/calendar" class="quick-card"><div class="qc-icon" style="background:#fef3c7;color:#d97706"><Calendar :size="18"/></div>Calendar</router-link>
-        <router-link v-if="can(CAP.MANAGE_LISTINGS)" to="/listings" class="quick-card"><div class="qc-icon" style="background:#f5f3ff;color:#7c3aed"><MapPin :size="18"/></div>Listings</router-link>
-        <router-link v-if="can(CAP.MANAGE_LISTINGS)" to="/memberships" class="quick-card"><div class="qc-icon" style="background:#ecfeff;color:#0891b2"><GraduationCap :size="18"/></div>Memberships</router-link>
-        <router-link v-if="can(CAP.VIEW_WALLET)" to="/wallet" class="quick-card"><div class="qc-icon" style="background:#ecfdf5;color:#059669"><WalletIcon :size="18"/></div>Earnings &amp; Payouts</router-link>
+        <router-link to="/bookings" class="quick-card"><div class="qc-icon" style="background: var(--info-bg);color: var(--info-ink)"><BookOpen :size="18"/></div>Bookings</router-link>
+        <router-link to="/calendar" class="quick-card"><div class="qc-icon" style="background: var(--warning-bg);color: var(--warning-ink)"><Calendar :size="18"/></div>Calendar</router-link>
+        <router-link v-if="can(CAP.MANAGE_LISTINGS)" to="/listings" class="quick-card"><div class="qc-icon" style="background: var(--purple-bg);color: var(--purple-ink)"><MapPin :size="18"/></div>Listings</router-link>
+        <router-link v-if="can(CAP.MANAGE_LISTINGS)" to="/memberships" class="quick-card"><div class="qc-icon" style="background: var(--info-bg);color: var(--info-ink)"><GraduationCap :size="18"/></div>Memberships</router-link>
+        <router-link v-if="can(CAP.VIEW_WALLET)" to="/wallet" class="quick-card"><div class="qc-icon" style="background: var(--positive-bg);color: var(--positive-ink)"><WalletIcon :size="18"/></div>Earnings &amp; Payouts</router-link>
       </div>
 
       <!-- ── Charts (all driven by the filters above) ── -->
@@ -1201,6 +1230,7 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
         </div>
       </div>
     </template>
+    </template>
   </div>
 </template>
 
@@ -1209,13 +1239,13 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
 
 .card-header { padding: 18px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
 .card-title { font-size: 15px; font-weight: 600; }
-.link { font-size: 13px; color: var(--primary); font-weight: 500; }
+.link { font-size: 13px; color: var(--primary-ink); font-weight: 500; }
 .list { padding: 8px; }
 .list-item { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 8px; transition: background 0.1s; }
 .list-item:hover { background: var(--bg); }
-.list-icon { width: 32px; height: 32px; border-radius: 8px; background: #dbeafe; color: #1e40af; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.list-icon.warn { background: #fef3c7; color: #92400e; }
-.list-icon.ok { background: #d1fae5; color: #065f46; }
+.list-icon { width: 32px; height: 32px; border-radius: 8px; background: var(--info-bg, #dbeafe); color: var(--info-ink, #1e40af); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.list-icon.warn { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); }
+.list-icon.ok { background: var(--positive-bg, #d1fae5); color: var(--positive-ink, #065f46); }
 .list-main { flex: 1; min-width: 0; }
 .list-title { font-size: 14px; font-weight: 500; }
 .list-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
@@ -1225,7 +1255,7 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
 /* Membership KPI section */
 .kpi-section { margin-top: 24px; }
 .kpi-section-head { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--text); }
-.kpi-section-head svg { color: #0891b2; }
+.kpi-section-head svg { color: var(--info-ink, #0891b2); }
 .kpi-section-head .link { margin-left: auto; font-weight: 500; }
 
 /* Quick actions */
@@ -1242,27 +1272,35 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
 .ops-banner {
   display: flex; align-items: center; gap: 8px;
   padding: 12px 16px; margin-bottom: 18px;
-  background: #f8fafc; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border); border-radius: 10px;
   font-size: 13px; color: var(--text-muted);
 }
 .ops-banner svg { color: var(--text-muted, #64748b); }
 
 /* ── Charts grid ── */
 .viz-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 12px; }
-.viz-section-head { display: flex; align-items: baseline; gap: 10px; margin-top: 26px; }
+.viz-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-top: 26px; }
 .viz-section-title { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .viz-section-sub { font-size: 12px; color: var(--text-light, #94a3b8); }
-.viz-card { padding: 16px 18px 14px; }
+.viz-card { min-width: 0; padding: 16px 18px 14px; }
 .viz-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .viz-title { font-size: 14.5px; font-weight: 700; color: var(--text); }
 .viz-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .viz-tools { display: inline-flex; align-items: center; gap: 8px; }
 .viz-chips { display: inline-flex; gap: 4px; background: var(--bg, #f1f5f9); border-radius: 8px; padding: 3px; }
 .viz-chips button { padding: 4px 10px; border: none; border-radius: 6px; background: none; font-size: 12px; font-weight: 700; color: var(--text-muted); cursor: pointer; }
-.viz-chips button.on { background: var(--surface, #ffffff); color: var(--primary); box-shadow: var(--shadow-sm); }
-@media (max-width: 860px) { .viz-grid { grid-template-columns: 1fr; } }
+.viz-chips button.on { background: var(--surface, #ffffff); color: var(--primary-ink); box-shadow: var(--shadow-sm); }
+@media (max-width: 860px) { .viz-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .viz-head { flex-wrap: wrap; }.viz-head > div:first-child { min-width: 0; }.viz-tools { flex-wrap: wrap; } }
 
 /* Analytics toolbar */
+.analytics-custom-dates { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin:12px 0; padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
+.analytics-custom-dates label { display:flex; flex-direction:column; gap:6px; min-width:0; font-size:12px; font-weight:600; }
+.analytics-custom-dates input { min-width:0; width:180px; max-width:100%; min-height:40px; }
+.analytics-custom-dates > span { font-size:12px; color:var(--text-muted); padding-bottom:10px; }
+.activity-coverage { margin:14px 0; font-size:12px; line-height:1.6; color:var(--text-muted); }
+.activity-coverage strong { color:var(--warning-ink); margin-right:6px; }
+@media(max-width:600px) { .analytics-custom-dates label { flex:1 1 130px; }.analytics-custom-dates input { width:100%; min-height:44px; font-size:16px; }.analytics-custom-dates > span { padding-bottom:0; } }
 /* Filter panel fields (inside the FilterBar dropdown / phone bottom sheet).
    minmax(0,1fr) columns + min-width:0 everywhere: date inputs have a large
    intrinsic min-content width that otherwise BLOWS the grid tracks past the
@@ -1289,10 +1327,14 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
 }
 .dt-export { margin-left: auto; }
 .dt-export:disabled { opacity: .5; cursor: default; }
-.dt-note { margin-top: 8px; font-size: 12.5px; font-weight: 600; color: var(--primary); }
+.dt-note { margin-top: 8px; font-size: 12.5px; font-weight: 600; color: var(--primary-ink); }
 .dt-count { font-size: 12px; font-weight: 700; color: var(--text-muted); margin-left: 6px; }
 .kpi-sub { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dt-viewall { width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 11px; margin-top: 4px; border: none; border-top: 1px solid var(--border); background: none; color: var(--primary); font-size: 13.5px; font-weight: 700; cursor: pointer; min-height: 44px; }
+.kpi-commission-currencies { white-space: normal; overflow-wrap: anywhere; }
+.kpi-note { margin-top: 8px; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); }
+.kpi-note-warning { color: var(--warning-ink); }
+.analytics-load-error { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-block: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; color: var(--warning-ink); background: var(--warning-bg); }
+.dt-viewall { width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 11px; margin-top: 4px; border: none; border-top: 1px solid var(--border); background: none; color: var(--primary-ink); font-size: 13.5px; font-weight: 700; cursor: pointer; min-height: 44px; }
 .dt-viewall:hover { background: var(--bg); }
 
 /* Phone (≤600px): tighten list rows / card headers, full-width primary action */

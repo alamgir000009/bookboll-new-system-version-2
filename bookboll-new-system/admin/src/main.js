@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { createHead } from '@unhead/vue'
 import './style.css'
 import App from './App.vue'
+import { dialogFocus } from './lib/dialogFocus.js'
 import { installUnsavedGuards } from './lib/unsavedGuard.js'
 import { initAuth, authUser, authLoading } from './lib/auth.js'
 import { i18n } from './lib/i18n.js'
@@ -113,5 +114,7 @@ router.beforeEach(async (to) => {
 
 installUnsavedGuards(router)
 
-createApp(App).use(router).use(i18n).use(createHead()).mount('#app')
+createApp(App).directive('dialog', dialogFocus).use(router).use(i18n).use(createHead()).mount('#app')
 initAutoTranslate()
+
+import './adminWorkspace.css'

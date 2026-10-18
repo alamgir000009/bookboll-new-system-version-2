@@ -31,10 +31,10 @@ onMounted(() => {
 <style scoped>
 .cb {
   min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 12px; color: #64748b; font: 500 14px/1.4 system-ui, sans-serif;
+  gap: 12px; color: var(--text-muted, #64748b); font: 500 14px/1.4 system-ui, sans-serif;
   background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #0f766e22 100%);
 }
 .cb p { color: #e2e8f0; }
-.spin { animation: spin 0.8s linear infinite; color: #14b8a6; }
+.spin { animation: spin 0.8s linear infinite; color: var(--primary-ink, #14b8a6); }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

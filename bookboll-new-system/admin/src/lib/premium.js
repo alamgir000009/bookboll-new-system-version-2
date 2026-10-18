@@ -11,8 +11,7 @@
  * requirePremium() returns true when allowed; otherwise it opens the global Upgrade
  * modal (components/UpgradeModal.vue, mounted once in App.vue) and returns false.
  *
- * The subscription is REAL: subscribing opens Stripe Checkout ($59/month or $588/year
- * after a free trial) and the plan only flips when Stripe confirms it. The gates here
+ * The subscription is REAL: subscribing opens Stripe Checkout ($588/year with no trial) and the plan only flips when Stripe confirms it. The gates here
  * explain the paywall; the backend enforces it, so a free provider that skips the UI
  * and posts straight to the API is refused with 402 all the same.
  */
@@ -21,19 +20,12 @@ import { useCurrentUser } from './currentUser.js'
 import { pushToast } from './toast.js'
 import { fetchPlan, startPlanCheckout, confirmPlanCheckout, cancelPlan, resumePlan } from './plan.js'
 
-// Pricing (USD). Monthly is the headline; yearly is billed once a year at ~17% off,
-// shown as a lower per-month rate. Both start with a free trial. These are defaults —
-// the server sends the same numbers with the plan and they win once loaded.
-export const PREMIUM_PRICE = 59              // monthly plan — USD / month
-export const PREMIUM_YEARLY_PER_MONTH = 49   // yearly plan shown as $/month (billed annually)
-export const PREMIUM_YEARLY_TOTAL = 588      // yearly plan billed once (49 × 12 ≈ 17% off 59 × 12)
-export const PREMIUM_YEARLY_SAVE_PCT = 17
-export const PREMIUM_TRIAL_DAYS = { monthly: 7, yearly: 14 }
-// The upfront amount actually billed for a plan (after the trial).
-export function billedAmount(billing) { return billing === 'yearly' ? PREMIUM_YEARLY_TOTAL : PREMIUM_PRICE }
+// Premium is sold annually. Laravel must enforce the no-trial policy (readmeAlamgir.md).
+export const PREMIUM_YEARLY_TOTAL = 588
+export function billedAmount() { return PREMIUM_YEARLY_TOTAL }
 
-// Canonical premium feature list (order = upsell display order).
 export const PREMIUM_FEATURES = [
+  { key: 'website_commission', label: '50% lower own-website commission', desc: 'Half the standard booking commission during your paid Premium subscription. Marketplace rates stay the same.' },
   { key: 'blog',       label: 'Website blog',       desc: 'Publish posts on your own site — great for Google.' },
   { key: 'marketing',  label: 'Marketing emails',   desc: 'Email campaigns to your opted-in customers.' },
   { key: 'exports',    label: 'Data exports',       desc: 'Download bookings, customers, payments & more as CSV.' },
@@ -89,7 +81,7 @@ export function ensurePlan() {
 /** Drop the cached plan — used when the acting account changes, and after sign-out. */
 export function resetPlan() {
   inflight = null
-  planState.value = { ...planState.value, plan: 'free', is_premium: false, is_platform: false, loaded: false }
+  planState.value = { ...planState.value, plan: 'free', is_premium: false, is_platform: false, status: null, own_site_commission_discount_eligible: undefined, loaded: false }
 }
 
 export function usePremium() {
@@ -125,11 +117,11 @@ export function usePremium() {
    * validatePromo({ applicableTo: 'provider_plan' }). Only its code string is sent;
    * the discount is recomputed server-side so it cannot be dictated by the browser.
    */
-  async function subscribePremium(promo = null, billing = 'yearly') {
+  async function subscribePremium(promo = null) {
     if (upgrading.value) return false
     upgrading.value = true
     const res = await startPlanCheckout({
-      billing,
+      billing: 'yearly',
       promoCode: promo?.code?.code || null,
       returnPath: window.location.pathname + window.location.search,
     })
@@ -163,13 +155,7 @@ export async function completePlanCheckout(sessionId) {
   planState.value = { ...planState.value, ...res.data, loaded: true }
   upgradeModal.value = { open: false, feature: '' }
 
-  const trial = res.data?.trial_ends_at ? new Date(res.data.trial_ends_at) : null
-  pushToast(
-    trial && trial > new Date()
-      ? `Premium is on — your free trial runs to ${trial.toLocaleDateString()}.`
-      : 'Premium is on — everything is unlocked.',
-    'success',
-  )
+  pushToast('Premium is on — everything is unlocked.', 'success')
   return true
 }
 

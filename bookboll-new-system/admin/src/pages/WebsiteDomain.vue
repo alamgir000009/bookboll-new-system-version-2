@@ -115,7 +115,7 @@ async function removeDomain() {
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">Custom domain</div>
+        <h1 class="page-title">Custom domain</h1>
         <div class="page-subtitle">Put your website on your own address instead of a Bookboll one.</div>
       </div>
       <router-link to="/brand" class="btn btn-secondary btn-sm"><ArrowLeft :size="14" /> Back to Site</router-link>
@@ -149,7 +149,7 @@ async function removeDomain() {
         <div class="wd-title"><Link2 :size="15" /> Connect your domain</div>
         <div class="wd-sub">One-time setup fee of <strong>${{ DOMAIN_FEE }}</strong> — no monthly cost. You need to own the domain already.</div>
         <div class="wd-form">
-          <input class="wd-input" v-model="domainInput" placeholder="book.myclub.com" spellcheck="false" @keyup.enter="domainValid && payAndConnectDomain()" />
+          <input class="wd-input" aria-label="Your domain name" v-model="domainInput" placeholder="book.myclub.com" spellcheck="false" @keyup.enter="domainValid && payAndConnectDomain()" />
           <button class="btn btn-primary" :disabled="!domainValid || savingDomain" @click="payAndConnectDomain">
             <Loader v-if="savingDomain" :size="15" class="spin" /><CreditCard v-else :size="15" />
             {{ savingDomain ? 'Opening checkout…' : `Pay $${DOMAIN_FEE} & connect` }}
@@ -176,7 +176,7 @@ async function removeDomain() {
             {{ verifying ? 'Checking DNS…' : "I've added it — verify" }}
           </button>
         </div>
-        <div v-else class="wd-hint" style="color:#166534;">Your site is live on your own address. 🎉</div>
+        <div v-else class="wd-hint" style="color:var(--positive-ink);">Your site is live on your own address. 🎉</div>
         <button class="btn btn-secondary btn-sm" style="margin-top:14px" @click="removeDomain"><X :size="13" /> Remove domain</button>
       </div>
     </div>
@@ -189,21 +189,21 @@ async function removeDomain() {
 .wd-card { padding: 18px 20px; }
 .wd-compare { display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap; }
 .wd-cmp { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 4px; border: 1.5px solid var(--border); border-radius: 12px; padding: 12px 14px; }
-.wd-cmp.on { border-color: var(--primary); background: #f0fdfa; }
+.wd-cmp.on { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); }
 .wd-cmp-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
 .wd-cmp-host { font-size: 14.5px; font-weight: 800; color: var(--text); word-break: break-all; }
 .wd-cmp-arrow { align-self: center; font-size: 18px; color: var(--text-light, #94a3b8); }
 .wd-hint { font-size: 12px; color: var(--text-muted); margin-top: 10px; line-height: 1.5; }
 .wd-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; color: var(--text); flex-wrap: wrap; }
-.wd-title svg { color: var(--primary); }
+.wd-title svg { color: var(--primary-ink); }
 .wd-sub { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
 .wd-form { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .wd-input { flex: 1; min-width: 200px; padding: 10px 13px; border: 1.5px solid var(--border); border-radius: 10px; font-size: 14px; }
 .wd-input:focus { outline: none; border-color: var(--primary); }
 .wd-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800; border-radius: 999px; padding: 3px 10px; }
-.wd-badge.ok { background: #dcfce7; color: #166534; }
-.wd-badge.pending { background: #fef3c7; color: #92400e; }
-.wd-dns { margin-top: 14px; background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.wd-badge.ok { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #166534); }
+.wd-badge.pending { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); }
+.wd-dns { margin-top: 14px; background: var(--surface-hover, #f8fafc); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
 .wd-dns-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 10px; }
 .wd-dns-rec { display: flex; gap: 12px; font-size: 13px; padding: 4px 0; }
 .wd-dns-rec span { width: 52px; color: var(--text-muted); }

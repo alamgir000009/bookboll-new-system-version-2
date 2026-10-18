@@ -15,7 +15,7 @@ import { loadReferenceData } from '../lib/referenceData.js'
 import { fetchSubscriptionsDashboard } from '../lib/subscriptions.js'
 import { appBaseUrl } from '../lib/appBase.js'
 import { useCurrentUser } from '../lib/currentUser.js'
-import { usePremium, openUpgrade, PREMIUM_PRICE } from '../lib/premium.js'
+import { usePremium, openUpgrade, PREMIUM_YEARLY_TOTAL } from '../lib/premium.js'
 import { brandHost, brandPreviewById, DEFAULT_PRIMARY } from '../lib/brand.js'
 import {
   Code2, Copy, Check, Globe2, ExternalLink, Loader, AlertTriangle, Lock,
@@ -236,7 +236,7 @@ async function copyFrameCode() {
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">Embed &amp; Widgets</div>
+        <h1 class="page-title">Embed &amp; Widgets</h1>
         <div class="page-subtitle">Add your booking experience to your own website. The full-site embed is free; scoped widgets are Premium.</div>
       </div>
       <a v-if="hasAddress" class="btn btn-secondary" :href="previewUrl('/', { embed: 'full' })" target="_blank" rel="noopener"><ExternalLink :size="15" /> Open my site</a>
@@ -271,7 +271,7 @@ async function copyFrameCode() {
       <div v-if="locked" class="em-pick em-upsell">
         <span class="em-upsell-ic"><Lock :size="26" /></span>
         <h3>“{{ cur.title }}” is a Premium widget</h3>
-        <p>Embedding your <strong>whole booking site</strong> is free. Scoped widgets like this — plus the “Book now” button and floating launcher — come with Premium for ${{ PREMIUM_PRICE }}/month.</p>
+        <p>Embedding your <strong>whole booking site</strong> is free. Scoped widgets like this — plus the “Book now” button and floating launcher — come with Premium for ${{ PREMIUM_YEARLY_TOTAL }}/year, billed annually.</p>
         <div class="em-upsell-actions">
           <button class="btn btn-secondary" @click="active = 'full'"><LayoutTemplate :size="15" /> Use the free full-site embed</button>
           <button class="btn btn-primary" @click="openUpgrade('widgets')"><Sparkles :size="15" /> See what Premium includes</button>
@@ -419,17 +419,17 @@ async function copyFrameCode() {
 /* address + status bar */
 .em-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; }
 .em-addr { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text); }
-.em-addr code { background: #f1f5f9; padding: 1px 7px; border-radius: 6px; font-size: 12.5px; }
+.em-addr code { background: var(--bg, #f1f5f9); padding: 1px 7px; border-radius: 6px; font-size: 12.5px; }
 .em-flag { display: inline-flex; align-items: center; gap: 6px; font-size: 12.3px; color: var(--text-muted); }
-.em-flag a { color: var(--primary); font-weight: 700; }
-.em-flag-warn { color: #92400e; }
+.em-flag a { color: var(--primary-ink); font-weight: 700; }
+.em-flag-warn { color: var(--warning-ink, #92400e); }
 
 /* tabs */
 .em-tabs { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .em-tab { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 13px 14px; border: 1.5px solid var(--border); background: var(--surface, #ffffff); border-radius: 14px; cursor: pointer; transition: border-color .12s, box-shadow .12s, transform .12s; }
 .em-tab:hover { border-color: var(--primary); transform: translateY(-1px); }
 .em-tab.on { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent); }
-.em-tab > svg { color: var(--primary); }
+.em-tab > svg { color: var(--primary-ink); }
 .em-tab-t { font-size: 13.5px; font-weight: 800; color: var(--text); }
 .em-tab-s { font-size: 11.5px; color: var(--text-muted); line-height: 1.35; }
 
@@ -437,24 +437,24 @@ async function copyFrameCode() {
 .em-config { display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-bottom: 16px; align-items: start; }
 .em-opts { background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
 .em-opts-head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 800; color: var(--text); }
-.em-opts-head svg { color: var(--primary); }
-.em-restrict { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 4px; padding: 10px 12px; border-radius: 10px; font-size: 12.3px; line-height: 1.45; background: #eff6ff; color: #1e40af; }
-.em-restrict.open { background: #f0fdf4; color: #166534; }
+.em-opts-head svg { color: var(--primary-ink); }
+.em-restrict { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 4px; padding: 10px 12px; border-radius: 10px; font-size: 12.3px; line-height: 1.45; background: var(--info-bg, #eff6ff); color: var(--info-ink, #1e40af); }
+.em-restrict.open { background: var(--positive-bg, #f0fdf4); color: var(--positive-ink, #166534); }
 .em-restrict svg { flex-shrink: 0; margin-top: 1px; }
 .em-field { display: block; margin-top: 14px; }
 .em-field-l { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 700; color: var(--text-muted); margin-bottom: 6px; }
-.em-field-l em { font-style: normal; color: var(--primary); font-weight: 800; }
+.em-field-l em { font-style: normal; color: var(--primary-ink); font-weight: 800; }
 .em-input { width: 100%; height: 38px; padding: 0 12px; border: 1px solid var(--border); border-radius: 9px; font-size: 14px; color: var(--text); box-sizing: border-box; }
 .em-input:focus { outline: none; border-color: var(--primary); }
 select.em-input { background: var(--surface, #ffffff); cursor: pointer; appearance: auto; }
 .em-field input[type=range] { width: 100%; accent-color: var(--primary); }
 .em-hint { font-size: 11.8px; color: var(--text-muted); margin-top: 8px; line-height: 1.45; }
 .em-hint.em-empty { margin-top: 14px; }
-.em-hint a { color: var(--primary); font-weight: 700; }
+.em-hint a { color: var(--primary-ink); font-weight: 700; }
 .em-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .em-seg button { padding: 8px 12px; font-size: 12.5px; font-weight: 700; background: var(--surface, #ffffff); color: var(--text-muted); border: none; cursor: pointer; }
 .em-seg button.on { background: var(--primary); color: #fff; }
-.em-demo { margin-top: 14px; padding: 18px; border: 1px dashed var(--border); border-radius: 10px; background: #f8fafc; display: flex; justify-content: center; position: relative; min-height: 64px; align-items: center; }
+.em-demo { margin-top: 14px; padding: 18px; border: 1px dashed var(--border); border-radius: 10px; background: var(--surface-hover, #f8fafc); display: flex; justify-content: center; position: relative; min-height: 64px; align-items: center; }
 .em-demo-btn { color: #fff; font-weight: 700; font-size: 14px; padding: 12px 22px; border-radius: 10px; }
 .em-demo-corner { min-height: 90px; }
 .em-demo-pill { position: absolute; bottom: 12px; color: #fff; font-weight: 700; font-size: 13px; padding: 11px 18px; border-radius: 999px; box-shadow: 0 6px 16px rgba(0,0,0,.2); }
@@ -464,29 +464,29 @@ select.em-input { background: var(--surface, #ffffff); cursor: pointer; appearan
 .em-codecol { min-width: 0; }
 .em-code-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; font-weight: 700; color: var(--text-muted); margin-bottom: 8px; }
 .em-copy { padding: 8px 14px; }
-.em-code { margin: 0; background: #0f172a; color: var(--border, #e2e8f0); border-radius: 12px; padding: 14px 16px; overflow-x: auto; font-size: 12.3px; line-height: 1.55; max-height: 230px; }
+.em-code { margin: 0; background: var(--bg); color: var(--text); border-radius: 12px; padding: 14px 16px; overflow-x: auto; font-size: 12.3px; line-height: 1.55; max-height: 230px; }
 .em-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
 
 /* big bottom preview */
 .em-preview { background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 16px; padding: 14px; }
 .em-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .em-preview-label { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: var(--text); }
-.em-preview-label svg { color: var(--primary); }
+.em-preview-label svg { color: var(--primary-ink); }
 .em-preview-tools { display: flex; align-items: center; gap: 8px; }
 .em-device { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .em-device button { width: 34px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--surface, #ffffff); color: var(--text-muted); border: none; cursor: pointer; }
 .em-device button.on { background: var(--primary); color: #fff; }
 .em-open { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--text-muted); text-decoration: none; }
-.em-open:hover { color: var(--primary); }
-.em-frame-wrap { background: #f1f5f9; border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; justify-content: center; }
+.em-open:hover { color: var(--primary-ink); }
+.em-frame-wrap { background: var(--bg, #f1f5f9); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; justify-content: center; }
 .em-frame-wrap.desktop .em-frame { width: 100%; height: 680px; }
 .em-frame-wrap.mobile .em-frame { width: 390px; max-width: 100%; height: 680px; border-radius: 22px; box-shadow: 0 6px 24px rgba(0,0,0,.14); }
 .em-frame { border: 1px solid var(--border); border-radius: 10px; background: var(--surface, #ffffff); }
 .em-preview-note { text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 10px; }
 
-.em-note { display: flex; gap: 9px; align-items: flex-start; font-size: 12.8px; line-height: 1.5; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 10px 13px; margin-top: 14px; }
+.em-note { display: flex; gap: 9px; align-items: flex-start; font-size: 12.8px; line-height: 1.5; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 12px; padding: 10px 13px; margin-top: 14px; }
 .em-note :deep(svg) { flex-shrink: 0; margin-top: 1px; }
-.em-note a { color: #92400e; font-weight: 800; }
+.em-note a { color: var(--warning-ink, #92400e); font-weight: 800; }
 
 @media (max-width: 980px) {
   .em-config { grid-template-columns: 1fr; }

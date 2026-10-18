@@ -1,0 +1,110 @@
+/* Shared working surfaces, including dialogs teleported outside #app. */
+html.adm-shell :is(button, a, summary, [tabindex]):focus-visible { outline: 2px solid var(--primary-ink); outline-offset: 3px; }
+html.adm-shell :is([role="dialog"], [role="alertdialog"]):focus { outline: none; }
+html.adm-shell :is(button, input, select, textarea):disabled { cursor: not-allowed; }
+html.adm-shell :is(.modal, .creation-drawer) .btn:disabled {
+  background: var(--surface-hover); color: var(--text-muted); border-color: var(--border);
+  box-shadow: none; opacity: .65;
+}
+html.adm-shell :is(input, textarea)::placeholder { color: var(--text-muted); opacity: 1; }
+html.adm-shell :is(.modal, .modal-card, .bk-modal, .cd-panel, .idlg-panel) { border: 1px solid var(--border); color: var(--text); }
+html.adm-shell :is(.modal, .modal-card) { max-height: min(900px, calc(100dvh - 48px)); overflow-y: auto; }
+html.adm-shell :is(.modal, .modal-card):has(> .modal-body) { display: flex; flex-direction: column; overflow: hidden; }
+html.adm-shell :is(.modal-body, .bb-drawer-body, .nbm-body) { min-height: 0; overscroll-behavior: contain; }
+html.adm-shell :is(.modal-body) { flex: 1 1 auto; overflow-y: auto; }
+html.adm-shell :is(.modal-header, .modal-head, .modal-footer, .modal-foot) { flex-shrink: 0; background: var(--surface); gap: 14px; }
+html.adm-shell :is(.modal-title, .bb-drawer-title, .nbm-title, .bdm-title) { font-size: 20px; line-height: 1.3; letter-spacing: -.35px; }
+html.adm-shell :is(.modal-header, .modal-head) { padding: 22px 24px; align-items: flex-start; }
+html.adm-shell :is(.modal-footer, .modal-foot) { padding: 16px 24px; border-top: 1px solid var(--border); }
+html.adm-shell :is(.modal, .modal-card, .bb-drawer, .nbm-panel, .bdm-panel) .btn { min-height: 42px; justify-content: center; }
+html.adm-shell :is(.modal-header, .modal-head) > button:has(svg),
+html.adm-shell :is(.bb-drawer-close, .nbm-close, .bdm-close, .cdm-close, .chm-close, .idlg-close) { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; flex-shrink: 0; background: var(--bg); color: var(--text-muted); }
+html.adm-shell :is(.modal-body, .bb-drawer-body) > .form-group:last-child { margin-bottom: 0; }
+html.adm-shell :is(.modal-body, .bb-drawer-body, .nbm-body) :is(.form-label, .nbm-label) { font-size: 13px; font-weight: 600; line-height: 1.5; }
+html.adm-shell .nbm-panel { max-width: 580px; }
+html.adm-shell .nbm-header { padding: 24px; }
+html.adm-shell .nbm-subtitle { font-size: 13px; line-height: 1.6; max-width: 42ch; margin-top: 5px; }
+html.adm-shell .nbm-body { padding: 24px; gap: 22px; }
+html.adm-shell .nbm-section-label { font-size: 16px; text-transform: none; letter-spacing: -.2px; color: var(--text); padding-bottom: 12px; }
+html.adm-shell .nbm-footer { padding: 16px 24px; padding-bottom: max(16px,env(safe-area-inset-bottom)); }
+html.adm-shell :is(.nbm-btn-save, .nbm-btn-save-customer) { background: var(--primary); color: white; }
+html.adm-shell .nbm-btn-save:hover:not(:disabled) { background: var(--primary-dark); }
+html.adm-shell :is(.nbm-customer-avatar, .bdm-avatar) { background: var(--primary-soft); color: var(--primary-ink); }
+html.adm-shell :is(.bb-drawer-subtitle, .nbm-subtitle) { color: var(--text-muted); }
+
+/* Filters stay recognizable across tables, with a readable two-column layout. */
+html.adm-shell .lf-panel { padding: 18px; width: min(600px, calc(100vw - 48px)); max-height: min(680px, calc(100dvh - 170px)); overflow-y: auto; overscroll-behavior: contain; }
+html.adm-shell .lf-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+html.adm-shell .lf-panel-head strong { font-size: 16px; }
+html.adm-shell .lf-panel-head .btn-icon { display: grid; place-items: center; min-width: 36px; min-height: 36px; background: var(--bg); border-radius: 8px; }
+html.adm-shell .lf-panel :is(label, .lf-label) { text-transform: none; letter-spacing: 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
+html.adm-shell .lf-panel :is(.bk-filter-grid,.pay-filter-grid,.dash-filter-grid,.cu-filter-grid,.aq-filter-grid) { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+html.adm-shell .lf-panel-foot { position: sticky; bottom: -18px; background: var(--surface); margin: 0 -18px -18px; padding: 14px 18px; z-index: 2; }
+html.adm-shell .lf-panel .filter-row-chips { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+html.adm-shell .lf-panel .filter-group { min-width: 0; width: 100%; }
+html.adm-shell .lf-panel .filter-row-range { display: grid; grid-template-columns: minmax(0,1fr); gap: 16px; }
+html.adm-shell .lf-selects:empty { display: none; }
+html.adm-shell .lf-bar { margin-top: 20px; }
+html.adm-shell .kpi-delta:not(.up):not(.down) { color: var(--text-muted); }
+html.adm-shell :is(.sd-section-title,.pd-section-title,.save-offer-title) { font-size: 14px; text-transform: none; letter-spacing: 0; color: var(--text); }
+html.adm-shell :is(.pay-drawer,.sub-drawer) { width: min(540px,100%); }
+html.adm-shell :is(.sd-head,.pd-head) { padding: 22px 24px; }
+html.adm-shell :is(.sd-body,.pd-body) { padding: 24px; gap: 24px; overscroll-behavior: contain; }
+html.adm-shell :is(.sd-name,.pd-title) { font-size: 18px; }
+html.adm-shell .psm-ic { background: var(--primary-soft); color: var(--primary-ink); }
+html.adm-shell .table-wrap td { vertical-align: middle; }
+html.adm-shell .table-wrap :is(th,td) { font-variant-numeric: tabular-nums; }
+html.adm-shell .badge { line-height: 1.4; }
+html.adm-shell .btn-warning { background: var(--warning-bg); color: var(--warning-ink); border-color: var(--warning-border); }
+html.adm-shell .btn-success { background: #16714b; color: #fff; }
+
+/* Analytics keeps the selected period visible next to the export action. */
+html.adm-shell .analytics-period { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); }
+html.adm-shell .analytics-period select { width: auto; min-width: 145px; }
+html.adm-shell .quick-row { gap: 8px; }
+html.adm-shell .quick-card { flex-direction: row; align-items: center; min-width: 120px; padding: 10px 12px; gap: 9px; font-size: 12.5px; background: transparent; }
+html.adm-shell .quick-card:hover { transform: none; box-shadow: none; }
+html.adm-shell .qc-icon { width: 28px; height: 28px; }
+html.adm-shell .viz-section-head { flex-wrap: wrap; gap: 4px 12px; }
+html.adm-shell .viz-card { padding: 22px; }
+html.adm-shell .viz-title { font-size: 16px; }
+
+/* Settings navigation should size to its contents, not to the form height. */
+html.adm-shell .grid:has(> .card > .set-nav) { align-items: start; grid-template-columns: 210px minmax(0,1fr) !important; }
+html.adm-shell .set-item { width: 100%; min-height: 44px; text-align: start; }
+html.adm-shell .card:has(> .set-nav) { position: sticky; top: 96px; }
+html.adm-shell .set-nav { gap: 5px; }
+html.adm-shell .plan-commission p { max-width: 72ch; }
+html.adm-shell .toggle { min-height: 56px; gap: 14px; }
+html.adm-shell .toggle input { width: 18px; height: 18px; flex-shrink: 0; }
+html.adm-shell .pg-section { border-color: var(--border); }
+html.adm-shell .pg-section-head { min-height: 72px; }
+html.adm-shell .pg-section-name { font-size: 16px; }
+html.adm-shell .pg-section-sub { line-height: 1.6; }
+
+@media (max-width: 900px) {
+  html.adm-shell .grid:has(> .card > .set-nav) { grid-template-columns: minmax(0,1fr) !important; }
+  html.adm-shell .card:has(> .set-nav) { position: static; }
+  html.adm-shell .set-item { width: auto; }
+}
+@media (max-width: 600px) {
+  html.adm-shell .lf-panel .filter-row-chips { grid-template-columns: minmax(0,1fr); }
+  html.adm-shell :is(.modal, .modal-card) { max-height: calc(100dvh - 16px); border-radius: 16px 16px 0 0; }
+  html.adm-shell :is(.modal-header, .modal-head, .nbm-header) { padding: 18px; }
+  html.adm-shell :is(.modal-body,.nbm-body) { padding: 18px; }
+  html.adm-shell :is(.modal-footer,.modal-foot,.nbm-footer) { padding: 14px 18px max(14px,env(safe-area-inset-bottom)); }
+  html.adm-shell :is(.modal-title,.bb-drawer-title,.nbm-title) { font-size: 18px; }
+  html.adm-shell .lf-panel { position: fixed; inset: auto 12px 12px; width: auto; height: auto; max-height: calc(100dvh - 92px); padding: 18px; z-index: 1050; }
+  html.adm-shell .lf-panel > * { flex-shrink: 0; }
+  html.adm-shell .lf-panel .lf-selects { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
+  html.adm-shell .lf-panel select { min-height: 44px; font-size: 16px; padding: 10px 12px; }
+  html.adm-shell .lf-panel-head .btn-icon, html.adm-shell .lf-panel-foot .btn { min-width: 44px; min-height: 44px; }
+  html.adm-shell .lf-panel :is(.bk-filter-grid,.pay-filter-grid,.dash-filter-grid,.cu-filter-grid,.aq-filter-grid) { grid-template-columns: minmax(0,1fr); }
+  html.adm-shell .analytics-period { flex: 1; }
+  html.adm-shell .analytics-period select { flex: 1; min-width: 0; }
+  html.adm-shell .viz-card { padding: 18px; }
+  html.adm-shell .quick-card { flex: 1 1 calc(50% - 8px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.adm-shell *, html.adm-shell *::before, html.adm-shell *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

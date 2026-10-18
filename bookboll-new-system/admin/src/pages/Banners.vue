@@ -7,7 +7,7 @@
  * platform_settings under the `hero_banners` key. A provider edits their own, stored on
  * their admin_users.hero_banners. Read live by the storefront (lib/brand.js → HeroSlideshow).
  */
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { loadSiteSettings, saveSiteSettings } from '../lib/siteSettings.js'
 import { loadReferenceData } from '../lib/referenceData.js'
 import { fetchSubscriptionsDashboard } from '../lib/subscriptions.js'
@@ -16,11 +16,14 @@ import { useCurrentUser } from '../lib/currentUser.js'
 import { usePremium } from '../lib/premium.js'
 import { useToast } from '../lib/toast.js'
 import { uploadImage, imageUploadConfigured } from '../lib/imageUpload.js'
-import { BANNER_ACTIONS, BANNER_FONTS, BANNER_TOKENS, LISTING_ACTION_PATH, applyTokens, blankBanner, normalizeBanners, bannerButtonText, defaultBanners, bannerButtons, bannerBgStyle } from '../lib/heroBanners.js'
+import { BANNER_ACTIONS, BANNER_FONTS, BANNER_TOKENS, LISTING_ACTION_PATH, applyTokens, normalizeBanners, bannerButtonText, defaultBanners, bannerButtons, bannerBgStyle } from '../lib/heroBanners.js'
 import { selectedCity, selectedCountry, customer } from '../lib/customerSession.js'
 import { sanitizeHtml } from '../lib/blog.js'
+import { brandButtonText } from '../lib/brandColors.js'
+import { BANNER_STARTERS, createBannerDraft, bannerDraftError } from '../lib/bannerEditor.js'
+import { markDirty, clearDirty } from '../lib/unsavedGuard.js'
 import MultiSelectDropdown from '../components/MultiSelectDropdown.vue'
-import { Images, Plus, Trash2, ChevronUp, ChevronDown, ChevronRight, Upload, Image as ImageIcon, Loader, Eye, Hash, MapPin, Award } from 'lucide-vue-next'
+import { Images, Plus, Trash2, ChevronUp, ChevronDown, ChevronRight, Upload, Image as ImageIcon, Loader, Eye, Hash, MapPin, Award, Check, ArrowRight, Undo2 } from 'lucide-vue-next'
 
 const { currentOwnerUserId, isSuperAdmin, role: actorRole } = useCurrentUser()
 const toast = useToast()
@@ -33,6 +36,37 @@ const loading = ref(true)
 const brandNameRef = ref('')
 const saving = ref(false)
 const banners = ref([])
+const savedSnapshot = ref('[]')
+const loadError = ref('')
+const showStarters = ref(false)
+const editorSteps = ref({})
+const editorErrors = ref({})
+const removedBanner = ref(null)
+const starters = computed(() => BANNER_STARTERS.filter(item => !item.platformOnly || isPlatformMode.value))
+const draftSnapshot = computed(() => JSON.stringify(normalizeBanners(banners.value)))
+const dirty = computed(() => draftSnapshot.value !== savedSnapshot.value)
+const busy = computed(() => saving.value || !!bannerUploading.value || !!bannerIconUploading.value)
+watch(dirty, changed => { if (!loading.value) changed ? markDirty() : clearDirty() })
+const stepFor = b => editorSteps.value[b.id] || 'message'
+const editSteps = [{ key: 'message', label: 'Message & button' }, { key: 'design', label: 'Appearance' }, { key: 'audience', label: 'Who sees it' }]
+function beginAdd() { showStarters.value = true }
+async function chooseStarter(key) {
+  if (!requirePremium('banners')) return
+  const b = createBannerDraft(key, isPlatformMode.value)
+  if (!b) return
+  banners.value = [...banners.value, b]
+  expandedIds.value = new Set([b.id])
+  editorSteps.value[b.id] = 'message'
+  showStarters.value = false
+  await nextTick()
+  document.getElementById(`banner-heading-${b.id}`)?.focus()
+}
+function undoRemove() {
+  if (!removedBanner.value) return
+  const { banner, index } = removedBanner.value
+  banners.value.splice(index, 0, banner)
+  removedBanner.value = null
+}
 const usingDefaults = ref(false)   // true when showing the built-in default (nothing saved yet)
 // Button actions: the super-admin marketplace gets the full set; a provider's own site
 // only offers the actions relevant to it (no events, loyalty/rewards or marketplace
@@ -54,8 +88,6 @@ const bannerActions = computed(() => {
   if (programOpts.value.length) keys.add('program')
   return BANNER_ACTIONS.filter(a => keys.has(a.key))
 })
-// Keep a banner valid if its chosen target action loses all options (or the action changes).
-function onActionChange(b) { if (!LISTING_ACTION_PATH[b.action]) b.target = '' }
 // Multi-CTA: `actions` drives the buttons; keep legacy `action` = first entry
 // and clean up config the removed actions no longer need.
 const actionOptions = computed(() => bannerActions.value
@@ -96,6 +128,8 @@ function setCountries(b, ids) {
 
 async function load() {
   loading.value = true
+  loadError.value = ''
+  try {
   // Countries + cities for the geo-targeting dropdowns (load once alongside the banners).
   if (!countries.value.length) {
     const ref = await loadReferenceData()
@@ -104,7 +138,9 @@ async function load() {
   }
   // The API returns the marketplace's banners for a platform admin, or the
   // provider's own — same endpoint either way.
-  const { settings, username } = await loadSiteSettings()
+  const response = await loadSiteSettings()
+  if (!response.success) throw new Error('Could not load your banners. Try again before making changes.')
+  const { settings, username } = response
   const saved = normalizeBanners(settings.hero_banners)
   let brandName = ''
   if (!isPlatformMode.value) {
@@ -117,8 +153,12 @@ async function load() {
   if (saved.length) { banners.value = saved; usingDefaults.value = false }
   else if (isPlatformMode.value) { banners.value = defaultBanners({ platform: true, brandName }); usingDefaults.value = true }
   else { banners.value = []; usingDefaults.value = false }
+  savedSnapshot.value = draftSnapshot.value
+  expandedIds.value = new Set()
+  removedBanner.value = null
   await loadTargets()
-  loading.value = false
+  } catch (error) { loadError.value = error.message || 'Could not load your banners.' }
+  finally { loading.value = false }
 }
 onMounted(load)
 watch(ownerId, load)
@@ -149,16 +189,12 @@ async function loadTargets() {
 const expandedIds = ref(new Set())
 const isExpanded = (b) => expandedIds.value.has(b.id)
 function toggleExpand(b) {
-  const s = new Set(expandedIds.value)
-  s.has(b.id) ? s.delete(b.id) : s.add(b.id)
-  expandedIds.value = s
+  expandedIds.value = isExpanded(b) ? new Set() : new Set([b.id])
 }
-function addBanner() {
-  const b = blankBanner()
-  banners.value = [...banners.value, b]
-  expandedIds.value = new Set([...expandedIds.value, b.id])   // open the new one for editing
+function removeBanner(i) {
+  removedBanner.value = { banner: banners.value[i], index: i }
+  banners.value = banners.value.filter((_, idx) => idx !== i)
 }
-function removeBanner(i) { banners.value = banners.value.filter((_, idx) => idx !== i) }
 function moveBanner(i, dir) {
   const j = i + dir
   if (j < 0 || j >= banners.value.length) return
@@ -207,16 +243,32 @@ function previewBg(b) { return bannerBgStyle(b) }
 const BANNER_COLORS = ['#ffffff', '#0f172a', '#fde047', '#34d399', '#60a5fa', '#f472b6', '#f97316']
 const sameColor = (a, c) => String(a || '').toLowerCase() === String(c || '').toLowerCase()
 const isPresetColor = (v) => BANNER_COLORS.some(c => sameColor(v, c))
-function previewBtnStyle(b) { return b.button_color ? { background: b.button_color, color: '#fff' } : {} }
+function previewBtnStyle(b) { return b.button_color ? { background: b.button_color, color: brandButtonText(b.button_color) } : {} }
 function previewHasButton(b) { return bannerButtons(b).length > 0 }
 const AUD_LABEL = { all: 'Everyone', in: 'Signed-in', out: 'Signed-out' }
 
 async function save() {
+  if (busy.value || loading.value || loadError.value) return
+  editorErrors.value = Object.fromEntries(banners.value.map(b => [b.id, bannerDraftError(b)]).filter(([, error]) => error))
+  const invalid = banners.value.find(b => editorErrors.value[b.id])
+  if (invalid) {
+    expandedIds.value = new Set([invalid.id])
+    editorSteps.value[invalid.id] = 'message'
+    await nextTick()
+    document.getElementById(`banner-heading-${invalid.id}`)?.focus()
+    return
+  }
   saving.value = true
   const clean = normalizeBanners(banners.value)
-  const res = await saveSiteSettings({ hero_banners: clean })
-  saving.value = false
+  let res
+  try { res = await saveSiteSettings({ hero_banners: clean }) }
+  catch { res = { success: false, message: 'Could not save your banners. Please try again.' } }
+  finally { saving.value = false }
   if (!res.success) { toast.error(res.message || 'Could not save.'); return }
+  savedSnapshot.value = JSON.stringify(clean)
+  usingDefaults.value = false
+  removedBanner.value = null
+  dirty.value ? markDirty() : clearDirty()
   if (isPlatformMode.value) { toast.success('Marketplace banners saved.'); return }
   toast.success('Home banners saved.')
 }
@@ -226,10 +278,10 @@ async function save() {
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">Home banners</div>
-        <div class="page-subtitle">{{ isPlatformMode ? 'The slideshow at the top of the Bookboll marketplace home page.' : 'Extra slides for your homepage hero. Your default hero (logo, background image, name & tagline) is set in My Website → Logo & name — banners added here rotate after it.' }}</div>
+        <h1 class="page-title">Home banners</h1>
+        <div class="page-subtitle">{{ isPlatformMode ? 'The slideshow at the top of the Bookboll marketplace home page.' : 'Guide visitors to a booking, a membership or your latest news.' }}</div>
       </div>
-      <button class="wl-btn wl-btn-primary" :disabled="saving || loading" @click="save">
+      <button class="wl-btn wl-btn-primary" :disabled="busy || loading || !!loadError || (!dirty && !usingDefaults)" @click="save">
         <Loader v-if="saving" :size="15" class="spin" /> {{ saving ? 'Saving…' : 'Save banners' }}
       </button>
     </div>
@@ -243,13 +295,14 @@ async function save() {
 
     <div v-else-if="loading" class="bn-page-empty"><Loader :size="22" class="spin" /> Loading…</div>
 
+    <div v-else-if="loadError" class="bn-page-empty" role="alert"><p>{{ loadError }}</p><button class="wl-btn wl-btn-primary" @click="load">Try again</button></div>
     <div v-else class="bn-layout">
      <div class="bn-wrap">
-      <div class="wl-card bn-help">
-        <div class="wl-card-title"><Images :size="14" style="vertical-align:-2px" /> How it works</div>
-        <div class="wl-card-sub">Add one or more banners. Each rotates on a slideshow. Choose <strong>who sees each</strong> (everyone / signed-in / signed-out), give it an image or colour, and an optional button. Use <code>{city}</code> in the text and it’s swapped for the visitor’s city. With no banners, the default welcome banner shows.</div>
+      <div v-if="!isPlatformMode" class="bn-welcome">
+        <span class="bn-welcome-icon"><Images :size="23" /></span>
+        <div><strong>Your welcome slide comes first</strong><p>Your logo, name and tagline are already on your homepage. Extra banners rotate after it.</p></div>
+        <router-link to="/brand?tab=branding">Edit welcome slide<ArrowRight :size="14" /></router-link>
       </div>
-
       <!-- System loyalty slide — shown automatically, first, to signed-in customers. Not editable. -->
       <div v-if="isPlatformMode" class="bn-sys">
         <div class="bn-sys-badge"><Award :size="20" /></div>
@@ -259,25 +312,30 @@ async function save() {
         </div>
       </div>
 
-      <div v-if="usingDefaults" class="bn-defaults-note">Showing the current <strong>default</strong> banner — edit it and click <strong>Save banners</strong> to customize, or add more.</div>
-      <div v-else-if="!banners.length" class="bn-empty">No banners yet — the default welcome banner shows. Add one to customize.</div>
-
-      <!-- Add-at-top button (mirrors the one at the bottom) -->
-      <div v-if="banners.length" class="bn-actions bn-actions-top">
-        <button class="wl-btn wl-btn-soft" @click="requirePremium('banners') && addBanner()"><Plus :size="15" /> Add banner<span v-if="!isPremium" class="prem-lock">Premium</span></button>
-      </div>
-
+      <div class="bn-collection-heading"><div><h2>{{ banners.length ? 'Your banner slides' : 'Add your first banner' }}</h2><p>{{ banners.length ? 'Shown in this order. Open a slide to edit it.' : 'Choose a starting point, make it yours, then save to go live.' }}</p></div><button v-if="banners.length && !showStarters" type="button" class="wl-btn wl-btn-soft" @click="beginAdd"><Plus :size="16" />Add banner</button></div>
+      <div v-if="!isPremium && !isPlatformMode" class="bn-plan-note">Extra banner slides are included with Premium. Your welcome slide is included on Free.</div>
+      <section v-if="!banners.length || showStarters" class="bn-starters" aria-label="Choose a banner starting point">
+        <button v-for="starter in starters" :key="starter.key" type="button" @click="chooseStarter(starter.key)">
+          <span class="bn-starter-art" :style="{ background: starter.color }"><span></span><span></span><span v-if="starter.key !== 'announcement' && starter.key !== 'blank'"></span></span>
+          <strong>{{ starter.title }}</strong><span>{{ starter.description }}</span><span class="bn-starter-choose">{{ !isPremium && !isPlatformMode ? 'Explore Premium' : 'Use this starting point' }}<ArrowRight :size="14" /></span>
+        </button>
+        <button v-if="showStarters && banners.length" type="button" class="bn-starters-cancel" @click="showStarters = false">Cancel</button>
+      </section>
+      <div v-if="usingDefaults" class="bn-defaults-note">These are your current default slides. Edit them or add another, then save.</div>
+      <div v-if="removedBanner" class="bn-undo" role="status">Banner removed from your draft.<button type="button" @click="undoRemove"><Undo2 :size="14" />Undo</button></div>
       <div v-for="(b, i) in banners" :key="b.id" class="bn-card" :class="{ collapsed: !isExpanded(b) }">
-        <div class="bn-head" @click="toggleExpand(b)">
-          <button type="button" class="bn-caret" :title="isExpanded(b) ? 'Collapse' : 'Expand to edit'">
+        <div class="bn-head">
+          <button type="button" class="bn-expand" :aria-expanded="isExpanded(b)" :aria-controls="`banner-editor-${b.id}`" @click="toggleExpand(b)">
+          <span class="bn-caret">
             <ChevronDown v-if="isExpanded(b)" :size="16" /><ChevronRight v-else :size="16" />
-          </button>
+          </span>
           <span class="bn-num">Banner {{ i + 1 }}</span>
           <span v-if="!isExpanded(b)" class="bn-head-summary">
             <span class="bn-sum-swatch" :style="previewBg(b)"></span>
             <span class="bn-sum-title">{{ tok(b.heading) || 'Untitled banner' }}</span>
             <span class="bn-sum-aud">{{ AUD_LABEL[b.audience] }}</span>
           </span>
+          </button>
           <div class="bn-head-actions" @click.stop>
             <button class="wl-icon-btn" :disabled="i === 0" @click="moveBanner(i, -1)" title="Move up"><ChevronUp :size="15" /></button>
             <button class="wl-icon-btn" :disabled="i === banners.length - 1" @click="moveBanner(i, 1)" title="Move down"><ChevronDown :size="15" /></button>
@@ -285,12 +343,11 @@ async function save() {
           </div>
         </div>
 
-        <div v-show="isExpanded(b)" class="bn-body">
+        <div v-show="isExpanded(b)" :id="`banner-editor-${b.id}`" class="bn-body">
         <!-- Live preview -->
-        <div class="wl-label bn-prev-label"><Eye :size="13" /> Preview</div>
+        <div class="bn-preview-heading"><span class="wl-label bn-prev-label"><Eye :size="14" /> Banner preview</span><span class="bn-preview-audience">{{ AUD_LABEL[b.audience] }}</span></div>
         <div class="bn-prev" :class="{ plain: !b.image && !b.bg }" :style="previewBg(b)">
           <div v-if="b.image" class="bn-prev-scrim"></div>
-          <span class="bn-prev-tag">{{ AUD_LABEL[b.audience] }}</span>
           <div class="bn-prev-content" :class="{ center: b.layout === 'center' }">
             <div class="bn-prev-lead">
               <img v-if="b.icon" :src="b.icon" class="bn-prev-icon" alt="" />
@@ -306,9 +363,13 @@ async function save() {
           </div>
         </div>
 
-        <!-- 1 · WORDS -->
+        <nav class="bn-editor-nav" aria-label="Banner editing steps"><button v-for="(editStep, stepIndex) in editSteps" :key="editStep.key" type="button" :aria-current="stepFor(b) === editStep.key ? 'step' : undefined" @click="editorSteps[b.id] = editStep.key"><span>{{ stepIndex + 1 }}</span>{{ editStep.label }}</button></nav>
+        <p v-if="editorErrors[b.id]" class="bn-validation" role="alert">{{ editorErrors[b.id] }}</p>
+        <div class="bn-editor-grid" :class="`step-${stepFor(b)}`">
+        <section v-show="stepFor(b) === 'message'" class="bn-editor-section bn-copy">
+        <h2>Content</h2>
         <label class="wl-field"><span class="wl-label">Heading</span>
-          <input class="wl-input" v-model="b.heading" maxlength="90" placeholder="Play more. Hangout. Near you." /></label>
+          <input :id="`banner-heading-${b.id}`" class="wl-input" v-model="b.heading" maxlength="90" placeholder="Play more. Hangout. Near you." /></label>
         <label class="wl-field"><span class="wl-label">Description <em>(optional)</em></span>
           <textarea class="wl-input bn-subarea" rows="2" maxlength="180" :value="plainSub(b.subheading)"
             @input="b.subheading = $event.target.value" placeholder="Book courts, join games and find classes in {city}."></textarea>
@@ -322,6 +383,9 @@ async function save() {
             <button type="button" class="bn-pill" :class="{ on: b.layout === 'center' }" @click="b.layout = 'center'">Centered</button>
           </div>
         </div>
+        </section>
+        <section v-show="stepFor(b) === 'design'" class="bn-editor-section bn-appearance">
+        <h2>Appearance</h2>
         <div class="wl-field">
           <span class="wl-label">Heading colour &amp; font</span>
           <div class="bn-colorrow">
@@ -388,15 +452,18 @@ async function save() {
           </div>
         </div>
 
+        </section>
+        <section v-show="stepFor(b) === 'message'" class="bn-editor-section bn-buttons">
+        <h2>Buttons &amp; destination</h2>
         <div class="bn-row2">
           <label class="wl-field"><span class="wl-label">Buttons <span class="opt">pick one or more — first is the primary</span></span>
             <MultiSelectDropdown :model-value="b.actions" :options="actionOptions" all-label="No buttons"
               @update:model-value="keys => setActions(b, keys)" />
           </label>
           <label v-if="b.actions.length" class="wl-field"><span class="wl-label">1st button text</span>
-            <input class="wl-input" v-model="b.button_text" :placeholder="actionPlaceholder(b)" maxlength="30" /></label>
+            <input class="wl-input" v-model="b.button_text" :placeholder="actionPlaceholder(b)" maxlength="60" /></label>
           <label v-if="b.actions.length" class="wl-field bn-color-field"><span class="wl-label">Colour</span>
-            <input type="color" class="wl-swatch" v-model="b.button_color" /></label>
+            <input type="color" class="wl-swatch" v-model="b.button_color" aria-label="Primary button colour" /></label>
         </div>
 
         <!-- Deep-link target: which specific venue / membership / event that button opens. -->
@@ -411,7 +478,9 @@ async function save() {
         <label v-if="b.actions.includes('custom')" class="wl-field"><span class="wl-label">Custom link</span>
           <input class="wl-input" v-model="b.link" placeholder="/facilities or https://example.com" spellcheck="false" /></label>
 
-        <!-- 4 · WHO SEES IT -->
+        </section>
+        <section v-show="stepFor(b) === 'audience'" class="bn-editor-section bn-audience">
+        <h2>Choose your audience</h2><p class="wl-card-sub">Show this banner to everyone, or choose specific visitors and locations.</p>
         <div class="wl-field">
           <span class="wl-label">Show to</span>
           <div class="bn-pills">
@@ -433,42 +502,39 @@ async function save() {
             </div>
           </div>
         </div>
+        </section>
+        </div>
+        <div class="bn-editor-footer"><span>Changes go live when you save banners.</span><button v-if="stepFor(b) !== 'audience'" type="button" class="wl-btn wl-btn-soft" @click="editorSteps[b.id] = stepFor(b) === 'message' ? 'design' : 'audience'">{{ stepFor(b) === 'message' ? 'Next: appearance' : 'Next: audience' }}<ArrowRight :size="15" /></button><button v-else type="button" class="wl-btn wl-btn-ghost" @click="toggleExpand(b)"><Check :size="15" />Done editing</button></div>
         </div>
       </div>
 
-      <div class="bn-actions">
-        <button class="wl-btn wl-btn-soft" @click="requirePremium('banners') && addBanner()"><Plus :size="15" /> Add banner<span v-if="!isPremium" class="prem-lock">Premium</span></button>
-        <button class="wl-btn wl-btn-primary" :disabled="saving" @click="save">
-          <Loader v-if="saving" :size="15" class="spin" /> {{ saving ? 'Saving…' : 'Save banners' }}
-        </button>
-      </div>
+      <div v-if="banners.length || dirty" class="bn-savebar"><span role="status">{{ dirty || usingDefaults ? 'Unsaved changes' : 'All changes saved' }}</span><button type="button" class="wl-btn wl-btn-primary" :disabled="busy || (!dirty && !usingDefaults)" @click="save"><Loader v-if="saving" :size="15" class="spin" /><Check v-else :size="15" />{{ saving ? 'Saving…' : 'Save banners' }}</button></div>
      </div>
 
       <!-- Right-side guidance: text shortcuts (tokens) -->
-      <aside class="bn-aside">
-        <div class="wl-card">
+      <aside class="bn-aside"><details class="wl-card"><summary>Personalise text with shortcuts</summary>
           <div class="wl-card-title"><Hash :size="14" style="vertical-align:-2px" /> Text shortcuts</div>
           <div class="wl-card-sub">Type any of these in the heading or description — they’re swapped for live values on your site.</div>
           <div class="bn-tok" v-for="t in bannerTokens" :key="t.code">
             <code class="bn-tok-code">{{ t.code }}</code>
             <span class="bn-tok-desc">{{ t.desc }}</span>
           </div>
-          <div class="wl-card-sub bn-aside-tip">Pick a <strong>Font</strong>, set a <strong>text colour</strong>, and use the description toolbar to <strong>bold</strong>, colour or link words.</div>
-        </div>
+          <div class="wl-card-sub bn-aside-tip">Use the preview to check your wording, colours and buttons. Changes go live when you save your banners.</div>
+        </details>
       </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.bn-layout { display: flex; align-items: flex-start; gap: 20px; }
-.bn-wrap { flex: 1; min-width: 0; max-width: 720px; display: flex; flex-direction: column; gap: 14px; }
-.bn-aside { width: 260px; flex-shrink: 0; position: sticky; top: 18px; }
-.bn-tok { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-top: 1px solid #f1f5f9; }
-.bn-tok-code { font-family: ui-monospace, monospace; font-size: 12.5px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
+.bn-layout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 24px; }
+.bn-wrap { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 16px; }
+.bn-aside { min-width: 0; }.bn-aside summary { cursor:pointer; font-size:13px; font-weight:650; color:var(--text); }.bn-aside .wl-card-title { display:none; }
+.bn-tok { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border, #f1f5f9); }
+.bn-tok-code { font-family: ui-monospace, monospace; font-size: 12.5px; font-weight: 700; color: var(--primary-ink, #0f766e); background: var(--primary-soft, #f0fdfa); border: 1px solid var(--primary-border, #99f6e4); border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
 .bn-tok-desc { font-size: 12.5px; color: var(--text-muted); }
-.bn-aside-tip { margin-top: 12px; padding-top: 12px; border-top: 1px solid #f1f5f9; }
-@media (max-width: 920px) { .bn-layout { flex-direction: column; } .bn-aside { width: 100%; position: static; } }
+.bn-aside-tip { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #f1f5f9); }
+@media (max-width: 1100px) { .bn-layout { grid-template-columns: minmax(0, 1fr); } .bn-aside { width: 100%; position: static; } }
 .bn-page-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 60px 20px; color: var(--text-muted); }
 .bn-page-empty h3 { margin: 6px 0 0; color: var(--text); }
 .bn-page-empty p { max-width: 360px; font-size: 13.5px; }
@@ -487,24 +553,24 @@ async function save() {
    this the colour pickers render as ugly full-width bars. */
 input.wl-swatch { width: 44px !important; max-width: 44px; height: 40px; padding: 0; border: 1px solid var(--border); border-radius: 9px; background: none; cursor: pointer; flex-shrink: 0; }
 .wl-icon-btn { width: 32px; height: 32px; border: 1px solid var(--border); background: var(--surface, #ffffff); border-radius: 8px; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.wl-icon-btn:hover:not(:disabled) { border-color: #14b8a6; color: #0f766e; }
+.wl-icon-btn:hover:not(:disabled) { border-color: #14b8a6; color: var(--primary-ink, #0f766e); }
 .wl-icon-btn:disabled { opacity: .45; cursor: not-allowed; }
 .wl-btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-radius: 9px; font-size: 13.5px; font-weight: 700; cursor: pointer; border: 1px solid transparent; }
 .wl-btn:disabled { opacity: .55; cursor: not-allowed; }
 .wl-btn-primary { background: #0f766e; color: #fff; }
 .wl-btn-primary:hover:not(:disabled) { background: #0d5e58; }
-.wl-btn-soft { background: #f0fdfa; color: #0f766e; border-color: #99f6e4; }
+.wl-btn-soft { background: var(--primary-soft, #f0fdfa); color: var(--primary-ink, #0f766e); border-color: var(--primary-border, #99f6e4); }
 .wl-btn-ghost { background: var(--surface, #ffffff); color: var(--text-muted); border-color: var(--border); }
 
 /* Banner cards */
 .bn-empty { font-size: 13px; color: var(--text-muted); padding: 4px 2px; }
-.bn-defaults-note { font-size: 12.5px; color: #0f766e; background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 10px; padding: 9px 13px; }
+.bn-defaults-note { font-size: 12.5px; color: var(--primary-ink, #0f766e); background: var(--primary-soft, #f0fdfa); border: 1px solid var(--primary-border, #99f6e4); border-radius: 10px; padding: 9px 13px; }
 
 /* System (loyalty) banner — read-only note */
-.bn-sys { display: flex; gap: 13px; align-items: flex-start; border: 1px dashed #cbd5e1; background: linear-gradient(135deg, #f8fafc, #f1f5f9); border-radius: 12px; padding: 14px 16px; }
+.bn-sys { display: flex; gap: 13px; align-items: flex-start; border: 1px dashed var(--border-strong, #cbd5e1); background: linear-gradient(135deg, var(--surface-hover, #f8fafc), var(--bg, #f1f5f9)); border-radius: 12px; padding: 14px 16px; }
 .bn-sys-badge { width: 40px; height: 40px; border-radius: 11px; background: #0f172a; color: #fbbf24; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .bn-sys-title { font-size: 13.5px; font-weight: 800; color: var(--text); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.bn-sys-tag { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #0f766e; background: #ccfbf1; border-radius: 999px; padding: 2px 8px; }
+.bn-sys-tag { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--primary-ink, #0f766e); background: var(--primary-soft, #ccfbf1); border-radius: 999px; padding: 2px 8px; }
 .bn-sys-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }
 
 /* Geo targeting (country + city multiselects) */
@@ -512,10 +578,12 @@ input.wl-swatch { width: 44px !important; max-width: 44px; height: 40px; padding
 .bn-geo-col { min-width: 0; }
 .bn-geo-l { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-bottom: 5px; }
 @media (max-width: 560px) { .bn-geo { grid-template-columns: 1fr; } }
-.bn-icon-prev { width: 56px; height: 56px; border-radius: 12px; background-size: cover; background-position: center; background-color: #f1f5f9; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.bn-card { border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--surface, #ffffff); }
+.bn-icon-prev { width: 56px; height: 56px; border-radius: 12px; background-size: cover; background-position: center; background-color: var(--bg, #f1f5f9); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.bn-card { container-type: inline-size; border: 1px solid var(--border); border-radius: 14px; padding: 22px; background: var(--surface, #ffffff); min-width: 0; }
 .bn-card.collapsed { padding: 10px 12px; }
-.bn-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.bn-head { display: flex; align-items: center; gap: 12px; user-select: none; }
+.bn-expand { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0; border: 0; background: transparent; text-align: start; cursor: pointer; }
+.bn-expand:focus-visible, .bn-pill:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; border-radius: 6px; }
 .bn-card:not(.collapsed) .bn-head { margin-bottom: 4px; }
 .bn-caret { border: none; background: transparent; padding: 0; display: inline-flex; align-items: center; color: var(--text-light, #94a3b8); cursor: pointer; flex-shrink: 0; }
 .bn-head:hover .bn-caret { color: var(--text); }
@@ -525,31 +593,32 @@ input.wl-swatch { width: 44px !important; max-width: 44px; height: 40px; padding
 .bn-head-summary { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
 .bn-sum-swatch { width: 34px; height: 22px; border-radius: 5px; border: 1px solid var(--border); background-size: cover; background-position: center; flex-shrink: 0; }
 .bn-sum-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.bn-sum-aud { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; flex-shrink: 0; }
+.bn-sum-aud { font-size: 11px; font-weight: 600; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; flex-shrink: 0; }
 .bn-body { margin-top: 12px; }
 .bn-actions-top { margin-bottom: 2px; }
-.bn-del:hover:not(:disabled) { color: #dc2626; border-color: #fecaca; }
+.bn-del:hover:not(:disabled) { color: var(--danger-ink, #dc2626); border-color: var(--danger-border, #fecaca); }
 .bn-pills { display: flex; gap: 6px; flex-wrap: wrap; }
 .bn-pill { border: 1.5px solid var(--border); background: var(--surface, #ffffff); color: var(--text-muted); font-size: 12.5px; font-weight: 700; padding: 7px 12px; border-radius: 999px; cursor: pointer; }
-.bn-pill.on { border-color: var(--brand, #14b8a6); background: color-mix(in srgb, var(--brand, #14b8a6) 10%, white); color: var(--brand, #0f766e); }
+.bn-pill.on { border-color: var(--brand, #14b8a6); background: color-mix(in srgb, var(--brand, #14b8a6) 10%, white); color: var(--primary-ink, #0f766e); }
 /* Live preview (matches the storefront HeroSlideshow look) */
-.bn-prev-label { display: flex; align-items: center; gap: 5px; margin: 14px 0 6px; }
-.bn-prev { position: relative; border-radius: 14px; overflow: hidden; min-height: 124px; display: flex; align-items: center; padding: 22px 22px; background-size: cover; background-position: center; }
+.bn-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 10px; }
+.bn-prev-label { display: flex; align-items: center; gap: 7px; margin: 0; }
+.bn-preview-audience { font-size: 11px; font-weight: 600; color: var(--text-muted); padding: 4px 8px; background: var(--bg); border-radius: 6px; }
+.bn-prev { position: relative; border-radius: 12px; overflow: hidden; min-height: 180px; display: flex; align-items: center; padding: 28px; background-size: cover; background-position: center; }
 .bn-prev.plain { background: linear-gradient(135deg, var(--brand-accent, #14b8a6), var(--brand, #0f766e)); }
 .bn-prev-scrim { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,.55), rgba(0,0,0,.15)); }
-.bn-prev-tag { position: absolute; top: 10px; right: 10px; z-index: 2; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #fff; background: rgba(15,23,42,.6); backdrop-filter: blur(4px); border-radius: 999px; padding: 3px 9px; }
 /* Text left, button right — mirrors the storefront HeroSlideshow. */
-.bn-prev-content { position: relative; z-index: 1; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.bn-prev-lead { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.bn-prev-content { position: relative; z-index: 1; width: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 22px; }
+.bn-prev-lead { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1 1 350px; }
 .bn-prev-icon { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; flex-shrink: 0; background: rgba(255,255,255,.18); }
 .bn-prev-body { min-width: 0; }
-.bn-prev-h1 { font-size: 21px; font-weight: 900; line-height: 1.15; }
+.bn-prev-h1 { font-size: 26px; font-weight: 750; line-height: 1.2; letter-spacing: -.5px; overflow-wrap: anywhere; }
 .bn-prev-sub { font-size: 13.5px; margin-top: 8px; opacity: .94; line-height: 1.45; }
-.bn-prev-btns { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
-.bn-prev-btn { flex-shrink: 0; display: inline-block; background: var(--surface, #ffffff); color: var(--brand, #0f766e); font-weight: 800; font-size: 13px; padding: 9px 18px; border-radius: 999px; white-space: nowrap; }
+.bn-prev-btns { display: flex; gap: 8px; flex-wrap: wrap; max-width: 100%; }
+.bn-prev-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; max-width: 100%; box-sizing: border-box; background: #ffffff; color: #142132; font-weight: 650; font-size: 13px; padding: 11px 18px; border-radius: 999px; white-space: normal; overflow-wrap: anywhere; text-align: center; }
 .bn-prev-btn.ghost { background: rgba(255,255,255,.14); color: #fff; border: 1.5px solid rgba(255,255,255,.6); }
 .bn-prev-content.center { flex-direction: column; text-align: center; gap: 12px; }
-.bn-prev-content.center .bn-prev-lead { flex-direction: column; align-items: center; }
+.bn-prev-content.center .bn-prev-lead { flex-direction: column; align-items: center; flex-basis: auto; }
 .bn-prev-content.center .bn-prev-btns { justify-content: center; }
 .bn-prev-logo { width: 44px; height: 44px; border-radius: 12px; background: rgba(255,255,255,.18); color: #fff; font-size: 16px; font-weight: 900; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .bn-layoutrow { display: flex; gap: 18px; margin-top: 10px; flex-wrap: wrap; }
@@ -557,12 +626,12 @@ input.wl-swatch { width: 44px !important; max-width: 44px; height: 40px; padding
 .bn-check input { width: 15px; height: 15px; accent-color: var(--primary, #0f766e); }
 
 .bn-bg { display: flex; gap: 12px; align-items: flex-start; }
-.bn-img { width: 110px; height: 66px; border-radius: 9px; background-size: cover; background-position: center; background-color: #f1f5f9; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.bn-img { width: 110px; height: 66px; border-radius: 9px; background-size: cover; background-position: center; background-color: var(--bg, #f1f5f9); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .bn-img-ph { color: var(--text-light, #94a3b8); }
 .bn-bg-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .bn-or { font-size: 12px; color: var(--text-muted); }
-.bn-hs-reset { flex-shrink: 0; font-size: 12px; font-weight: 700; color: var(--primary); background: none; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; padding: 5px 10px; }
-.bn-hs-reset:hover { background: #f0fdfa; border-color: var(--primary); }
+.bn-hs-reset { flex-shrink: 0; font-size: 12px; font-weight: 700; color: var(--primary-ink); background: none; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; padding: 5px 10px; }
+.bn-hs-reset:hover { background: var(--primary-soft, #f0fdfa); border-color: var(--primary); }
 .bn-subarea { resize: vertical; min-height: 58px; line-height: 1.45; }
 .bn-hs-font { margin-top: 8px; }
 
@@ -573,8 +642,21 @@ input.wl-swatch { width: 44px !important; max-width: 44px; height: 40px; padding
 .bn-csw-custom { position: relative; overflow: hidden; display: inline-flex; background-image: conic-gradient(#ef4444, #f59e0b, #10b981, #3b82f6, #a855f7, #ef4444); }
 .bn-csw-custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .bn-hs-font { flex: 1; min-width: 160px; }
-.bn-warn { font-size: 11.5px; color: #b45309; margin-top: 8px; }
-.bn-row2 { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
+.bn-warn { font-size: 11.5px; color: var(--warning-ink, #b45309); margin-top: 8px; }
+.bn-row2 { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: end; }
+.bn-row2 > .wl-field { min-width: 0; }
+.bn-row2 > :first-child { grid-column: 1 / -1; }
+.bn-editor-grid { display:grid; gap:24px 32px; margin-top:24px; }
+.bn-editor-grid.step-message { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+.bn-editor-grid.step-design, .bn-editor-grid.step-audience { grid-template-columns:minmax(0,1fr); }
+.bn-editor-section { min-width:0; }.bn-editor-section h2 { font-size:16px; margin:0; color:var(--text); }
+.bn-buttons { border-inline-start:1px solid var(--border); padding-inline-start:28px; }
+.bn-appearance { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px 28px; }.bn-appearance h2 { grid-column:1/-1; }.bn-appearance .wl-field { margin-top:0; }.bn-appearance .bn-bg { flex-wrap:wrap; }
+@container(max-width:660px) {
+  .bn-editor-grid.step-message, .bn-appearance { grid-template-columns:minmax(0,1fr); }
+  .bn-buttons { padding-inline-start:0; border-inline-start:0; border-top:1px solid var(--border); padding-top:20px; }
+  .bn-prev-content { flex-direction:column; align-items:flex-start; }.bn-prev-lead { flex-basis:auto; }.bn-prev-content.center { align-items:center; }
+}
 .bn-color-field { margin-top: 14px; }
 .bn-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 @media (max-width: 560px) { .bn-row2 { grid-template-columns: 1fr; } }
@@ -601,4 +683,23 @@ input.wl-swatch { width: 44px !important; max-width: 44px; height: 40px; padding
   /* Slightly tighter card padding for narrow field width. */
   .bn-card { padding: 12px; }
 }
+.bn-welcome { display:flex; gap:16px; align-items:center; padding:22px; background:var(--surface); border:1px solid var(--border); border-radius:12px; }
+.bn-welcome-icon { display:flex; padding:13px; border-radius:10px; color:var(--primary-ink); background:var(--primary-soft); }.bn-welcome div { flex:1; min-width:0; }.bn-welcome strong { font-size:15px; }.bn-welcome p { font-size:13px; line-height:1.6; color:var(--text-muted); margin:5px 0 0; max-width:65ch; }
+.bn-welcome a { display:flex; align-items:center; gap:6px; color:var(--primary-ink); font-size:13px; text-decoration:none; font-weight:650; }
+.bn-collection-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:8px; }.bn-collection-heading h2 { font-size:19px; margin:0; }.bn-collection-heading p { font-size:13px; color:var(--text-muted); margin:6px 0 0; }
+.bn-plan-note { font-size:12px; color:var(--text-muted); }
+.bn-starters { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; }
+.bn-starters > button { display:flex; flex-direction:column; align-items:stretch; text-align:start; padding:14px; border:1px solid var(--border); border-radius:12px; background:var(--surface); color:var(--text); font:inherit; cursor:pointer; min-width:0; }
+.bn-starters > button:hover { border-color:var(--primary); }.bn-starters strong { font-size:14px; margin:14px 0 6px; }.bn-starters > button > span:not(.bn-starter-art) { font-size:12px; line-height:1.5; }.bn-starters > button > span:nth-of-type(2) { color:var(--text-muted); }
+.bn-starter-art { height:86px; border-radius:7px; padding:20px 15px; display:flex; flex-direction:column; gap:7px; justify-content:center; }.bn-starter-art span { height:5px; width:75%; background:#ffffffd9; border-radius:2px; }.bn-starter-art span:nth-child(2) { width:90%; background:#ffffff80; height:3px; }.bn-starter-art span:nth-child(3) { width:42px; height:12px; margin-top:3px; }
+.bn-starters .bn-starter-choose { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; padding-top:16px; color:var(--primary-ink); font-weight:650; }
+.bn-starters > .bn-starters-cancel { grid-column:1/-1; padding:8px; border:0; color:var(--text-muted); align-items:center; background:none; }
+.bn-editor-nav { display:flex; gap:6px; margin-top:24px; padding:6px; border-radius:10px; background:var(--bg); }
+.bn-editor-nav button { flex:1; display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:8px; border:0; background:none; color:var(--text-muted); border-radius:7px; font:inherit; font-size:13px; cursor:pointer; }.bn-editor-nav button[aria-current=step] { background:var(--surface); color:var(--primary-ink); box-shadow:0 1px 4px #12332f12; font-weight:700; }.bn-editor-nav button span { font-size:11px; border:1px solid currentColor; border-radius:50%; width:20px; height:20px; display:grid; place-items:center; flex-shrink:0; }
+.bn-editor-footer, .bn-savebar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-top:20px; margin-top:24px; border-top:1px solid var(--border); }.bn-editor-footer > span, .bn-savebar > span { font-size:12px; color:var(--text-muted); }.bn-savebar { margin:0; }
+.bn-undo { display:flex; align-items:center; gap:12px; padding:12px 16px; background:var(--primary-soft); border-radius:8px; font-size:13px; }.bn-undo button { display:flex; align-items:center; gap:6px; border:0; background:none; color:var(--primary-ink); font:inherit; font-weight:700; cursor:pointer; }
+.bn-validation { padding:12px; border-radius:8px; background:var(--danger-bg); color:var(--danger-ink); font-size:13px; }
+.bn-layout :is(button,a,summary):focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+@media(max-width:600px) { .bn-welcome { flex-wrap:wrap; padding:16px; }.bn-welcome a { width:100%; min-height:40px; }.bn-welcome-icon { padding:9px; }.bn-starters { grid-template-columns:1fr 1fr; gap:10px; }.bn-starters > button { padding:12px; }.bn-starter-art { height:70px; padding:12px; }.bn-editor-nav { gap:2px; padding:4px; }.bn-editor-nav button { flex-direction:column; font-size:11px; gap:5px; }.bn-editor-footer { flex-wrap:wrap; }.bn-editor-footer .wl-btn { width:100%; justify-content:center; }.bn-collection-heading { flex-wrap:wrap; } }
+@media(max-width:360px) { .bn-starters { grid-template-columns:1fr; }.bn-head { gap:6px; }.bn-expand { flex-wrap:wrap; gap:6px; }.bn-head-summary { flex-basis:100%; }.bn-head-actions { gap:3px; } }
 </style>

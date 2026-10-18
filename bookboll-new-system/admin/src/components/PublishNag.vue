@@ -59,19 +59,19 @@ const show = computed(() =>
 
 <style scoped>
 .pn { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 16px;
-  background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; font-size: 13px; color: #92400e; }
-.pn-ico { flex-shrink: 0; color: #d97706; }
+  background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 12px; font-size: 13px; color: var(--warning-ink, #92400e); }
+.pn-ico { flex-shrink: 0; color: var(--warning-ink, #d97706); }
 .pn-txt { flex: 1; min-width: 0; line-height: 1.45; }
-.pn-txt b { color: #78350f; }
-.pn-host { font-weight: 800; color: #78350f; }
+.pn-txt b { color: var(--warning-ink, #78350f); }
+.pn-host { font-weight: 800; color: var(--warning-ink, #78350f); }
 .pn-cta { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; background: #d97706; color: #fff;
   font-size: 12.5px; font-weight: 800; padding: 8px 14px; border-radius: 999px; text-decoration: none; white-space: nowrap; }
 .pn-cta:hover { background: #b45309; }
-.pn-never { flex-shrink: 0; background: none; border: none; font-size: 12px; font-weight: 700; color: #b45309;
+.pn-never { flex-shrink: 0; background: none; border: none; font-size: 12px; font-weight: 700; color: var(--warning-ink, #b45309);
   text-decoration: underline; cursor: pointer; padding: 4px; white-space: nowrap; }
-.pn-x { flex-shrink: 0; width: 30px; height: 30px; border: none; background: none; color: #b45309;
+.pn-x { flex-shrink: 0; width: 30px; height: 30px; border: none; background: none; color: var(--warning-ink, #b45309);
   border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
-.pn-x:hover { background: #fef3c7; }
+.pn-x:hover { background: var(--warning-bg, #fef3c7); }
 @media (max-width: 700px) {
   .pn { flex-wrap: wrap; }
   .pn-txt { flex-basis: calc(100% - 56px); }

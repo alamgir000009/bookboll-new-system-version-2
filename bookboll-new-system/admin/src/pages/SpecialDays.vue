@@ -407,7 +407,7 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">Special Days</div>
+        <h1 class="page-title">Special Days</h1>
         <div class="page-subtitle">Tap dates on the calendar, then close them or override the schedule for a venue or a single listing — with optional special pricing for those dates.</div>
       </div>
     </div>
@@ -473,7 +473,7 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
             <div class="sd-sel-chips">
               <span v-for="d in selectedSorted" :key="d" class="sd-sel-chip">
                 {{ shortDate(d) }}
-                <button @click="toggleDate(d)"><X :size="10" /></button>
+                <button @click="toggleDate(d)" :aria-label="`Remove ${d} from selection`"><X :size="10" /></button>
               </span>
             </div>
             <div class="sd-action-btns">
@@ -534,12 +534,12 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
 
     <!-- ═══════════════ CONFIGURE MODAL ═══════════════════════════════════ -->
     <div v-if="showModal" class="modal-backdrop" @click.self="requestClose">
-      <div class="modal special-modal" @input="markDirty" @change="markDirty">
+      <div class="modal special-modal" v-dialog="requestClose" @input="markDirty" @change="markDirty">
         <div class="modal-header">
           <div class="modal-title">
             {{ editing ? 'Edit Special Day' : (form.type === 'holiday' ? 'Mark Off-days' : 'Set Custom Schedule') }}
           </div>
-          <button class="btn-icon" @click="requestClose"><X :size="18" /></button>
+          <button class="btn-icon" @click="requestClose" aria-label="Close"><X :size="18" /></button>
         </div>
 
         <div class="modal-body sd-modal-body">
@@ -701,10 +701,10 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
 
     <!-- ═══════════════ BULK CLEAR MODAL ═══════════════════════════════════ -->
     <div v-if="showClear" class="modal-backdrop" @click.self="showClear = false">
-      <div class="modal special-modal">
+      <div class="modal special-modal" v-dialog="() => showClear = false">
         <div class="modal-header">
           <div class="modal-title">Clear special days</div>
-          <button class="btn-icon" @click="showClear = false"><X :size="18" /></button>
+          <button class="btn-icon" @click="showClear = false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body sd-modal-body">
           <div class="field-section">
@@ -801,13 +801,13 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
   border: 1.5px solid var(--border); background: var(--surface, #ffffff); cursor: pointer;
   display: flex; flex-direction: column; gap: 4px; text-align: left; transition: all .12s;
 }
-.sd-cell:hover:not(:disabled) { border-color: var(--primary); background: #f0fdfa; }
-.sd-cell.selected { border-color: var(--primary); background: #ecfdf5; box-shadow: 0 0 0 2px rgba(16,185,129,.18); }
+.sd-cell:hover:not(:disabled) { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); }
+.sd-cell.selected { border-color: var(--primary); background: var(--positive-bg, #ecfdf5); box-shadow: 0 0 0 2px rgba(16,185,129,.18); }
 .sd-cell.today .sd-cell-num { background: var(--primary); color: #fff; }
-.sd-cell.out-month { opacity: .3; cursor: default; background: #fafafa; }
+.sd-cell.out-month { opacity: .3; cursor: default; background: var(--surface-hover, #fafafa); }
 .sd-cell.is-past { opacity: .6; }
 .sd-cell-num { font-size: 13px; font-weight: 600; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-.sd-cell-check { position: absolute; top: 6px; right: 6px; color: var(--primary); }
+.sd-cell-check { position: absolute; top: 6px; right: 6px; color: var(--primary-ink); }
 .sd-cell-events { display: flex; flex-direction: column; gap: 2px; margin-top: auto; }
 .sd-event-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sd-event-chip:hover { filter: brightness(.92); }
@@ -816,7 +816,7 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
 .sd-legend { display: flex; gap: 16px; margin-top: 14px; font-size: 12px; color: var(--text-muted); }
 .sd-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .lg-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-.lg-sel { background: #ecfdf5; border: 2px solid var(--primary); }
+.lg-sel { background: var(--positive-bg, #ecfdf5); border: 2px solid var(--primary); }
 
 /* Side */
 .sd-side { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 16px; }
@@ -825,8 +825,8 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
 .sd-side-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
 .sd-side-empty-sm { color: var(--text-muted); font-size: 13px; }
 .sd-sel-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.sd-sel-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px 3px 9px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 6px; font-size: 12px; font-weight: 600; }
-.sd-sel-chip button { display: inline-flex; width: 15px; height: 15px; border-radius: 4px; background: rgba(6,95,70,.15); color: #065f46; align-items: center; justify-content: center; }
+.sd-sel-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px 3px 9px; background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #065f46); border: 1px solid var(--positive-border, #a7f3d0); border-radius: 6px; font-size: 12px; font-weight: 600; }
+.sd-sel-chip button { display: inline-flex; width: 15px; height: 15px; border-radius: 4px; background: rgba(6,95,70,.15); color: var(--positive-ink, #065f46); align-items: center; justify-content: center; }
 .sd-action-btns { display: flex; flex-direction: column; gap: 8px; }
 .sd-action-btns .btn { justify-content: center; }
 
@@ -839,31 +839,31 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
 .sd-up-actions { display: flex; flex-direction: column; gap: 2px; }
 .btn-icon { padding: 6px; border-radius: 6px; color: var(--text-muted); display: inline-flex; }
 .btn-icon:hover { background: var(--surface, #ffffff); color: var(--text); }
-.btn-icon.danger:hover { background: #fee2e2; color: #dc2626; }
+.btn-icon.danger:hover { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626); }
 
 /* Modal */
 .special-modal { max-width: 640px; width: 100%; }
 .sd-modal-body { display: flex; flex-direction: column; gap: 0; }
-.sd-dates-summary { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 9px; font-size: 13px; color: #065f46; margin-bottom: 4px; flex-wrap: wrap; }
+.sd-dates-summary { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--positive-bg, #ecfdf5); border: 1px solid var(--positive-border, #a7f3d0); border-radius: 9px; font-size: 13px; color: var(--positive-ink, #065f46); margin-bottom: 4px; flex-wrap: wrap; }
 .sd-ds-count { font-weight: 700; }
-.sd-ds-list { color: #047857; }
+.sd-ds-list { color: var(--positive-ink, #047857); }
 .field-section { padding: 16px 0; border-bottom: 1px solid var(--border); }
 .field-label { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 10px; }
 .opt { font-size: 11px; color: var(--text-muted); font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 4px; }
-.req { font-size: 11px; color: #dc2626; font-weight: 500; text-transform: none; letter-spacing: 0; margin-left: 4px; }
+.req { font-size: 11px; color: var(--danger-ink, #dc2626); font-weight: 500; text-transform: none; letter-spacing: 0; margin-left: 4px; }
 .type-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .type-btn { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 2px solid var(--border); border-radius: 10px; background: var(--surface, #ffffff); text-align: left; cursor: pointer; transition: all .15s; }
-.type-btn:hover { border-color: var(--primary); background: #f0fdfa; }
-.type-btn.active { border-color: var(--primary); background: #f0fdfa; box-shadow: 0 0 0 3px rgba(16,185,129,.12); }
+.type-btn:hover { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); }
+.type-btn.active { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); box-shadow: 0 0 0 3px rgba(16,185,129,.12); }
 .type-btn-title { font-size: 14px; font-weight: 600; }
 .type-btn-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .scope-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .scope-row .form-group { min-width: 0; }
 .scope-row :deep(.ms-wrap) { min-width: 0; }
-.conflict-warn { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 13px; color: #9a3412; margin-top: 10px; line-height: 1.5; }
-.holiday-info { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 13px; color: #1e40af; margin-top: 10px; line-height: 1.5; }
+.conflict-warn { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); border-radius: 8px; font-size: 13px; color: var(--warning-ink, #9a3412); margin-top: 10px; line-height: 1.5; }
+.holiday-info { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--info-bg, #eff6ff); border: 1px solid var(--info-border, #bfdbfe); border-radius: 8px; font-size: 13px; color: var(--info-ink, #1e40af); margin-top: 10px; line-height: 1.5; }
 .custom-schedule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.price-keep-note { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; font-size: 12.5px; color: #166534; margin-top: 12px; line-height: 1.5; }
+.price-keep-note { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0); border-radius: 8px; font-size: 12.5px; color: var(--positive-ink, #166534); margin-top: 12px; line-height: 1.5; }
 @media (max-width: 680px) {
   .type-toggle, .scope-row, .custom-schedule-grid { grid-template-columns: 1fr; }
   /* ≥16px fields stop iOS auto-zoom on focus. */
@@ -941,22 +941,22 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
 .sd-qs-sep { color: var(--text-muted); flex-shrink: 0; }
 .sd-qs-dows { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
 .sd-qs-dow { flex: 1 1 0; min-width: 34px; padding: 7px 0; border: 1px solid var(--border); border-radius: 7px; background: var(--surface, #ffffff); font-size: 11px; font-weight: 700; color: var(--text-muted); cursor: pointer; }
-.sd-qs-dow.on { background: #ecfdf5; border-color: var(--primary); color: #065f46; }
+.sd-qs-dow.on { background: var(--positive-bg, #ecfdf5); border-color: var(--primary); color: var(--positive-ink, #065f46); }
 .sd-qs-add { width: 100%; justify-content: center; margin-top: 10px; }
 .sd-qs-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; }
 
 /* Upcoming head + past row + clear links */
 .sd-up-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.sd-clear-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: #dc2626; background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
-.sd-clear-link:hover { background: #fee2e2; }
+.sd-clear-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: var(--danger-ink, #dc2626); background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.sd-clear-link:hover { background: var(--danger-bg, #fee2e2); }
 .sd-past-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 12px; color: var(--text-muted); }
-.sd-price-badge { display: inline-flex; padding: 1px 7px; border-radius: 999px; background: #fef3c7; color: #92400e; font-weight: 700; font-size: 10.5px; }
+.sd-price-badge { display: inline-flex; padding: 1px 7px; border-radius: 999px; background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); font-weight: 700; font-size: 10.5px; }
 
 /* Pricing modes */
 .sd-price-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .sd-pm { padding: 10px 12px; border: 2px solid var(--border); border-radius: 10px; background: var(--surface, #ffffff); text-align: left; cursor: pointer; transition: all .15s; min-width: 0; }
 .sd-pm:hover { border-color: var(--primary); }
-.sd-pm.active { border-color: var(--primary); background: #f0fdfa; box-shadow: 0 0 0 3px rgba(16,185,129,.12); }
+.sd-pm.active { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); box-shadow: 0 0 0 3px rgba(16,185,129,.12); }
 .sd-pm-t { font-size: 13px; font-weight: 700; }
 .sd-pm-s { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.35; }
 .sd-price-input { margin-top: 12px; max-width: 280px; }
@@ -965,8 +965,8 @@ const selectedSorted = computed(() => selDates.value.slice().sort())
 /* Bulk clear */
 .sd-clear-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .sd-clear-chips button { padding: 8px 14px; border: 1.5px solid var(--border); border-radius: 999px; background: var(--surface, #ffffff); font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; }
-.sd-clear-chips button.on { border-color: var(--primary); background: #ecfdf5; color: #065f46; }
-.sd-clear-preview { margin-top: 4px; padding: 10px 12px; border-radius: 9px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 13px; }
+.sd-clear-chips button.on { border-color: var(--primary); background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #065f46); }
+.sd-clear-preview { margin-top: 4px; padding: 10px 12px; border-radius: 9px; background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); color: var(--warning-ink, #9a3412); font-size: 13px; }
 .sd-clear-preview.none { background: var(--bg); border-color: var(--border); color: var(--text-muted); }
 
 @media (max-width: 600px) {

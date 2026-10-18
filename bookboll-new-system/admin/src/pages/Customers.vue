@@ -1,4 +1,8 @@
 <script setup>
+import ExportDialog from '../components/ExportDialog.vue'
+import { customerExportFields } from '../lib/customerExport.js'
+import { CUSTOMER_TYPES, customerTypeInfo } from '../lib/customerTypes.js'
+import { isCommercialBooking } from '../lib/bookingMeta.js'
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import {
   fetchCustomersDashboard, createCustomer, updateCustomer, deleteCustomer, firstError,
@@ -87,6 +91,10 @@ const filterCountry   = ref([])   // multi (FilterBar) — customer's registered
 const filterCity      = ref([])   // multi (FilterBar) — derived from their booking cities
 const sportFilter     = ref([])   // sport category strings
 const currencyFilter  = ref([])   // currency codes
+const customerTypeFilter = ref([])
+const customerTypeMatch = ref('any')
+const directoryError = ref('')
+const typeInfoByCustomer = computed(() => Object.fromEntries(customers.value.map(customer=>[customer.id,customerTypeInfo(customer,{bookings:scopedBookingRows.value,subscriptions:scopedSubscriptions.value})])))
 
 // Chip multi-select filters
 const statusFilter    = ref([])   // 'active' | 'inactive'
@@ -150,6 +158,7 @@ function buildCustomerQuery({ useFilters = true, includeLookups = false, exportA
   if (!useFilters) return q
 
   if (search.value.trim()) q.search = search.value.trim()
+  if (customerTypeFilter.value.length) { q.customer_types = customerTypeFilter.value; q.customer_types_match = customerTypeMatch.value }
   if (statusFilter.value.length) q.status = statusFilter.value
   if (genderFilter.value.length) q.gender = genderFilter.value
   if (filterCountry.value.length) q.country_id = filterCountry.value
@@ -202,6 +211,7 @@ function applyDashboardPayload(d, { mergeLookups = true } = {}) {
 async function load(opts = {}) {
   const id = ++listRequestId.value
   loadingList.value = true
+  directoryError.value = ''
   const res = await fetchCustomersDashboard(buildCustomerQuery({
     includeLookups: opts.includeLookups || !lookupsLoaded.value,
     useFilters: opts.useFilters !== false,
@@ -209,6 +219,9 @@ async function load(opts = {}) {
   if (id !== listRequestId.value) return
   loadingList.value = false
   if (!res.success) {
+    customers.value = []; matchingTotal.value = 0; custTotalPages.value = 1
+    selectedIds.value = new Set()
+    directoryError.value = res.message || 'Could not load customers.'
     pushToast(res.message || 'Could not load customers.', 'error')
     return
   }
@@ -228,7 +241,7 @@ watch([
   statusFilter, genderFilter, filterCountry, filterCity, locationFilter, listingFilter,
   sportFilter, tagFilter, marketingFilter, subStatusFilter, programFilter, currencyFilter,
   tierFilter, lastActivityFilter, joinedFrom, joinedTo, spendMin, spendMax, bkMin, bkMax,
-  sortKey, sortDir,
+  sortKey, sortDir, customerTypeFilter, customerTypeMatch,
 ], () => resetToFirstPageAndLoad(), { deep: true })
 watch(search, scheduleSearchLoad)
 
@@ -255,7 +268,7 @@ watch(requestBlockCustomerId, async (id) => {
 // keeps the platform-wide set.
 const scopedBookingRows = computed(() => {
   const locIds = ownedLocationIds.value
-  return locIds ? bookings.value.filter(b => locIds.has(b.location_id)) : bookings.value
+  return bookings.value.filter(b => isCommercialBooking(b) && (!locIds || locIds.has(b.location_id)))
 })
 const bkByCustomer = computed(() => {
   const map = {}
@@ -551,9 +564,12 @@ function toggleSelectAll() {
     selectedIds.value = new Set()
     return
   }
-  fetchCustomersDashboard(buildCustomerQuery({ idsOnly: true, includeLookups: false })).then((res) => {
+  const query=buildCustomerQuery({ idsOnly: true, includeLookups: false }), snapshot=JSON.stringify(query)
+  fetchCustomersDashboard(query).then((res) => {
+    if(snapshot!==JSON.stringify(buildCustomerQuery({ idsOnly:true,includeLookups:false })))return
     if (!res.success) {
-      selectedIds.value = new Set(customers.value.map(c => c.id))
+      selectedIds.value = new Set()
+      pushToast(res.message || 'Could not select matching customers.', 'error')
       return
     }
     selectedIds.value = new Set(res.data?.ids || [])
@@ -1160,6 +1176,7 @@ function sortIcon(key) {
 const activeFilterCount = computed(() =>
   [
     tierFilter.value,
+    customerTypeFilter.value.length ? '1' : '',
     statusFilter.value.length      ? '1' : '',
     locationFilter.value.length    ? '1' : '',
     listingFilter.value.length     ? '1' : '',
@@ -1210,6 +1227,7 @@ function custGoTo(p) {
 
 function resetToFirstPageAndLoad() {
   if (filterQuiet) return
+  selectedIds.value = new Set()
   if (custPage.value !== 1) custPage.value = 1
   else load()
 }
@@ -1217,6 +1235,7 @@ function resetToFirstPageAndLoad() {
 function clearFilters() {
   filterQuiet = true
   tierFilter.value = ''
+  customerTypeFilter.value = []; customerTypeMatch.value = 'any'; directoryError.value = ''
   statusFilter.value = [];    filterCountry.value = [];  filterCity.value = []
   locationFilter.value = [];  listingFilter.value = [];  programFilter.value = []
   genderFilter.value = [];    sportFilter.value = [];    subStatusFilter.value = []
@@ -1233,31 +1252,44 @@ function clearFilters() {
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
+const exportBusy = ref(false)
 const showExportModal = ref(false)
 async function doExport(useFilters) {
+  if (!canExport.value) return
+  if (!requirePremium('exports')) { showExportModal.value = false; return }
+  if (exportBusy.value) return
+  exportBusy.value = true
+  try {
   const res = await fetchCustomersDashboard(buildCustomerQuery({
     useFilters,
     exportAll: true,
-    includeLookups: false,
+    includeLookups: true,
   }))
+  if (!res.success) throw new Error(res.message || 'Could not prepare the export.')
+  if (res.data?.truncated) throw new Error('Too many customers to export at once. Apply filters and try again.')
   const p = res.data?.customers
   const rows = p?.data || (Array.isArray(res.data?.customers) ? res.data.customers : [])
+  if (Number(p?.total) > rows.length) throw new Error('This export exceeds the server limit. Apply filters to export a smaller group.')
+  if (!rows.length) { pushToast('No customers to export.', 'info'); return }
+  const fields = customerExportFields(res.data)
   downloadCSV(rows, [
     { label: 'ID',            key: 'id' },
     { label: 'Full Name',     key: 'full_name' },
     { label: 'Email',         key: 'email' },
     { label: 'Phone',         key: 'phone' },
+    { label: 'Customer types',fn: fields.types },
     { label: 'Gender',        key: 'gender' },
     ...(canSeeLoyalty.value ? [
-      { label: 'Loyalty Tier (highest)', fn: r => customerHighestTier(r.id) || '—' },
-      { label: 'Loyalty Points by Country', fn: r => customerLoyaltyList(r.id).map(x => `${x.countryName} ${x.points} (${x.tier})`).join(' | ') || '0' },
+      { label: 'Loyalty Tier (highest)', fn: fields.tier },
+      { label: 'Loyalty Points by Country', fn: fields.points },
     ] : []),
-    { label: 'Total Bookings',fn: c => scopedBookingsCount(c) },
-    { label: 'Spend by Currency', fn: r => customerSpendList(r.id).map(([cur, amt]) => `${cur} ${amt}`).join(' | ') || '—' },
+    { label: 'Total Bookings',fn: fields.count },
+    { label: 'Spend by Currency', fn: fields.spend },
     { label: 'Status',        key: 'status' },
     { label: 'Joined Date',   fn: r => r.created_at?.slice(0,10) },
   ], 'customers')
   showExportModal.value = false
+  } catch (e) { pushToast(e.message, 'error') } finally { exportBusy.value = false }
 }
 
 // ── Chip helper ───────────────────────────────────────────────────────────────────
@@ -1302,6 +1334,8 @@ async function save() {
   delete payload.created_at
   delete payload.updated_at
   delete payload.unsubscribe_token
+  delete payload.customer_types
+  delete payload.customer_types_complete
   const res = editing.value
     ? await updateCustomer(editing.value.id, payload)
     : await createCustomer(payload)
@@ -1355,40 +1389,42 @@ function avatarColor(id) {
 </script>
 
 <template>
-  <div class="page">
+  <ExportDialog :open="showExportModal" title="Export customers" noun="customers" :filtered-count="matchingTotal" :all-count="rosterTotal" :busy="exportBusy" @close="showExportModal = false" @export="doExport" />
+  <div class="page admin-workspace customers-workspace">
     <div class="page-header">
       <div>
-        <div class="page-title">Customers</div>
-        <div class="page-subtitle">CRM and customer relationship database</div>
+        <h1 class="page-title">Customers</h1>
+        <div class="page-subtitle">Find customers, review their bookings and manage their details.</div>
       </div>
       <button v-if="isBookbollSide" class="btn btn-primary" @click="openNew"><Plus :size="16" />New Customer</button>
     </div>
 
     <!-- KPIs -->
-    <div class="grid" :class="canSeeLoyalty ? 'grid-4' : 'grid-3'">
+    <div class="grid customer-overview" :class="canSeeLoyalty ? 'grid-4' : 'grid-3'">
       <div class="card kpi">
-        <div class="kpi-top"><div class="kpi-label">Total Customers</div><div class="kpi-icon" style="background:#dbeafe;color:#3b82f6"><Users :size="18" /></div></div>
+        <div class="kpi-top"><div class="kpi-label">Total Customers</div><div class="kpi-icon" style="background: var(--info-bg);color: var(--info-ink)"><Users :size="18" /></div></div>
         <div class="kpi-value">{{ kpis.total }}</div>
         <div class="kpi-delta">{{ kpis.active }} active</div>
       </div>
       <div class="card kpi">
-        <div class="kpi-top"><div class="kpi-label">Active Members</div><div class="kpi-icon" style="background:#d1fae5;color:#059669"><GraduationCap :size="18" /></div></div>
+        <div class="kpi-top"><div class="kpi-label">Active Members</div><div class="kpi-icon" style="background: var(--positive-bg);color: var(--positive-ink)"><GraduationCap :size="18" /></div></div>
         <div class="kpi-value">{{ kpis.activeSubs }}</div>
         <div class="kpi-delta">Membership program members</div>
       </div>
       <div v-if="canSeeLoyalty" class="card kpi">
-        <div class="kpi-top"><div class="kpi-label">VIP (Legend+)</div><div class="kpi-icon" style="background:#fef3c7;color:#d97706"><Award :size="18" /></div></div>
+        <div class="kpi-top"><div class="kpi-label">VIP (Legend+)</div><div class="kpi-icon" style="background: var(--warning-bg);color: var(--warning-ink)"><Award :size="18" /></div></div>
         <div class="kpi-value">{{ kpis.vip }}</div>
         <div class="kpi-delta">Legend &amp; GOAT tier</div>
       </div>
       <div class="card kpi">
-        <div class="kpi-top"><div class="kpi-label">Avg. Spend</div><div class="kpi-icon" style="background:#ccfbf1;color:#0f766e"><TrendingUp :size="18" /></div></div>
-        <div class="kpi-value">AED {{ kpis.avgSpend.toLocaleString() }}</div>
-        <div class="kpi-delta">Per customer</div>
+        <div class="kpi-top"><div class="kpi-label">Customer status</div><div class="kpi-icon" style="background: var(--primary-soft);color: var(--primary-ink)"><TrendingUp :size="18" /></div></div>
+        <div class="kpi-value">{{ Math.max(0, kpis.total - kpis.active).toLocaleString() }}</div>
+        <div class="kpi-delta">Inactive or blocked</div>
       </div>
     </div>
 
-    <div class="card" style="margin-top:20px;">
+    <div class="card customer-directory">
+      <div class="workspace-section-heading"><div><h2>Customer directory</h2><p>Contact details, booking history and country rewards.</p></div><span>{{ directoryError ? 'Results unavailable' : loadingList ? 'Loading results…' : `${matchingTotal.toLocaleString()} results` }}</span></div>
 
       <!-- ── Toolbar (search + all filters in the dropdown) ──────────────────── -->
       <FilterBar
@@ -1404,13 +1440,21 @@ function avatarColor(id) {
         @clear="clearFilters"
       >
         <template #actions>
-          <button v-if="canExport" class="btn btn-secondary btn-sm" @click="requirePremium('exports') && (showExportModal = true)">
+          <button v-if="canExport" class="btn btn-secondary btn-sm" @click="showExportModal = true">
             <Download :size="14" />Export<span v-if="!isPremium" class="prem-lock">Premium</span>
           </button>
         </template>
 
         <!-- Row 1: Multi-select dropdowns -->
         <div class="filter-ms-row">
+          <div class="filter-ms-col">
+            <label class="filter-label">Customer type</label>
+            <MultiSelect v-model="customerTypeFilter" :options="CUSTOMER_TYPES" placeholder="All customer types" />
+          </div>
+          <div v-if="customerTypeFilter.length > 1" class="filter-ms-col">
+            <label class="filter-label" for="customer-type-match">Match selected types</label>
+            <select id="customer-type-match" v-model="customerTypeMatch"><option value="any">Any selected type</option><option value="all">Every selected type</option></select>
+          </div>
           <div class="filter-ms-col">
             <label class="filter-label">Location</label>
             <MultiSelect v-model="locationFilter" :options="locationOptions" placeholder="All locations" />
@@ -1562,7 +1606,7 @@ function avatarColor(id) {
             <button class="bulk-btn danger" @click="openBlockDialog"><Ban :size="14" />Block…</button>
             <button class="bulk-btn success" @click="unblockSelected"><CheckCircle :size="14" />Remove All Blocks</button>
             <button class="bulk-btn" @click="openTagDialog"><Tag :size="14" />Add Tag</button>
-            <button class="bulk-deselect" @click="clearSelection"><X :size="15" /></button>
+            <button class="bulk-deselect" @click="clearSelection" aria-label="Close"><X :size="15" /></button>
           </div>
         </div>
       </Transition>
@@ -1629,6 +1673,10 @@ function avatarColor(id) {
                       <span v-if="c.status === 'blocked'" class="blocked-badge"><Ban :size="9" />Blocked</span>
                     </div>
                     <!-- Booking auto-tags -->
+                    <div class="customer-type-tags" :title="typeInfoByCustomer[c.id]?.complete ? 'Customer types across the full accessible history' : 'Based on available activity. Complete customer types need backend sync.'">
+                      <span v-for="type in typeInfoByCustomer[c.id]?.types || []" :key="type" class="customer-type-tag" :class="'customer-type-'+type">{{ CUSTOMER_TYPES.find(item=>item.value===type)?.label }}</span>
+                      <span v-if="!typeInfoByCustomer[c.id]?.types.length" class="no-tags">{{ typeInfoByCustomer[c.id]?.complete ? 'No qualifying activity' : 'Customer type unavailable' }}</span>
+                    </div>
                     <div class="auto-tags">
                       <span v-for="tag in (autoTagsByCustomer[c.id] || []).slice(0, 3)" :key="tag.name" class="auto-tag" :style="{ borderLeftColor: tag.color }">
                         {{ tag.name }}
@@ -1636,13 +1684,12 @@ function avatarColor(id) {
                       <span v-if="(autoTagsByCustomer[c.id] || []).length > 3" class="auto-tag-more">
                         +{{ (autoTagsByCustomer[c.id] || []).length - 3 }}
                       </span>
-                      <span v-if="!(autoTagsByCustomer[c.id] || []).length" class="no-tags">No bookings yet</span>
                     </div>
                     <!-- Manual admin tags -->
                     <div v-if="customerTags(c).length" class="manual-tags">
                       <span v-for="tag in customerTags(c)" :key="tag" class="manual-tag">
                         <Tag :size="9" />{{ tag }}
-                        <button class="tag-x" @click.stop="removeTag(c.id, tag)"><X :size="8" /></button>
+                        <button class="tag-x" @click.stop="removeTag(c.id, tag)" aria-label="Close"><X :size="8" /></button>
                       </span>
                     </div>
                     <!-- Block indicators -->
@@ -1652,7 +1699,7 @@ function avatarColor(id) {
                         :title="b.reason || undefined">
                         <Ban :size="9" />
                         {{ blockTargetName(b) }}
-                        <button class="block-chip-x" @click.stop="removeBlock(c.id, b.type, b.targetId)"><X :size="8" /></button>
+                        <button class="block-chip-x" @click.stop="removeBlock(c.id, b.type, b.targetId)" aria-label="Close"><X :size="8" /></button>
                       </span>
                     </div>
                   </div>
@@ -1733,9 +1780,9 @@ function avatarColor(id) {
                 <div class="row-actions">
                   <button class="btn-icon" title="View details" @click="openCustomer(c.id)"><Eye :size="15" /></button>
                   <button v-if="c.email" class="btn-icon" title="Email customer" @click="emailCustomer(c)"><Mail :size="15" /></button>
-                  <button v-if="c.phone" class="btn-icon" style="color:#16a34a" title="WhatsApp" @click="whatsappCustomer(c)"><WhatsappIcon :size="15" /></button>
+                  <button v-if="c.phone" class="btn-icon" style="color: var(--positive-ink)" title="WhatsApp" @click="whatsappCustomer(c)"><WhatsappIcon :size="15" /></button>
                   <button class="btn-icon" title="Booking history" @click="viewHistoryId = c.id"><History :size="15" /></button>
-                  <button v-if="c.status === 'blocked' && isBookbollSide" class="btn-icon" style="color:#059669" title="Unblock customer" @click="unblockCustomerRow(c)"><CheckCircle :size="15" /></button>
+                  <button v-if="c.status === 'blocked' && isBookbollSide" class="btn-icon" style="color: var(--positive-ink)" title="Unblock customer" @click="unblockCustomerRow(c)"><CheckCircle :size="15" /></button>
                   <button v-else class="btn-icon" title="Block customer" @click="openBlockForRow(c)"><Ban :size="15" /></button>
                   <button v-if="isBookbollSide" class="btn-icon" title="Edit" @click="openEdit(c)"><Edit2 :size="15" /></button>
                   <button v-if="isBookbollSide" class="btn-icon danger" title="Delete" @click="remove(c.id)"><Trash2 :size="15" /></button>
@@ -1747,6 +1794,7 @@ function avatarColor(id) {
                 <Loader :size="18" style="display:inline;margin-right:8px" />Loading customers…
               </td>
             </tr>
+            <tr v-else-if="directoryError"><td colspan="10" class="fin-error" role="alert">{{ directoryError }} <button v-if="customerTypeFilter.length" type="button" class="btn btn-secondary btn-sm" style="margin:8px" @click="customerTypeFilter=[]">Clear customer type filter</button></td></tr>
             <tr v-else-if="!filteredSorted.length">
               <td colspan="10" style="padding:0">
                 <EmptyState :icon="Users"
@@ -1773,10 +1821,10 @@ function avatarColor(id) {
 
     <!-- Block dialog -->
     <div v-if="showBlockDialog" class="modal-backdrop" @click.self="showBlockDialog=false">
-      <div class="modal" style="max-width:460px;">
+      <div class="modal" v-dialog style="max-width:460px;">
         <div class="modal-header">
           <div class="modal-title"><Ban :size="16" style="margin-right:6px;color:var(--error)"/>Block Customers</div>
-          <button class="btn-icon" @click="showBlockDialog=false"><X :size="18" /></button>
+          <button class="btn-icon" @click="showBlockDialog=false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <p class="block-hint">
@@ -1857,10 +1905,10 @@ function avatarColor(id) {
 
     <!-- Tag dialog -->
     <div v-if="showTagDialog" class="modal-backdrop" @click.self="showTagDialog=false">
-      <div class="modal" style="max-width:440px;">
+      <div class="modal" v-dialog style="max-width:440px;">
         <div class="modal-header">
           <div class="modal-title"><Tag :size="16" style="margin-right:6px;"/>Tag Customers</div>
-          <button class="btn-icon" @click="showTagDialog=false"><X :size="18" /></button>
+          <button class="btn-icon" @click="showTagDialog=false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -1888,10 +1936,10 @@ function avatarColor(id) {
 
     <!-- Marketing email composer (consent-gated, record & preview) -->
     <div v-if="showEmailDialog" class="modal-backdrop" @click.self="showEmailDialog=false">
-      <div class="modal mkt-modal">
+      <div class="modal mkt-modal" v-dialog>
         <div class="modal-header">
           <div class="modal-title"><Mail :size="16" style="margin-right:6px;"/>Marketing email</div>
-          <button class="btn-icon" @click="showEmailDialog=false"><X :size="18" /></button>
+          <button class="btn-icon" @click="showEmailDialog=false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body mkt-body">
           <!-- Compose -->
@@ -1959,10 +2007,10 @@ function avatarColor(id) {
 
     <!-- ── Bulk WhatsApp campaign dialog ────────────────────────────────────── -->
     <div v-if="showWaDialog" class="modal-backdrop" @click.self="showWaDialog=false">
-      <div class="modal mkt-modal">
+      <div class="modal mkt-modal" v-dialog>
         <div class="modal-header">
           <div class="modal-title"><WhatsappIcon :size="16" style="margin-right:6px;color:#25d366"/>WhatsApp campaign</div>
-          <button class="btn-icon" @click="showWaDialog=false"><X :size="18" /></button>
+          <button class="btn-icon" @click="showWaDialog=false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body mkt-body">
           <div class="mkt-compose">
@@ -2099,25 +2147,25 @@ function avatarColor(id) {
     </div>
 
     <div v-if="showModal" class="modal-backdrop" @click.self="requestCloseForm">
-      <div class="modal" @input="markDirty" @change="markDirty">
+      <div class="modal" v-dialog="requestCloseForm" @input="markDirty" @change="markDirty">
         <div class="modal-header">
           <div class="modal-title">{{ editing ? 'Edit Customer' : 'New Customer' }}</div>
-          <button class="btn-icon" @click="requestCloseForm"><X :size="18" /></button>
+          <button class="btn-icon" @click="requestCloseForm" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <div class="form-group">
             <label class="form-label">Full Name <span class="req-star">*</span></label>
-            <input v-model="form.full_name" :class="{ 'input-invalid': triedSave && !form.full_name?.trim() }" />
+            <input aria-label="Customer full name" v-model="form.full_name" :class="{ 'input-invalid': triedSave && !form.full_name?.trim() }" />
             <div v-if="triedSave && !form.full_name?.trim()" class="field-error-text"><Info :size="12" />Name is required</div>
           </div>
           <div class="grid grid-2">
-            <div class="form-group"><label class="form-label">Email</label><input v-model="form.email" type="email" :class="{ 'input-invalid': triedSave && form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()) }" /></div>
-            <div class="form-group"><label class="form-label">Phone</label><input v-model="form.phone" /></div>
+            <div class="form-group"><label class="form-label">Email</label><input aria-label="Customer email" v-model="form.email" type="email" :class="{ 'input-invalid': triedSave && form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()) }" /></div>
+            <div class="form-group"><label class="form-label">Phone</label><input aria-label="Customer phone" v-model="form.phone" /></div>
             <div class="form-group"><label class="form-label">Gender</label>
-              <select v-model="form.gender"><option value="">—</option><option>Male</option><option>Female</option></select>
+              <select aria-label="Gender" v-model="form.gender"><option value="">—</option><option>Male</option><option>Female</option></select>
             </div>
             <div class="form-group"><label class="form-label">Country</label>
-              <select v-model="form.country_id"><option value="">Select</option><option v-for="co in countries" :key="co.id" :value="co.id">{{ co.name }}</option></select>
+              <select aria-label="Country" v-model="form.country_id"><option value="">Select</option><option v-for="co in countries" :key="co.id" :value="co.id">{{ co.name }}</option></select>
             </div>
           </div>
 
@@ -2145,7 +2193,7 @@ function avatarColor(id) {
             </div>
           </div>
           <div class="form-group"><label class="form-label">Status</label>
-            <select v-model="form.status"><option value="active">Active</option><option value="inactive">Inactive</option></select>
+            <select aria-label="Customer status" v-model="form.status"><option value="active">Active</option><option value="inactive">Inactive</option></select>
           </div>
         </div>
         <div class="modal-footer">
@@ -2156,25 +2204,7 @@ function avatarColor(id) {
     </div>
 
     <!-- ── Export modal ───────────────────────────────────────────────────── -->
-    <div v-if="showExportModal" class="modal-backdrop" @click.self="showExportModal=false">
-      <div class="modal" style="max-width:400px">
-        <div class="modal-header">
-          <div class="modal-title">Export Customers</div>
-          <button class="btn-icon" @click="showExportModal=false"><X :size="18"/></button>
-        </div>
-        <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
-          <button class="export-choice-btn" @click="doExport(true)">
-            <Download :size="16"/>
-            <div><strong>Export with filters</strong><br><span>{{ matchingTotal }} customers</span></div>
-          </button>
-          <button class="export-choice-btn" @click="doExport(false)">
-            <Download :size="16"/>
-            <div><strong>Export all customers</strong><br><span>{{ rosterTotal }} customers</span></div>
-          </button>
-        </div>
-        <div class="modal-footer"><button class="btn btn-secondary" @click="showExportModal=false">Cancel</button></div>
-      </div>
-    </div>
+
   </div>
 </template>
 
@@ -2198,13 +2228,13 @@ function avatarColor(id) {
 /* ── Bulk select-all link + email dialog ────────────────────────────────────────── */
 .bulk-selectall-link { margin-left: 10px; font-size: 12px; font-weight: 600; color: #fff; text-decoration: underline; background: none; border: none; cursor: pointer; opacity: .9; }
 .bulk-selectall-link:hover { opacity: 1; }
-.email-recipients { display: flex; align-items: center; gap: 7px; padding: 10px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 13px; color: #1e40af; margin-bottom: 10px; }
-.email-skip { color: #92400e; font-size: 12px; }
+.email-recipients { display: flex; align-items: center; gap: 7px; padding: 10px 12px; background: var(--info-bg, #eff6ff); border: 1px solid var(--info-border, #bfdbfe); border-radius: 8px; font-size: 13px; color: var(--info-ink, #1e40af); margin-bottom: 10px; }
+.email-skip { color: var(--warning-ink, #92400e); font-size: 12px; }
 .email-note { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; color: var(--text-muted); margin-top: 4px; line-height: 1.5; }
 
 /* Marketing-consent chips in the customers table */
 .consent-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-.consent-chip { display: inline-flex; align-items: center; font-size: 10px; font-weight: 800; color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 999px; padding: 1px 7px; letter-spacing: .02em; }
+.consent-chip { display: inline-flex; align-items: center; font-size: 10px; font-weight: 800; color: var(--positive-ink, #15803d); background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0); border-radius: 999px; padding: 1px 7px; letter-spacing: .02em; }
 .consent-none { font-size: 10.5px; color: var(--text-muted); font-style: italic; }
 
 /* Marketing email composer (two-pane: compose + live preview) */
@@ -2212,8 +2242,8 @@ function avatarColor(id) {
 .mkt-body { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
 .mkt-compose { min-width: 0; }
 .mkt-sender { font-size: 12.5px; color: var(--text-muted); margin-bottom: 12px; }
-.mkt-gate { display: flex; align-items: center; gap: 11px; padding: 12px 14px; margin-bottom: 12px; border: 1px solid #99f6e4; background: #f0fdfa; border-radius: 10px; }
-.mkt-gate > svg { color: var(--primary); flex-shrink: 0; }
+.mkt-gate { display: flex; align-items: center; gap: 11px; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--primary-border, #99f6e4); background: var(--primary-soft, #f0fdfa); border-radius: 10px; }
+.mkt-gate > svg { color: var(--primary-ink); flex-shrink: 0; }
 .mkt-gate-txt { flex: 1; min-width: 0; }
 .mkt-gate-txt strong { display: block; font-size: 13px; color: var(--text); }
 .mkt-gate-txt span { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
@@ -2224,20 +2254,20 @@ function avatarColor(id) {
 .wa-tpl-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; }
 .wa-tpl { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: start; border: 1.5px solid var(--border); background: var(--surface, #ffffff); border-radius: 10px; padding: 9px 12px; cursor: pointer; }
 .wa-tpl:hover { border-color: #86efac; }
-.wa-tpl.active { border-color: #25d366; background: #f0fdf4; }
+.wa-tpl.active { border-color: #25d366; background: var(--positive-bg, #f0fdf4); }
 .wa-tpl-name { font-size: 13px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.wa-tpl-pending { display: inline-block; margin-inline-start: 7px; font-family: inherit; font-size: 10.5px; font-weight: 800; color: #92400e; background: #fef3c7; padding: 2px 8px; border-radius: 999px; vertical-align: 1px; }
+.wa-tpl-pending { display: inline-block; margin-inline-start: 7px; font-family: inherit; font-size: 10.5px; font-weight: 800; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fef3c7); padding: 2px 8px; border-radius: 999px; vertical-align: 1px; }
 .wa-tpl-meta { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 .wa-manual { display: flex; gap: 8px; flex-wrap: wrap; }
 .wa-manual input { flex: 1; min-width: 180px; }
 .wa-manual .form-hint { flex-basis: 100%; line-height: 1.5; }
-.wa-hint-link { color: #0f766e; font-weight: 800; text-decoration: underline; }
+.wa-hint-link { color: var(--primary-ink, #0f766e); font-weight: 800; text-decoration: underline; }
 /* Pick-existing vs. author-new mode tabs */
-.wa-mode-tabs { display: inline-flex; gap: 4px; padding: 3px; background: #f1f5f9; border-radius: 10px; margin-bottom: 10px; }
+.wa-mode-tabs { display: inline-flex; gap: 4px; padding: 3px; background: var(--bg, #f1f5f9); border-radius: 10px; margin-bottom: 10px; }
 .wa-mode-tab { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--text-muted); font-size: 12.5px; font-weight: 700; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
-.wa-mode-tab.on { background: var(--surface, #ffffff); color: #0f766e; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.wa-mode-tab.on { background: var(--surface, #ffffff); color: var(--primary-ink, #0f766e); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 /* Inline new-template author form */
-.wa-newtpl { display: flex; flex-direction: column; gap: 10px; border: 1.5px dashed #86efac; background: #f0fdf4; border-radius: 12px; padding: 12px; }
+.wa-newtpl { display: flex; flex-direction: column; gap: 10px; border: 1.5px dashed #86efac; background: var(--positive-bg, #f0fdf4); border-radius: 12px; padding: 12px; }
 .wa-newtpl-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .wa-newtpl-f { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 160px; }
 .wa-newtpl-f > span { font-size: 11.5px; font-weight: 700; color: var(--text-muted); }
@@ -2245,12 +2275,12 @@ function avatarColor(id) {
 .wa-newtpl-f textarea { resize: vertical; min-height: 84px; line-height: 1.5; }
 .wa-newtpl-sm { flex: 0 0 140px; min-width: 120px; }
 .wa-newtpl-xs { flex: 0 0 110px; min-width: 96px; }
-.wa-newtpl .form-hint code { background: #dcfce7; color: #166534; padding: 1px 5px; border-radius: 5px; font-weight: 700; }
+.wa-newtpl .form-hint code { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #166534); padding: 1px 5px; border-radius: 5px; font-weight: 700; }
 .wa-newtpl-submit { align-self: flex-start; }
 .spin-icon { animation: wa-spin 0.9s linear infinite; }
 @keyframes wa-spin { to { transform: rotate(360deg); } }
 .wa-var-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.wa-var-n { font-size: 11.5px; font-weight: 700; color: #0f766e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex-shrink: 0; width: 44px; }
+.wa-var-n { font-size: 11.5px; font-weight: 700; color: var(--primary-ink, #0f766e); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex-shrink: 0; width: 44px; }
 .wa-var-row input { flex: 1; }
 /* WhatsApp-style chat preview */
 .wa-chat { background: #e5ddd5 url('') center/cover; background-color: #e5ddd5; border-radius: 12px; padding: 18px 14px; min-height: 140px; }
@@ -2259,11 +2289,11 @@ function avatarColor(id) {
 .wa-bubble-meta { font-size: 10.5px; color: #667781; text-align: right; margin-top: 3px; }
 .wa-chat-note { font-size: 11px; color: #54656f; text-align: center; margin-top: 10px; }
 .mkt-sender strong { color: var(--text); }
-.mkt-skip { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; line-height: 1.45; }
-.mkt-sent { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; font-weight: 600; color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 9px 11px; margin-top: 12px; line-height: 1.45; }
+.mkt-skip { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; line-height: 1.45; }
+.mkt-sent { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--positive-ink, #15803d); background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0); border-radius: 8px; padding: 9px 11px; margin-top: 12px; line-height: 1.45; }
 .mkt-preview { min-width: 0; }
 .mkt-preview-h { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: 8px; }
-.mkt-frame { width: 100%; height: 460px; border: 1px solid var(--border); border-radius: 12px; background: #f1f5f9; }
+.mkt-frame { width: 100%; height: 460px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg, #f1f5f9); }
 @media (max-width: 760px) {
   .mkt-body { grid-template-columns: 1fr; }
   .mkt-frame { height: 260px; }
@@ -2276,14 +2306,14 @@ function avatarColor(id) {
   background:var(--bg);border:1.5px solid var(--border);border-radius:10px;
   cursor:pointer;text-align:left;width:100%;transition:all .15s;
 }
-.export-choice-btn:hover { border-color:var(--primary);background:#f0f9ff; }
-.export-choice-btn svg { color:var(--primary);flex-shrink:0; }
+.export-choice-btn:hover { border-color:var(--primary);background:var(--info-bg, #f0f9ff); }
+.export-choice-btn svg { color:var(--primary-ink);flex-shrink:0; }
 .export-choice-btn strong { font-size:13.5px;color:var(--text); }
 .export-choice-btn span { font-size:12px;color:var(--text-muted); }
 
 /* ── Table ─────────────────────────────────────────────────────────────────────── */
 .sortable { cursor: pointer; user-select: none; white-space: nowrap; }
-.sortable:hover { background: #f8fafc; }
+.sortable:hover { background: var(--surface-hover, #f8fafc); }
 .sort-icon { display: inline-flex; align-items: center; margin-left: 4px; vertical-align: middle; color: var(--text-muted); }
 .muted-icon { opacity: 0.35; }
 
@@ -2293,19 +2323,19 @@ function avatarColor(id) {
 .cell-name-col { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .cell-name { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cust-name-btn { background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: var(--text); cursor: pointer; }
-.cust-name-btn:hover { color: var(--primary, #0f766e); text-decoration: underline; }
+.cust-name-btn:hover { color: var(--primary-ink, #0f766e); text-decoration: underline; }
 
 /* Auto-tags */
 .auto-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .auto-tag {
   display: inline-flex; align-items: center;
   font-size: 11px; color: var(--text-muted);
-  background: #f1f5f9; border-left: 3px solid #64748b;
+  background: var(--bg, #f1f5f9); border-left: 3px solid #64748b;
   padding: 1px 6px 1px 5px; border-radius: 0 4px 4px 0;
   white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis;
 }
 .auto-tag-more { font-size: 11px; color: var(--text-muted); padding: 1px 4px; background: var(--border, #e2e8f0); border-radius: 4px; }
-.no-tags { font-size: 11px; color: #cbd5e1; font-style: italic; }
+.no-tags { font-size: 11px; color: var(--text-light, #cbd5e1); font-style: italic; }
 
 /* Contact */
 .contact-line { display: flex; align-items: center; gap: 5px; font-size: 12.5px; }
@@ -2314,13 +2344,13 @@ function avatarColor(id) {
 /* Subscription cell */
 .sub-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .sub-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
-.sub-active { background: #d1fae5; color: #065f46; }
-.sub-trial  { background: #fef3c7; color: #92400e; }
-.sub-ex     { background: #f1f5f9; color: var(--text-muted, #64748b); }
+.sub-active { background: var(--positive-bg, #d1fae5); color: var(--positive-ink, #065f46); }
+.sub-trial  { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); }
+.sub-ex     { background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); }
 .sub-plan-tag {
   font-size: 11px;
   color: var(--text-muted);
-  background: #f1f5f9;
+  background: var(--bg, #f1f5f9);
   border-left: 2px solid #94a3b8;
   padding: 1px 6px 1px 5px;
   border-radius: 0 4px 4px 0;
@@ -2337,17 +2367,17 @@ function avatarColor(id) {
   border: 1px solid var(--border); color: var(--text-muted); background: var(--surface, #ffffff);
   cursor: pointer; transition: all 0.12s;
 }
-.tier-pill:hover { border-color: var(--primary); color: var(--primary); }
+.tier-pill:hover { border-color: var(--primary); color: var(--primary-ink); }
 .tier-pill.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 .filter-btn { display: flex; align-items: center; gap: 6px; position: relative; }
-.filter-btn.filter-active { border-color: var(--primary); color: var(--primary); }
+.filter-btn.filter-active { border-color: var(--primary); color: var(--primary-ink); }
 .filter-badge { background: var(--primary); color: #fff; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 0 6px; min-width: 18px; text-align: center; }
 
 /* ── Filter panel ──────────────────────────────────────────────────────────────── */
 .filter-panel {
   padding: 18px 20px;
-  background: #f8fafc;
+  background: var(--surface-hover, #f8fafc);
   border-bottom: 1px solid var(--border);
 }
 
@@ -2406,7 +2436,7 @@ function avatarColor(id) {
   cursor: pointer;
   transition: all 0.12s;
 }
-.chip:hover { border-color: var(--primary); color: var(--primary); }
+.chip:hover { border-color: var(--primary); color: var(--primary-ink); }
 .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 /* Range inputs */
@@ -2446,14 +2476,14 @@ function avatarColor(id) {
 .row-checkbox { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; display: block; }
 
 /* ── Row states ────────────────────────────────────────────────────────────────── */
-.row-selected td { background: #f0fdfb !important; }
-.row-blocked td  { background: #fff5f5 !important; opacity: 0.8; }
+.row-selected td { background: var(--primary-soft) !important; }
+.row-blocked td  { background: var(--danger-bg) !important; opacity: 0.8; }
 
 /* ── Blocked badge ─────────────────────────────────────────────────────────────── */
 .blocked-badge {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
-  background: #fee2e2; color: #dc2626;
+  background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626);
   padding: 1px 6px; border-radius: 4px; margin-left: 6px; vertical-align: middle;
 }
 
@@ -2462,14 +2492,14 @@ function avatarColor(id) {
 .manual-tag {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 11px; font-weight: 500;
-  background: #ede9fe; color: #6d28d9;
+  background: var(--purple-bg, #ede9fe); color: var(--purple-ink, #6d28d9);
   padding: 2px 4px 2px 6px; border-radius: 4px;
   white-space: nowrap;
 }
 .tag-x {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 3px;
-  color: #6d28d9; cursor: pointer; opacity: 0.6;
+  color: var(--purple-ink, #6d28d9); cursor: pointer; opacity: 0.6;
 }
 .tag-x:hover { opacity: 1; background: rgba(109,40,217,0.15); }
 
@@ -2516,10 +2546,10 @@ function avatarColor(id) {
   white-space: nowrap; max-width: 190px; overflow: hidden; text-overflow: ellipsis;
   cursor: default;
 }
-.block-platform { background: #fee2e2; color: #b91c1c; }
-.block-location  { background: #ffedd5; color: #c2410c; }
-.block-listing   { background: #fef9c3; color: #a16207; }
-.block-program   { background: #ede9fe; color: #6d28d9; }
+.block-platform { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #b91c1c); }
+.block-location  { background: var(--warning-bg, #ffedd5); color: var(--warning-ink, #c2410c); }
+.block-listing   { background: var(--warning-bg, #fef9c3); color: var(--warning-ink, #a16207); }
+.block-program   { background: var(--purple-bg, #ede9fe); color: var(--purple-ink, #6d28d9); }
 .block-chip-x {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 3px; opacity: 0.55; cursor: pointer;
@@ -2535,15 +2565,15 @@ function avatarColor(id) {
   width: 100%;
   display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 11px 16px; border-radius: 10px; font-size: 14px; font-weight: 600;
-  border: 2px dashed #fca5a5; background: #fff5f5; color: #dc2626;
+  border: 2px dashed var(--danger-border, #fca5a5); background: var(--danger-bg); color: var(--danger-ink, #dc2626);
   cursor: pointer; transition: all 0.18s; position: relative;
   margin-bottom: 4px;
 }
 .platform-ban-btn:hover {
-  background: #fee2e2; border-color: #ef4444; border-style: solid;
+  background: var(--danger-bg, #fee2e2); border-color: #ef4444; border-style: solid;
 }
 .platform-ban-btn.active {
-  background: #fee2e2; border-color: #dc2626; border-style: solid;
+  background: var(--danger-bg, #fee2e2); border-color: #dc2626; border-style: solid;
   box-shadow: 0 0 0 3px rgba(220,38,38,0.12);
 }
 .platform-ban-active-dot {
@@ -2570,7 +2600,7 @@ function avatarColor(id) {
 
 .block-dropdowns { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .block-preview {
-  padding: 12px 14px; background: #f8fafc;
+  padding: 12px 14px; background: var(--surface-hover, #f8fafc);
   border: 1px solid var(--border); border-radius: 8px;
 }
 .block-preview-header {
@@ -2581,11 +2611,11 @@ function avatarColor(id) {
   letter-spacing: 0.06em; color: var(--text-muted);
 }
 .block-preview-summary {
-  font-size: 12px; font-weight: 600; color: var(--primary);
+  font-size: 12px; font-weight: 600; color: var(--primary-ink);
 }
-.block-preview-summary.needs-scope { color: #d97706; font-style: italic; font-weight: 500; }
+.block-preview-summary.needs-scope { color: var(--warning-ink, #d97706); font-style: italic; font-weight: 500; }
 .block-preview-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.auto-hint { color: var(--primary); font-weight: 500; }
+.auto-hint { color: var(--primary-ink); font-weight: 500; }
 
 /* btn-danger */
 .btn-danger {
@@ -2602,17 +2632,17 @@ function avatarColor(id) {
 .tag-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag-suggestion-chip {
   padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
-  border: 1px solid #ddd6fe; background: #f5f3ff; color: #6d28d9;
+  border: 1px solid var(--purple-border, #ddd6fe); background: var(--purple-bg, #f5f3ff); color: var(--purple-ink, #6d28d9);
   cursor: pointer; transition: all 0.12s;
 }
-.tag-suggestion-chip:hover  { background: #ede9fe; }
+.tag-suggestion-chip:hover  { background: var(--purple-bg, #ede9fe); }
 .tag-suggestion-chip.active { background: #6d28d9; color: #fff; border-color: #6d28d9; }
 
 /* ── Row actions ───────────────────────────────────────────────────────────────── */
 .row-actions { display: flex; gap: 4px; }
 .btn-icon { padding: 7px; border-radius: 6px; color: var(--text-muted); display: inline-flex; }
 .btn-icon:hover { background: var(--bg); color: var(--text); }
-.btn-icon.danger:hover { background: #fee2e2; color: var(--error); }
+.btn-icon.danger:hover { background: var(--danger-bg, #fee2e2); color: var(--error); }
 
 .modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--border); }
 
@@ -2655,4 +2685,12 @@ function avatarColor(id) {
   /* Slightly larger touch targets for row action icons */
   .row-actions .btn-icon { padding: 10px; }
 }
+</style>
+
+<style scoped>
+.customer-type-tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.customer-type-tag { display:inline-flex; padding:3px 7px; border-radius:5px; font-size:11px; line-height:1.4; font-weight:600; }
+.customer-type-booking { color:var(--info-ink); background:var(--info-bg); }
+.customer-type-membership { color:var(--purple-ink); background:var(--purple-bg); }
+.customer-type-event { color:var(--warning-ink); background:var(--warning-bg); }
 </style>

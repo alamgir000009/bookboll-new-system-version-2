@@ -73,23 +73,23 @@ function removeOption(i, j) { const o = [...(list()[i].options || [])]; o.splice
 .cfb-empty { display: flex; align-items: flex-start; gap: 9px; font-size: 12.5px; color: var(--text-muted); background: var(--bg, #f8fafc); border: 1px dashed var(--border); border-radius: 10px; padding: 12px 14px; line-height: 1.45; }
 .cfb-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 13px; background: var(--surface, #ffffff); }
 .cfb-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
-.cfb-grip { color: #cbd5e1; cursor: grab; }
-.cfb-num { font-size: 12px; font-weight: 800; color: var(--brand, #0f766e); background: #f0fdfa; border-radius: 6px; padding: 2px 7px; }
+.cfb-grip { color: var(--text-light, #cbd5e1); cursor: grab; }
+.cfb-num { font-size: 12px; font-weight: 800; color: var(--primary-ink, #0f766e); background: var(--primary-soft, #f0fdfa); border-radius: 6px; padding: 2px 7px; }
 .cfb-type { height: 32px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; padding: 0 8px; background: var(--surface, #ffffff); color: var(--text); }
 .cfb-req { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-muted); font-weight: 600; cursor: pointer; white-space: nowrap; }
 .cfb-spacer { flex: 1; }
 .cfb-ic { width: 30px; height: 30px; border: 1px solid var(--border); background: var(--surface, #ffffff); border-radius: 7px; color: var(--text-muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .cfb-ic:hover:not(:disabled) { border-color: var(--brand-accent, #14b8a6); color: var(--text); }
 .cfb-ic:disabled { opacity: .4; cursor: not-allowed; }
-.cfb-ic.danger:hover { border-color: #fecaca; color: #dc2626; background: #fef2f2; }
+.cfb-ic.danger:hover { border-color: var(--danger-border, #fecaca); color: var(--danger-ink, #dc2626); background: var(--danger-bg, #fef2f2); }
 .cfb-label { width: 100%; height: 38px; border: 1px solid var(--border); border-radius: 8px; padding: 0 11px; font-size: 14px; font-weight: 600; color: var(--text); box-sizing: border-box; }
 .cfb-label:focus { outline: none; border-color: var(--brand-accent, #14b8a6); }
 .cfb-opts { margin-top: 9px; display: flex; flex-direction: column; gap: 6px; padding-left: 4px; }
 .cfb-opt { display: flex; align-items: center; gap: 8px; }
-.cfb-opt-dot { width: 10px; height: 10px; border: 2px solid #cbd5e1; border-radius: 50%; flex-shrink: 0; }
+.cfb-opt-dot { width: 10px; height: 10px; border: 2px solid var(--border-strong, #cbd5e1); border-radius: 50%; flex-shrink: 0; }
 .cfb-opt input { flex: 1; height: 32px; border: 1px solid var(--border); border-radius: 7px; padding: 0 10px; font-size: 13px; color: var(--text); }
 .cfb-opt input:focus { outline: none; border-color: var(--brand-accent, #14b8a6); }
-.cfb-addopt { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--brand, #0f766e); background: none; border: none; cursor: pointer; padding: 2px 4px; }
+.cfb-addopt { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--primary-ink, #0f766e); background: none; border: none; cursor: pointer; padding: 2px 4px; }
 .cfb-add { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 40px; border: 1.5px dashed var(--border); border-radius: 10px; background: var(--bg, #f8fafc); color: var(--text); font-size: 13.5px; font-weight: 700; cursor: pointer; }
-.cfb-add:hover { border-color: var(--brand-accent, #14b8a6); color: var(--brand, #0f766e); }
+.cfb-add:hover { border-color: var(--brand-accent, #14b8a6); color: var(--primary-ink, #0f766e); }
 </style>

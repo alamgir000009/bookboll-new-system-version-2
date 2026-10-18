@@ -1,4 +1,6 @@
 <script setup>
+import ExportDialog from '../components/ExportDialog.vue'
+import AdminAppDownloadButton from '../components/AdminAppDownloadButton.vue'
 import { ref, onMounted, computed, watch } from 'vue'
 import {
   fetchBookingsDashboard, fetchBookingsForExport, cancelDashboardBooking, firstError,
@@ -393,6 +395,8 @@ async function doCancel() {
 // them first rather than exporting the 25 rows the table happens to hold.
 const exporting = ref(false)
 async function exportCSV(useFilters) {
+  if (!canExport.value) return
+  if (!requirePremium('exports')) { showExportModal.value = false; return }
   if (exporting.value) return
   exporting.value = true
   // "All bookings" = the caller's whole scope, so send no filters.
@@ -429,14 +433,16 @@ async function exportCSV(useFilters) {
 </script>
 
 <template>
+  <ExportDialog :open="showExportModal" title="Export bookings" noun="bookings" :filtered-count="total" :all-count="scopeTotal" :busy="exporting" @close="showExportModal = false" @export="exportCSV" />
   <div class="page">
     <div class="page-header">
       <div>
-        <div class="page-title">Bookings</div>
-        <div class="page-subtitle">Manage all facility bookings</div>
+        <h1 class="page-title">Bookings</h1>
+        <div class="page-subtitle">Manage your listing bookings and payments</div>
       </div>
       <div class="bk-head-actions">
-        <button v-if="canExport" class="btn btn-secondary" @click="requirePremium('exports') && (showExportModal = true)"><Download :size="16" />Export<span v-if="!isPremium" class="prem-lock">Premium</span></button>
+        <AdminAppDownloadButton />
+        <button v-if="canExport" class="btn btn-secondary" @click="showExportModal = true"><Download :size="16" />Export<span v-if="!isPremium" class="prem-lock">Premium</span></button>
         <button v-if="can(CAP.MANAGE_BOOKINGS)" class="btn btn-primary" @click="showNewBooking = true"><Plus :size="16" />New Booking</button>
       </div>
     </div>
@@ -525,19 +531,19 @@ async function exportCSV(useFilters) {
           </div>
           <div class="bk-filter-field">
             <label>Booking Date From</label>
-            <input type="date" v-model="filterDateFrom" />
+            <input type="date" v-model="filterDateFrom" aria-label="Booking date from" />
           </div>
           <div class="bk-filter-field">
             <label>Booking Date To</label>
-            <input type="date" v-model="filterDateTo" />
+            <input type="date" v-model="filterDateTo" aria-label="Booking date to" />
           </div>
           <div class="bk-filter-field">
             <label>Record Date From</label>
-            <input type="date" v-model="filterCreatedFrom" />
+            <input type="date" v-model="filterCreatedFrom" aria-label="Record date from" />
           </div>
           <div class="bk-filter-field">
             <label>Record Date To</label>
-            <input type="date" v-model="filterCreatedTo" />
+            <input type="date" v-model="filterCreatedTo" aria-label="Record date to" />
           </div>
         </div>
     </FilterBar>
@@ -663,30 +669,13 @@ async function exportCSV(useFilters) {
 
     <!-- Export modal -->
     <Teleport to="body">
-      <div v-if="showExportModal" class="bk-modal-backdrop" @click.self="showExportModal = false">
-        <div class="bk-modal export-modal">
-          <div class="bk-modal-icon" style="background:#eff6ff; color:#1d4ed8;"><FileDown :size="22" /></div>
-          <div class="bk-modal-title">Export Bookings</div>
-          <div class="bk-modal-body">Choose which bookings to export as a CSV file.</div>
-          <div class="export-options">
-            <button class="export-option-btn" @click="exportCSV(false)">
-              <div class="export-opt-title">Export All</div>
-              <div class="export-opt-sub">{{ scopeTotal }} total bookings</div>
-            </button>
-            <button class="export-option-btn" @click="exportCSV(true)">
-              <div class="export-opt-title">Export with Current Filters</div>
-              <div class="export-opt-sub">{{ total }} matching bookings</div>
-            </button>
-          </div>
-          <button class="bk-btn-ghost" style="width:100%; margin-top:4px;" @click="showExportModal = false">Cancel</button>
-        </div>
-      </div>
+
     </Teleport>
 
     <!-- Cancel step 1: this session or all future? -->
     <Teleport to="body">
       <div v-if="showCancelChoice" class="bk-modal-backdrop" @click.self="abortCancel">
-        <div class="bk-modal">
+        <div class="bk-modal" v-dialog="abortCancel">
           <div class="bk-modal-icon warn"><AlertTriangle :size="22" /></div>
           <div class="bk-modal-title">Cancel Booking</div>
           <div class="bk-modal-body">
@@ -704,7 +693,7 @@ async function exportCSV(useFilters) {
     <!-- Cancel step 2: are you sure? -->
     <Teleport to="body">
       <div v-if="showCancelConfirm" class="bk-modal-backdrop" @click.self="abortCancel">
-        <div class="bk-modal">
+        <div class="bk-modal" v-dialog="abortCancel">
           <div class="bk-modal-icon danger"><AlertTriangle :size="22" /></div>
           <div class="bk-modal-title">Are you sure?</div>
           <div v-if="cancellingAll" class="bk-modal-body">
@@ -734,24 +723,24 @@ async function exportCSV(useFilters) {
 /* ── Toolbar ──────────────────────────────────────────────────────────────── */
 .bk-toolbar {
   display: flex; align-items: center; gap: 10px;
-  padding: 14px 18px; border-bottom: 1px solid #f1f5f9;
+  padding: 14px 18px; border-bottom: 1px solid var(--border, #f1f5f9);
 }
 .bk-search {
   flex: 1; display: flex; align-items: center; gap: 8px;
-  background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
   padding: 7px 12px; max-width: 360px;
 }
-.bk-search input { border: none; background: transparent; font-size: 13.5px; color: #0f172a; outline: none; width: 100%; }
+.bk-search input { border: none; background: transparent; font-size: 13.5px; color: var(--text, #0f172a); outline: none; width: 100%; }
 .bk-search input::placeholder { color: var(--text-light, #94a3b8); }
 .bk-search svg  { color: var(--text-light, #94a3b8); flex-shrink: 0; }
 .bk-toolbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .bk-filter-btn {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 13px; border-radius: 8px; border: 1px solid var(--border, #e2e8f0);
-  background: var(--surface, #ffffff); color: #475569; font-size: 13px; font-weight: 500; cursor: pointer;
+  background: var(--surface, #ffffff); color: var(--text-secondary, #475569); font-size: 13px; font-weight: 500; cursor: pointer;
   transition: all .15s;
 }
-.bk-filter-btn:hover, .bk-filter-btn.active { background: #f1f5f9; border-color: #cbd5e1; color: #0f172a; }
+.bk-filter-btn:hover, .bk-filter-btn.active { background: var(--bg, #f1f5f9); border-color: var(--border-strong, #cbd5e1); color: var(--text, #0f172a); }
 .bk-filter-count {
   background: #0f172a; color: #fff;
   font-size: 11px; font-weight: 700; border-radius: 999px;
@@ -762,12 +751,12 @@ async function exportCSV(useFilters) {
   background: var(--surface, #ffffff); color: var(--text-light, #94a3b8); cursor: pointer; display: flex; align-items: center;
   transition: all .15s;
 }
-.bk-reset-btn:hover { background: #fee2e2; color: #dc2626; border-color: #fca5a5; }
+.bk-reset-btn:hover { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626); border-color: var(--danger-border, #fca5a5); }
 
 /* ── Filter panel ─────────────────────────────────────────────────────────── */
 .bk-filter-panel {
-  padding: 16px 18px 12px; border-bottom: 1px solid #f1f5f9;
-  background: #fafbfc; animation: filterSlide .15s ease;
+  padding: 16px 18px 12px; border-bottom: 1px solid var(--border, #f1f5f9);
+  background: var(--bg); animation: filterSlide .15s ease;
 }
 @keyframes filterSlide { from { opacity: 0; transform: translateY(-6px); } }
 .bk-filter-grid {
@@ -778,7 +767,7 @@ async function exportCSV(useFilters) {
 .bk-filter-field select,
 .bk-filter-field input {
   padding: 7px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 7px;
-  font-size: 12.5px; color: #0f172a; background: var(--surface, #ffffff); appearance: none;
+  font-size: 12.5px; color: var(--text, #0f172a); background: var(--surface, #ffffff); appearance: none;
   transition: border-color .15s;
 }
 .bk-filter-field select:focus, .bk-filter-field input:focus { outline: none; border-color: #3b82f6; }
@@ -791,11 +780,11 @@ async function exportCSV(useFilters) {
   display: flex; align-items: center; gap: 5px;
   font-size: 12px; color: var(--text-muted, #64748b); background: none; border: none; cursor: pointer;
 }
-.bk-reset-link:hover { color: #dc2626; }
+.bk-reset-link:hover { color: var(--danger-ink, #dc2626); }
 
 /* ── Table ────────────────────────────────────────────────────────────────── */
 .th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
-.th-sort:hover { background: #f8fafc; }
+.th-sort:hover { background: var(--surface-hover, #f8fafc); }
 .sort-icon { display: inline-flex; align-items: center; margin-left: 4px; color: var(--text-light, #94a3b8); vertical-align: middle; }
 .cell-sub { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
 .record-date { font-size: 12.5px; color: var(--text-muted, #64748b); white-space: nowrap; }
@@ -803,7 +792,7 @@ async function exportCSV(useFilters) {
 /* ── Pagination ───────────────────────────────────────────────────────────── */
 .bk-pagination {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  padding: 12px 18px; border-top: 1px solid #f1f5f9;
+  padding: 12px 18px; border-top: 1px solid var(--border, #f1f5f9);
 }
 .bk-per-page {
   display: flex; align-items: center; gap: 7px;
@@ -811,16 +800,16 @@ async function exportCSV(useFilters) {
 }
 .bk-per-page select {
   padding: 5px 26px 5px 9px; border: 1px solid var(--border, #e2e8f0); border-radius: 7px;
-  font-size: 13px; color: #0f172a; background: var(--surface, #ffffff); appearance: none; cursor: pointer;
+  font-size: 13px; color: var(--text, #0f172a); background: var(--surface, #ffffff); appearance: none; cursor: pointer;
 }
 .bk-page-info { font-size: 13px; color: var(--text-muted, #64748b); white-space: nowrap; }
 .bk-page-nav  { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .bk-page-btn  {
   min-width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
   border: 1px solid var(--border, #e2e8f0); border-radius: 7px; background: var(--surface, #ffffff);
-  font-size: 13px; color: #475569; cursor: pointer; transition: all .15s; padding: 0 6px;
+  font-size: 13px; color: var(--text-secondary, #475569); cursor: pointer; transition: all .15s; padding: 0 6px;
 }
-.bk-page-btn:hover:not(:disabled):not(.active) { background: #f1f5f9; }
+.bk-page-btn:hover:not(:disabled):not(.active) { background: var(--bg, #f1f5f9); }
 .bk-page-btn.active { background: #0f172a; color: #fff; border-color: #0f172a; font-weight: 600; }
 .bk-page-btn:disabled { opacity: .35; cursor: not-allowed; }
 .bk-page-ellipsis { font-size: 13px; color: var(--text-light, #94a3b8); padding: 0 4px; }
@@ -832,8 +821,8 @@ async function exportCSV(useFilters) {
   padding: 12px 16px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px;
   background: var(--surface, #ffffff); cursor: pointer; text-align: left; transition: all .15s;
 }
-.export-option-btn:hover { border-color: #3b82f6; background: #eff6ff; }
-.export-opt-title { font-size: 13.5px; font-weight: 600; color: #0f172a; }
+.export-option-btn:hover { border-color: #3b82f6; background: var(--info-bg, #eff6ff); }
+.export-opt-title { font-size: 13.5px; font-weight: 600; color: var(--text, #0f172a); }
 .export-opt-sub   { font-size: 12px; color: var(--text-light, #94a3b8); margin-top: 2px; }
 
 /* ── Cancel / confirm modals ──────────────────────────────────────────────── */
@@ -854,24 +843,24 @@ async function exportCSV(useFilters) {
   width: 48px; height: 48px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.bk-modal-icon.warn   { background: #fef3c7; color: #d97706; }
-.bk-modal-icon.danger { background: #fee2e2; color: #dc2626; }
-.bk-modal-title  { font-size: 17px; font-weight: 700; color: #0f172a; text-align: center; }
-.bk-modal-body   { font-size: 13.5px; color: #475569; text-align: center; line-height: 1.6; }
-.bk-modal-body strong { color: #0f172a; }
+.bk-modal-icon.warn   { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #d97706); }
+.bk-modal-icon.danger { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626); }
+.bk-modal-title  { font-size: 17px; font-weight: 700; color: var(--text, #0f172a); text-align: center; }
+.bk-modal-body   { font-size: 13.5px; color: var(--text-secondary, #475569); text-align: center; line-height: 1.6; }
+.bk-modal-body strong { color: var(--text, #0f172a); }
 .bk-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; width: 100%; }
 .bk-btn-ghost {
   padding: 9px 18px; border-radius: 8px; border: 1px solid var(--border, #e2e8f0);
-  background: #f8fafc; color: var(--text-muted, #64748b); font-size: 13.5px; font-weight: 500; cursor: pointer;
+  background: var(--surface-hover, #f8fafc); color: var(--text-muted, #64748b); font-size: 13.5px; font-weight: 500; cursor: pointer;
   transition: background .15s;
 }
-.bk-btn-ghost:hover { background: #f1f5f9; }
+.bk-btn-ghost:hover { background: var(--bg, #f1f5f9); }
 .bk-btn-secondary {
   padding: 9px 18px; border-radius: 8px; border: 1px solid #3b82f6;
-  background: #eff6ff; color: #1d4ed8; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  background: var(--info-bg, #eff6ff); color: var(--info-ink, #1d4ed8); font-size: 13.5px; font-weight: 600; cursor: pointer;
   transition: background .15s;
 }
-.bk-btn-secondary:hover { background: #dbeafe; }
+.bk-btn-secondary:hover { background: var(--info-bg, #dbeafe); }
 .bk-btn-danger {
   padding: 9px 18px; border-radius: 8px; border: none;
   background: #dc2626; color: #fff; font-size: 13.5px; font-weight: 600; cursor: pointer;
@@ -882,19 +871,19 @@ async function exportCSV(useFilters) {
 
 /* ── Misc ─────────────────────────────────────────────────────────────────── */
 .mono { font-family: 'SF Mono', Monaco, monospace; font-size: 13px; color: var(--text-muted); }
-.bk-cust-link { background: none; border: none; padding: 0; font: inherit; font-weight: 500; color: #0f766e; cursor: pointer; text-align: left; }
+.bk-cust-link { background: none; border: none; padding: 0; font: inherit; font-weight: 500; color: var(--primary-ink, #0f766e); cursor: pointer; text-align: left; }
 .bk-cust-link:hover { text-decoration: underline; }
 .row-clickable { cursor: pointer; }
-.row-clickable:hover td { background: #f8fafc; }
+.row-clickable:hover td { background: var(--surface-hover, #f8fafc); }
 .row-actions { display: flex; gap: 4px; }
 .btn-icon { padding: 6px; border-radius: 6px; color: var(--text-muted); transition: all 0.15s; background: none; border: none; cursor: pointer; }
 .btn-icon:hover { background: var(--bg); color: var(--text); }
-.btn-icon.danger:hover { background: #fee2e2; color: var(--error); }
+.btn-icon.danger:hover { background: var(--danger-bg, #fee2e2); color: var(--error); }
 .btn-icon:disabled { opacity: .3; cursor: not-allowed; }
-.badge-program { background: #fef3c7; color: #92400e; font-weight: 600; }
-.badge-game { background: #ede9fe; color: #6d28d9; font-weight: 600; }
-.badge-site { background: #ccfbf1; color: #0f766e; font-weight: 600; }
-.program-block-label { font-weight: 600; color: #92400e; font-size: 13px; }
+.badge-program { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); font-weight: 600; }
+.badge-game { background: var(--purple-bg, #ede9fe); color: var(--purple-ink, #6d28d9); font-weight: 600; }
+.badge-site { background: var(--primary-soft, #ccfbf1); color: var(--primary-ink, #0f766e); font-weight: 600; }
+.program-block-label { font-weight: 600; color: var(--warning-ink, #92400e); font-size: 13px; }
 .muted-text { color: var(--text-muted); font-size: 13px; }
 
 /* ── Phone (≤600px) ───────────────────────────────────────────────────────── */

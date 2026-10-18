@@ -13,6 +13,7 @@
  */
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import FeatureSearch from '../components/FeatureSearch.vue'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { pushToast } from '../lib/toast.js'
 import { markDirty, clearDirty } from '../lib/unsavedGuard.js'
@@ -43,6 +44,13 @@ const CHANNEL_ICONS = { email: Mail, sms: MessageSquare, whatsapp: MessageCircle
 const settings = ref(builtinSettings())
 const loading  = ref(true)
 const saving   = ref(false)
+const search = ref('')
+const eventGroup = ref('all')
+const visibleEvents = computed(() => NOTIFICATION_EVENTS.filter(event => {
+  const membership = event.key.startsWith('membership_') || event.key === 'trial_ending'
+  return (eventGroup.value === 'all' || (eventGroup.value === 'memberships' ? membership : !membership)) &&
+    (event.label + ' ' + event.desc).toLowerCase().includes(search.value.trim().toLowerCase())
+}))
 
 async function load() {
   loading.value = true
@@ -153,16 +161,17 @@ async function save() {
       </button>
     </div>
 
-    <!-- Channel status strip (honest: email included, SMS/WhatsApp are credit-based later) -->
+    <FeatureSearch />
+
+    <!-- Channel setup and availability -->
     <div class="nt-channels">
       <span class="nt-chan"><Mail :size="14" /> Email — <b>included</b></span>
-      <span class="nt-chan dim"><MessageSquare :size="14" /> SMS — <b>uses credits</b> · coming soon</span>
-      <span class="nt-chan dim"><MessageCircle :size="14" /> WhatsApp — <b>uses credits</b> · coming soon</span>
-      <span class="nt-chan-note"><Info :size="13" /> Long SMS split into 160-character parts.</span>
+      <span class="nt-chan dim"><MessageSquare :size="14" /> SMS — <b>delivery coming soon</b></span>
+      <span class="nt-chan"><MessageCircle :size="14" /> WhatsApp — <b>requires setup</b></span>
     </div>
 
     <!-- Sending address for automated emails (optional own SMTP) -->
-    <div v-if="!isPlatformMode" class="nt-sender" :class="{ own: smtpAutomated }" @click="router.push('/email-sender')">
+    <div v-if="!isPlatformMode" class="nt-sender" role="link" tabindex="0" @keydown.enter="router.push('/email-sender')" :class="{ own: smtpAutomated }" @click="router.push('/email-sender')">
       <MailCheck :size="16" class="nt-sender-ic" />
       <div class="nt-sender-txt">
         <template v-if="smtpAutomated">
@@ -178,6 +187,11 @@ async function save() {
       <span class="nt-sender-cta">{{ smtpAutomated ? 'Manage' : 'Set up' }} <ChevronRight :size="14" /></span>
     </div>
 
+    <div class="nt-tools">
+      <label class="nt-search">Find a notification<input v-model="search" type="search" placeholder="Search confirmations, reminders, payments…" /></label>
+      <label>Show<select v-model="eventGroup"><option value="all">All notifications</option><option value="bookings">Bookings &amp; payments</option><option value="memberships">Memberships</option></select></label>
+    </div>
+    <p class="nt-help">Choose a notification to edit its message. Use the switches to choose who receives it.</p>
     <!-- ── Event × audience × channel matrix ── -->
     <div class="card">
       <div class="table-scroll">
@@ -197,20 +211,22 @@ async function save() {
             </tr>
           </thead>
           <tbody>
-            <template v-for="ev in NOTIFICATION_EVENTS" :key="ev.key">
+            <tr v-if="!visibleEvents.length"><td colspan="7" class="nt-no-results">No notifications match your search.</td></tr>
+            <template v-for="ev in visibleEvents" :key="ev.key">
               <tr class="nt-row" :class="{ open: openEvent === ev.key }" @click="toggleEditor(ev)">
                 <td class="nt-ev">
                   <component :is="openEvent === ev.key ? ChevronDown : ChevronRight" :size="15" class="nt-caret" />
                   <component :is="EVENT_ICONS[ev.icon] || Bell" :size="15" class="nt-ev-ic" />
                   <div class="nt-ev-txt">
-                    <b>{{ ev.label }}</b>
+                    <button type="button" class="nt-event-button" :aria-expanded="openEvent === ev.key" @click.stop="toggleEditor(ev)">{{ ev.label }}</button>
                     <small>{{ ev.desc }}</small>
                   </div>
                 </td>
                 <template v-for="aud in AUDIENCES" :key="ev.key + aud.key">
                   <td v-for="ch in CHANNELS" :key="ev.key + aud.key + ch.key" class="nt-cell" @click.stop>
+                    <span class="nt-mobile-channel" aria-hidden="true">{{ aud.key === 'client' ? 'Customer' : 'Team' }}<b>{{ ch.label }}</b></span>
                     <label v-if="tpl(ev.key, aud.key, ch.key)" class="nt-switch" :title="`${ch.label} ${aud.key === 'client' ? 'to the customer' : 'to your team'}`">
-                      <input type="checkbox" v-model="tpl(ev.key, aud.key, ch.key).on" />
+                      <input type="checkbox" v-model="tpl(ev.key, aud.key, ch.key).on" :aria-label="`${ev.label}: ${ch.label} ${aud.key === 'client' ? 'to the customer' : 'to your team'}`" />
                       <span class="nt-slider"></span>
                     </label>
                     <span v-else class="nt-na">—</span>
@@ -343,8 +359,8 @@ async function save() {
     </div>
 
     <!-- ── Template vars reference ── -->
-    <div class="card nt-vars-card">
-      <div class="nt-vars-title"><Hash :size="15" /> Template variables</div>
+    <details class="card nt-vars-card">
+      <summary class="nt-vars-title"><Hash :size="15" /> Template variables <span>Show reference</span></summary>
       <div class="nt-vars-sub">Use these tags anywhere in a subject or message — they’re replaced with the real values when the message is sent. Click a tag to copy it.</div>
       <div v-for="g in TEMPLATE_VARS" :key="g.group" class="nt-vars-group">
         <div class="nt-vars-g">{{ g.group }}</div>
@@ -355,9 +371,9 @@ async function save() {
           </button>
         </div>
       </div>
-    </div>
+    </details>
 
-    <div class="nt-foot-note"><Info :size="13" /> Email and WhatsApp are delivered for real. SMS has no gateway yet, so those messages are saved but not sent.</div>
+    <div class="nt-foot-note"><Info :size="13" /> Connect WhatsApp in Marketing to enable delivery. SMS templates can be saved, but SMS delivery is not available yet.</div>
   </div>
 </template>
 
@@ -374,11 +390,11 @@ async function save() {
 
 /* Sending-address banner */
 .nt-sender { display: flex; align-items: center; gap: 11px; padding: 11px 15px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface, #ffffff); cursor: pointer; transition: border-color .12s, background .12s; }
-.nt-sender:hover { border-color: var(--primary); background: #f8fafc; }
-.nt-sender.own { border-color: #99f6e4; background: #f0fdfa; }
-.nt-sender-ic { color: var(--primary); flex-shrink: 0; }
+.nt-sender:hover { border-color: var(--primary); background: var(--surface-hover, #f8fafc); }
+.nt-sender.own { border-color: var(--primary-border, #99f6e4); background: var(--primary-soft, #f0fdfa); }
+.nt-sender-ic { color: var(--primary-ink); flex-shrink: 0; }
 .nt-sender-txt { flex: 1; min-width: 0; font-size: 13px; color: var(--text); }
-.nt-sender-cta { display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; font-weight: 700; color: var(--primary); flex-shrink: 0; }
+.nt-sender-cta { display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; font-weight: 700; color: var(--primary-ink); flex-shrink: 0; }
 
 /* Matrix */
 .nt-table { width: 100%; border-collapse: collapse; }
@@ -388,22 +404,22 @@ async function save() {
 .nt-th-ch { text-align: center; font-size: 10.5px; white-space: nowrap; }
 .nt-th-ch svg { vertical-align: -2px; }
 .nt-row { cursor: pointer; }
-.nt-row.open { background: #f8fafc; }
+.nt-row.open { background: var(--surface-hover, #f8fafc); }
 .nt-ev { display: flex; align-items: flex-start; gap: 8px; padding: 13px 16px; }
 .nt-caret { color: var(--text-light, #94a3b8); margin-top: 3px; flex-shrink: 0; }
-.nt-ev-ic { color: var(--primary); margin-top: 2px; flex-shrink: 0; }
+.nt-ev-ic { color: var(--primary-ink); margin-top: 2px; flex-shrink: 0; }
 .nt-ev-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .nt-ev-txt b { font-size: 13.5px; }
 .nt-ev-txt small { font-size: 11.5px; color: var(--text-muted); line-height: 1.4; }
 .nt-cell { text-align: center; cursor: default; }
 .nt-cell:nth-child(2), .nt-cell:nth-child(5) { border-left: 2px solid var(--border); }
-.nt-na { color: #cbd5e1; }
+.nt-na { color: var(--text-light, #cbd5e1); }
 
 /* Toggle switch */
 .nt-switch { position: relative; display: inline-block; width: 32px; height: 18px; }
-.nt-switch input { opacity: 0; width: 0; height: 0; }
+.nt-switch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; z-index: 1; cursor: pointer; }
 .nt-slider { position: absolute; inset: 0; border-radius: 999px; background: var(--border, #e2e8f0); transition: background .15s; cursor: pointer; }
-.nt-slider::before { content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; border-radius: 50%; background: var(--surface, #ffffff); box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s; }
+.nt-slider::before { content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s; }
 .nt-switch input:checked + .nt-slider { background: var(--primary); }
 .nt-switch input:checked + .nt-slider::before { transform: translateX(14px); }
 
@@ -413,12 +429,12 @@ async function save() {
 .nt-lead-sel { border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; font-size: 12.5px; background: var(--surface, #ffffff); }
 
 /* Editor */
-.nt-editor-row td { padding: 0; background: #f8fafc; border-bottom: 1px solid var(--border); }
+.nt-editor-row td { padding: 0; background: var(--surface-hover, #f8fafc); border-bottom: 1px solid var(--border); }
 .nt-editor { padding: 16px; }
 .nt-ed-tabs { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .nt-ed-aud, .nt-ed-ch { display: flex; gap: 6px; flex-wrap: wrap; }
 .nt-tab { border: 1.5px solid var(--border); background: var(--surface, #ffffff); border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 700; color: var(--text-muted); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.nt-tab.active { border-color: var(--primary); color: var(--primary); background: #f0fdfa; }
+.nt-tab.active { border-color: var(--primary); color: var(--primary-ink); background: var(--primary-soft, #f0fdfa); }
 .nt-tab-ch em { font-style: normal; font-size: 10px; font-weight: 800; text-transform: uppercase; color: var(--text-light, #94a3b8); }
 .nt-ed-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; }
 @media (max-width: 900px) {
@@ -440,16 +456,16 @@ async function save() {
 /* Var chips */
 .nt-vars-mini { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .nt-vars-mini-t { font-size: 11px; font-weight: 700; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-right: 3px; }
-.nt-var { border: 1px solid var(--border); background: var(--surface, #ffffff); border-radius: 7px; padding: 3px 8px; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #0f766e; cursor: pointer; }
-.nt-var:hover { border-color: var(--primary); background: #f0fdfa; }
+.nt-var { border: 1px solid var(--border); background: var(--surface, #ffffff); border-radius: 7px; padding: 3px 8px; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--primary-ink, #0f766e); cursor: pointer; }
+.nt-var:hover { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); }
 
 /* Preview */
 .nt-ed-prev { min-width: 0; }
 .nt-prev-head { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted); margin-bottom: 8px; }
-.nt-prev-toggle { margin-left: auto; border: none; background: transparent; color: var(--primary); font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.nt-prev-toggle { margin-left: auto; border: none; background: transparent; color: var(--primary-ink); font-size: 11.5px; font-weight: 700; cursor: pointer; }
 .nt-prev-box { border: 1px solid var(--border); border-radius: 12px; background: var(--surface, #ffffff); padding: 14px 16px; }
-.nt-prev-box.sms, .nt-prev-box.whatsapp { border-radius: 16px; background: #f0fdf4; border-color: #bbf7d0; max-width: 340px; }
-.nt-prev-box.sms { background: #eff6ff; border-color: #bfdbfe; }
+.nt-prev-box.sms, .nt-prev-box.whatsapp { border-radius: 16px; background: var(--positive-bg, #f0fdf4); border-color: var(--positive-border, #bbf7d0); max-width: 340px; }
+.nt-prev-box.sms { background: var(--info-bg, #eff6ff); border-color: var(--info-border, #bfdbfe); }
 .nt-prev-subject { font-weight: 800; font-size: 13.5px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 .nt-prev-body { font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: var(--text); }
 
@@ -461,10 +477,10 @@ async function save() {
 .nt-vars-g { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: 6px; }
 .nt-vars-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .nt-var-lg { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; }
-.nt-var-lg code { font-size: 11.5px; color: #0f766e; }
+.nt-var-lg code { font-size: 11.5px; color: var(--primary-ink, #0f766e); }
 .nt-var-lg span { font-size: 11.5px; color: var(--text-muted); font-family: inherit; }
-.nt-var-cp { color: #cbd5e1; }
-.nt-var-ok { color: #16a34a; }
+.nt-var-cp { color: var(--text-light, #cbd5e1); }
+.nt-var-ok { color: var(--positive-ink, #16a34a); }
 
 .nt-foot-note { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin-top: 14px; }
 
@@ -503,5 +519,38 @@ async function save() {
   .nt-switch { width: 40px; height: 24px; }
   .nt-slider::before { width: 20px; height: 20px; }
   .nt-switch input:checked + .nt-slider::before { transform: translateX(16px); }
+}
+
+.nt-tools { display: flex; align-items: end; gap: 16px; margin: 24px 0 8px; }
+.nt-tools label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; font-weight: 600; }
+.nt-search { flex: 1; }
+.nt-tools select { min-width: 200px; }
+.nt-help { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
+.nt-event-button { text-align: start; background: none; border: 0; color: var(--text); padding: 0; font-size: 14px; font-weight: 650; cursor: pointer; }
+.nt-event-button:hover { color: var(--primary-ink); }
+.nt-no-results { padding: 32px; text-align: center; color: var(--text-muted); }
+.nt-switch:has(input:focus-visible) { outline: 2px solid var(--primary-ink); outline-offset: 4px; border-radius: 12px; }
+.nt-mobile-channel { display: none; }
+.nt-field > span { font-size: 13px; text-transform: none; letter-spacing: 0; }
+.nt-vars-title { cursor: pointer; min-height: 32px; }
+.nt-vars-title span { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.nt-vars-card[open] .nt-vars-title span { display: none; }
+@media (max-width: 600px) { .nt-tools { align-items: stretch; flex-direction: column; } .nt-tools select { width: 100%; } }
+@media (max-width: 600px) {
+  /* Keep each notification and its recipients together, without a wide matrix. */
+  .table-scroll { overflow-x: visible; }
+  .nt-table, .nt-table tbody { display: block; min-width: 0; width: 100%; }
+  .nt-table thead { display: none; }
+  .nt-row { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); padding: 14px; border-bottom: 1px solid var(--border); }
+  .nt-row:not(:first-child) { border-top: 8px solid var(--bg); }
+  .nt-ev { grid-column: 1 / -1; border: 0; padding: 0 0 14px; white-space: normal; }
+  .nt-ev-txt small { font-size: 12px; line-height: 1.5; margin-top: 4px; }
+  .nt-row .nt-cell { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 4px; border: 0; border-top: 1px solid var(--border); min-width: 0; }
+  .nt-mobile-channel { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-muted); }
+  .nt-mobile-channel b { font-size: 12px; font-weight: 600; color: var(--text); }
+  .nt-editor-row, .nt-editor-row > td, .nt-lead-row, .nt-no-results { display: block; width: 100%; }
+  .nt-editor { position: static; max-width: none; padding: 16px; }
+  .nt-lead-row .nt-lead { position: static; max-width: none; padding: 12px 16px; white-space: normal; }
+  .nt-ed-form { min-width: 0; }
 }
 </style>

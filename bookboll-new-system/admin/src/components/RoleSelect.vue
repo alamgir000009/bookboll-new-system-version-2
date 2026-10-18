@@ -29,8 +29,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 </script>
 
 <template>
-  <div class="rs" ref="root">
-    <button type="button" class="rs-trigger" :class="{ open }" @click="toggle">
+  <div class="rs" ref="root" @keydown.esc.stop="open = false">
+    <button type="button" class="rs-trigger" :aria-expanded="open" :class="{ open }" @click="toggle">
       <span class="rs-dot" :style="{ background: current.color || '#94a3b8' }"></span>
       <span class="rs-trigger-text">
         <span class="rs-trigger-label">{{ current.label }}</span>
@@ -79,15 +79,15 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
   box-shadow: 0 14px 40px rgba(15,23,42,.16); padding: 6px; max-height: 360px; overflow-y: auto;
 }
 .rs-opt { width: 100%; display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px; border: none; background: none; border-radius: 9px; cursor: pointer; text-align: left; }
-.rs-opt:hover { background: #f8fafc; }
-.rs-opt.active { background: #f0fdfa; }
+.rs-opt:hover { background: var(--surface-hover, #f8fafc); }
+.rs-opt.active { background: var(--primary-soft, #f0fdfa); }
 .rs-opt-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
 .rs-opt-body { flex: 1; min-width: 0; }
 .rs-opt-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .rs-opt-label { font-size: 13.5px; font-weight: 800; color: var(--text); }
 .rs-opt-tag { font-size: 12px; color: var(--text-muted); }
 .rs-opt-can { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.rs-opt-can li { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #475569; }
-.rs-opt-can li svg { color: #16a34a; flex-shrink: 0; }
-.rs-opt-check { color: var(--primary); flex-shrink: 0; margin-top: 3px; }
+.rs-opt-can li { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary, #475569); }
+.rs-opt-can li svg { color: var(--positive-ink, #16a34a); flex-shrink: 0; }
+.rs-opt-check { color: var(--primary-ink); flex-shrink: 0; margin-top: 3px; }
 </style>

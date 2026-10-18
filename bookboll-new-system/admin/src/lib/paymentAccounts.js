@@ -29,10 +29,11 @@ export async function deletePaymentAccount(id) {
   return apiFetch(`/admin/payment-accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
-/** Fallback ordering for the customer site — marketplace or the provider's own. */
+/** Default ordering, scoped by the authenticated actor on the server. */
 export async function fetchStorefrontSort() {
   const res = await apiFetch('/admin/storefront-sort')
-  const s = res.success ? (res.data?.sort || {}) : {}
+  if (!res.success) throw new Error(res.message || 'Could not load customer ordering.')
+  const s = res.data?.sort || {}
   return { space: s.space || 'recommended', venue: s.venue || 'recommended' }
 }
 

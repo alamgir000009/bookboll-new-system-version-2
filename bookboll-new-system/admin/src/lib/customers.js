@@ -3,6 +3,7 @@
  * Payload shape matches the existing Customers UI (full_name, tags, per-country loyalty).
  */
 import { apiFetch } from './api.js'
+import { customerTypeFilterConfirmed } from './customerTypes.js'
 
 export async function fetchCustomersDashboard(query = {}) {
   const params = {}
@@ -11,7 +12,9 @@ export async function fetchCustomersDashboard(query = {}) {
     if (Array.isArray(value) && !value.length) continue
     params[key] = value
   }
-  return apiFetch('/admin/customers/dashboard', { query: params })
+  const response = await apiFetch('/admin/customers/dashboard', { query: params })
+  if (response.success && !customerTypeFilterConfirmed(response.data, params)) return {success:false,message:'Customer-type filtering needs the updated backend. Clear this filter to view the directory.',data:null}
+  return response
 }
 
 export async function fetchCustomerCrm(id) {

@@ -4,17 +4,17 @@
       {{ rangeStart }}–{{ rangeEnd }} of {{ total }}
     </div>
     <div class="pagination-controls">
-      <select class="per-page-select" :value="perPage" @change="$emit('update:perPage', Number($event.target.value))">
+      <select class="per-page-select" aria-label="Rows per page" :value="perPage" @change="$emit('update:perPage', Number($event.target.value))">
         <option v-for="n in perPageOpts" :key="n" :value="n">{{ n }} / page</option>
       </select>
-      <button class="pg-btn" :disabled="page <= 1" @click="$emit('goTo', 1)">«</button>
-      <button class="pg-btn" :disabled="page <= 1" @click="$emit('goTo', page - 1)">‹</button>
+      <button class="pg-btn" :disabled="page <= 1" aria-label="First page" @click="$emit('goTo', 1)">«</button>
+      <button class="pg-btn" :disabled="page <= 1" aria-label="Previous page" @click="$emit('goTo', page - 1)">‹</button>
       <template v-for="(p, i) in visiblePages" :key="p">
         <span v-if="i > 0 && p - visiblePages[i - 1] > 1" class="pg-ellipsis">…</span>
-        <button class="pg-btn" :class="{ active: p === page }" @click="$emit('goTo', p)">{{ p }}</button>
+        <button class="pg-btn" :class="{ active: p === page }" :aria-current="p === page ? 'page' : undefined" :aria-label="`Page ${p}`" @click="$emit('goTo', p)">{{ p }}</button>
       </template>
-      <button class="pg-btn" :disabled="page >= totalPages" @click="$emit('goTo', page + 1)">›</button>
-      <button class="pg-btn" :disabled="page >= totalPages" @click="$emit('goTo', totalPages)">»</button>
+      <button class="pg-btn" :disabled="page >= totalPages" aria-label="Next page" @click="$emit('goTo', page + 1)">›</button>
+      <button class="pg-btn" :disabled="page >= totalPages" aria-label="Last page" @click="$emit('goTo', totalPages)">»</button>
     </div>
   </div>
 </template>

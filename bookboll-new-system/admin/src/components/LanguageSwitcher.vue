@@ -14,6 +14,7 @@ const props = defineProps({ compact: { type: Boolean, default: false } })
 
 const open = ref(false)
 const root = ref(null)
+const languageError = ref('')
 // On a provider's white-label storefront, only the languages the provider chose are
 // offered (English is always kept — it's the source language). Everywhere else (apex
 // marketplace + admin dashboard, where activeBrand is null) all languages show.
@@ -25,7 +26,11 @@ const locales = computed(() => {
 })
 const active = computed(() => locales.value.find(l => l.code === appLang.value) || SUPPORTED_LOCALES.find(l => l.code === appLang.value) || SUPPORTED_LOCALES[0])
 
-function pick(code) { setAppLanguage(code); open.value = false }
+function pick(code) {
+  languageError.value = ''
+  try { setAppLanguage(code); open.value = false }
+  catch { languageError.value = 'Allow browser storage to save your language, then try again.' }
+}
 function onDoc(e) { if (open.value && root.value && !root.value.contains(e.target)) open.value = false }
 function onKey(e) { if (e.key === 'Escape') open.value = false }
 onMounted(() => { document.addEventListener('click', onDoc, true); document.addEventListener('keydown', onKey) })
@@ -34,11 +39,12 @@ onUnmounted(() => { document.removeEventListener('click', onDoc, true); document
 
 <template>
   <div class="lang" ref="root">
-    <button type="button" class="lang-trigger" :class="{ compact }" @click.stop="open = !open" :title="$t('common.language')">
+    <button type="button" class="lang-trigger" :class="{ compact }" @click.stop="open = !open" :title="$t('common.language')" :aria-label="$t('common.language')" :aria-expanded="open" aria-haspopup="true">
       <Languages :size="17" />
       <span v-if="!compact" class="lang-current">{{ active.label }}</span>
     </button>
     <div v-if="open" class="lang-menu" data-no-translate>
+      <p v-if="languageError" class="lang-error" role="alert">{{ languageError }}</p>
       <button
         v-for="l in locales" :key="l.code"
         type="button" class="lang-opt" :class="{ sel: l.code === active.code }"
@@ -52,13 +58,14 @@ onUnmounted(() => { document.removeEventListener('click', onDoc, true); document
 </template>
 
 <style scoped>
+.lang-error { font-size: 12px; color: var(--danger-ink, #b91c1c); padding: 10px; line-height: 1.5; }
 .lang { position: relative; }
 .lang-trigger {
   display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 12px;
-  border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; background: var(--surface, #ffffff); color: #334155;
+  border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; background: var(--surface, #ffffff); color: var(--text-secondary, #334155);
   font-size: 13.5px; font-weight: 600; cursor: pointer;
 }
-.lang-trigger:hover { border-color: var(--brand-accent, #14b8a6); color: var(--brand, #0f766e); }
+.lang-trigger:hover { border-color: var(--brand-accent, #14b8a6); color: var(--primary-ink, #0f766e); }
 .lang-trigger.compact { width: 38px; height: 38px; padding: 0; justify-content: center; border-radius: 50%; }
 .lang-current { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -72,9 +79,9 @@ onUnmounted(() => { document.removeEventListener('click', onDoc, true); document
 .lang-opt {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
   padding: 9px 11px; border: none; background: none; border-radius: 8px; cursor: pointer;
-  font-size: 14px; color: #334155; text-align: start;
+  font-size: 14px; color: var(--text-secondary, #334155); text-align: start;
 }
-.lang-opt:hover { background: #f1f5f9; }
-.lang-opt.sel { background: #f0fdfa; color: var(--brand, #0f766e); font-weight: 700; }
-.lang-opt-check { color: var(--brand, #0f766e); flex-shrink: 0; }
+.lang-opt:hover { background: var(--bg, #f1f5f9); }
+.lang-opt.sel { background: var(--primary-soft, #f0fdfa); color: var(--primary-ink, #0f766e); font-weight: 700; }
+.lang-opt-check { color: var(--primary-ink, #0f766e); flex-shrink: 0; }
 </style>

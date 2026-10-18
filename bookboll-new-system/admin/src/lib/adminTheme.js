@@ -1,8 +1,6 @@
 // ── Admin dashboard theme (dark mode) ─────────────────────────────────────────
-// Mirrors the customer storefront's proven approach (see CustomerLayout.vue):
-// a smart-invert filter on the ROOT element, scoped by the `adm-shell` class that
-// App.vue toggles on <html> while the admin area is active — so the customer
-// storefront and auth pages are never affected.
+// Uses the explicit light/dark palettes in dashboardTheme.css, scoped by the
+// `adm-shell` class App.vue toggles while the dashboard is active.
 //
 // Default follows the user's local clock (light 07:00–18:59, dark 19:00–06:59,
 // shared rule: timeDefaultTheme in customerSession.js). Only an EXPLICIT toggle

@@ -59,7 +59,7 @@ onUnmounted(() => { document.removeEventListener('click', onDoc, true); document
 <style scoped>
 .am { position: relative; display: inline-block; }
 .am-trigger { gap: 6px; }
-.am-trigger.on.btn-secondary { border-color: var(--primary); color: var(--primary); }
+.am-trigger.on.btn-secondary { border-color: var(--primary); color: var(--primary-ink); }
 .am-caret { opacity: .7; transition: transform .15s; }
 .am-caret.rot { transform: rotate(180deg); }
 
@@ -80,7 +80,7 @@ onUnmounted(() => { document.removeEventListener('click', onDoc, true); document
 .am-item:hover { background: var(--bg); }
 .am-ico {
   width: 36px; height: 36px; border-radius: 9px; flex-shrink: 0;
-  background: #ecfdf5; color: var(--primary);
+  background: var(--positive-bg, #ecfdf5); color: var(--primary-ink);
   display: flex; align-items: center; justify-content: center;
 }
 .am-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

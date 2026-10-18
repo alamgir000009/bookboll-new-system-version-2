@@ -1,10 +1,11 @@
 <script setup>
+import { isBookbollVenue } from '../lib/finance.js'
+import ExportDialog from '../components/ExportDialog.vue'
 import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { loadReferenceData } from '../lib/referenceData.js'
 import { uploadImage } from '../lib/imageUpload.js'
 import {
   fetchPaymentAccount, createPaymentAccount, updatePaymentAccount, deletePaymentAccount,
-  fetchStorefrontSort, saveStorefrontSortValue,
 } from '../lib/paymentAccounts.js'
 import { fetchWallets } from '../lib/walletPayouts.js'
 import {
@@ -25,12 +26,22 @@ import { useRouter, useRoute } from 'vue-router'
 import { VENUE_CATEGORIES, subcategoriesFor, normCategory, categoryLabel } from '../lib/venueCategories.js'
 import { loadApprovedTypes, approvedTypesFor, addPendingType } from '../lib/customTypes.js'
 import { isWalletReady, hasActivePayoutMethodFor } from '../lib/walletSetup.js'
-import { usePremium } from '../lib/premium.js'
+import { usePremium, planState, openUpgrade } from '../lib/premium.js'
 import PayoutSetupModal from '../components/PayoutSetupModal.vue'
 import { askConfirm } from '../lib/confirm.js'
 import { idIn } from '../lib/geoFilter.js'
 import { contentChanged } from '../lib/approvalState.js'
+import PhotoOrderEditor from '../components/PhotoOrderEditor.vue'
+import PricingSetupReminder from '../components/PricingSetupReminder.vue'
+import { missingPricingSetup, pricingSetupGate } from '../lib/pricingSetup.js'
+import StorefrontOrderSettings from '../components/StorefrontOrderSettings.vue'
 import MultiSelectDropdown from '../components/MultiSelectDropdown.vue'
+import CreationSteps from '../components/CreationSteps.vue'
+import ListingPayments from '../components/ListingPayments.vue'
+import { paymentExample, hasPaidWebsiteDiscount } from '../lib/listingPayments.js'
+import { LISTING_STEPS, listingStepFor, listingStepIssue } from '../lib/creationFlow.js'
+import { adminBrandVars } from '../lib/adminBrand.js'
+import { useEditorDialog } from '../lib/editorDialog.js'
 const router = useRouter()
 
 const COMMON_TIMEZONES = [
@@ -104,7 +115,6 @@ import { useJurisdiction } from '../lib/jurisdiction.js'
 import { downloadCSV } from '../lib/useExport.js'
 import { SLOT_DURATIONS, BUFFER_OPTIONS, previewSlots, durationLabel, toMinutes, toTimeStr, generateSlots, fmt12, fmtRange12 } from '../lib/slots.js'
 import { CAP } from '../lib/permissions.js'
-import { SORT_OPTIONS } from '../lib/storefrontSort.js'
 import { useConfirm } from '../lib/confirm.js'
 import { useToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty, registerDraftSaver, formDirty } from '../lib/unsavedGuard.js'
@@ -115,6 +125,7 @@ const confirm = useConfirm()
 const toast = useToast()
 const listingTriedSave = ref(false)
 async function requestExitEditor() {
+  if (listingSaving.value) return
   const res = await confirmDiscardIfDirty()   // false = stay · true = discard · 'draft' = saved a draft
   if (!res) return
   registerDraftSaver(null)
@@ -167,7 +178,10 @@ async function offerListingDraft() {
   }
 }
 function saveListingDraftNow() {
-  saveFormDraft(listingDraftKey(), listingDraftSnapshot())
+  if (!saveFormDraft(listingDraftKey(), listingDraftSnapshot())) {
+    listingSaveError.value = 'The draft could not be saved in this browser. Keep this form open and try again.'
+    return
+  }
   clearDirty()
   registerDraftSaver(null)
   toast.success('Draft saved — it will be offered when you reopen this form')
@@ -195,11 +209,11 @@ function onPageAdd(key) {
 const needLocationModal = ref(false)
 const hasUsableLocation = computed(() => listingFormLocations.value.length > 0)
 
-// Jump to the Weekly Schedule section (from the "weekly schedule" text buttons).
+// Jump to the Weekly schedule section (from the "weekly schedule" text buttons).
 function goToSchedule() {
   openSection.value = 'schedule'
   nextTick(() => {
-    const card = [...document.querySelectorAll('.section-card')].find(c => /Weekly Schedule/.test(c.querySelector('.section-title')?.textContent || ''))
+    const card = [...document.querySelectorAll('.section-card')].find(c => /Weekly schedule/.test(c.querySelector('.section-title')?.textContent || ''))
     card?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   })
 }
@@ -227,7 +241,7 @@ const userRole = computed(() => (isSuperAdmin.value || isCountryAdmin.value || a
 // A venue with no owner_user_id is Bookboll-owned → full online payment (all money is Bookboll's).
 const selectedLocBookbollOwned = computed(() => {
   const loc = locations.value.find(l => cid(l.id) === cid(form.value.location_id))
-  return loc ? !loc.owner_user_id : false
+  return isBookbollVenue(loc)
 })
 
 const locations = ref([])
@@ -435,8 +449,11 @@ function catalogParams() {
 }
 
 let listSeq = 0
+const listLoading = ref(false), listError = ref('')
 async function loadList() {
   const seq = ++listSeq
+  listLoading.value = true; listError.value = ''
+  try {
   const base = catalogParams()
 
   // The GROUPED view pages over venue cards and then pulls only those venues'
@@ -462,6 +479,8 @@ async function loadList() {
   ])
   if (seq !== listSeq) return
 
+  if (!venuesRes.success || (grouped && !cardsRes?.success)) throw new Error(venuesRes.message || cardsRes?.message || 'Could not load venues.')
+
   cities.value = ref.cities
   countries.value = ref.countries
   locations.value = venuesRes.data?.locations || []
@@ -477,6 +496,8 @@ async function loadList() {
       : listingQuery
   )
   if (seq !== listSeq) return
+
+  if (!listingsRes.success) throw new Error(listingsRes.message || 'Could not load listings.')
 
   listings.value = listingsRes.data?.listings || []
   flatTotal.value = listingsRes.data?.pagination?.total ?? listings.value.length
@@ -497,6 +518,11 @@ async function loadList() {
   // manual collapses when loadList re-runs (e.g. after saving a listing).
   if (expanded.value.size === 0 && venueCards.value.length) {
     expanded.value = new Set(venueCards.value.map(l => l.id))
+  }
+  } catch (error) {
+    if (seq === listSeq) listError.value = error.message || 'Could not load the catalog. Please retry.'
+  } finally {
+    if (seq === listSeq) listLoading.value = false
   }
 }
 onMounted(loadList)
@@ -557,6 +583,7 @@ function openEditLoc(l) {
   locModal.value = true
 }
 async function onLocationSaved(loc) {
+  if (!locEditing.value && !locFromListingForm.value && loc?.id) createdVenue.value = loc
   locModal.value = false
   await loadList()
   // The setup guide sits on this same page — tell it the venue step is done,
@@ -668,6 +695,7 @@ function rowState(row) {
 
   if (eligibility === 'paused' && approval === 'pending' && hasSnapshot) return 'resubmitted'
   if (eligibility === 'paused') return 'paused'
+  if (approval === 'rejected') return 'paused'
   if (approval === 'pending') return 'pending_new'
   return 'active'
 }
@@ -681,7 +709,7 @@ function marketplaceState(l) {
     // Live & approved, but new content (title/photos/description) is awaiting approval —
     // the listing keeps serving its approved content, so it stays LIVE with a small note.
     if (l.pending_content) return { on: true, cls: 'live', icon: 'live', suffix: 'Update in review', live: true, tip: 'Live on the Bookboll marketplace. Your latest title/description/photos are awaiting approval — the current ones stay live until then.' }
-    return { on: true, cls: 'live', icon: 'live', suffix: '', live: true, tip: 'Live on the Bookboll marketplace.' }
+    return { on: true, cls: 'live', icon: 'live', suffix: 'Live', live: true, tip: 'Live on the Bookboll marketplace.' }
   }
   if (st === 'paused')  return { on: true, cls: 'action', icon: 'action', suffix: 'Action required', live: false, tip: 'Paused by Bookboll — open the listing, make the requested changes and resubmit.' }
   return { on: true, cls: 'pending', icon: 'review', suffix: 'Under review', live: false, tip: 'Awaiting Bookboll approval — it will go live on the marketplace once approved.' }   // pending_new / resubmitted
@@ -690,7 +718,7 @@ function marketplaceState(l) {
 function siteState(l) {
   return l.show_on_provider_site === false
     ? { on: false, cls: 'off', icon: 'off', suffix: 'Off', live: false, tip: 'Hidden from your own website.' }
-    : { on: true, cls: 'live', icon: 'live', suffix: '', live: true, tip: 'Live on your own website — visible to your customers right away.' }
+    : { on: true, cls: 'live', icon: 'live', suffix: 'Live', live: true, tip: 'Live on your own website — visible to your customers right away.' }
 }
 // Maps a placement state to a status icon (the chip icon communicates STATUS, not channel).
 function statusIcon(k) {
@@ -717,7 +745,7 @@ function placementChannels(row) {
   const m = marketplaceState(row), s = siteState(row)
   return [
     { key: 'marketplace', name: 'Bookboll',  ...m, url: m.live ? listingUrl(row, 'marketplace') : null },
-    { key: 'site',        name: 'Your site', ...s, url: s.live ? listingUrl(row, 'site') : null },
+    { key: 'site',        name: 'Your website', ...s, url: s.live ? listingUrl(row, 'site') : null },
   ]
 }
 
@@ -751,9 +779,12 @@ const providerHasOnline = ref(false)
 // because we split the payment and pay out the provider's share. Bookboll-owned
 // venues (no provider to pay) are exempt.
 const ownerWalletActive = ref(false)
+const payoutStatus = ref('idle')
+let payoutCheckSequence = 0
+const payChannel = ref('marketplace')
 const locationIsBookbollOwned = computed(() => {
   const loc = locations.value.find(l => cid(l.id) === cid(form.value.location_id))
-  return !!loc && !loc.owner_user_id
+  return isBookbollVenue(loc)
 })
 const onlineAllowed = computed(() => locationIsBookbollOwned.value || ownerWalletActive.value)
 // The country (name + id) of the location chosen in the listing form — used to name
@@ -771,7 +802,9 @@ function payoutFallbackDeposit() {
   if (payoutModalSource.value === 'site') {
     // Own-website deposits go to Bookboll while payouts are missing — that
     // choice deserves the explainer, so route into the site-deposit modal.
-    siteDepositModal.value = true
+    pay.value.site_deposit_enabled = true
+    payChannel.value = 'site'
+    markDirty()
     return
   }
   pay.value.deposit_enabled = true
@@ -781,6 +814,79 @@ function payoutFallbackDeposit() {
 const savedFlag = ref(false)
 const listingSaveError = ref('')
 const openSection = ref('basic')
+const listingStep = ref('details')
+const pricingGate = pricingSetupGate()
+const pricingReminder = ref(null)
+function closePricingReminder() { pricingReminder.value = null }
+function skipPricingSetup() {
+  const reminder = pricingReminder.value
+  if (!reminder) return
+  pricingGate.skip(reminder.features)
+  closePricingReminder()
+  selectListingStep(reminder.step)
+}
+async function setupSuggestedPricing(feature) {
+  closePricingReminder()
+  selectListingStep('pricing')
+  if (feature === 'dynamic') dynamicPricing.value = true
+  else toggleExtension(true)
+  markDirty()
+  await nextTick()
+  const field = [...(listingBodyEl.value?.querySelectorAll(feature === 'dynamic' ? '[aria-label="Dynamic pricing"]' : '[aria-label="Extension discount"]') || [])].find(element => element.getClientRects().length)
+  field?.scrollIntoView({ behavior:'smooth', block:'center' })
+  field?.focus({ preventScroll:true })
+}
+const listingSaving = ref(false)
+const listingOpening = ref(false)
+const listingBodyEl = ref(null)
+const listingDialogEl = ref(null)
+const listingEditorKeydown = useEditorDialog(computed(() => view.value === 'editor'), listingDialogEl)
+const createdVenue = ref(null)
+const listingStepIndex = computed(() => LISTING_STEPS.findIndex(step => step.id === listingStep.value))
+const currentListingStep = computed(() => LISTING_STEPS[listingStepIndex.value] || LISTING_STEPS[0])
+const listingStepDescription = computed(() => ({ details: 'Show customers what they can book. Add the essentials first, then photos.', availability: 'Set when this listing is available and how long each booking lasts.', pricing: 'Set your base price. Add time-based prices, extras or shared resources if you need them.', payments: 'Choose where customers can book and how they can pay.', review: 'Check the details below. Nothing is published until you choose Create listing.' }[listingStep.value]))
+const listingVenueName = computed(() => locations.value.find(loc => cid(loc.id) === cid(form.value.location_id))?.name || 'No venue selected')
+const listingDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+function listingIssue(step) { return listingStepIssue(step, { form: form.value, hours: hours.value, hoursOutOfBounds: listingHoursOutOfBounds.value, paymentError: payError.value }) }
+const completedListingSteps = computed(() => LISTING_STEPS.filter(step => step.id !== 'review' && !listingIssue(step.id)).map(step => step.id))
+watch(openSection, section => {
+  const step = listingStepFor(section)
+  if (step) listingStep.value = step
+})
+watch(listingStep, async () => { await nextTick(); if (listingBodyEl.value) listingBodyEl.value.scrollTop = 0 })
+function validateListingSteps(steps = LISTING_STEPS.filter(step => step.id !== 'review').map(step => step.id)) {
+  for (const step of steps) {
+    const issue = listingIssue(step)
+    if (!issue) continue
+    listingTriedSave.value = true
+    listingSaveError.value = issue.message
+    listingStep.value = step
+    openSection.value = issue.section
+    if (issue.section === 'placement') {
+      payChannel.value = siteNoMethod.value || (form.value.show_on_provider_site && pay.value.site_online_enabled && !onlineAllowed.value) ? 'site' : 'marketplace'
+    }
+    scrollToInvalid()
+    return false
+  }
+  listingSaveError.value = ''
+  return true
+}
+function selectListingStep(step) {
+  if (listingSaving.value || !LISTING_STEPS.some(item => item.id === step)) return
+  if (step === 'review' && !validateListingSteps()) return
+  if (['payments','review'].includes(step) && !['payments','review'].includes(listingStep.value)) {
+    if (!validateListingSteps(['pricing'])) return
+    const features = pricingGate.missing(missingPricingSetup({ enabled:dynamicPricing.value, cells:cells.value, groups:groups.value, form:form.value }))
+    if (features.length) { listingStep.value = 'pricing'; openSection.value = 'pricing'; pricingReminder.value = { features, step }; return }
+  }
+  listingStep.value = step
+  if (step === 'payments') payChannel.value = (!form.value.show_on_marketplace) && !locationIsBookbollOwned.value ? 'site' : 'marketplace'
+  openSection.value = LISTING_STEPS.find(item => item.id === step)?.sections[0] || ''
+}
+function continueListing() {
+  if (listingSaving.value || !validateListingSteps([listingStep.value])) return
+  selectListingStep(LISTING_STEPS[Math.min(listingStepIndex.value + 1, LISTING_STEPS.length - 1)].id)
+}
 
 const slotPreview = computed(() => previewSlots(form.value.slot_duration, form.value.buffer_time))
 
@@ -853,23 +959,17 @@ const effectiveCommissionRate = computed(() => {
   return commissionRates.value[countryId]?.facility ?? 15
 })
 
-/* ── Live money example for Placement & Payment ───────────────
+/* ── Live money example for Booking & payments ───────────────
    Percentages confuse people; a real split of a real booking doesn't. Uses the
    listing's slot price when set (else a round 100) so every payment option can
    show "who gets what, where" in actual money. */
 const payCur = computed(() => currencyForLocation(form.value.location_id))
-const payExample = computed(() => {
-  const total = Number(form.value.base_price) > 0 ? Number(form.value.base_price) : 100
-  const feePct = Math.max(0, Math.min(100, Number(effectiveCommissionRate.value) || 0))
-  const fee = +(total * feePct / 100).toFixed(2)
-  const sitePct = Math.max(10, Math.min(100, Number(pay.value.site_deposit_percentage) || 0))
-  const siteDep = +(total * sitePct / 100).toFixed(2)
-  return {
-    total, feePct, fee, share: +(total - fee).toFixed(2),
-    sitePct, siteDep, siteRest: +(total - siteDep).toFixed(2),
-    isReal: Number(form.value.base_price) > 0,
-  }
+const ownSitePaidPlan = computed(() => {
+  const venue = locations.value.find(loc => cid(loc.id) === cid(form.value.location_id))
+  // Platform staff use the selected merchant's plan, never their own exemption.
+  return hasPaidWebsiteDiscount(userRole.value === 'provider' ? planState.value : venue?.business_plan)
 })
+const payExample = computed(() => paymentExample(form.value.base_price, effectiveCommissionRate.value, ownSitePaidPlan.value))
 const fmtPay = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })
 
 /* ── Provider country lock ──────────────────────────────────── */
@@ -918,7 +1018,7 @@ function defaultLocHours() {
 function minutesOfH(t) { const [h, m] = t.split(':').map(Number); return h * 60 + m }
 // Midnight CLOSE = end of day (12 PM → 12 AM is 12 open hours, not empty).
 function endMinH(t) { const m = minutesOfH(t); return m === 0 ? 24 * 60 : m }
-function defaultPay() {
+function defaultPay({ forNewListing = false } = {}) {
   const isProvider = userRole.value === 'provider'
   return {
     cash_on_arrival: false,
@@ -927,41 +1027,49 @@ function defaultPay() {
     deposit_percentage: 20,
     online_payment_enabled: !isProvider,   // Bookboll admin gets online available by default
     // Provider's OWN-website payment options (independent of the marketplace ones above).
-    // All own-site revenue is the provider's. Everything starts OFF so the provider makes
-    // a conscious choice — ticking "deposit" without a payout method opens the explainer
-    // modal (where does the money go), instead of silently defaulting them into it.
-    site_deposit_enabled: false,
+    // The online deposit is Bookboll's commission, with or without payouts.
+    // Its rate is resolved from the applicable commission and merchant plan.
+    site_deposit_enabled: forNewListing,
     site_deposit_percentage: 10,
     site_online_enabled: false,
     site_cash_enabled: false,
   }
 }
 
-async function openNewListing(presetLocationId) {
+async function loadListingEditor(task) {
+  if (listingOpening.value) return
+  listingOpening.value = true
+  try { await task() }
+  catch (error) { toast.error(error?.message || 'Could not load the listing. Please try again.') }
+  finally { listingOpening.value = false }
+}
+function openNewListing(presetLocationId) { return loadListingEditor(() => openNewListingForm(presetLocationId)) }
+function openEditListing(listing) { return loadListingEditor(() => openEditListingForm(listing)) }
+async function openNewListingForm(presetLocationId) {
   if (!presetLocationId && !hasUsableLocation.value) { needLocationModal.value = true; return }
+  const initialLocationId = presetLocationId || (listingFormLocations.value.length === 1 ? listingFormLocations.value[0].id : '')
+  listingStep.value = 'details'
+  pricingGate.reset(); closePricingReminder()
   editing.value = null
   editingExisting.value = false
   contentUnderReview.value = false
-  dynamicNudgeAsked.value = false
-  extensionNudgeAsked.value = false
-  form.value = { ...defaultForm(), location_id: presetLocationId || '' }
+  form.value = { ...defaultForm(), location_id: initialLocationId }
   prevLocationId.value = form.value.location_id
   syncFixedFromTimes(form.value.fixed_start_times)
   hours.value = defaultHours()
-  // Dynamic pricing starts OFF — instead of pre-checking it, the save flow makes
-  // the revenue case once and lets the provider opt in knowingly (or skip).
+  // Dynamic pricing is optional and can be enabled in Pricing & extras.
   groups.value = []; cells.value = []; pattern.value = 'B'; dynamicPricing.value = false
-  pay.value = defaultPay()
+  pay.value = defaultPay({ forNewListing: true })
   connectedAddons.value = []
   connectedResources.value = []
   locationHours.value = []
-  if (presetLocationId) {
-    await loadLocationHours(presetLocationId)
+  if (initialLocationId) {
+    await loadLocationHours(initialLocationId)
     hours.value = hoursFromLocation()   // seed new listing from the location schedule
   }
-  await checkProviderOnline(presetLocationId)
+  await checkProviderOnline(initialLocationId)
   openSection.value = 'basic'
-  payOpen.value = { mkt: false, site: false }   // panels expand when a place is turned on
+  payChannel.value = 'marketplace'
   listingTriedSave.value = false
   listingSaveError.value = ''
   clearDirty()
@@ -970,7 +1078,9 @@ async function openNewListing(presetLocationId) {
   view.value = 'editor'
 }
 
-async function openEditListing(l) {
+async function openEditListingForm(l) {
+  listingStep.value = 'details'
+  pricingGate.reset(); closePricingReminder()
   editing.value = l
   editingExisting.value = true
   form.value = {
@@ -1090,8 +1200,8 @@ async function openEditListing(l) {
   }
 
   await checkProviderOnline(l.location_id)
-  openSection.value = ''   // editing → open with all cards collapsed
-  payOpen.value = { mkt: false, site: false }   // payment panels collapsed (summaries show the facts)
+  openSection.value = 'basic'
+  payChannel.value = 'marketplace'
   listingTriedSave.value = false
   listingSaveError.value = ''
   clearDirty()
@@ -1111,22 +1221,30 @@ function defaultPayAcctForm() {
 }
 
 async function checkProviderOnline(locationId) {
+  const checkSequence = ++payoutCheckSequence
+  payoutStatus.value = locationId ? 'loading' : 'idle'
   providerHasOnline.value = false
   providerAccount.value = null
   ownerWalletActive.value = false
   if (!locationId) return
   const loc = locations.value.find(l => cid(l.id) === cid(locationId))
-  if (!loc?.owner_user_id) return   // Bookboll-owned → exempt via locationIsBookbollOwned
+  if (!loc) { payoutStatus.value = 'error'; return }
+  if (isBookbollVenue(loc)) { payoutStatus.value = 'loaded'; return } // Bookboll-owned
   // An ACTIVE payout method is the prerequisite for full online payment — and it is NOT
   // per-country: any active wallet (in any country) lets the provider take online payments.
   // "Active" means Stripe is connected OR a manual (Bookboll Wallet) method has been
   // APPROVED by Bookboll. A merely-submitted ('pending_review') method does not count.
   // select('*') so newer columns (purpose, payout_paused) are seen whenever they exist.
-  const wRes = await fetchWallets({ owner_user_id: loc.owner_user_id })
-  const ws = wRes.success ? (wRes.data?.wallets || []) : []
+  let wRes
+  try { wRes = await fetchWallets({ owner_user_id: loc.owner_user_id }) }
+  catch { wRes = { success: false } }
+  if (checkSequence !== payoutCheckSequence) return
+  if (!wRes.success) { payoutStatus.value = 'error'; return }
+  const ws = wRes.data?.wallets || []
   // Full online payment for venue bookings requires an ACTIVE payout method on a BOOKINGS wallet
   // (the Bookboll Wallet shortcut is subscription-only, so venue online needs a real rail).
   ownerWalletActive.value = hasActivePayoutMethodFor(ws, 'bookings')
+  payoutStatus.value = 'loaded'
   // Enforce the gate in the form: a provider venue without an active wallet
   // can't have full online payment on. Keep at least one method enabled.
   if (!ownerWalletActive.value && pay.value?.online_payment_enabled) {
@@ -1135,7 +1253,7 @@ async function checkProviderOnline(locationId) {
   }
   // (legacy) keep the connected payout account in view if one exists.
   const acct = await fetchPaymentAccount(loc.owner_user_id)
-  if (acct) {
+  if (acct && checkSequence === payoutCheckSequence) {
     providerAccount.value = acct
     providerHasOnline.value = true
   }
@@ -1212,11 +1330,15 @@ async function loadLocationHours(id) {
 }
 
 async function onLocationChange() {
-  await loadLocationHours(form.value.location_id)
+  const locationId = form.value.location_id
+  // Invalidate the previous venue's payout state immediately. Venue hours must
+  // not delay the payment check or leave the previous owner's methods active.
+  const payoutCheck = checkProviderOnline(locationId)
+  await loadLocationHours(locationId)
   // A new (unsaved) listing adopts the chosen location's hours as its starting
   // point. Existing listings keep their own hours when moved to a new location.
-  if (!editingExisting.value) hours.value = hoursFromLocation()
-  await checkProviderOnline(form.value.location_id)
+  if (cid(form.value.location_id) === cid(locationId) && !editingExisting.value) hours.value = hoursFromLocation()
+  await payoutCheck
 }
 
 // ── Changing a listing's location: warn if connected add-ons/resources belong
@@ -1335,6 +1457,10 @@ function currencyForLocation(locationId) {
 const basicComplete = computed(() => !!form.value.name && !!form.value.location_id && !!form.value.category && !!form.value.sport_category && !!form.value.description)
 // Provider needs ≥1 of deposit / full-online on, and an active wallet if full-online is on.
 const payError = computed(() => {
+  if (!locationIsBookbollOwned.value && (form.value.show_on_marketplace || form.value.show_on_provider_site)) {
+    if (payoutStatus.value === 'error') return 'We could not check your payout connection. Retry before saving payment settings.'
+    if (payoutStatus.value !== 'loaded') return 'Wait for the payout check to finish before continuing.'
+  }
   // Marketplace payment options (only validated when listed on the marketplace).
   if (form.value.show_on_marketplace !== false) {
     if (userRole.value === 'provider') {
@@ -1346,24 +1472,20 @@ const payError = computed(() => {
     }
   }
   // Own-website payment options (provider listings on their own site).
-  if (siteNoMethod.value) return 'Keep at least one payment option on for your own website.'
-  if (!locationIsBookbollOwned.value && form.value.show_on_provider_site && siteDepositPctInvalid.value) {
-    return 'The own-website online deposit must be between 10% and 100%.'
-  }
+  if (siteNoMethod.value) return 'Enable at least one payment method for your own website.'
+  if (form.value.show_on_provider_site && pay.value.site_online_enabled && !onlineAllowed.value) return 'Connect payouts to receive full online payments on your website, or turn that method off.'
   return ''
 })
 const payComplete = computed(() => !payError.value)
-// Keep the provider's ≥1 invariant: never leave both deposit and online off.
-// Also block turning full online on when the wallet isn't set up.
+// Let owners change methods freely; validate at least one on Continue/Save.
+// Full online payments still require connected payouts.
 function onProviderOnlineToggle() {
   if (pay.value.online_payment_enabled && !onlineAllowed.value) {
     pay.value.online_payment_enabled = false
-    if (!pay.value.deposit_enabled) pay.value.deposit_enabled = true
     payoutModalSource.value = 'marketplace'
     payoutModal.value = true   // guide them to set up the Bookings wallet
     return
   }
-  if (!pay.value.online_payment_enabled && !pay.value.deposit_enabled) pay.value.deposit_enabled = true
 }
 // Same gate for the own-website "full online" toggle.
 function onSiteOnlineToggle() {
@@ -1371,14 +1493,6 @@ function onSiteOnlineToggle() {
     pay.value.site_online_enabled = false
     payoutModalSource.value = 'site'
     payoutModal.value = true
-  }
-}
-function onProviderDepositToggle() {
-  // Not disabled (a greyed checkbox reads as broken) — unticking the last
-  // active option snaps back with an explanation instead.
-  if (!pay.value.deposit_enabled && !pay.value.online_payment_enabled) {
-    pay.value.deposit_enabled = true
-    toast.error('Keep at least one payment option on. To switch the deposit off, first turn on "Everything paid online" below.')
   }
 }
 // Bookboll admin: can't enable full online for a provider without an active wallet
@@ -1398,10 +1512,7 @@ const pricingBelowBase = ref(false)
 // Dynamic pricing = different prices for different days/times. Off → every slot uses
 // the base price; on → the day/time pricing grid (Slot Grid + Groups views) is shown.
 const dynamicPricing = ref(false)
-// One-shot guards for the revenue nudges (dynamic pricing / session extension) —
-// each asks exactly once per listing creation, never on edits.
-const dynamicNudgeAsked = ref(false)
-const extensionNudgeAsked = ref(false)
+// The step-navigation reminder checks configured prices, not just this toggle.
 async function onToggleDynamic() {
   if (dynamicPricing.value) return
   // Turning it off — clear any custom day/time prices (with a heads-up if there are any).
@@ -1440,62 +1551,23 @@ async function confirmMarketplaceOff() {
   // form: the toggle is already off and will persist on Save.
 }
 
-// Own-website deposit without a payout method: the money question ("where do my
-// deposits actually go?") is answered in a modal at the moment they opt in, not
-// buried in a permanent warning banner. Three ways forward: connect payouts,
-// knowingly proceed anyway, or fall back to pay-at-venue.
-const siteDepositModal = ref(false)
-function onSiteDepositToggle() {
-  if (!pay.value.site_deposit_enabled) return          // turning it off is always fine
-  if (userRole.value !== 'provider') return            // admin flow keeps the old behavior
-  if (onlineAllowed.value) return                      // payouts connected — deposits reach them
-  pay.value.site_deposit_enabled = false               // hold the tick until they pick a path
-  siteDepositModal.value = true
+function updatePaymentMethod(key, value) {
+  if (!['deposit_enabled', 'online_payment_enabled', 'cash_on_arrival', 'site_deposit_enabled', 'site_online_enabled'].includes(key)) return
+  pay.value[key] = value
+  markDirty()
+  if (key === 'online_payment_enabled') userRole.value === 'provider' ? onProviderOnlineToggle() : onAdminOnlineToggle()
+  if (key === 'site_online_enabled') onSiteOnlineToggle()
 }
-async function siteDepositConnect() {
-  if (!(await confirmDiscardIfDirty())) return         // navigating abandons the open form
-  siteDepositModal.value = false
-  router.push(formWalletLink.value)
-}
-function siteDepositAccept() {
-  pay.value.site_deposit_enabled = true
-  siteDepositModal.value = false
+function updatePaymentPlacement(channel, value) {
+  if (channel === 'site') form.value.show_on_provider_site = value
+  else { form.value.show_on_marketplace = value; onMarketplaceToggle() }
   markDirty()
 }
-// A tiny deposit doesn't deter no-shows and rounds to nothing on cheap slots —
-// 10% is the floor. The value is NEVER silently rewritten: the field goes red,
-// a toast explains, and saving/advancing is blocked until the provider fixes it.
-const siteDepositPctInvalid = computed(() => {
-  if (!pay.value.site_deposit_enabled) return false
-  const n = Number(pay.value.site_deposit_percentage) || 0
-  return n < 10 || n > 100
-})
-function onSiteDepositPctChange() {
-  if (siteDepositPctInvalid.value) toast.error('The online deposit must be between 10% and 100% — please adjust it.')
-}
-async function siteDepositPayAtVenue() {
-  siteDepositModal.value = false
-  pay.value.site_cash_enabled = true
-  markDirty()
-  await onSitePayLaterToggle()   // reuse the no-show risk warning; reverts if declined
-}
-
-// Own-website "pay later" (full cash) — risky, so confirm before enabling.
-async function onSitePayLaterToggle() {
-  if (!pay.value.site_cash_enabled) return   // turning it off is always fine
-  const ok = await askConfirm({
-    danger: true,
-    title: 'Enable pay-later (cash)?',
-    message: "Risky — there's no guarantee the customer actually shows up. You can lose the revenue AND the timeslot stays blocked. A deposit or full online payment protects your business.",
-    confirmText: 'Enable anyway',
-    cancelText: 'Keep it off',
-  })
-  if (!ok) pay.value.site_cash_enabled = false
-}
+function connectListingPayouts(channel) { payoutModalSource.value = channel; payoutModal.value = true }
 // At least one own-site method must stay on (only matters for provider listings).
 const siteNoMethod = computed(() =>
   !locationIsBookbollOwned.value && form.value.show_on_provider_site &&
-  !pay.value.site_deposit_enabled && !pay.value.site_online_enabled && !pay.value.site_cash_enabled
+  !pay.value.site_deposit_enabled && !pay.value.site_online_enabled
 )
 
 // ── Inline placement editing from the listings page (chip dropdowns) ───────────
@@ -1528,18 +1600,7 @@ const placementComplete = computed(() =>
   form.value.show_on_marketplace !== false || form.value.show_on_provider_site !== false
 )
 
-/* ── Collapsible payment panels (progressive disclosure) ──────────────────────
-   Each channel's payment methods sit behind its "Getting paid" header. Collapsed
-   by default when opening the editor (a compact summary keeps the facts visible);
-   turning a place ON auto-expands its panel so the next step is obvious. */
-const payOpen = ref({ mkt: false, site: false })
-function onMarketplacePlacementChange() {
-  if (form.value.show_on_marketplace) payOpen.value.mkt = true
-  onMarketplaceToggle()
-}
-function onSitePlacementChange() {
-  if (form.value.show_on_provider_site) payOpen.value.site = true
-}
+// Payment summaries also appear on the final review screen.
 // Compact facts shown while a panel is collapsed.
 const mktPaySummary = computed(() => {
   const s = []
@@ -1550,9 +1611,8 @@ const mktPaySummary = computed(() => {
 })
 const sitePaySummary = computed(() => {
   const s = []
-  if (pay.value.site_deposit_enabled) s.push(`${Math.max(10, Math.min(100, Number(pay.value.site_deposit_percentage) || 0))}% deposit + at venue`)
+  if (pay.value.site_deposit_enabled) s.push(`${payExample.value.sitePct}% deposit + on arrival · deposit is Bookboll’s fee`)
   if (pay.value.site_online_enabled) s.push('Everything online')
-  if (pay.value.site_cash_enabled) s.push('Pay at venue')
   return s
 })
 const addonsComplete = computed(() => true)
@@ -1592,6 +1652,8 @@ async function addListingImages(files) {
     imageUploading.value = false
   }
 }
+
+function updateListingPhotos(photos) { form.value.photos = photos; form.value.photo_url = photos[0] || ''; markDirty() }
 
 function removeListingImage(i) {
   form.value.photos = (form.value.photos || []).filter((_, idx) => idx !== i)
@@ -1749,49 +1811,8 @@ const submittedInfo = ref(null)
 
 async function save() {
   const wasEdit = editingExisting.value
-  // Required basic fields
-  listingTriedSave.value = true
-  if (!basicComplete.value) {
-    listingSaveError.value = 'Please complete Basic Information (name, location, type and description).'
-    openSection.value = 'basic'
-    toast.error('Please complete the required fields.')
-    scrollToInvalid()
-    return
-  }
-  if (!(Number(form.value.base_price) > 0)) {
-    listingSaveError.value = 'Please set a base price greater than 0 in the Pricing section.'
-    openSection.value = 'pricing'
-    toast.error('Please set a base price.')
-    return
-  }
-  // New listing leaving pricing without dynamic pricing → make the revenue case,
-  // exactly ONCE per creation (every wizard card runs this same save(), so an
-  // unflagged prompt would re-nag on each step). Runs right after the base-price
-  // check so it appears on the Pricing card's own "Save & Continue", before any
-  // payment-section validation can bounce the user elsewhere. Edits never nag.
-  if (!editingExisting.value && !dynamicPricing.value && !dynamicNudgeAsked.value) {
-    dynamicNudgeAsked.value = true
-    const enable = await confirm({
-      danger: false,
-      title: 'Launch without dynamic pricing?',
-      message: 'Facilities that price by demand earn up to 40% more on Bookboll — a higher price for peak evening and weekend slots that always sell out, a lower price to fill quiet daytime hours. It takes a minute to paint your prices onto the weekly grid, and you can change them anytime.',
-      confirmText: 'Enable & set it up',
-      cancelText: 'Skip for now',
-    })
-    if (enable) {
-      dynamicPricing.value = true
-      openSection.value = 'pricing'
-      return   // back to the form — pricing section open, grid ready to paint
-    }
-  }
-  if (payError.value) {
-    listingSaveError.value = payError.value
-    openSection.value = 'placement'
-    if (siteNoMethod.value || siteDepositPctInvalid.value) payOpen.value.site = true
-    else payOpen.value.mkt = true
-    toast.error(payError.value)
-    return
-  }
+  const savedDraftKey = listingDraftKey()
+  if (!validateListingSteps()) return
   // Both places off → the listing is invisible to customers. Prompt: pick a place,
   // or knowingly save it as hidden (a legitimate draft state).
   if (!form.value.show_on_marketplace && !form.value.show_on_provider_site) {
@@ -1799,7 +1820,7 @@ async function save() {
     const saveHidden = await askConfirm({
       danger: false,
       title: 'Customers can’t book this yet',
-      message: 'Both places are still off, so this listing won’t appear on the Bookboll Marketplace or on your website. Turn one on in "Placement & Payment", or save it as a hidden listing for now.',
+      message: 'Both places are still off, so this listing won’t appear on the Bookboll Marketplace or on your website. Turn one on in "Booking & payments", or save it as a hidden listing for now.',
       confirmText: 'Save as hidden',
       cancelText: 'Choose where',
     })
@@ -1899,7 +1920,7 @@ async function save() {
     stageMode = userRole.value === 'admin' ? 'admin' : 'full'
   }
 
-  const depPct = Number(effectiveCommissionRate.value) || 20
+  const depPct = Number(effectiveCommissionRate.value)
   const body = {
     ...opPayload,
     ...liveContent,
@@ -1921,9 +1942,11 @@ async function save() {
       deposit_percentage: depPct,
       online_payment_enabled: !!pay.value.online_payment_enabled,
       site_deposit_enabled: !!pay.value.site_deposit_enabled,
-      site_deposit_percentage: Math.max(10, Math.min(100, Number(pay.value.site_deposit_percentage) || 0)),
+      // Compatibility field; the backend must derive the current rate at booking
+      // time, including plan changes, instead of trusting this client value.
+      site_deposit_percentage: payExample.value.sitePct,
       site_online_enabled: !!pay.value.site_online_enabled && onlineAllowed.value,
-      site_cash_enabled: !!pay.value.site_cash_enabled,
+      site_cash_enabled: false,
     },
     addons: connectedAddons.value
       .filter(a => a.addon_id)
@@ -1965,7 +1988,7 @@ async function save() {
   setTimeout(() => (savedFlag.value = false), 2000)
   notifySetupChanged()   // moves the setup guide past "Add your first listing"
   clearDirty()
-  clearFormDraft(listingDraftKey())   // a real save supersedes any local draft
+  clearFormDraft(savedDraftKey)   // a real save supersedes any local draft
   // Tell the provider exactly what happened. Operational-only edits are fully live —
   // no review, just a quiet confirmation. Content edits stay live on the approved
   // version while the new one is reviewed. First-time/paused go through full review.
@@ -1987,69 +2010,19 @@ async function save() {
   await loadList()
 }
 
-/* NEW-LISTING WIZARD: each card's "Save & Continue" validates ONLY the card
-   being left and advances — no DB write yet. The listing is created once, by
-   "Create Listing" on the last card, which runs the full save() validation.
-   (Previously every card ran the full save(), whose first failing check
-   jumped the user straight from Basic to Pricing, skipping Schedule and
-   Timeslot Settings entirely.) */
-function sectionGateError(sec) {
-  if (sec === 'basic' && !basicComplete.value) return 'Please complete Basic Information (name, location, type and description).'
-  if (sec === 'schedule') {
-    if (!scheduleComplete.value) return 'Open at least one day in the Weekly Schedule.'
-    if (listingHoursOutOfBounds.value.length) return `This listing's hours fall outside the location's schedule (${listingHoursOutOfBounds.value[0]}). Adjust the hours or the location schedule.`
-  }
-  if (sec === 'timeslot' && !(Number(form.value.slot_duration) > 0)) return 'Choose a slot duration in Timeslot Settings.'
-  if (sec === 'pricing' && !(Number(form.value.base_price) > 0)) return 'Please set a base price greater than 0.'
-  if (sec === 'placement' && payError.value) {
-    // Expand the sub-panel the problem lives in so the red state is visible.
-    if (siteNoMethod.value || siteDepositPctInvalid.value) payOpen.value.site = true
-    else payOpen.value.mkt = true
-    return payError.value
-  }
-  return ''
-}
-async function saveAndAdvance(next) {
-  listingTriedSave.value = true
-  const err = sectionGateError(openSection.value)
-  if (err) { listingSaveError.value = err; toast.error(err); scrollToInvalid(); return }
-  listingSaveError.value = ''
-  // Leaving the timeslot card without session extensions → one-time revenue nudge.
-  // (The same toggle also appears on the Add-ons card, but it's asked about once.)
-  if (openSection.value === 'timeslot' && !extensionEnabled.value && !extensionNudgeAsked.value) {
-    extensionNudgeAsked.value = true
-    const enable = await confirm({
-      danger: false,
-      title: 'Launch without session extensions?',
-      message: 'Providers who let customers extend into the next free slot at a small discount earn up to 35% more on Bookboll — adjacent slots often sit empty anyway, and a discounted extension turns them into paid time. You choose the discount and how many extra slots it covers.',
-      confirmText: 'Enable & set it up',
-      cancelText: 'Skip for now',
-    })
-    if (enable) { toggleExtension(true); return }   // stay on the card, options revealed
-  }
-  // Leaving the pricing card without dynamic pricing → the one-time revenue nudge.
-  if (openSection.value === 'pricing' && !dynamicPricing.value && !dynamicNudgeAsked.value) {
-    dynamicNudgeAsked.value = true
-    const enable = await confirm({
-      danger: false,
-      title: 'Launch without dynamic pricing?',
-      message: 'Facilities that price by demand earn up to 40% more on Bookboll — a higher price for peak evening and weekend slots that always sell out, a lower price to fill quiet daytime hours. It takes a minute to paint your prices onto the weekly grid, and you can change them anytime.',
-      confirmText: 'Enable & set it up',
-      cancelText: 'Skip for now',
-    })
-    if (enable) { dynamicPricing.value = true; return }   // stay on the pricing card
-  }
-  if (next) openSection.value = next
-}
-// Final card action: save, then close the editor only if it actually saved.
+// Only the final confirmation writes the listing; guard against duplicate clicks.
 async function saveAndClose() {
+  if (listingSaving.value || imageUploading.value) return
+  listingSaving.value = true
   savedFlag.value = false
-  await save()
-  if (savedFlag.value) view.value = 'list'
+  try {
+    await save()
+    if (savedFlag.value) view.value = 'list'
+  } catch (error) {
+    listingSaveError.value = error?.message || 'Could not save the listing. Please try again.'
+    toast.error(listingSaveError.value)
+  } finally { listingSaving.value = false }
 }
-// Per-card primary action. New listing → save & advance to the next card (wizard).
-// Editing an existing listing → save & close (no need to step through every card).
-function saveSection(next) { return editingExisting.value ? saveAndClose() : saveAndAdvance(next) }
 
 async function removeListing(id) {
   const l = listings.value.find(x => x.id === id)
@@ -2161,31 +2134,6 @@ const resourceById = (id) => allResources.value.find(a => a.id === id || String(
 /* ---- layout toggle ---- */
 const layout = ref('grouped') // 'grouped' | 'flat'
 
-// ── Storefront sort (how the customer site orders listings when location is OFF) ──
-// The customer site shows NEAREST FIRST when the visitor shares their location; this is
-// the fallback order otherwise. Super admin sets it for the Bookboll marketplace
-// (platform_settings); a provider sets it for their own white-label site (their row).
-// One choice per view: "All Listings"/flat → space, "Grouped"/by-venue → venue.
-const sortOptions = SORT_OPTIONS
-const storefrontSort = ref({ space: 'recommended', venue: 'recommended' })
-async function loadStorefrontSort() {
-  storefrontSort.value = await fetchStorefrontSort()
-}
-onMounted(loadStorefrontSort)
-// The control targets the view currently shown: flat → space, grouped → venue.
-const storefrontSortView = computed(() => layout.value === 'flat' ? 'space' : 'venue')
-const storefrontSortModel = computed({
-  get: () => storefrontSort.value[storefrontSortView.value],
-  set: (v) => saveStorefrontSort(storefrontSortView.value, v),
-})
-async function saveStorefrontSort(view, value) {
-  storefrontSort.value = { ...storefrontSort.value, [view]: value }
-  const res = await saveStorefrontSortValue(view, value)
-  if (!res.success) { toast.error(res.message || 'Could not save the order — try again.'); return }
-  if (res.data?.sort) storefrontSort.value = res.data.sort
-  toast.success('Customer site order updated')
-}
-
 // ── Extra flat-view filters ───────────────────────────────────────────────────
 const flatFilterStatus = ref('')   // '' | 'live' | 'review' | 'off_market' (Bookboll placement)
 // Who may book: '' | 'both' | 'admin_only' | 'customer_only' | 'inactive'.
@@ -2194,10 +2142,10 @@ const flatFilterStatus = ref('')   // '' | 'live' | 'review' | 'off_market' (Boo
 const filterVisibility = ref('')
 
 const VISIBILITY_BADGE = {
-  both:          { label: 'Everyone',      cls: 'vis-both',     tip: 'Bookable by customers and by staff.' },
+  both:          { label: 'Customers & staff',      cls: 'vis-both',     tip: 'Bookable by customers and by staff.' },
   customer_only: { label: 'Customers',     cls: 'vis-customer', tip: 'Bookable by customers only — hidden from the admin booking screen.' },
   admin_only:    { label: 'Staff only',    cls: 'vis-admin',    tip: 'Bookable by staff only — customers cannot see or book it.' },
-  inactive:      { label: 'Nobody',        cls: 'vis-none',     tip: 'Hidden from both customers and staff — the listing is inactive.' },
+  inactive:      { label: 'Booking disabled',        cls: 'vis-none',     tip: 'Hidden from both customers and staff — the listing is inactive.' },
 }
 /** The row's visibility, derived when the API predates the flags. */
 function visibilityOf(l) {
@@ -2270,6 +2218,8 @@ const showExportModal = ref(false)
 // server for them rather than exporting whatever the table happens to hold.
 const exportingList = ref(false)
 async function doExport(useFilters) {
+  if (!canExport.value) return
+  if (!requirePremium('exports')) { showExportModal.value = false; return }
   if (exportingList.value) return
   exportingList.value = true
   const params = useFilters ? { ...catalogParams(), export: 1 } : { export: 1 }
@@ -2395,24 +2345,27 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 </script>
 
 <template>
+  <ExportDialog :open="showExportModal" title="Export listings" noun="listings" :filtered-count="layout === 'flat' && !listLoading ? flatTotal : null" :all-count="listLoading ? null : scopeTotal" :busy="exportingList" @close="showExportModal = false" @export="doExport" />
   <div class="page">
     <!-- LIST VIEW (kept mounted behind the editor drawer) -->
     <template v-if="view === 'list' || view === 'editor'">
       <div class="page-header">
         <div>
-          <div class="page-title">Listings</div>
-          <div class="page-subtitle">Manage your locations and venue listings</div>
+          <h1 class="page-title">Listings &amp; venues</h1>
+          <div class="page-subtitle">Manage what customers can book and the venues where it happens.</div>
         </div>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <AddMenu v-if="pageAddItems.length" label="Add" variant="primary" align="right" :items="pageAddItems" @select="onPageAdd" />
+        <div v-if="canManageListings" class="cf-catalog-actions">
+          <button class="btn btn-secondary" @click="openNewLoc"><BldIcon :size="16" />Add venue</button>
+          <button class="btn btn-primary" :disabled="listingOpening" @click="openNewListing(null)"><Plus :size="16" />{{ listingOpening ? 'Loading…' : 'Create listing' }}</button>
         </div>
       </div>
 
+      <div v-if="createdVenue" class="cf-created" role="status"><CircleCheck :size="20" /><div><strong>{{ createdVenue.name }} is ready</strong><p>Next, add a listing customers can book at this venue.</p></div><button class="btn btn-primary" @click="openNewListing(createdVenue.id); createdVenue = null">Create first listing</button><button aria-label="Dismiss venue confirmation" @click="createdVenue = null"><X :size="16" /></button></div>
       <div class="toolbar lf-bar">
         <div class="lf-search-wrap">
           <div class="search lf-search">
             <Search :size="16" />
-            <input v-model="search" placeholder="Search listings, sports, locations…" />
+            <input v-model="search" placeholder="Search listings, activities or venues…" />
             <button type="button" class="lf-filter-btn" :class="{ on: showFilters || activeFilterCount }" @click.stop="showFilters = !showFilters" title="Filters">
               <SlidersHorizontal :size="16" />
               <span v-if="activeFilterCount" class="lf-filter-n">{{ activeFilterCount }}</span>
@@ -2420,7 +2373,8 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
           </div>
 
           <!-- All filters live in this dropdown -->
-          <div v-if="showFilters" class="lf-panel" @click.stop>
+          <div v-if="showFilters" class="lf-panel" v-dialog="() => showFilters = false" aria-label="Listing filters" @click.stop>
+            <div class="lf-panel-head"><strong>Listing filters</strong><button type="button" class="btn-icon" aria-label="Close filters" @click="showFilters = false"><X :size="18" /></button></div>
             <div class="lf-selects">
               <div class="lf-field">
                 <label>Country</label>
@@ -2433,9 +2387,9 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                   @update:model-value="v => filterCity = v" />
               </div>
               <div class="lf-field">
-                <label>Location</label>
+                <label>Venue</label>
                 <select class="filter-select" v-model="filterLocation">
-                  <option value="">All locations</option>
+                  <option value="">All venues</option>
                   <option v-for="l in locationsForFilter" :key="l.id" :value="l.id">{{ l.name }}</option>
                 </select>
               </div>
@@ -2484,36 +2438,34 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
         <div class="lf-spacer"></div>
 
-        <button v-if="canExport" class="btn btn-secondary btn-sm" @click="requirePremium('exports') && (showExportModal = true)">
+        <button v-if="canExport" class="btn btn-secondary btn-sm" @click="showExportModal = true">
           <Download :size="14" />Export<span v-if="!isPremium" class="prem-lock">Premium</span>
         </button>
-        <div v-if="isSuperAdmin || currentOwnerUserId" class="sf-sort" :title="`How the customer site orders the ${storefrontSortView === 'space' ? 'by-space' : 'by-venue'} view when a visitor's location is unavailable (otherwise it's nearest-first)`">
-          <span class="sf-sort-lbl">Customer site order</span>
-          <select v-model="storefrontSortModel" class="sf-sort-sel">
-            <option v-for="o in sortOptions" :key="o.key" :value="o.key">{{ o.label }}</option>
-          </select>
-        </div>
         <div class="layout-toggle">
-          <button :class="['layout-btn', { active: layout === 'grouped' }]" @click="layout='grouped'" title="Grouped by location">
-            <Layers :size="16" /><span>Grouped</span>
+          <button :class="['layout-btn', { active: layout === 'grouped' }]" @click="layout='grouped'" title="View listings grouped by venue">
+            <Layers :size="16" /><span>Venue view</span>
           </button>
-          <button :class="['layout-btn', { active: layout === 'flat' }]" @click="layout='flat'" title="All listings flat">
-            <LayoutList :size="16" /><span>All Listings</span>
+          <button :class="['layout-btn', { active: layout === 'flat' }]" @click="layout='flat'" title="View all listings">
+            <LayoutList :size="16" /><span>Listing view</span>
           </button>
         </div>
       </div>
+
+      <StorefrontOrderSettings v-if="isSuperAdmin || currentOwnerUserId" :marketplace="isSuperAdmin" />
+      <p v-if="listLoading" role="status" class="catalog-load-message">Loading venues and listings…</p>
+      <p v-if="listError" role="alert" class="catalog-load-message catalog-load-error">{{ listError }} <button type="button" class="btn btn-secondary btn-sm" @click="loadList">Retry</button></p>
 
       <!-- FLAT LIST VIEW -->
       <template v-if="layout === 'flat'">
         <!-- VENUE LISTINGS TABLE -->
         <div class="flat-section">
-          <div class="flat-section-head"><Boxes :size="15" /><span>Venue Listings</span><span class="flat-section-count">{{ flatTotal }}</span></div>
+          <div class="flat-section-head"><Boxes :size="15" /><span>Listings</span><span class="flat-section-count">{{ flatTotal }}</span></div>
           <div class="flat-list">
             <div class="flat-header">
               <span class="flat-col-grip"></span>
               <span class="flat-col-color"></span>
               <span class="flat-col-name flat-th-sort" @click="toggleFlatSort('name')">Listing <ChevronUp v-if="flatSortKey==='name'&&flatSortDir==='asc'" :size="11"/><ChevronDown v-else-if="flatSortKey==='name'&&flatSortDir==='desc'" :size="11"/></span>
-              <span class="flat-col-loc">Location</span>
+              <span class="flat-col-loc">Venue</span>
               <span class="flat-col-sport flat-th-sort" @click="toggleFlatSort('sport_category')">Sport <ChevronUp v-if="flatSortKey==='sport_category'&&flatSortDir==='asc'" :size="11"/><ChevronDown v-else-if="flatSortKey==='sport_category'&&flatSortDir==='desc'" :size="11"/></span>
               <span class="flat-col-price flat-th-sort" @click="toggleFlatSort('base_price')">Price /slot <ChevronUp v-if="flatSortKey==='base_price'&&flatSortDir==='asc'" :size="11"/><ChevronDown v-else-if="flatSortKey==='base_price'&&flatSortDir==='desc'" :size="11"/></span>
               <span class="flat-col-status">Placement</span>
@@ -2541,7 +2493,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                     <button type="button" class="chan" :class="['chan-'+ch.cls, { 'chan-btn': canManageListings }]" :title="ch.tip" @click.stop="canManageListings && togglePlacementMenu(l.id, ch.key)">
                       <component :is="statusIcon(ch.icon)" :size="12" />
                       <span class="chan-name">{{ ch.name }}</span>
-                      <span v-if="ch.suffix" class="chan-suffix">· {{ ch.suffix }}</span>
+                      <span v-if="ch.suffix" class="chan-suffix">{{ ch.suffix }}</span>
                       <ChevronDown v-if="canManageListings" :size="11" class="chan-caret" />
                     </button>
                     <a v-if="ch.live && ch.url" class="chan-open" :href="ch.url" target="_blank" rel="noopener" title="Open in new tab" @click.stop><ExternalLink :size="12" /></a>
@@ -2559,8 +2511,8 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                 </div>
               </div>
               <div class="flat-actions listing-actions">
-                <button v-if="canManageListings" class="btn-icon" @click="openEditListing(l)"><Edit2 :size="15" /></button>
-                <button v-if="canManageListings" class="btn-icon danger" @click="removeListing(l.id)"><Trash2 :size="15" /></button>
+                <button v-if="canManageListings" class="btn-icon" :aria-label="'Edit ' + l.name" @click="openEditListing(l)"><Edit2 :size="15" /></button>
+                <button v-if="canManageListings" class="btn-icon danger" :aria-label="'Delete ' + l.name" @click="removeListing(l.id)"><Trash2 :size="15" /></button>
                 <span v-if="!canManageListings" class="muted" style="font-size:12px">View only</span>
               </div>
             </div>
@@ -2570,25 +2522,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
         </div>
 
         <!-- Export modal -->
-        <div v-if="showExportModal" class="modal-backdrop" @click.self="showExportModal=false">
-          <div class="modal" style="max-width:400px">
-            <div class="modal-header">
-              <div class="modal-title">Export Listings</div>
-              <button class="btn-icon" @click="showExportModal=false"><X :size="18"/></button>
-            </div>
-            <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
-              <button class="export-choice-btn" @click="doExport(true)">
-                <Download :size="16"/>
-                <div><strong>Export with filters</strong><br><span>{{ flatTotal }} listings</span></div>
-              </button>
-              <button class="export-choice-btn" @click="doExport(false)">
-                <Download :size="16"/>
-                <div><strong>Export all listings</strong><br><span>{{ scopeTotal }} listings</span></div>
-              </button>
-            </div>
-            <div class="modal-footer"><button class="btn btn-secondary" @click="showExportModal=false">Cancel</button></div>
-          </div>
-        </div>
+
       </template>
 
       <div v-else class="loc-list">
@@ -2631,8 +2565,8 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                 <Eye v-if="loc.status === 'active'" :size="16" />
                 <EyeOff v-else :size="16" />
               </button>
-              <button v-if="canManageListings" class="btn-icon" @click="openEditLoc(loc)"><Edit2 :size="16" /></button>
-              <button v-if="canManageListings" class="btn-icon danger" @click="removeLoc(loc.id)"><Trash2 :size="16" /></button>
+              <button v-if="canManageListings" class="btn-icon" :aria-label="'Edit ' + loc.name" @click="openEditLoc(loc)"><Edit2 :size="16" /></button>
+              <button v-if="canManageListings" class="btn-icon danger" :aria-label="'Delete ' + loc.name" @click="removeLoc(loc.id)"><Trash2 :size="16" /></button>
             </div>
           </div>
 
@@ -2693,7 +2627,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                     <button type="button" class="chan" :class="['chan-'+ch.cls, { 'chan-btn': canManageListings }]" :title="ch.tip" @click.stop="canManageListings && togglePlacementMenu(l.id, ch.key)">
                       <component :is="statusIcon(ch.icon)" :size="12" />
                       <span class="chan-name">{{ ch.name }}</span>
-                      <span v-if="ch.suffix" class="chan-suffix">· {{ ch.suffix }}</span>
+                      <span v-if="ch.suffix" class="chan-suffix">{{ ch.suffix }}</span>
                       <ChevronDown v-if="canManageListings" :size="11" class="chan-caret" />
                     </button>
                     <a v-if="ch.live && ch.url" class="chan-open" :href="ch.url" target="_blank" rel="noopener" title="Open in new tab" @click.stop><ExternalLink :size="12" /></a>
@@ -2719,24 +2653,24 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                     <PlayCircle :size="16" />
                   </button>
                 </template>
-                <button v-if="canManageListings" class="btn-icon" @click="openEditListing(l)"><Edit2 :size="16" /></button>
-                <button v-if="canManageListings" class="btn-icon danger" @click="removeListing(l.id)"><Trash2 :size="16" /></button>
+                <button v-if="canManageListings" class="btn-icon" :aria-label="'Edit ' + l.name" @click="openEditListing(l)"><Edit2 :size="16" /></button>
+                <button v-if="canManageListings" class="btn-icon danger" :aria-label="'Delete ' + l.name" @click="removeListing(l.id)"><Trash2 :size="16" /></button>
               </div>
             </div>
             <div v-if="!listingsByLocation(loc.id).length" class="empty-sub">
-              <span>No booking listings yet for this location.</span>
+              <span>No listings at this venue yet.</span>
               <AddMenu v-if="canManageListings" size="sm" label="Add" align="left" :items="locAddItems" @select="k => onLocAdd(k, loc.id)" />
             </div>
           </div>
         </div>
         <div v-if="filteredLocations.length && canManageListings" class="loc-add-foot">
-          <button class="btn btn-secondary" @click="openNewLoc"><Plus :size="15" />Add new location</button>
+          <button class="btn btn-secondary" @click="openNewLoc"><Plus :size="15" />Add venue</button>
         </div>
-        <div v-if="!filteredLocations.length" class="card">
+        <div v-if="!filteredLocations.length && !listLoading && !listError" class="card">
           <EmptyState :icon="Landmark"
-            :title="locations.length ? 'No matching locations' : 'No locations yet'"
-            :message="locations.length ? 'No locations match your search or filters. Try clearing them.' : 'Add your first location, then create bookable listings inside it.'"
-            :action-label="(!locations.length && canManageListings) ? 'Add Location' : ''" @action="openNewLoc" />
+            :title="locations.length ? 'No matching venues' : 'No venues yet'"
+            :message="locations.length ? 'No venues match your search or filters. Try clearing them.' : 'Add your first venue, then create the listings customers can book there.'"
+            :action-label="(!locations.length && canManageListings) ? 'Add venue' : ''" @action="openNewLoc" />
         </div>
       </div>
         <!-- The grouped view pages over VENUE CARDS. It previously rendered every
@@ -2750,16 +2684,19 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
     <!-- EDITOR DRAWER (slides in from the right) -->
     <teleport to="body">
     <div v-if="view === 'editor'" class="bb-drawer-backdrop" style="z-index:3000" @click.self="requestExitEditor">
-    <div class="bb-drawer lf-drawer" @input="markDirty" @change="markDirty">
+    <div ref="listingDialogEl" class="bb-drawer lf-drawer creation-drawer" :style="adminBrandVars" :inert="!!pricingReminder" role="dialog" aria-modal="true" aria-labelledby="listing-editor-title" @keydown="listingEditorKeydown" @keydown.esc.stop="requestExitEditor" @input="markDirty" @change="markDirty">
       <div class="bb-drawer-header">
         <div>
-          <div class="bb-drawer-title">{{ editing ? 'Edit Booking Listing' : 'New Booking Listing' }}</div>
-          <div class="bb-drawer-subtitle">Configure every detail of this bookable listing</div>
+          <div id="listing-editor-title" class="bb-drawer-title">{{ editingExisting ? 'Edit listing' : 'Create a listing' }}</div>
+          <div class="bb-drawer-subtitle">{{ editingExisting ? form.name : 'A listing is the service, activity or space a customer books.' }}</div>
         </div>
-        <button class="bb-drawer-close" @click="requestExitEditor"><X :size="18" /></button>
+        <button class="bb-drawer-close" aria-label="Close listing editor" :disabled="listingSaving" @click="requestExitEditor"><X :size="18" /></button>
       </div>
-      <div class="bb-drawer-body">
-
+      <div class="cf-workspace" :inert="listingSaving">
+      <PricingSetupReminder :features="pricingReminder?.features || []" :base-price="Number(form.base_price)" :currency="currencyForLocation(form.location_id)" @close="closePricingReminder" @skip="skipPricingSetup" @setup="setupSuggestedPricing" />
+      <CreationSteps :steps="LISTING_STEPS" :active="listingStep" :completed="completedListingSteps" @select="selectListingStep" />
+      <div ref="listingBodyEl" class="bb-drawer-body">
+      <div class="cf-context"><h2>{{ currentListingStep.label }}</h2><p>{{ listingStep === 'review' && editingExisting ? 'Review your changes before saving them.' : listingStepDescription }}</p></div>
       <!-- editor state notice -->
       <template v-if="editing && rowState(form) !== 'active'">
         <div v-if="rowState(form) === 'resubmitted'" class="eligibility-notice notice-review" style="margin-bottom:16px;">
@@ -2794,34 +2731,34 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
       <div class="sections">
         <!-- BASIC INFORMATION -->
-        <section class="section-card" :class="{ open: openSection === 'basic' }">
-          <button class="section-head" @click="openSection = openSection === 'basic' ? '' : 'basic'">
+        <section v-show="listingStep === 'details'" class="section-card" >
+          <div class="section-head">
             <span class="tick" :class="{ done: basicComplete }"><Check :size="12" /></span>
             <div class="section-title">
-              <div>Basic Information</div>
+              <div>Listing details</div>
               <div class="section-sub">Name, location, type &amp; description</div>
             </div>
-            <ChevronDown :size="18" class="chev-icon" :class="{ rot: openSection === 'basic' }" />
-          </button>
-          <div v-if="openSection === 'basic'" class="section-body">
+          </div>
+          <div class="section-body">
             <div class="grid grid-2">
-              <div class="form-group"><label class="form-label">Listing Name <span class="req">*</span><InfoTip text="The public name customers see for this bookable space — e.g. “Football Field A” or “Studio 2”. Keep it short and recognizable." /></label>
-                <input v-model="form.name" :class="{ 'input-invalid': listingTriedSave && !form.name }" placeholder="e.g. Football Field A" />
+              <div class="form-group"><label for="listing-name" class="form-label">Listing Name <span class="req">*</span><InfoTip text="The public name customers see for this bookable space — e.g. “Football Field A” or “Studio 2”. Keep it short and recognizable." /></label>
+                <input id="listing-name" v-model="form.name" :class="{ 'input-invalid': listingTriedSave && !form.name?.trim() }" placeholder="e.g. Guided city tour or Football pitch A" />
               </div>
-              <div class="form-group"><label class="form-label">Location Assignment <span class="req">*</span><InfoTip text="Which of your venues this listing belongs to. It inherits that location's opening hours, address and currency." /></label>
-                <select v-model="form.location_id" @change="onLocationSelectChange" :class="{ 'input-invalid': listingTriedSave && !form.location_id }">
-                  <option value="">Select location</option>
+              <div class="form-group"><label for="listing-venue" class="form-label">Venue <span class="req">*</span><InfoTip text="Which of your venues this listing belongs to. It inherits that location's opening hours, address and currency." /></label>
+                <select id="listing-venue" v-model="form.location_id" @change="onLocationSelectChange" :class="{ 'input-invalid': listingTriedSave && !form.location_id }">
+                  <option value="">Select venue</option>
                   <option v-for="lo in listingFormLocations" :key="lo.id" :value="lo.id">{{ lo.name }}</option>
-                  <option v-if="canManageListings" value="__create__">＋ Create a new location…</option>
+                  <option v-if="canManageListings" value="__create__">＋ Create a new venue…</option>
                 </select>
                 <div v-if="userRole === 'provider'" class="form-hint">
-                  You can list venues in any country you operate in. Once you have a payout wallet, full online payments work everywhere — a local wallet is created automatically per country so you're paid in that currency.
+                  This listing uses the venue’s address, currency and opening hours.
                 </div>
               </div>
-              <div class="form-group"><label class="form-label">Type <span class="req">*</span><InfoTip text="What kind of space this is (Padel, Restaurant, Studio…). Customers filter by type, and it sets the Category automatically." /></label>
+              <div class="form-group"><label for="listing-type" class="form-label">Type <span class="req">*</span><InfoTip text="The activity or service you offer, such as a tour, padel or a studio. This also sets its category." /></label>
                 <div class="combo" @click.stop>
                   <input
                     class="combo-input"
+                    id="listing-type"
                     :class="{ 'input-invalid': listingTriedSave && !form.sport_category }"
                     :value="sportOpen ? sportQuery : form.sport_category"
                     @input="e => { sportQuery = e.target.value; sportOpen = true }"
@@ -2866,12 +2803,13 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               </div>
             </div>
 
-            <div class="form-group"><label class="form-label">Description <span class="req">*</span><InfoTip text="What customers read before booking: indoor/outdoor, surface, capacity, amenities (lighting, parking, showers) and any house rules." /></label>
-              <textarea v-model="form.description" rows="4" placeholder="Describe this listing for customers…" :class="{ 'input-invalid': listingTriedSave && !form.description }"></textarea>
+            <div class="form-group"><label for="listing-description" class="form-label">Description <span class="req">*</span><InfoTip text="What customers read before booking: indoor/outdoor, surface, capacity, amenities (lighting, parking, showers) and any house rules." /></label>
+              <textarea id="listing-description" v-model="form.description" rows="4" placeholder="Describe this listing for customers…" :class="{ 'input-invalid': listingTriedSave && !form.description?.trim() }"></textarea>
             </div>
 
+            <section class="cf-option cf-access"><h3>Booking access &amp; calendar colour</h3>
             <div class="form-group">
-              <label class="form-label">Booking Color in Calendar<InfoTip text="The color used for this listing's confirmed bookings in your calendar, so you can tell listings apart at a glance." /></label>
+              <label class="form-label">Calendar colour<InfoTip text="The color used for this listing's confirmed bookings in your calendar, so you can tell listings apart at a glance." /></label>
               <div class="pg-color-row">
                 <button v-for="c in BOOKING_COLORS" :key="c" type="button" class="pg-swatch" :class="{ active: form.booking_color === c }" :style="{ background: c }" :title="c" @click="form.booking_color = c"></button>
                 <label class="pg-swatch pg-swatch-custom" :class="{ active: form.booking_color && !BOOKING_COLORS.includes(form.booking_color) }" title="Custom color">
@@ -2883,7 +2821,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             <!-- Who may book this listing. Separate from Placement (which decides
                  WHERE it is shown): this decides WHO may make a booking. -->
             <div class="form-group">
-              <label class="form-label">Availability<InfoTip text="Who can book this listing. Tick both for a normal listing. Untick Customers to keep a court for the front desk only; untick Staff to hide it from the admin booking screen. With both unticked the listing is inactive." /></label>
+              <label class="form-label">Who can book<InfoTip text="Who can book this listing. Tick both for a normal listing. Untick Customers to keep a court for the front desk only; untick Staff to hide it from the admin booking screen. With both unticked the listing is inactive." /></label>
               <div class="vis-picker">
                 <label class="vis-check" :class="{ on: form.show_on_customer }">
                   <input type="checkbox" v-model="form.show_on_customer" />
@@ -2907,29 +2845,23 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               </div>
             </div>
 
-            <div v-if="listingSaveError" class="module-block-error">
-              <AlertTriangle :size="14" />{{ listingSaveError }}
-            </div>
-            <div class="section-footer">
-              <button class="btn btn-secondary sf-cancel" @click="requestExitEditor">Cancel</button>
-              <span v-if="savedFlag" class="saved"><Check :size="14" />Saved</span>
-              <button class="btn btn-primary" @click="saveSection('schedule')">{{ editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue' }}</button>
-            </div>
+
+
+            </section>
           </div>
         </section>
 
         <!-- WEEKLY SCHEDULE -->
-        <section class="section-card" :class="{ open: openSection === 'schedule' }">
-          <button class="section-head" @click="openSection = openSection === 'schedule' ? '' : 'schedule'">
+        <section v-show="listingStep === 'availability'" class="section-card" >
+          <div class="section-head">
             <span class="tick" :class="{ done: scheduleComplete }"><Check :size="12" /></span>
             <div class="section-title">
-              <div>Weekly Schedule</div>
+              <div>Weekly schedule</div>
               <div class="section-sub">Operating hours for each day of the week</div>
             </div>
-            <ChevronDown :size="18" class="chev-icon" :class="{ rot: openSection === 'schedule' }" />
-          </button>
-          <div v-if="openSection === 'schedule'" class="section-body">
-            <p class="muted" style="margin: 0 0 12px;">A new listing starts from a copy of its location's hours. Edit any day below — these hours are this listing's own and won't change when the location's schedule changes. The location's hours only limit when the listing can be open; hours outside them are flagged below.</p>
+          </div>
+          <div class="section-body">
+            <p class="muted" style="margin: 0 0 12px;">These hours start from your venue’s schedule. Adjust them for this listing, keeping each day within the venue’s opening hours.</p>
             <div v-if="listingHoursOutOfBounds.length" class="oob-warning">
               <AlertTriangle :size="14" />
               <div>
@@ -2944,37 +2876,32 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               </div>
             </div>
             <WeeklyHours v-model="hours" :parent-hours="locationHoursGrouped" :show-inherit="true" :slot-duration="Number(form.slot_duration)" @edit-location-schedule="editLocationSchedule" @create-special-day="createSpecialDayForListing" />
-            <div class="section-footer">
-              <button class="btn btn-secondary sf-cancel" @click="requestExitEditor">Cancel</button>
-              <span v-if="savedFlag" class="saved"><Check :size="14" />Saved</span>
-              <button class="btn btn-primary" @click="saveSection('timeslot')">{{ editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue' }}</button>
-            </div>
+
           </div>
         </section>
 
         <!-- TIMESLOT SETTINGS -->
-        <section class="section-card" :class="{ open: openSection === 'timeslot' }">
-          <button class="section-head" @click="openSection = openSection === 'timeslot' ? '' : 'timeslot'">
+        <section v-show="listingStep === 'availability'" class="section-card" >
+          <div class="section-head">
             <span class="tick" :class="{ done: timeslotComplete }"><Check :size="12" /></span>
             <div class="section-title">
-              <div>Timeslot Settings</div>
+              <div>Booking length & start times</div>
               <div class="section-sub">How bookable time slots are generated</div>
             </div>
-            <ChevronDown :size="18" class="chev-icon" :class="{ rot: openSection === 'timeslot' }" />
-          </button>
-          <div v-if="openSection === 'timeslot'" class="section-body">
+          </div>
+          <div class="section-body">
             <div class="grid grid-2">
               <div class="form-group"><label class="form-label">Max Bookings per Time Slot <span class="req">*</span><InfoTip text="How many separate bookings can share the same start time — e.g. set to 3 if you have 3 identical courts." /></label>
-                <input type="number" min="1" v-model="form.max_bookings_per_slot" />
+                <input aria-label="Maximum bookings at the same time" type="number" min="1" v-model="form.max_bookings_per_slot" />
               </div>
               <div class="form-group"><label class="form-label">Slot Duration <span class="req">*</span><InfoTip text="How long one bookable slot lasts. Customers book in blocks of this length (e.g. 1 hour). Options go in 15-minute steps." /></label>
-                <select v-model.number="form.slot_duration">
+                <select aria-label="Booking duration" v-model.number="form.slot_duration">
                   <option v-for="d in slotDurationOptions" :key="d.value" :value="d.value">{{ d.label }}</option>
                 </select>
               </div>
               <div class="form-group">
                 <label class="form-label">Buffer Between Bookings<InfoTip text="A gap automatically reserved after each booking — for cleaning or turnaround — before the next one can start." /></label>
-                <select v-model.number="form.buffer_time">
+                <select aria-label="Buffer between bookings" v-model.number="form.buffer_time">
                   <option v-for="b in BUFFER_OPTIONS" :key="b.value" :value="b.value">{{ b.label }}</option>
                 </select>
               </div>
@@ -2985,11 +2912,11 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               <label class="form-label">Bookable start times<InfoTip text="Generated from your slot length, buffer & weekly schedule. Tap a time to turn it off if you don't want to offer it — leave them all on to offer every slot." /></label>
               <div class="ft-preview">
                 <div class="ft-preview-head"><Clock :size="13" /> Offered to customers<span class="ft-preview-count">{{ displayedStartTimes.length }}</span></div>
-                <div v-if="!autoStartTimes.length" class="fixed-times-empty">No bookable times yet — set open hours in the <button type="button" class="link-btn" @click.stop="goToSchedule">Weekly Schedule</button> above.</div>
+                <div v-if="!autoStartTimes.length" class="fixed-times-empty">No bookable times yet — set open hours in the <button type="button" class="link-btn" @click.stop="goToSchedule">Weekly schedule</button> above.</div>
                 <template v-else>
                   <div class="cst-caption"><Info :size="13" /> Tap a time to turn it off or on — only highlighted times are offered to customers.</div>
                   <div class="cst-chips">
-                    <button v-for="t in autoStartTimes" :key="t" type="button" class="cst-chip" :class="{ on: isStartOffered(t) }" @click="toggleStartTime(t)">
+                    <button v-for="t in autoStartTimes" :key="t" type="button" class="cst-chip" :class="{ on: isStartOffered(t) }" :aria-pressed="isStartOffered(t)" @click="toggleStartTime(t)">
                       <Check v-if="isStartOffered(t)" :size="12" class="cst-chip-check" />{{ fmt12(t) }}
                     </button>
                   </div>
@@ -3005,7 +2932,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                   <div class="ext-block-sub">Let customers extend into the next free adjacent slot at a reduced price.</div>
                 </div>
                 <label class="dp-switch" :title="extensionEnabled ? 'On' : 'Off'">
-                  <input type="checkbox" :checked="extensionEnabled" @change="toggleExtension($event.target.checked)" />
+                  <input type="checkbox" aria-label="Session extension discount" :checked="extensionEnabled" @change="toggleExtension($event.target.checked)" />
                   <span class="dp-slider"></span>
                 </label>
               </div>
@@ -3015,43 +2942,36 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                   <button type="button" :class="{ on: form.extension_pricing === 'flat' }" @click="form.extension_pricing = 'flat'">Flat discount</button>
                 </div>
                 <div class="ext-value-row">
-                  <input type="number" min="0" v-model="form.extension_value" class="ext-value-input" />
+                  <input aria-label="Extension discount" type="number" min="0" v-model="form.extension_value" class="ext-value-input" />
                   <span class="ext-value-unit">{{ form.extension_pricing === 'flat' ? currencyForLocation(form.location_id) + ' off each extra slot' : '% off each extra slot' }}</span>
                 </div>
                 <div class="ext-value-row">
-                  <input type="number" min="1" max="12" v-model.number="form.extension_max_slots" class="ext-value-input" />
+                  <input aria-label="Maximum discounted slots" type="number" min="1" max="12" v-model.number="form.extension_max_slots" class="ext-value-input" />
                   <span class="ext-value-unit">discounted slot{{ Number(form.extension_max_slots) === 1 ? '' : 's' }} per chain (max)</span>
                 </div>
                 <div class="form-hint">Caps how many adjacent slots in one run get the discount. With <strong>{{ Math.max(1, Number(form.extension_max_slots) || 1) }}</strong>, picking 6pm discounts the next {{ Math.max(1, Number(form.extension_max_slots) || 1) }} slot{{ Math.max(1, Number(form.extension_max_slots) || 1) === 1 ? '' : 's' }}; anything beyond that is full price.</div>
               </div>
             </div>
 
-            <div v-if="listingSaveError" class="module-block-error">
-              <AlertTriangle :size="14" />{{ listingSaveError }}
-            </div>
-            <div class="section-footer">
-              <button class="btn btn-secondary sf-cancel" @click="requestExitEditor">Cancel</button>
-              <span v-if="savedFlag" class="saved"><Check :size="14" />Saved</span>
-              <button class="btn btn-primary" @click="saveSection('pricing')">{{ editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue' }}</button>
-            </div>
+
+
           </div>
         </section>
 
         <!-- PRICING -->
-        <section class="section-card" :class="{ open: openSection === 'pricing' }">
-          <button class="section-head" @click="openSection = openSection === 'pricing' ? '' : 'pricing'">
+        <section v-show="listingStep === 'pricing'" class="section-card" >
+          <div class="section-head">
             <span class="tick" :class="{ done: pricingComplete }"><Check :size="12" /></span>
             <div class="section-title">
               <div>Pricing</div>
               <div class="section-sub">Base price per slot &amp; time-range overrides</div>
             </div>
-            <ChevronDown :size="18" class="chev-icon" :class="{ rot: openSection === 'pricing' }" />
-          </button>
-          <div v-if="openSection === 'pricing'" class="section-body">
+          </div>
+          <div class="section-body">
             <div class="grid grid-2" style="margin-bottom:16px;">
               <div class="form-group"><label class="form-label">Base Price per Slot ({{ currencyForLocation(form.location_id) }}) <span class="req">*</span><InfoTip text="The default price a customer pays for one slot. Override it for specific days or times with the pricing grid below." /></label>
-                <input type="number" v-model="form.base_price" placeholder="e.g. 120" :class="{ 'input-invalid': (listingTriedSave && !(Number(form.base_price) > 0)) || pricingBelowBase }" />
-                <div v-if="pricingBelowBase" class="form-hint" style="color:#dc2626;">A price below is lower than this base price — lower the base price, or set a higher price in the grid.</div>
+                <input aria-label="Base price per slot" type="number" v-model="form.base_price" placeholder="e.g. 120" :class="{ 'input-invalid': (listingTriedSave && !(Number(form.base_price) > 0)) || pricingBelowBase }" />
+                <div v-if="pricingBelowBase" class="form-hint" style="color: var(--danger-ink);">A price below is lower than this base price — lower the base price, or set a higher price in the grid.</div>
               </div>
             </div>
             <div class="dp-head">
@@ -3061,7 +2981,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                 <InfoTip text="Charge more at peak times or on certain days. When off, every slot uses the base price above." />
               </div>
               <label class="dp-switch" :title="dynamicPricing ? 'On' : 'Off'">
-                <input type="checkbox" v-model="dynamicPricing" @change="onToggleDynamic" />
+                <input type="checkbox" aria-label="Dynamic pricing" v-model="dynamicPricing" @change="onToggleDynamic" />
                 <span class="dp-slider"></span>
               </label>
             </div>
@@ -3073,298 +2993,32 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               @update:groups="groups = $event" @update:cells="cells = $event" @update:pattern="pattern = $event"
               @below-base="pricingBelowBase = $event"
             />
-            <div class="section-footer">
-              <button class="btn btn-secondary sf-cancel" @click="requestExitEditor">Cancel</button>
-              <span v-if="savedFlag" class="saved"><Check :size="14" />Saved</span>
-              <button class="btn btn-primary" @click="saveSection('placement')">{{ editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue' }}</button>
-            </div>
+
           </div>
         </section>
 
         <!-- PLACEMENT & PAYMENT -->
-        <section class="section-card" :class="{ open: openSection === 'placement' }">
-          <button class="section-head" @click="openSection = openSection === 'placement' ? '' : 'placement'">
-            <span class="tick" :class="{ done: placementComplete && payComplete }"><Check :size="12" /></span>
-            <div class="section-title">
-              <div>Placement &amp; Payment</div>
-              <div class="section-sub">Where this listing appears, and how customers pay on each</div>
-            </div>
-            <ChevronDown :size="18" class="chev-icon" :class="{ rot: openSection === 'placement' }" />
-          </button>
-          <div v-if="openSection === 'placement'" class="section-body">
-
-            <!-- ── STEP 1 · Where can customers book this? ── -->
-            <div class="pp-step"><span class="pp-step-n">1</span> Where can customers book this?</div>
-            <div class="pp-step-sub">Turn on one or both. Each place has its own payment setup below.</div>
-
-            <div class="pl-opt" :class="{ on: form.show_on_marketplace }">
-              <div class="pl-opt-icon mkt"><Store :size="20" /></div>
-              <div class="pl-opt-body">
-                <div class="pl-opt-name">Bookboll Marketplace <span class="badge badge-success placement-rec">Recommended</span>
-                  <a v-if="editingExisting && editing && marketplaceState(editing).live" class="pl-open" :href="listingUrl(editing, 'marketplace')" target="_blank" rel="noopener" title="Open on Bookboll" @click.stop><ExternalLink :size="14" /></a>
-                </div>
-                <div class="pl-opt-desc">New customers find and book you on Bookboll. Reviewed before it goes live.</div>
-              </div>
-              <label class="dp-switch" :title="form.show_on_marketplace ? 'On' : 'Off'">
-                <input type="checkbox" v-model="form.show_on_marketplace" @change="onMarketplacePlacementChange" />
-                <span class="dp-slider"></span>
-              </label>
-            </div>
-
-            <div class="pl-opt" :class="{ on: form.show_on_provider_site }" style="margin-top:10px;">
-              <div class="pl-opt-icon site"><Globe :size="20" /></div>
-              <div class="pl-opt-body">
-                <div class="pl-opt-name">My own website
-                  <a v-if="editingExisting && editing && siteState(editing).live" class="pl-open" :href="listingUrl(editing, 'site')" target="_blank" rel="noopener" title="Open on your website" @click.stop><ExternalLink :size="14" /></a>
-                </div>
-                <div class="pl-opt-desc">Your own booking site — live instantly, 0% commission.</div>
-              </div>
-              <label class="dp-switch" :title="form.show_on_provider_site ? 'On' : 'Off'">
-                <input type="checkbox" v-model="form.show_on_provider_site" @change="onSitePlacementChange" />
-                <span class="dp-slider"></span>
-              </label>
-            </div>
-
-            <div v-if="!form.show_on_marketplace && !form.show_on_provider_site" class="placement-warn">
-              <AlertTriangle :size="14" /> This listing won't appear anywhere until you turn on a place above.
-            </div>
-
-
-            <!-- ── STEP 2 · Getting paid on the Marketplace (collapsible) ── -->
-            <div v-if="form.show_on_marketplace" class="pp-pay">
-              <button type="button" class="pp-chan pp-chan-toggle" :aria-expanded="payOpen.mkt" @click="payOpen.mkt = !payOpen.mkt">
-                <span class="pp-step-n">2</span>
-                <Store :size="15" />
-                <b>Bookboll Marketplace payment methods</b>
-                <span class="pp-chan-fee">You always keep {{ 100 - effectiveCommissionRate }}%</span>
-                <ChevronDown :size="16" class="pp-chan-chev" :class="{ rot: payOpen.mkt }" />
-              </button>
-
-              <!-- Collapsed: the facts at a glance, one click to edit -->
-              <div v-if="!payOpen.mkt" class="pp-sum" role="button" @click="payOpen.mkt = true">
-                <template v-if="mktPaySummary.length">
-                  <span v-for="s in mktPaySummary" :key="s" class="pp-sum-chip"><Check :size="11" /> {{ s }}</span>
-                </template>
-                <span v-else class="pp-sum-none"><AlertTriangle :size="12" /> No payment option on — click to choose</span>
-                <span v-if="!onlineAllowed && !locationIsBookbollOwned" class="pp-sum-warn">payout method needed for full online payment</span>
-                <span class="pp-sum-edit">Edit</span>
-              </div>
-
-              <template v-if="payOpen.mkt">
-              <div class="pp-chan-sub">
-                Bookboll's fee here is <strong>{{ effectiveCommissionRate }}%</strong> of every booking, on every option — the options below only change <strong>where the customer pays</strong>. If more than one is on, the customer picks at checkout.
-              </div>
-
-              <!-- ONE wallet status strip (replaces per-option warnings) -->
-              <div v-if="!onlineAllowed && !locationIsBookbollOwned" class="pay-status warn">
-                <AlertTriangle :size="14" />
-                <span v-if="userRole === 'provider'">You haven't connected a payout method yet, so money paid online can't reach you — <b>"Everything paid online" is locked</b>. The deposit option works without one.</span>
-                <span v-else>This provider has no payout method yet — "Everything paid online" can't be enabled until they add one.</span>
-                <a v-if="userRole === 'provider'" class="btn-link" @click.prevent="payoutModalSource = 'marketplace'; payoutModal = true">Set up payouts</a>
-              </div>
-              <div v-else-if="onlineAllowed && !locationIsBookbollOwned" class="pay-status ok">
-                <ShieldCheck :size="14" /> <span>Payouts ready — online money goes straight to your Bookings wallet.</span>
-              </div>
-
-              <!-- ── Provider: fee is fixed; choose where the customer pays ── -->
-              <template v-if="userRole === 'provider'">
-                <label class="pay-opt" :class="{ on: pay.deposit_enabled }">
-                  <input type="checkbox" v-model="pay.deposit_enabled" @change="onProviderDepositToggle" />
-                  <div class="pay-opt-body">
-                    <div class="pay-opt-title">Deposit online, rest upon customer arrival (offline) <span class="pay-chip rec">Simplest</span></div>
-                    <div class="pay-opt-desc">A small online deposit confirms the booking — that deposit is Bookboll's {{ payExample.feePct }}% platform fee. Everything paid at your venue is yours.</div>
-                    <div class="ps-bar">
-                      <span class="ps-seg fee" :style="{ width: Math.max(payExample.feePct, 8) + '%' }"></span>
-                      <span class="ps-seg venue" :style="{ width: (100 - Math.max(payExample.feePct, 8)) + '%' }"></span>
-                    </div>
-                    <div class="ps-legend">
-                      <span class="ps-key"><i class="fee"></i>{{ payCur }} {{ fmtPay(payExample.fee) }} online → Bookboll's fee ({{ payExample.feePct }}%)</span>
-                      <span class="ps-key"><i class="venue"></i>{{ payCur }} {{ fmtPay(payExample.share) }} at your venue → <b>yours</b></span>
-                    </div>
-                    <div v-if="!pay.online_payment_enabled" class="pay-hint-locked">To switch this off, first turn on "Everything paid online" below.</div>
-                  </div>
-                </label>
-
-                <label class="pay-opt" :class="{ on: pay.online_payment_enabled, dim: !onlineAllowed }">
-                  <input type="checkbox" v-model="pay.online_payment_enabled" @change="onProviderOnlineToggle" />
-                  <div class="pay-opt-body">
-                    <div class="pay-opt-title">Everything paid online <Lock v-if="!onlineAllowed" :size="12" class="pay-lock-ico" /></div>
-                    <div class="pay-opt-desc">The customer pays in full when booking. Your share lands in your Bookings wallet — nothing to collect on arrival.</div>
-                    <div class="ps-bar">
-                      <span class="ps-seg you" :style="{ width: (100 - Math.max(payExample.feePct, 8)) + '%' }"></span>
-                      <span class="ps-seg fee" :style="{ width: Math.max(payExample.feePct, 8) + '%' }"></span>
-                    </div>
-                    <div class="ps-legend">
-                      <span class="ps-key"><i class="you"></i>{{ payCur }} {{ fmtPay(payExample.share) }} → <b>your wallet</b></span>
-                      <span class="ps-key"><i class="fee"></i>{{ payCur }} {{ fmtPay(payExample.fee) }} → Bookboll's fee ({{ payExample.feePct }}%)</span>
-                    </div>
-                  </div>
-                </label>
-
-                <div v-if="pay.cash_on_arrival" class="pay-opt locked">
-                  <span class="lock-dot"></span>
-                  <div class="pay-opt-body">
-                    <div class="pay-opt-title">Cash — everything at the venue <span class="badge badge-info" style="margin-left:6px">Enabled by Bookboll</span></div>
-                    <div class="pay-opt-desc">Bookboll has allowed full cash payment at the venue for this listing.</div>
-                  </div>
-                </div>
-
-                <div v-if="!pay.deposit_enabled && !pay.online_payment_enabled" class="note" style="color:var(--error); margin-top:10px;">Keep at least one payment option on.</div>
-              </template>
-
-              <!-- ── Bookboll admin: set the fee, then enable any mix ── -->
-              <template v-else>
-                <div class="commission-override-box" style="margin-bottom:14px;">
-                  <div class="commission-override-title"><DollarSign :size="14" /> Platform fee (%)</div>
-                  <div class="commission-override-row">
-                    <div class="form-group" style="flex:1; max-width:200px; margin:0;">
-                      <label class="form-label">Percentage (%)</label>
-                      <input type="number" min="0" max="100" step="0.5" v-model="form.commission_rate" :placeholder="`Default ${effectiveCommissionRate}%`" />
-                    </div>
-                    <div class="commission-override-hint">
-                      Bookboll's cut of every booking — collected as the online deposit, or out of a full online payment. Blank = country default (<strong>{{ effectiveCommissionRate }}%</strong>).
-                    </div>
-                  </div>
-                </div>
-
-                <label class="pay-opt" :class="{ on: pay.deposit_enabled }">
-                  <input type="checkbox" v-model="pay.deposit_enabled" />
-                  <div class="pay-opt-body">
-                    <div class="pay-opt-title">Deposit online, rest upon customer arrival (offline)</div>
-                    <div class="pay-opt-desc">The online deposit is Bookboll's fee; the provider collects the rest on arrival.</div>
-                    <div class="ps-legend">
-                      <span class="ps-key"><i class="fee"></i>{{ payCur }} {{ fmtPay(payExample.fee) }} online → Bookboll</span>
-                      <span class="ps-key"><i class="venue"></i>{{ payCur }} {{ fmtPay(payExample.share) }} at the venue → provider</span>
-                    </div>
-                  </div>
-                </label>
-                <label class="pay-opt" :class="{ on: pay.online_payment_enabled }">
-                  <input type="checkbox" v-model="pay.online_payment_enabled" @change="onAdminOnlineToggle" />
-                  <div class="pay-opt-body">
-                    <div class="pay-opt-title">Everything paid online</div>
-                    <div class="pay-opt-desc">Paid in full at booking; the provider's share is credited to their wallet.</div>
-                    <div class="ps-legend">
-                      <span class="ps-key"><i class="you"></i>{{ payCur }} {{ fmtPay(payExample.share) }} → provider's wallet</span>
-                      <span class="ps-key"><i class="fee"></i>{{ payCur }} {{ fmtPay(payExample.fee) }} → Bookboll</span>
-                    </div>
-                    <div v-if="locationIsBookbollOwned" class="pay-hint-locked">Bookboll-owned listing — no wallet needed.</div>
-                  </div>
-                </label>
-                <label class="pay-opt" :class="{ on: pay.cash_on_arrival }">
-                  <input type="checkbox" v-model="pay.cash_on_arrival" />
-                  <div class="pay-opt-body">
-                    <div class="pay-opt-title">Cash — everything at the venue</div>
-                    <div class="pay-opt-desc">Nothing collected online; the customer pays the full amount in person.</div>
-                  </div>
-                </label>
-                <div v-if="!pay.cash_on_arrival && !pay.online_payment_enabled && !pay.deposit_enabled" class="note" style="color:var(--error); margin-top:10px;">Enable at least one payment method.</div>
-              </template>
-
-              <div class="ps-example-note">Example amounts use {{ payExample.isReal ? 'this listing\'s slot price' : 'a sample booking' }} of <strong>{{ payCur }} {{ fmtPay(payExample.total) }}</strong>.</div>
-              </template>
-            </div>
-            <!-- /marketplace payment options -->
-
-            <!-- ── STEP 3 · Getting paid on your own website (collapsible) ── -->
-            <div v-if="form.show_on_provider_site && !locationIsBookbollOwned" class="pp-pay site-pay">
-              <button type="button" class="pp-chan pp-chan-toggle" :aria-expanded="payOpen.site" @click="payOpen.site = !payOpen.site">
-                <span class="pp-step-n">{{ form.show_on_marketplace ? 3 : 2 }}</span>
-                <Globe :size="15" />
-                <b>Your own website payment methods</b>
-                <span class="pp-chan-fee free">0% commission — it's all yours</span>
-                <ChevronDown :size="16" class="pp-chan-chev" :class="{ rot: payOpen.site }" />
-              </button>
-
-              <!-- Collapsed: the facts at a glance, one click to edit -->
-              <div v-if="!payOpen.site" class="pp-sum" role="button" @click="payOpen.site = true">
-                <template v-if="sitePaySummary.length">
-                  <span v-for="s in sitePaySummary" :key="s" class="pp-sum-chip"><Check :size="11" /> {{ s }}</span>
-                </template>
-                <span v-else class="pp-sum-none"><AlertTriangle :size="12" /> No payment option on — click to choose</span>
-                <span v-if="!onlineAllowed" class="pp-sum-warn">payout method needed for full online payments &amp; deposit payouts</span>
-                <span class="pp-sum-edit">Edit</span>
-              </div>
-
-              <template v-if="payOpen.site">
-              <div class="pp-chan-sub">
-                Bookings from your own website have <strong>no Bookboll fee</strong>. Pick how customers can pay — keep at least one on; if more than one is on, the customer picks at checkout.
-              </div>
-
-              <!-- Payout explainer lives in the deposit modal now — only the good news stays inline -->
-              <div v-if="onlineAllowed" class="pay-status ok">
-                <ShieldCheck :size="14" /> <span>Payouts ready — deposits and online payments here go straight to your wallet, with no Bookboll fee.</span>
-              </div>
-
-              <!-- Deposit + balance on arrival -->
-              <label class="pay-opt" :class="{ on: pay.site_deposit_enabled, invalid: listingTriedSave && siteNoMethod }">
-                <input type="checkbox" v-model="pay.site_deposit_enabled" @change="onSiteDepositToggle" />
-                <div class="pay-opt-body">
-                  <div class="pay-opt-title">Deposit online, rest upon customer arrival (offline) <span class="pay-chip rec">Recommended</span></div>
-                  <div class="pay-opt-desc">A deposit confirms the booking (protects you from no-shows); the rest is paid at your venue. You choose the deposit size.</div>
-                  <div v-if="pay.site_deposit_enabled" class="ext-value-row" style="margin-top:8px;">
-                    <input type="number" min="10" max="100" v-model.number="pay.site_deposit_percentage" @change="onSiteDepositPctChange" class="ext-value-input" :class="{ 'input-invalid': siteDepositPctInvalid }" />
-                    <span class="ext-value-unit" :class="{ 'unit-invalid': siteDepositPctInvalid }">% deposit online · minimum 10%</span>
-                  </div>
-                  <div class="ps-bar">
-                    <span class="ps-seg" :class="onlineAllowed ? 'you' : 'warnseg'" :style="{ width: Math.max(payExample.sitePct, 8) + '%' }"></span>
-                    <span class="ps-seg venue" :style="{ width: (100 - Math.max(payExample.sitePct, 8)) + '%' }"></span>
-                  </div>
-                  <div class="ps-legend">
-                    <span v-if="onlineAllowed" class="ps-key"><i class="you"></i>{{ payCur }} {{ fmtPay(payExample.siteDep) }} online → <b>your wallet</b></span>
-                    <span v-else class="ps-key"><i class="warnseg"></i>{{ payCur }} {{ fmtPay(payExample.siteDep) }} online → Bookboll (until payouts are set up)</span>
-                    <span class="ps-key"><i class="venue"></i>{{ payCur }} {{ fmtPay(payExample.siteRest) }} at your venue → <b>yours</b></span>
-                  </div>
-                </div>
-              </label>
-
-              <!-- Full online -->
-              <label class="pay-opt" :class="{ on: pay.site_online_enabled, dim: !onlineAllowed, invalid: listingTriedSave && siteNoMethod }">
-                <input type="checkbox" v-model="pay.site_online_enabled" @change="onSiteOnlineToggle" />
-                <div class="pay-opt-body">
-                  <div class="pay-opt-title">Everything paid online <Lock v-if="!onlineAllowed" :size="12" class="pay-lock-ico" /></div>
-                  <div class="pay-opt-desc">Paid in full at booking, straight to your wallet — nothing to collect on arrival.</div>
-                  <div class="ps-bar"><span class="ps-seg you" style="width:100%"></span></div>
-                  <div class="ps-legend">
-                    <span class="ps-key"><i class="you"></i>{{ payCur }} {{ fmtPay(payExample.total) }} online → <b>your wallet</b> · 0% fee</span>
-                  </div>
-                </div>
-              </label>
-
-              <!-- Pay later (full cash) -->
-              <label class="pay-opt" :class="{ on: pay.site_cash_enabled, invalid: listingTriedSave && siteNoMethod }">
-                <input type="checkbox" v-model="pay.site_cash_enabled" @change="onSitePayLaterToggle" />
-                <div class="pay-opt-body">
-                  <div class="pay-opt-title">Pay at the venue <span class="pay-chip risk">No-show risk</span></div>
-                  <div class="pay-opt-desc">No prepayment — easiest for customers, but a no-show costs you the revenue and the blocked timeslot.</div>
-                  <div class="ps-bar"><span class="ps-seg venue" style="width:100%"></span></div>
-                  <div class="ps-legend">
-                    <span class="ps-key"><i class="venue"></i>{{ payCur }} {{ fmtPay(payExample.total) }} at your venue → <b>yours</b></span>
-                  </div>
-                </div>
-              </label>
-
-              <div v-if="siteNoMethod" class="note" style="color:var(--error); margin-top:10px;">Keep at least one payment option on for your own website.</div>
-              </template>
-            </div>
-            <div class="section-footer">
-              <button class="btn btn-secondary sf-cancel" @click="requestExitEditor">Cancel</button>
-              <span v-if="savedFlag" class="saved"><Check :size="14" />Saved</span>
-              <button class="btn btn-primary" @click="saveSection('addons')">{{ editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue' }}</button>
-            </div>
-          </div>
-        </section>
+        <ListingPayments v-show="listingStep === 'payments'"
+          :form="form" :payment="pay" :example="payExample" :currency="payCur" :role="userRole"
+          :channel="payChannel" :online-allowed="onlineAllowed" :bookboll-owned="locationIsBookbollOwned"
+          :payout-status="payoutStatus"
+          :show-errors="listingTriedSave" :paid-plan="ownSitePaidPlan"
+          @channel="payChannel = $event" @placement="updatePaymentPlacement" @method="updatePaymentMethod"
+          @commission="form.commission_rate = $event; markDirty()"
+          @upgrade="openUpgrade('website_commission')"
+          @connect="connectListingPayouts" @retry="checkProviderOnline(form.location_id)"
+          @choose-venue="selectListingStep('details')" />
 
         <!-- CONNECTED ADD-ONS -->
-        <section class="section-card" :class="{ open: openSection === 'addons' }">
-          <button class="section-head" @click="openSection = openSection === 'addons' ? '' : 'addons'">
+        <section v-show="listingStep === 'pricing'" class="section-card" >
+          <div class="section-head">
             <span class="tick" :class="{ done: addonsComplete }"><Check :size="12" /></span>
             <div class="section-title">
-              <div>Connected Add-Ons <span class="opt-tag">Optional</span></div>
+              <div>Booking add-ons <span class="opt-tag">Optional</span></div>
               <div class="section-sub">Extras customers can add to a booking (equipment, drinks…) — skip if you don't need any</div>
             </div>
-            <ChevronDown :size="18" class="chev-icon" :class="{ rot: openSection === 'addons' }" />
-          </button>
-          <div v-if="openSection === 'addons'" class="section-body">
+          </div>
+          <div class="section-body">
             <div class="conn-rows">
               <div v-for="(row, i) in connectedAddons" :key="i" class="conn-row">
                 <span class="conn-row-ico"><PackagePlus :size="15" /></span>
@@ -3381,7 +3035,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                   @edit="editAddon"
                   @delete="deleteAddon"
                 />
-                <button type="button" class="conn-row-x" @click="removeAddonRow(i)" title="Remove"><X :size="16" /></button>
+                <button type="button" class="conn-row-x" @click="removeAddonRow(i)" aria-label="Remove add-on from listing" title="Remove"><X :size="16" /></button>
               </div>
             </div>
             <div v-if="!connectedAddons.length" class="conn-hint">No add-ons connected yet. Add one below — customers can add it to their booking.</div>
@@ -3398,7 +3052,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                     <div class="ext-block-sub">Let customers extend their booking into the next free adjacent slot at a reduced price.</div>
                   </div>
                   <label class="dp-switch" :title="extensionEnabled ? 'On' : 'Off'">
-                    <input type="checkbox" :checked="extensionEnabled" @change="toggleExtension($event.target.checked)" />
+                    <input type="checkbox" aria-label="Session extension discount" :checked="extensionEnabled" @change="toggleExtension($event.target.checked)" />
                     <span class="dp-slider"></span>
                   </label>
                 </div>
@@ -3408,11 +3062,11 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                     <button type="button" :class="{ on: form.extension_pricing === 'flat' }" @click="form.extension_pricing = 'flat'">Flat discount</button>
                   </div>
                   <div class="ext-value-row">
-                    <input type="number" min="0" v-model="form.extension_value" class="ext-value-input" />
+                    <input aria-label="Extension discount" type="number" min="0" v-model="form.extension_value" class="ext-value-input" />
                     <span class="ext-value-unit">{{ form.extension_pricing === 'flat' ? currencyForLocation(form.location_id) + ' off each extra slot' : '% off each extra slot' }}</span>
                   </div>
                   <div class="ext-value-row">
-                    <input type="number" min="1" max="12" v-model.number="form.extension_max_slots" class="ext-value-input" />
+                    <input aria-label="Maximum discounted slots" type="number" min="1" max="12" v-model.number="form.extension_max_slots" class="ext-value-input" />
                     <span class="ext-value-unit">discounted slot{{ Number(form.extension_max_slots) === 1 ? '' : 's' }} per chain (max)</span>
                   </div>
                   <div class="form-hint">Caps how many adjacent slots in one run get the discount. With <strong>{{ Math.max(1, Number(form.extension_max_slots) || 1) }}</strong>, picking 6pm discounts the next {{ Math.max(1, Number(form.extension_max_slots) || 1) }} slot{{ Math.max(1, Number(form.extension_max_slots) || 1) === 1 ? '' : 's' }}; anything beyond that is full price.</div>
@@ -3420,26 +3074,20 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               </div>
             </div>
 
-            <div class="section-footer">
-              <button class="btn btn-secondary sf-cancel" @click="requestExitEditor">Cancel</button>
-              <span v-if="savedFlag" class="saved"><Check :size="14" />Saved</span>
-              <button v-if="!editingExisting" class="btn btn-secondary" @click="openSection = 'resources'">Skip</button>
-              <button class="btn btn-primary" @click="saveSection('resources')">{{ editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue' }}</button>
-            </div>
+
           </div>
         </section>
 
         <!-- RESOURCE REQUIREMENTS -->
-        <section class="section-card" :class="{ open: openSection === 'resources' }">
-          <button class="section-head" @click="openSection = openSection === 'resources' ? '' : 'resources'">
+        <section v-show="listingStep === 'pricing'" class="section-card" >
+          <div class="section-head">
             <span class="tick" :class="{ done: resourcesComplete }"><Check :size="12" /></span>
             <div class="section-title">
-              <div>Resource Requirements <span class="opt-tag">Optional</span></div>
+              <div>Shared resources <span class="opt-tag">Optional</span></div>
               <div class="section-sub">Shared resources a booking consumes (coach, hall…) — most listings don't need this</div>
             </div>
-            <ChevronDown :size="18" class="chev-icon" :class="{ rot: openSection === 'resources' }" />
-          </button>
-          <div v-if="openSection === 'resources'" class="section-body">
+          </div>
+          <div class="section-body">
             <div class="conn-rows">
               <div v-for="(row, i) in connectedResources" :key="i" class="conn-row">
                 <span class="conn-row-ico res"><Boxes :size="15" /></span>
@@ -3458,46 +3106,34 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                 />
                 <div class="conn-row-qty">
                   <span class="conn-item-qty-lbl">Qty</span>
-                  <button type="button" class="conn-qty-btn" :disabled="(Number(row.quantity)||1) <= 1" @click="row.quantity = Math.max(1, (Number(row.quantity)||1) - 1)"><Minus :size="13" /></button>
-                  <input type="number" v-model.number="row.quantity" min="1" class="conn-qty-input" />
-                  <button type="button" class="conn-qty-btn" @click="row.quantity = (Number(row.quantity)||1) + 1"><Plus :size="13" /></button>
+                  <button type="button" class="conn-qty-btn" aria-label="Decrease resource quantity" :disabled="(Number(row.quantity)||1) <= 1" @click="row.quantity = Math.max(1, (Number(row.quantity)||1) - 1)"><Minus :size="13" /></button>
+                  <input aria-label="Resource quantity" type="number" v-model.number="row.quantity" min="1" class="conn-qty-input" />
+                  <button type="button" class="conn-qty-btn" aria-label="Increase resource quantity" @click="row.quantity = (Number(row.quantity)||1) + 1"><Plus :size="13" /></button>
                 </div>
-                <button type="button" class="conn-row-x" @click="removeResourceRow(i)" title="Remove"><X :size="16" /></button>
+                <button type="button" class="conn-row-x" @click="removeResourceRow(i)" aria-label="Remove resource from listing" title="Remove"><X :size="16" /></button>
               </div>
             </div>
             <div v-if="!connectedResources.length" class="conn-hint">No resources required. Add one below to reserve it for every booking of this listing.</div>
             <div class="conn-actions">
               <button type="button" class="conn-add-btn" @click="addResourceRow"><Plus :size="15" />{{ connectedResources.length ? 'Add another resource' : 'Require a resource' }}</button>
             </div>
-            <div class="section-footer">
-              <button class="btn btn-secondary sf-cancel" @click="requestExitEditor">Cancel</button>
-              <span v-if="savedFlag" class="saved"><Check :size="14" />Saved</span>
-              <button v-if="!editingExisting" class="btn btn-secondary" @click="openSection = 'images'">Skip</button>
-              <button class="btn btn-primary" @click="saveSection('images')">{{ editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue' }}</button>
-            </div>
+
           </div>
         </section>
 
         <!-- IMAGES -->
-        <section class="section-card" :class="{ open: openSection === 'images' }">
-          <button class="section-head" @click="openSection = openSection === 'images' ? '' : 'images'">
+        <section v-show="listingStep === 'details'" class="section-card" >
+          <div class="section-head">
             <span class="tick" :class="{ done: imagesComplete }"><Check :size="12" /></span>
             <div class="section-title">
-              <div>Images</div>
+              <div>Photos</div>
               <div class="section-sub">Upload one or more photos — the first is the cover</div>
             </div>
-            <ChevronDown :size="18" class="chev-icon" :class="{ rot: openSection === 'images' }" />
-          </button>
-          <div v-if="openSection === 'images'" class="section-body">
+          </div>
+          <div class="section-body">
 
             <!-- Gallery grid (first image is the cover) -->
-            <div v-if="(form.photos || []).length" class="img-grid">
-              <div v-for="(src, i) in form.photos" :key="i" class="img-tile">
-                <img :src="src" alt="" />
-                <span v-if="i === 0" class="img-cover-badge">Cover</span>
-                <button type="button" class="img-remove" @click="removeListingImage(i)" title="Remove"><X :size="13" /></button>
-              </div>
-            </div>
+            <PhotoOrderEditor :model-value="form.photos || []" @update:model-value="updateListingPhotos" />
 
             <!-- Drop zone (always available — add as many as you like) -->
             <div class="img-drop-zone"
@@ -3530,28 +3166,45 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               </div>
             </details>
 
-            <div class="section-footer">
-              <button class="btn btn-secondary sf-cancel" @click="requestExitEditor">Cancel</button>
-              <button v-if="formDirty" class="btn btn-secondary" @click="saveListingDraftNow">Save draft</button>
-              <span v-if="savedFlag" class="saved"><Check :size="14" />Saved</span>
-              <button class="btn btn-primary" @click="saveAndClose">{{ editingExisting ? 'Save &amp; Close' : 'Create Listing' }}</button>
-            </div>
+
 
           </div>
         </section>
         </div><!-- /.sections -->
+
+      <div v-if="listingStep === 'review'">
+        <div class="cf-summary"><img v-if="form.photos?.[0]" :src="form.photos[0]" alt="Listing cover" /><div><h3>{{ form.name }}</h3><p>{{ listingVenueName }} · {{ form.sport_category }}</p><div class="cf-summary-price">{{ payCur }} {{ Number(form.base_price).toLocaleString() }} <small>/ {{ durationLabel(form.slot_duration) }}</small></div></div></div>
+        <div class="cf-review">
+          <section class="cf-review-card"><div class="cf-review-head"><h3>Customer details</h3><button @click="selectListingStep('details')">Edit details</button></div><p class="cf-review-text">{{ form.description }}</p><dl style="margin-top:14px"><dt>Photos</dt><dd>{{ form.photos?.length || 0 }} added</dd><dt>Who can book</dt><dd>{{ [form.show_on_customer && 'Customers', form.show_on_admin && 'Staff'].filter(Boolean).join(' & ') || 'Nobody — inactive' }}</dd></dl></section>
+          <section class="cf-review-card"><div class="cf-review-head"><h3>Availability</h3><button @click="selectListingStep('availability')">Edit availability</button></div><dl><dt>Booking length</dt><dd>{{ durationLabel(form.slot_duration) }}</dd><dt>Buffer</dt><dd>{{ Number(form.buffer_time) ? durationLabel(form.buffer_time) : 'No gap between bookings' }}</dd><dt>Start times</dt><dd>{{ customStartTimes.length ? customStartTimes.map(fmt12).join(', ') : 'Generated from opening hours' }}</dd><template v-for="day in hours" :key="day.day_of_week"><dt>{{ listingDayNames[day.day_of_week] }}</dt><dd>{{ day.is_open ? day.periods.map(p => p.open_time === p.close_time ? 'Open 24 hours' : fmtRange12(p.open_time, p.close_time)).join(', ') : 'Closed' }}</dd></template></dl></section>
+          <section class="cf-review-card"><div class="cf-review-head"><h3>Pricing &amp; extras</h3><button @click="selectListingStep('pricing')">Edit pricing</button></div><dl><dt>Base price</dt><dd>{{ payCur }} {{ form.base_price }} per {{ durationLabel(form.slot_duration) }}</dd><dt>Time-based prices</dt><dd>{{ dynamicPricing ? 'Enabled — custom prices override the base price' : 'Off — same base price at all times' }}</dd><dt>Session extensions</dt><dd>{{ extensionEnabled ? 'Enabled' : 'Off' }}</dd><dt>Add-ons</dt><dd>{{ connectedAddons.filter(row => row.addon_id).length }} connected</dd><dt>Resources</dt><dd>{{ connectedResources.filter(row => row.resource_id).length }} connected</dd></dl></section>
+          <section class="cf-review-card"><div class="cf-review-head"><h3>Where customers can book</h3><button @click="selectListingStep('payments')">Edit payments</button></div><dl><dt>Bookboll marketplace</dt><dd>{{ form.show_on_marketplace ? mktPaySummary.join(' · ') : 'Hidden' }}<br v-if="form.show_on_marketplace && userRole === 'provider'" /><small v-if="form.show_on_marketplace && userRole === 'provider'">New listings and content changes need Bookboll approval.</small></dd><dt>Your website</dt><dd>{{ form.show_on_provider_site ? sitePaySummary.join(' · ') : 'Hidden' }}</dd></dl></section>
+        </div>
+      </div>
       </div><!-- /.bb-drawer-body -->
+      </div><!-- /.cf-workspace -->
+      <div class="cf-footer">
+        <p v-if="listingSaveError" class="cf-footer-error" role="alert">{{ listingSaveError }}</p>
+        <span class="cf-footer-note">{{ listingSaving ? 'Saving your listing…' : 'Changes are saved only when you finish. Drafts stay in this browser.' }}</span>
+        <button class="btn btn-secondary" :disabled="listingSaving || imageUploading" @click="saveListingDraftNow">Save draft &amp; exit</button>
+        <button v-if="listingStepIndex > 0" class="btn btn-secondary" :disabled="listingSaving" @click="selectListingStep(LISTING_STEPS[listingStepIndex - 1].id)">Back</button>
+        <button v-if="listingStep !== 'review'" class="btn btn-primary" :disabled="listingSaving" @click="continueListing">{{ listingStep === 'payments' ? 'Review listing' : 'Continue' }}</button>
+        <button v-else class="btn btn-primary" :disabled="listingSaving || imageUploading" @click="saveAndClose">{{ listingSaving ? 'Saving…' : (editingExisting ? 'Save changes' : 'Create listing') }}</button>
+      </div>
     </div><!-- /.bb-drawer -->
     </div><!-- /.bb-drawer-backdrop -->
     </teleport>
 
+    <!-- Nested editor dialogs must sit outside the inert dashboard background. -->
+    <Teleport to="body">
+    <div :style="adminBrandVars">
     <!-- LOCATION MODAL -->
     <!-- Shared location form (new / edit) -->
     <LocationModal :open="locModal" :editing="locEditing" @close="locModal=false; locFromListingForm=false" @saved="onLocationSaved" />
 
     <!-- MARKETPLACE-OFF CONFIRM (icon-led) -->
     <div v-if="mktConfirm" class="modal-backdrop" style="z-index:3600" @click.self="keepOnMarketplace">
-      <div class="modal mkt-modal">
+      <div class="modal mkt-modal" v-dialog="keepOnMarketplace">
         <div class="mkt-icon"><Store :size="28" /></div>
         <div class="mkt-title">Hide from Bookboll Marketplace?</div>
         <div class="mkt-points">
@@ -3568,54 +3221,27 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
     <!-- NEED A LOCATION FIRST (no locations created yet) -->
     <div v-if="needLocationModal" class="modal-backdrop" style="z-index:3600" @click.self="needLocationModal=false">
-      <div class="modal need-loc-modal">
+      <div class="modal need-loc-modal" v-dialog="() => needLocationModal = false">
         <div class="nlm-icon"><Landmark :size="26" /></div>
-        <div class="nlm-title">Create a location first</div>
-        <p class="nlm-text">Listings live inside a location (your venue, club or site). Add your first location, then you can create venue listings inside it.</p>
+        <div class="nlm-title">Add your first venue</div>
+        <p class="nlm-text">A venue holds your business location and opening hours. Then add the services, activities or spaces customers can book.</p>
         <div class="nlm-steps">
-          <div class="nlm-step"><span class="nlm-step-n">1</span><div><strong>Add a location</strong><span>Name, address &amp; opening hours</span></div></div>
-          <div class="nlm-step muted"><span class="nlm-step-n">2</span><div><strong>Add venue listings</strong><span>Bookable courts, studios &amp; more</span></div></div>
+          <div class="nlm-step"><span class="nlm-step-n">1</span><div><strong>Add a venue</strong><span>Name, city &amp; opening hours</span></div></div>
+          <div class="nlm-step muted"><span class="nlm-step-n">2</span><div><strong>Create a listing</strong><span>Tours, courts, studios &amp; more</span></div></div>
         </div>
         <div class="nlm-actions">
           <button class="btn btn-secondary" @click="needLocationModal=false">Not now</button>
-          <button class="btn btn-primary" @click="needLocationModal=false; openNewLoc()"><Plus :size="15" />Create location</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- OWN-SITE DEPOSIT, NO PAYOUT METHOD YET: explain where the money goes + 3 ways forward -->
-    <div v-if="siteDepositModal" class="modal-backdrop" style="z-index:3600" @click.self="siteDepositModal=false">
-      <div class="modal sd-modal">
-        <button class="sd-x" @click="siteDepositModal=false" aria-label="Close"><X :size="18" /></button>
-        <div class="sd-icon"><Wallet :size="26" /></div>
-        <div class="sd-title">Where do your deposits go?</div>
-        <div class="sd-facts">
-          <div class="sd-fact warn"><AlertTriangle :size="15" /><span>No payout method yet — online deposits <b>become Bookboll's platform fee</b>, not held for you.</span></div>
-          <div class="sd-fact ok"><ShieldCheck :size="15" /><span>Money paid <b>at your venue</b> is always 100% yours.</span></div>
-        </div>
-        <div class="sd-actions">
-          <button class="sd-btn" @click="siteDepositConnect">
-            <Wallet :size="16" />
-            <span><span class="sd-btn-title">Connect my payout method</span><small>Deposits land in your wallet + unlocks "Everything paid online"</small></span>
-          </button>
-          <button class="sd-btn" @click="siteDepositAccept">
-            <Check :size="16" />
-            <span><span class="sd-btn-title">Turn deposits on anyway <em class="pay-chip rec">Recommended</em></span><small>I understand deposits are Bookboll's fee until I connect payouts</small></span>
-          </button>
-          <button class="sd-btn" @click="siteDepositPayAtVenue">
-            <Landmark :size="16" />
-            <span><span class="sd-btn-title">Pay at the venue instead</span><small>No online payments — the full amount is collected at your venue</small></span>
-          </button>
+          <button class="btn btn-primary" @click="needLocationModal=false; openNewLoc()"><Plus :size="15" />Add venue</button>
         </div>
       </div>
     </div>
 
     <!-- CHANGE-LOCATION CONFIRM (connected add-ons/resources will detach) -->
     <div v-if="locChangeModal" class="modal-backdrop" style="z-index:3600" @click.self="cancelLocationChange">
-      <div class="modal loc-change-modal">
+      <div class="modal loc-change-modal" v-dialog="cancelLocationChange">
         <div class="lcm-icon"><Landmark :size="26" /></div>
         <div class="lcm-title">Move this listing to {{ locationName(locChangeModal.newLoc) }}?</div>
-        <p class="lcm-text">Add-ons &amp; resources only work at their own location. These belong to <strong>{{ locationName(locChangeModal.prevLoc) }}</strong> and will be removed from this listing:</p>
+        <p class="lcm-text">Add-ons &amp; resources belong to a specific venue. These belong to <strong>{{ locationName(locChangeModal.prevLoc) }}</strong> and will be removed from this listing:</p>
         <div class="lcm-list">
           <div v-for="a in locChangeModal.addons" :key="'a'+a.id" class="lcm-item">
             <span class="lcm-item-ico addon"><PackagePlus :size="15" /></span>
@@ -3630,7 +3256,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
         </div>
         <p class="lcm-hint">Nothing is deleted — you can re-add matching items from {{ locationName(locChangeModal.newLoc) }} afterwards.</p>
         <div class="lcm-actions">
-          <button class="btn btn-secondary" @click="cancelLocationChange">Keep current location</button>
+          <button class="btn btn-secondary" @click="cancelLocationChange">Keep current venue</button>
           <button class="btn btn-danger" @click="confirmLocationChange">Move &amp; remove {{ locChangeModal.addons.length + locChangeModal.resources.length }} item{{ (locChangeModal.addons.length + locChangeModal.resources.length) !== 1 ? 's' : '' }}</button>
         </div>
       </div>
@@ -3638,10 +3264,10 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
     <!-- PAUSE ELIGIBILITY MODAL -->
     <div v-if="pauseModal" class="modal-backdrop" style="z-index:3400" @click.self="pauseModal=false">
-      <div class="modal" style="max-width: 500px;">
+      <div class="modal" v-dialog="() => pauseModal = false" style="max-width: 500px;">
         <div class="modal-header">
           <div class="modal-title">Pause Eligibility</div>
-          <button class="btn-icon" @click="pauseModal=false"><X :size="18" /></button>
+          <button class="btn-icon" @click="pauseModal=false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <div class="pause-info">
@@ -3662,20 +3288,20 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
     <!-- NEW ADD-ON MODAL -->
     <div v-if="newAddonModal" class="modal-backdrop" style="z-index:3400" @click.self="newAddonModal=false">
-      <div class="modal" style="max-width: 560px;">
+      <div class="modal catalog-item-modal" v-dialog="() => newAddonModal = false" style="max-width: 560px;">
         <div class="modal-header">
           <div class="modal-title">{{ addonEditingId ? 'Edit Add-On' : 'New Add-On' }}</div>
-          <button class="btn-icon" @click="newAddonModal=false"><X :size="18" /></button>
+          <button class="btn-icon" @click="newAddonModal=false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">Location <span class="req">*</span><InfoTip text="The add-on is tied to this location and only appears for listings at the same location." /></label>
-            <select v-model="newAddonForm.location_id">
-              <option value="">Select location</option>
+          <div class="form-group"><label for="addon-venue" class="form-label">Venue <span class="req">*</span><InfoTip text="The add-on belongs to this venue and is available to its listings." /></label>
+            <select id="addon-venue" v-model="newAddonForm.location_id">
+              <option value="">Select venue</option>
               <option v-for="lo in listingFormLocations" :key="lo.id" :value="lo.id">{{ lo.name }}</option>
             </select>
           </div>
-          <div class="form-group"><label class="form-label">Name <span class="req">*</span></label><input v-model="newAddonForm.name" placeholder="e.g. Water bottle, Coaching, Racket rental" /></div>
-          <div class="form-group"><label class="form-label">Description</label><textarea v-model="newAddonForm.description" rows="2" placeholder="Short description customers see when adding it"></textarea></div>
+          <div class="form-group"><label for="addon-name" class="form-label">Name <span class="req">*</span></label><input id="addon-name" v-model="newAddonForm.name" placeholder="e.g. Water bottle, Coaching, Racket rental" /></div>
+          <div class="form-group"><label for="addon-description" class="form-label">Description</label><textarea id="addon-description" v-model="newAddonForm.description" rows="2" placeholder="Short description customers see when adding it"></textarea></div>
 
           <div class="form-group">
             <label class="form-label">Image</label>
@@ -3684,7 +3310,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               <button class="img-remove-btn" @click="newAddonForm.image_url = ''; addonImgError = ''" title="Remove image"><X :size="14" /></button>
             </div>
             <div v-else
-              class="img-drop-zone"
+              class="img-drop-zone" role="button" tabindex="0" aria-label="Choose add-on photo" @keydown.enter.prevent="!addonImgUploading && addonFileInput?.click()" @keydown.space.prevent="!addonImgUploading && addonFileInput?.click()"
               :class="{ 'drop-active': addonImgDropActive, 'uploading': addonImgUploading }"
               @dragover.prevent="addonImgDropActive = true"
               @dragleave.prevent="addonImgDropActive = false"
@@ -3697,67 +3323,67 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               </template>
               <template v-else>
                 <Upload :size="24" />
-                <span class="drop-label">Drag &amp; drop an image, or <strong>click to browse</strong></span>
+                <span class="drop-label"><strong>Choose a photo</strong> <span class="form-hint">Optional · shown to customers</span></span>
               </template>
             </div>
             <div v-if="addonImgError" class="img-upload-error">{{ addonImgError }}</div>
           </div>
 
-          <div class="form-group"><label class="form-label">Price ({{ currencyForLocation(newAddonForm.location_id) }})</label><input type="number" min="0" v-model="newAddonForm.price" placeholder="0" /></div>
-          <div class="form-hint">A simple add-on product — customers pick a quantity at checkout and pay price × quantity, once per booking.</div>
+          <div class="form-group"><label for="addon-price" class="form-label">Price ({{ currencyForLocation(newAddonForm.location_id) }})</label><input id="addon-price" type="number" min="0" v-model="newAddonForm.price" placeholder="0" /></div>
+          <div class="form-hint">Customers pay this price for each item they add. Creating an add-on saves it to your venue and connects it to this listing.</div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="newAddonModal=false">Cancel</button>
-          <button class="btn btn-primary" :disabled="!newAddonForm.location_id || !newAddonForm.name.trim()" @click="saveNewAddon">{{ addonEditingId ? 'Save' : 'Create' }}</button>
+          <button class="btn btn-primary" :disabled="!newAddonForm.location_id || !newAddonForm.name.trim()" @click="saveNewAddon">{{ addonEditingId ? 'Save add-on' : 'Create & connect' }}</button>
         </div>
       </div>
     </div>
 
     <!-- NEW RESOURCE MODAL -->
     <div v-if="newResourceModal" class="modal-backdrop" style="z-index:3400" @click.self="newResourceModal=false">
-      <div class="modal" style="max-width: 560px;">
+      <div class="modal catalog-item-modal" v-dialog="() => newResourceModal = false" style="max-width: 560px;">
         <div class="modal-header">
           <div class="modal-title">{{ resourceEditingId ? 'Edit Resource' : 'New Resource' }}</div>
-          <button class="btn-icon" @click="newResourceModal=false"><X :size="18" /></button>
+          <button class="btn-icon" @click="newResourceModal=false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Location <span class="req">*</span><InfoTip text="The resource is tied to this location and only appears for listings at the same location." /></label>
-            <select v-model="newResourceForm.location_id">
-              <option value="">Select location</option>
+            <label for="resource-venue" class="form-label">Venue <span class="req">*</span><InfoTip text="The resource belongs to this venue and can be shared by its listings." /></label>
+            <select id="resource-venue" v-model="newResourceForm.location_id">
+              <option value="">Select venue</option>
               <option v-for="lo in listingFormLocations" :key="lo.id" :value="lo.id">{{ lo.name }}</option>
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Resource Name <span class="req">*</span></label>
-            <input v-model="newResourceForm.name" placeholder="e.g. Indoor Court A" />
+            <label for="resource-name" class="form-label">Resource Name <span class="req">*</span></label>
+            <input id="resource-name" v-model="newResourceForm.name" placeholder="e.g. Indoor Court A" />
           </div>
           <div class="form-group">
-            <label class="form-label">Total Quantity <span class="req">*</span></label>
-            <input type="number" min="1" v-model="newResourceForm.quantity" />
+            <label for="resource-quantity" class="form-label">Total Quantity <span class="req">*</span></label>
+            <input id="resource-quantity" type="number" min="1" v-model="newResourceForm.quantity" /><div class="form-hint">How many are available at once? Each booking reserves the quantity set on the listing.</div>
           </div>
           <div class="form-group">
-            <label class="form-label">Unit Type <span class="form-hint">optional</span></label>
-            <input v-model="newResourceForm.type" placeholder="e.g. Court, Field, Room" />
+            <label for="resource-type" class="form-label">Unit Type <span class="form-hint">optional</span></label>
+            <input id="resource-type" v-model="newResourceForm.type" placeholder="e.g. Court, Field, Room" />
           </div>
           <div class="form-group">
-            <label class="form-label">Status <span class="req">*</span></label>
-            <select v-model="newResourceForm.status"><option value="active">Active</option><option value="inactive">Inactive</option></select>
+            <label for="resource-status" class="form-label">Status <span class="req">*</span></label>
+            <select id="resource-status" v-model="newResourceForm.status"><option value="active">Active</option><option value="inactive">Inactive</option></select>
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" @click="newResourceModal=false">Cancel</button>
-          <button class="btn btn-primary" :disabled="!newResourceForm.location_id || !newResourceForm.name.trim()" @click="saveNewResource">{{ resourceEditingId ? 'Save' : 'Create' }}</button>
+          <button class="btn btn-primary" :disabled="!newResourceForm.location_id || !newResourceForm.name.trim()" @click="saveNewResource">{{ resourceEditingId ? 'Save resource' : 'Create & connect' }}</button>
         </div>
       </div>
     </div>
 
     <!-- PAYMENT ACCOUNT MODAL -->
     <div v-if="payAcctModal" class="modal-backdrop" style="z-index:3400" @click.self="payAcctModal=false">
-      <div class="modal" style="max-width: 520px;">
+      <div class="modal" v-dialog="() => payAcctModal = false" style="max-width: 520px;">
         <div class="modal-header">
           <div class="modal-title">{{ payAcctEditing ? 'Manage Payment Account' : 'Connect Payment Account' }}</div>
-          <button class="btn-icon" @click="payAcctModal=false"><X :size="18" /></button>
+          <button class="btn-icon" @click="payAcctModal=false" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <div class="acct-modal-icon"><Landmark :size="26" /></div>
@@ -3787,12 +3413,14 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
       </div>
     </div>
 
-    <PayoutSetupModal :open="payoutModal" purpose="bookings" :country-id="formCountryId" @close="payoutModal = false" @fallback="payoutFallbackDeposit" />
+    <PayoutSetupModal :open="payoutModal" purpose="bookings" :country-id="String(formCountryId || '')" @close="payoutModal = false" @fallback="payoutFallbackDeposit" />
+    </div>
+    </Teleport>
 
     <!-- Post-submit status: where the listing stands, per placement -->
     <Teleport to="body">
       <div v-if="submittedInfo" class="ls-sub-backdrop" @click.self="submittedInfo = null">
-        <div class="ls-sub" role="dialog" aria-modal="true">
+        <div class="ls-sub" v-dialog="() => submittedInfo = null" role="dialog" aria-modal="true">
           <div class="ls-sub-badge"><Check :size="26" /></div>
           <h3 class="ls-sub-title">{{ submittedInfo.mode === 'content' ? 'Saved — you stay live' : (submittedInfo.wasEdit ? 'Changes submitted!' : 'Listing submitted!') }}</h3>
           <div class="ls-sub-name">{{ submittedInfo.name }}</div>
@@ -3826,37 +3454,44 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 </template>
 
 <style scoped>
+.catalog-load-message { color:var(--text-muted); font-size:14px; padding:12px 0; }
+.catalog-load-error { color:var(--danger-ink); }
+.section-card .section-head { cursor:default; }
+.section-card .section-head:hover { background:transparent; }
+.cf-access h3 { font-size:15px; margin:0 0 18px; color:var(--text); }
+.cf-access { margin-top:24px; padding:18px; }
+
 /* ── Post-submit status modal ──────────────────────────────────────────────── */
 .ls-sub-backdrop { position: fixed; inset: 0; z-index: 4400; background: rgba(15,23,42,.55); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .ls-sub { width: 100%; max-width: 400px; background: var(--surface, #ffffff); border-radius: 18px; padding: 26px 22px 20px; text-align: center; box-shadow: 0 24px 64px rgba(15,23,42,.32); }
-.ls-sub-badge { width: 58px; height: 58px; margin: 0 auto 12px; border-radius: 50%; background: #f0fdf4; border: 1.5px solid #bbf7d0; color: #16a34a; display: flex; align-items: center; justify-content: center; }
+.ls-sub-badge { width: 58px; height: 58px; margin: 0 auto 12px; border-radius: 50%; background: var(--positive-bg, #f0fdf4); border: 1.5px solid var(--positive-border, #bbf7d0); color: var(--positive-ink, #16a34a); display: flex; align-items: center; justify-content: center; }
 .ls-sub-title { font-size: 19px; font-weight: 800; color: var(--text, #0f172a); margin: 0 0 2px; }
 .ls-sub-name { font-size: 13px; color: var(--text-muted, #64748b); margin-bottom: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ls-sub-rows { display: flex; flex-direction: column; gap: 8px; text-align: left; margin-bottom: 12px; }
 .ls-sub-row { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; background: var(--bg, #f8fafc); }
 .ls-sub-ic { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.ls-sub-ic.ok { background: #f0fdf4; color: #16a34a; }
-.ls-sub-ic.wait { background: #fffbeb; color: #b45309; }
+.ls-sub-ic.ok { background: var(--positive-bg, #f0fdf4); color: var(--positive-ink, #16a34a); }
+.ls-sub-ic.wait { background: var(--warning-bg, #fffbeb); color: var(--warning-ink, #b45309); }
 .ls-sub-l { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 700; color: var(--text, #0f172a); }
 .ls-sub-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 800; flex-shrink: 0; }
-.ls-sub-chip.live { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+.ls-sub-chip.live { background: var(--positive-bg, #f0fdf4); color: var(--positive-ink, #15803d); border: 1px solid var(--positive-border, #bbf7d0); }
 .ls-sub-chip.live i { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
-.ls-sub-chip.wait { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.ls-sub-chip.wait { background: var(--warning-bg, #fffbeb); color: var(--warning-ink, #b45309); border: 1px solid var(--warning-border, #fde68a); }
 .ls-sub-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted, #64748b); margin-bottom: 16px; }
 .ls-sub-btn { width: 100%; padding: 12px; border: none; border-radius: 11px; background: var(--primary, #0f766e); color: #fff; font-size: 14.5px; font-weight: 800; cursor: pointer; }
 .ls-sub-btn:hover { filter: brightness(1.06); }
 
-.assigned-chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
-.assigned-chip.bookboll-chip { background: #f0f9ff; border-color: #bae6fd; color: #0369a1; }
+.assigned-chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--positive-bg, #ecfdf5); border: 1px solid var(--positive-border, #a7f3d0); color: var(--positive-ink, #065f46); border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+.assigned-chip.bookboll-chip { background: var(--info-bg, #f0f9ff); border-color: var(--info-border, #bae6fd); color: var(--info-ink, #0369a1); }
 
 /* Location modal tabs */
 .loc-tabs { display: flex; border-bottom: 1px solid var(--border); margin: 0 -24px 20px; padding: 0 24px; gap: 2px; }
 .loc-tab { padding: 10px 16px; font-size: 13px; font-weight: 500; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; cursor: pointer; transition: all .15s; }
-.loc-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.loc-tab.active { color: var(--primary-ink); border-bottom-color: var(--primary); font-weight: 600; }
 .loc-tab:hover:not(.active) { color: var(--text); background: var(--bg); border-radius: 6px 6px 0 0; }
 
 /* Out-of-bounds warning */
-.oob-warning { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 13px; color: #9a3412; line-height: 1.5; margin-bottom: 14px; }
+.oob-warning { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); border-radius: 8px; font-size: 13px; color: var(--warning-ink, #9a3412); line-height: 1.5; margin-bottom: 14px; }
 
 /* Form hint text */
 .form-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 5px; line-height: 1.4; }
@@ -3864,7 +3499,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 /* Commission override (admin only) */
 .commission-override-box {
   margin-top: 18px; padding: 14px 16px;
-  background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
 }
 .commission-override-title {
   display: flex; align-items: center; gap: 6px;
@@ -3877,7 +3512,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 /* ── Dynamic pricing header + toggle ───────────────────────────── */
 .dp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
 .dp-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: var(--text); }
-.dp-rec { font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--primary); background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 999px; padding: 2px 8px; line-height: 1.4; }
+.dp-rec { font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--primary-ink); background: var(--primary-soft, #f0fdfa); border: 1px solid var(--primary-border, #99f6e4); border-radius: 999px; padding: 2px 8px; line-height: 1.4; }
 
 /* Booking colour picker — matches the Membership Program form's swatches */
 .pg-color-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -3889,7 +3524,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .dp-q {
   display: inline-flex; align-items: center; justify-content: center;
   width: 17px; height: 17px; border-radius: 50%;
-  background: var(--border, #e2e8f0); color: #475569; font-size: 11px; font-weight: 700;
+  background: var(--border, #e2e8f0); color: var(--text-secondary, #475569); font-size: 11px; font-weight: 700;
   cursor: help; user-select: none;
 }
 .dp-q:hover { background: #cbd5e1; }
@@ -3899,51 +3534,51 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .dp-slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 999px; transition: background .15s; }
 .dp-slider::before {
   content: ''; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px;
-  background: var(--surface, #ffffff); border-radius: 50%; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  background: #fff; border-radius: 50%; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2);
 }
 .dp-switch input:checked + .dp-slider { background: var(--primary); }
 .dp-switch input:checked + .dp-slider::before { transform: translateX(18px); }
 
 /* ── Placement section (where the listing appears) ─────────────── */
 .pl-opt { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1.5px solid var(--border); border-radius: 12px; margin-bottom: 12px; transition: border-color .15s, background .15s; }
-.pl-opt.on { border-color: var(--primary); background: #f0fdfa; }
+.pl-opt.on { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); }
 .pl-opt-icon { width: 44px; height: 44px; border-radius: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.pl-opt-icon.mkt { background: #ccfbf1; color: #0f766e; }
-.pl-opt-icon.site { background: #ede9fe; color: #6d28d9; }
+.pl-opt-icon.mkt { background: var(--primary-soft, #ccfbf1); color: var(--primary-ink, #0f766e); }
+.pl-opt-icon.site { background: var(--purple-bg, #ede9fe); color: var(--purple-ink, #6d28d9); }
 .pl-opt-body { flex: 1; min-width: 0; }
 .pl-opt-name { font-size: 14.5px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pl-open { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border-radius: 6px; color: var(--primary); opacity: .85; }
-.pl-open:hover { opacity: 1; background: #ccfbf1; }
+.pl-open { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border-radius: 6px; color: var(--primary-ink); opacity: .85; }
+.pl-open:hover { opacity: 1; background: var(--primary-soft, #ccfbf1); }
 .pl-opt-desc { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }
 .placement-rec { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 7px; }
-.placement-warn { display: flex; align-items: center; gap: 7px; margin-top: 2px; padding: 9px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; font-size: 12.5px; color: #92400e; }
+.placement-warn { display: flex; align-items: center; gap: 7px; margin-top: 2px; padding: 9px 12px; background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 8px; font-size: 12.5px; color: var(--warning-ink, #92400e); }
 /* Payment options nested under a placement toggle */
 .pp-pay { margin: 16px 0 0; padding: 15px 16px 14px; border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 0 12px 12px 0; background: var(--bg); }
 
 /* Marketplace-off confirm modal (icon-led) */
 .mkt-modal { max-width: 380px; text-align: center; padding: 26px 24px 20px; }
-.mkt-icon { width: 60px; height: 60px; border-radius: 50%; background: #fef2f2; color: #dc2626; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
+.mkt-icon { width: 60px; height: 60px; border-radius: 50%; background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #dc2626); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
 .mkt-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 18px; }
 .mkt-points { display: flex; flex-direction: column; gap: 11px; text-align: left; margin-bottom: 22px; }
 .mkt-point { display: flex; align-items: center; gap: 11px; font-size: 14px; font-weight: 600; }
 .mkt-point svg { flex-shrink: 0; }
-.mkt-point.neg { color: #b91c1c; }
-.mkt-point.pos { color: #15803d; }
+.mkt-point.neg { color: var(--danger-ink, #b91c1c); }
+.mkt-point.pos { color: var(--positive-ink, #15803d); }
 .mkt-actions { display: flex; flex-direction: column; gap: 6px; }
 .mkt-keep { width: 100%; justify-content: center; }
 .mkt-anyway { background: transparent; border: 0; color: var(--text-muted); font-size: 13px; font-weight: 600; padding: 9px; cursor: pointer; border-radius: 8px; }
-.mkt-anyway:hover { color: #dc2626; background: #fef2f2; }
+.mkt-anyway:hover { color: var(--danger-ink, #dc2626); background: var(--danger-bg, #fef2f2); }
 
 /* Change-location confirm modal */
 .loc-change-modal { max-width: 460px; width: 100%; padding: 24px; text-align: center; }
-.lcm-icon { width: 54px; height: 54px; border-radius: 14px; background: #fff7ed; color: #c2410c; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+.lcm-icon { width: 54px; height: 54px; border-radius: 14px; background: var(--warning-bg, #fff7ed); color: var(--warning-ink, #c2410c); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
 .lcm-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
 .lcm-text { font-size: 13.5px; color: var(--text-muted); line-height: 1.55; margin: 0 0 14px; }
 .lcm-list { display: flex; flex-direction: column; gap: 8px; text-align: left; margin-bottom: 14px; max-height: 220px; overflow-y: auto; }
-.lcm-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; }
+.lcm-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--surface-hover, #f8fafc); border: 1px solid var(--border); border-radius: 10px; }
 .lcm-item-ico { width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.lcm-item-ico.addon { background: #eef2ff; color: #4f46e5; }
-.lcm-item-ico.res { background: #ecfeff; color: #0e7490; }
+.lcm-item-ico.addon { background: var(--info-bg, #eef2ff); color: var(--purple-ink, #4f46e5); }
+.lcm-item-ico.res { background: var(--info-bg, #ecfeff); color: var(--info-ink, #0e7490); }
 .lcm-item-name { flex: 1; min-width: 0; font-weight: 600; font-size: 13.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lcm-item-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; flex-shrink: 0; }
 .lcm-hint { font-size: 12px; color: var(--text-light); margin: 0 0 18px; }
@@ -3952,7 +3587,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
 /* Need-a-location-first modal */
 .need-loc-modal { max-width: 440px; width: 100%; padding: 26px 24px 22px; text-align: center; }
-.nlm-icon { width: 56px; height: 56px; border-radius: 16px; background: #f0fdfa; color: var(--primary); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+.nlm-icon { width: 56px; height: 56px; border-radius: 16px; background: var(--primary-soft, #f0fdfa); color: var(--primary-ink); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
 .nlm-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
 .nlm-text { font-size: 13.5px; color: var(--text-muted); line-height: 1.55; margin: 0 0 18px; }
 .nlm-steps { display: flex; flex-direction: column; gap: 10px; text-align: left; margin-bottom: 20px; }
@@ -3967,20 +3602,20 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
 /* Own-site deposit → payout explainer modal */
 .sd-modal { position: relative; max-width: 480px; width: 100%; padding: 26px 24px 22px; text-align: center; }
-.sd-x { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 50%; border: none; background: #f1f5f9; color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.sd-x:hover { background: var(--border, #e2e8f0); color: #0f172a; }
-.sd-icon { width: 52px; height: 52px; border-radius: 14px; background: #fff7ed; color: #d97706; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px; }
+.sd-x { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.sd-x:hover { background: var(--border, #e2e8f0); color: var(--text, #0f172a); }
+.sd-icon { width: 52px; height: 52px; border-radius: 14px; background: var(--warning-bg, #fff7ed); color: var(--warning-ink, #d97706); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px; }
 .sd-title { font-size: 17px; font-weight: 800; color: var(--text); margin-bottom: 12px; }
 .sd-facts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .sd-fact { display: flex; align-items: flex-start; gap: 8px; text-align: left; font-size: 12.5px; line-height: 1.5; border-radius: 10px; padding: 9px 11px; }
 .sd-fact svg { flex-shrink: 0; margin-top: 1px; }
-.sd-fact.warn { color: #9a3412; background: #fff7ed; border: 1px solid #fed7aa; }
-.sd-fact.ok { color: #166534; background: #f0fdf4; border: 1px solid #bbf7d0; }
+.sd-fact.warn { color: var(--warning-ink, #9a3412); background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); }
+.sd-fact.ok { color: var(--positive-ink, #166534); background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0); }
 .sd-btn-title { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13.5px; font-weight: 700; color: var(--text); }
 .sd-btn-title .pay-chip { margin-left: 0; vertical-align: baseline; font-style: normal; }
 .sd-actions { display: flex; flex-direction: column; gap: 9px; }
 .sd-btn { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; text-align: left; border: 1px solid var(--border); border-radius: 11px; background: var(--surface, #ffffff); cursor: pointer; transition: all .15s; }
-.sd-btn:hover { border-color: #cbd5e1; background: #f8fafc; }
+.sd-btn:hover { border-color: var(--border-strong, #cbd5e1); background: var(--surface-hover, #f8fafc); }
 .sd-btn svg { flex-shrink: 0; margin-top: 2px; color: var(--text-muted); }
 .sd-btn > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; align-items: flex-start; }
 .sd-btn small { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
@@ -3993,18 +3628,18 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
   padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px;
   cursor: pointer; background: var(--card, #fff); transition: border-color .15s, background .15s;
 }
-.vis-check:hover { border-color: #cbd5e1; }
-.vis-check.on { border-color: var(--primary, #10b981); background: #f0fdf4; }
+.vis-check:hover { border-color: var(--border-strong, #cbd5e1); }
+.vis-check.on { border-color: var(--primary, #10b981); background: var(--positive-bg, #f0fdf4); }
 .vis-check input { width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; accent-color: var(--primary, #10b981); }
 .vis-check > svg { color: var(--text-muted); flex-shrink: 0; }
-.vis-check.on > svg { color: var(--primary, #10b981); }
+.vis-check.on > svg { color: var(--primary-ink, #10b981); }
 .vis-check-body { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
 .vis-check-name { font-size: 13px; font-weight: 600; color: var(--text); }
 .vis-check-desc { font-size: 11px; color: var(--text-muted); }
 .vis-warn {
   display: flex; align-items: center; gap: 6px; margin-top: 8px;
-  font-size: 12px; color: #92400e; background: #fffbeb;
-  border: 1px solid #fde68a; border-radius: 8px; padding: 7px 10px;
+  font-size: 12px; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb);
+  border: 1px solid var(--warning-border, #fde68a); border-radius: 8px; padding: 7px 10px;
 }
 @media (max-width: 600px) { .vis-picker { grid-template-columns: 1fr; } }
 
@@ -4014,10 +3649,10 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
   font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
   padding: 2px 7px; border-radius: 999px; margin-bottom: 4px; white-space: nowrap;
 }
-.vis-badge.vis-both     { background: #dcfce7; color: #15803d; }
-.vis-badge.vis-customer { background: #dbeafe; color: #1d4ed8; }
-.vis-badge.vis-admin    { background: #fef3c7; color: #92400e; }
-.vis-badge.vis-none     { background: #fee2e2; color: #991b1b; }
+.vis-badge.vis-both     { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #15803d); }
+.vis-badge.vis-customer { background: var(--info-bg, #dbeafe); color: var(--info-ink, #1d4ed8); }
+.vis-badge.vis-admin    { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); }
+.vis-badge.vis-none     { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #991b1b); }
 
 .placement-chips { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
 .placement-chips-row { flex-direction: row; flex-wrap: wrap; }
@@ -4029,12 +3664,12 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .chan-name { line-height: 1; }
 .chan-suffix { font-weight: 500; opacity: .9; }
 .chan-caret { opacity: .6; margin-left: -1px; }
-.chan-live    { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
-.chan-pending { background: #fffbeb; color: #b45309; border-color: #fde68a; }
-.chan-action  { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-.chan-off     { background: #f8fafc; color: var(--text-light, #94a3b8); border-color: var(--border, #e2e8f0); }
+.chan-live    { background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #047857); border-color: var(--positive-border, #a7f3d0); }
+.chan-pending { background: var(--warning-bg, #fffbeb); color: var(--warning-ink, #b45309); border-color: var(--warning-border, #fde68a); }
+.chan-action  { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #b91c1c); border-color: var(--danger-border, #fecaca); }
+.chan-off     { background: var(--surface-hover, #f8fafc); color: var(--text-light, #94a3b8); border-color: var(--border, #e2e8f0); }
 .chan-open { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border-radius: 5px; color: var(--text-muted); opacity: .8; }
-.chan-open:hover { opacity: 1; color: var(--primary); background: #ccfbf1; }
+.chan-open:hover { opacity: 1; color: var(--primary-ink); background: var(--primary-soft, #ccfbf1); }
 /* Share modal (copy link + QR) */
 .share-modal { max-width: 420px; }
 .share-body { display: flex; flex-direction: column; gap: 14px; }
@@ -4045,7 +3680,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .share-qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .share-qr { width: 200px; height: 200px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface, #ffffff); padding: 8px; }
 .share-qr-empty { display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
-.share-open { display: inline-flex; align-items: center; gap: 6px; align-self: center; font-size: 13px; font-weight: 700; color: #0f766e; text-decoration: none; }
+.share-open { display: inline-flex; align-items: center; gap: 6px; align-self: center; font-size: 13px; font-weight: 700; color: var(--primary-ink, #0f766e); text-decoration: none; }
 .share-open:hover { text-decoration: underline; }
 
 /* Inline placement dropdown */
@@ -4053,21 +3688,21 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .pm-title { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--text); }
 .pm-row { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; }
 .pm-note { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
-.pm-adminnote { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.45; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 7px; padding: 7px 9px; }
+.pm-adminnote { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.45; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 7px; padding: 7px 9px; }
 .pm-adminnote svg { flex-shrink: 0; margin-top: 1px; }
-.pm-open { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--primary); padding-top: 8px; border-top: 1px solid var(--border); }
+.pm-open { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--primary-ink); padding-top: 8px; border-top: 1px solid var(--border); }
 .pm-open:hover { text-decoration: underline; }
 
 /* Geo detection */
-.geo-detect-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:10px; margin-bottom:4px; }
-.geo-detect-info { display:flex; align-items:center; gap:8px; font-size:13px; color:#0c4a6e; }
-.geo-error { font-size:12px; color:#b91c1c; padding:6px 10px; background:#fef2f2; border-radius:8px; margin-bottom:4px; }
-.geo-success { display:flex; align-items:center; gap:6px; font-size:12px; color:#065f46; padding:6px 10px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; margin-bottom:4px; }
-.geo-inherited-preview { background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-top:2px; }
+.geo-detect-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; background:var(--info-bg, #f0f9ff); border:1px solid var(--info-border, #bae6fd); border-radius:10px; margin-bottom:4px; }
+.geo-detect-info { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--info-ink, #0c4a6e); }
+.geo-error { font-size:12px; color:var(--danger-ink, #b91c1c); padding:6px 10px; background:var(--danger-bg, #fef2f2); border-radius:8px; margin-bottom:4px; }
+.geo-success { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--positive-ink, #065f46); padding:6px 10px; background:var(--positive-bg, #ecfdf5); border:1px solid var(--positive-border, #a7f3d0); border-radius:8px; margin-bottom:4px; }
+.geo-inherited-preview { background:var(--surface-hover, #f8fafc); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-top:2px; }
 .geo-inherited-title { font-size:11.5px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px; }
 .geo-inherited-pills { display:flex; flex-wrap:wrap; gap:8px; }
-.geo-pill { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:999px; font-size:12.5px; font-weight:600; background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; }
-.geo-pill-muted { background:#f1f5f9; color:var(--text-muted, #64748b); border-color:var(--border, #e2e8f0); font-weight:500; }
+.geo-pill { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:999px; font-size:12.5px; font-weight:600; background:var(--info-bg, #e0f2fe); color:var(--info-ink, #0369a1); border:1px solid var(--info-border, #bae6fd); }
+.geo-pill-muted { background:var(--bg, #f1f5f9); color:var(--text-muted, #64748b); border-color:var(--border, #e2e8f0); font-weight:500; }
 .btn-sm { padding:6px 12px; font-size:12px; }
 .role-toggle { display:flex; align-items:center; gap:8px; font-size:13px; color: var(--text-muted); padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface, #ffffff); }
 .role-toggle select { border: none; padding: 0; width: auto; font-size: 13px; color: var(--text); background: transparent; }
@@ -4083,10 +3718,10 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .chev { padding: 4px; border-radius: 6px; color: var(--text-muted); }
 .chev:hover { background: var(--bg); }
 .loc-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
-.loc-title-ic { width: 28px; height: 28px; border-radius: 8px; background: #f0fdfa; color: var(--brand, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.loc-title-ic { width: 28px; height: 28px; border-radius: 8px; background: var(--primary-soft, #f0fdfa); color: var(--primary-ink, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .loc-name-btn { font-size: 15px; font-weight: 700; color: var(--text); background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
 .loc-add-foot { display: flex; justify-content: center; padding: 6px 0 4px; }
-.loc-name-btn:hover { color: var(--primary); text-decoration: underline; }
+.loc-name-btn:hover { color: var(--primary-ink); text-decoration: underline; }
 .count { font-size: 12px; color: var(--text-muted); }
 .loc-actions { display: flex; gap: 6px; align-items: center; }
 /* Phone layout for the venue group header: row 1 = grip + chevron + (wrapping)
@@ -4112,22 +3747,22 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .dot { width: 4px; align-self: stretch; min-height: 30px; border-radius: 3px; }
 .listing-info { flex: 1; min-width: 0; text-align: left; }
 .listing-name-btn { font-weight: 600; font-size: 14px; color: var(--text); text-align: left; padding: 0; background: none; border: none; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.listing-name-btn:hover { color: var(--primary); text-decoration: underline; }
+.listing-name-btn:hover { color: var(--primary-ink); text-decoration: underline; }
 .muted { color: var(--text-muted); font-size: 12px; }
 .listing-actions { display: flex; gap: 4px; margin-left: auto; flex-shrink: 0; }
 .btn-icon { padding: 7px; border-radius: 6px; color: var(--text-muted); display: inline-flex; }
 .btn-icon:hover { background: var(--bg); color: var(--text); }
-.btn-icon.danger:hover { background: #fee2e2; color: var(--error); }
+.btn-icon.danger:hover { background: var(--danger-bg, #fee2e2); color: var(--error); }
 .empty-sub { padding: 18px; text-align: center; color: var(--text-muted); display:flex; flex-direction:column; align-items:center; gap:10px; }
 /* No own border — the last venue row's bottom border is the single divider, so
    there's no double line above Membership Programs. Whitespace gives separation. */
 .programs-subhead { display: flex; align-items: center; gap: 7px; padding: 16px 16px 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; color: var(--text-muted); }
 .programs-subhead .count-sub { background: var(--bg); padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; color: var(--text); text-transform: none; letter-spacing: 0; }
-.program-row .program-dot { width: 22px; height: 22px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; background: #ecfeff; color: #0e7490; }
+.program-row .program-dot { width: 22px; height: 22px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; background: var(--info-bg, #ecfeff); color: var(--info-ink, #0e7490); }
 /* Type pill in the flat (All Listings) view — distinguishes venues from memberships. */
 .flat-type-pill { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; vertical-align: middle; }
-.flat-type-pill.venue { background: #ecfdf5; color: #047857; }
-.flat-type-pill.academy { background: #ecfeff; color: #0e7490; }
+.flat-type-pill.venue { background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #047857); }
+.flat-type-pill.academy { background: var(--info-bg, #ecfeff); color: var(--info-ink, #0e7490); }
 
 .editor-header { display:flex; align-items:center; gap:14px; margin-bottom: 18px; }
 .editor-header .page-title { font-size: 22px; font-weight: 700; }
@@ -4137,20 +3772,20 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .section-card { background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; transition: box-shadow 0.15s; }
 .section-card.open { box-shadow: var(--shadow); }
 .section-head { width: 100%; display: flex; align-items: center; gap: 14px; padding: 18px 20px; background: transparent; }
-.section-head:hover { background: #fafafa; }
+.section-head:hover { background: var(--surface-hover, #fafafa); }
 .section-title { flex: 1; text-align: left; }
 .section-title > div:first-child { font-weight: 600; font-size: 14px; color: var(--text); }
 .section-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.opt-tag { font-size: 10px; font-weight: 700; color: var(--text-muted); background: #f1f5f9; padding: 1px 7px; border-radius: 6px; margin-left: 6px; text-transform: uppercase; letter-spacing: .03em; vertical-align: 1px; }
-.tick { width: 22px; height: 22px; border-radius: 50%; background: #e5e7eb; color: #fff; display: inline-flex; align-items:center; justify-content:center; flex-shrink: 0; }
+.opt-tag { font-size: 10px; font-weight: 700; color: var(--text-muted); background: var(--bg, #f1f5f9); padding: 1px 7px; border-radius: 6px; margin-left: 6px; text-transform: uppercase; letter-spacing: .03em; vertical-align: 1px; }
+.tick { width: 22px; height: 22px; border-radius: 50%; background: var(--border, #e5e7eb); color: #fff; display: inline-flex; align-items:center; justify-content:center; flex-shrink: 0; }
 .tick.done { background: #10b981; }
 .chev-icon { color: var(--text-muted); transition: transform 0.15s; }
 .chev-icon.rot { transform: rotate(180deg); }
 .section-body { padding: 18px 20px 20px; border-top: 1px solid var(--border); }
 .section-footer { display:flex; justify-content: flex-end; align-items: center; gap: 12px; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--border); }
 .section-footer .sf-cancel { margin-right: auto; }
-.saved { color: #10b981; font-size: 13px; display: inline-flex; gap: 4px; align-items: center; }
-.module-block-error { display:flex; align-items:flex-start; gap:8px; padding:10px 14px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b; font-size:13px; line-height:1.5; margin-bottom:12px; }
+.saved { color: var(--positive-ink, #10b981); font-size: 13px; display: inline-flex; gap: 4px; align-items: center; }
+.module-block-error { display:flex; align-items:flex-start; gap:8px; padding:10px 14px; background:var(--danger-bg, #fef2f2); border:1px solid var(--danger-border, #fecaca); border-radius:8px; color:var(--danger-ink, #991b1b); font-size:13px; line-height:1.5; margin-bottom:12px; }
 
 .req { color: var(--error); }
 
@@ -4161,99 +3796,99 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .check-row input { accent-color: var(--primary); width: 16px; height: 16px; }
 .check-row.locked { color: var(--text); cursor: default; }
 .lock-dot { width: 16px; height: 16px; border-radius: 50%; background: #14b8a6; flex-shrink: 0; }
-.info-row { display:flex; gap:8px; align-items:flex-start; background: #f0f9ff; color: #075985; padding: 12px; border-radius: 8px; font-size: 13px; margin-bottom: 8px; }
+.info-row { display:flex; gap:8px; align-items:flex-start; background: var(--info-bg, #f0f9ff); color: var(--info-ink, #075985); padding: 12px; border-radius: 8px; font-size: 13px; margin-bottom: 8px; }
 
 /* Payment method option cards */
 .pay-opt { display:flex; gap:12px; align-items:flex-start; padding:13px 14px; border:1px solid var(--border); border-radius:10px; margin-top:10px; cursor:pointer; transition:border-color .12s, background .12s; }
-.pay-opt:hover { border-color:#cbd5e1; }
-.pay-opt.on { border-color: var(--primary); background:#f0fdfa; }
+.pay-opt:hover { border-color:var(--border-strong, #cbd5e1); }
+.pay-opt.on { border-color: var(--primary); background:var(--primary-soft, #f0fdfa); }
 .pay-opt.locked { cursor:default; background: var(--bg); }
 .pay-opt input[type=checkbox] { accent-color: var(--primary); width:17px; height:17px; flex-shrink:0; margin-top:2px; cursor:pointer; }
 .pay-opt input[type=checkbox]:disabled { cursor:not-allowed; opacity:.5; }
 /* "pick one" not satisfied at save time → the choices themselves go red */
-.pay-opt.invalid { border-color: #dc2626; background: #fef2f2; }
-.unit-invalid { color: #dc2626; font-weight: 600; }
+.pay-opt.invalid { border-color: #dc2626; background: var(--danger-bg, #fef2f2); }
+.unit-invalid { color: var(--danger-ink, #dc2626); font-weight: 600; }
 .pay-opt-body { flex:1; min-width:0; }
 .pay-opt-title { font-size:14px; font-weight:700; color: var(--text); }
 .pay-opt-desc { font-size:12.5px; color: var(--text-muted); margin-top:3px; line-height:1.5; }
 .pay-hint-locked { font-size:11.5px; color:var(--text-light, #94a3b8); margin-top:5px; font-style:italic; }
-.pay-warn { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:8px; font-size:12px; color:#b45309; }
-.btn-link { background:none; border:none; padding:0; color: var(--primary); font-weight:700; font-size:12px; text-decoration:underline; cursor:pointer; }
+.pay-warn { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:8px; font-size:12px; color:var(--warning-ink, #b45309); }
+.btn-link { background:none; border:none; padding:0; color: var(--primary-ink); font-weight:700; font-size:12px; text-decoration:underline; cursor:pointer; }
 .pay-note { display:flex; align-items:flex-start; gap:6px; font-size:12px; color: var(--text-muted); margin-top:14px; padding-top:11px; border-top:1px dashed var(--border); }
 .pay-note svg { flex-shrink:0; margin-top:1px; }
 
-/* ── Placement & Payment: guided steps + money-split visuals ── */
+/* ── Booking & payments: guided steps + money-split visuals ── */
 .pp-step { display:flex; align-items:center; gap:9px; font-size:14.5px; font-weight:800; color:var(--text); margin:2px 0 3px; }
 .pp-step-n { width:22px; height:22px; border-radius:50%; background:var(--primary); color:#fff; font-size:12px; font-weight:800; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
 .pp-step-sub { font-size:12.5px; color:var(--text-muted); margin:0 0 12px 31px; }
 .pp-chan { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:14px; color:var(--text); margin-bottom:2px; }
-.pp-chan svg { color:var(--primary); }
+.pp-chan svg { color:var(--primary-ink); }
 .pp-chan-toggle { width:100%; background:none; border:none; padding:2px 0; cursor:pointer; text-align:start; font:inherit; }
-.pp-chan-toggle:hover b { color:var(--primary); }
+.pp-chan-toggle:hover b { color:var(--primary-ink); }
 .pp-chan-chev { color:var(--text-muted) !important; transition:transform .15s; flex-shrink:0; }
 .pp-chan-chev.rot { transform:rotate(180deg); }
 .pp-sum { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-top:8px; cursor:pointer; }
-.pp-sum-chip { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; color:#0f766e; background:#f0fdfa; border:1px solid #99f6e4; border-radius:999px; padding:4px 11px; }
-.pp-sum-none { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; color:#b45309; background:#fffbeb; border:1px solid #fde68a; border-radius:999px; padding:4px 11px; }
-.pp-sum-warn { font-size:11.5px; font-weight:700; color:#b45309; }
-.pp-sum-edit { margin-left:auto; font-size:12px; font-weight:700; color:var(--primary); text-decoration:underline; }
-.pp-chan-fee { margin-left:auto; font-size:11.5px; font-weight:800; color:#0f766e; background:#f0fdfa; border:1px solid #99f6e4; border-radius:999px; padding:3px 10px; }
+.pp-sum-chip { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; color:var(--primary-ink, #0f766e); background:var(--primary-soft, #f0fdfa); border:1px solid var(--primary-border, #99f6e4); border-radius:999px; padding:4px 11px; }
+.pp-sum-none { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; color:var(--warning-ink, #b45309); background:var(--warning-bg, #fffbeb); border:1px solid var(--warning-border, #fde68a); border-radius:999px; padding:4px 11px; }
+.pp-sum-warn { font-size:11.5px; font-weight:700; color:var(--warning-ink, #b45309); }
+.pp-sum-edit { margin-left:auto; font-size:12px; font-weight:700; color:var(--primary-ink); text-decoration:underline; }
+.pp-chan-fee { margin-left:auto; font-size:11.5px; font-weight:800; color:var(--primary-ink, #0f766e); background:var(--primary-soft, #f0fdfa); border:1px solid var(--primary-border, #99f6e4); border-radius:999px; padding:3px 10px; }
 .pp-chan-toggle .pp-chan-fee { margin-left:auto; }
-.pp-chan-fee.free { color:#166534; background:#f0fdf4; border-color:#bbf7d0; }
+.pp-chan-fee.free { color:var(--positive-ink, #166534); background:var(--positive-bg, #f0fdf4); border-color:var(--positive-border, #bbf7d0); }
 .pp-chan-sub { font-size:12.5px; color:var(--text-muted); line-height:1.55; margin:4px 0 10px 30px; }
 .pay-status { display:flex; align-items:flex-start; gap:8px; flex-wrap:wrap; font-size:12.5px; line-height:1.5; border-radius:10px; padding:10px 12px; margin-bottom:4px; }
 .pay-status svg { flex-shrink:0; margin-top:1px; }
 .pay-status span { flex:1; min-width:200px; }
-.pay-status.warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; }
-.pay-status.ok { background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; }
-.ps-bar { display:flex; height:14px; border-radius:999px; overflow:hidden; margin-top:9px; background:#f1f5f9; }
+.pay-status.warn { background:var(--warning-bg, #fffbeb); border:1px solid var(--warning-border, #fde68a); color:var(--warning-ink, #92400e); }
+.pay-status.ok { background:var(--positive-bg, #f0fdf4); border:1px solid var(--positive-border, #bbf7d0); color:var(--positive-ink, #166534); }
+.ps-bar { display:flex; height:14px; border-radius:999px; overflow:hidden; margin-top:9px; background:var(--bg, #f1f5f9); }
 .ps-seg { display:block; height:100%; }
 .ps-seg.you { background:#10b981; }
 .ps-seg.fee { background:#64748b; }
 .ps-seg.venue { background:#a7f3d0; }
 .ps-seg.warnseg { background:#f59e0b; }
 .ps-legend { display:flex; flex-wrap:wrap; gap:5px 16px; margin-top:7px; }
-.ps-key { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#475569; }
-.ps-key b { color:#0f172a; }
+.ps-key { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary, #475569); }
+.ps-key b { color:var(--text, #0f172a); }
 .ps-key i { width:9px; height:9px; border-radius:3px; flex-shrink:0; }
 .ps-key i.you { background:#10b981; }
 .ps-key i.fee { background:#64748b; }
 .ps-key i.venue { background:#a7f3d0; }
 .ps-key i.warnseg { background:#f59e0b; }
 .pay-chip { display:inline-block; margin-left:7px; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.03em; border-radius:999px; padding:2px 8px; vertical-align:1px; }
-.pay-chip.rec { color:#0f766e; background:#ccfbf1; }
-.pay-chip.risk { color:#b45309; background:#fef3c7; }
+.pay-chip.rec { color:var(--primary-ink, #0f766e); background:var(--primary-soft, #ccfbf1); }
+.pay-chip.risk { color:var(--warning-ink, #b45309); background:var(--warning-bg, #fef3c7); }
 .pay-opt.dim:not(.on) { opacity:.75; }
-.pay-lock-ico { color:#b45309; margin-left:5px; vertical-align:-1px; }
+.pay-lock-ico { color:var(--warning-ink, #b45309); margin-left:5px; vertical-align:-1px; }
 .ps-example-note { font-size:11.5px; color:var(--text-light, #94a3b8); margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); }
 .pp-pay.site-pay { margin-top:18px; }
 
-.sub-box { background: #f0fdfa; border: 1px solid #ccfbf1; padding: 14px; border-radius: 10px; margin: 8px 0 14px; }
-.sub-box.muted-box { background: #f9fafb; border-color: var(--border); }
+.sub-box { background: var(--primary-soft, #f0fdfa); border: 1px solid #ccfbf1; padding: 14px; border-radius: 10px; margin: 8px 0 14px; }
+.sub-box.muted-box { background: var(--surface-hover, #f9fafb); border-color: var(--border); }
 .sub-title { font-weight: 600; font-size: 13px; color: var(--text); margin-bottom: 8px; }
 .note { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
 
 .top-actions-row { display: flex; gap: 8px; justify-content: flex-end; margin-bottom: 12px; }
 .linked-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; }
 .linked-row select { flex: 1; }
-.empty-inline { text-align:center; padding: 18px; color: var(--text-muted); background: #fafafa; border-radius: 8px; font-size: 13px; }
+.empty-inline { text-align:center; padding: 18px; color: var(--text-muted); background: var(--surface-hover, #fafafa); border-radius: 8px; font-size: 13px; }
 
 /* Connected add-ons / resources — dropdown picker + chips */
 /* Connected add-ons / resources — selected item cards */
 .conn-selected { display: flex; flex-direction: column; gap: 8px; }
 .conn-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 10px; transition: border-color .12s, box-shadow .12s; }
-.conn-item:hover { border-color: #cbd5e1; box-shadow: 0 1px 4px rgba(15,23,42,.05); }
-.conn-item-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; background: #ecfeff; color: #0891b2; flex-shrink: 0; }
+.conn-item:hover { border-color: var(--border-strong, #cbd5e1); box-shadow: 0 1px 4px rgba(15,23,42,.05); }
+.conn-item-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; background: var(--info-bg, #ecfeff); color: var(--info-ink, #0891b2); flex-shrink: 0; }
 .conn-item-info { flex: 1; min-width: 0; }
 .conn-item-name { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conn-item-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 1px; text-transform: capitalize; }
-.conn-item-price { font-size: 13px; font-weight: 700; color: #0f766e; white-space: nowrap; flex-shrink: 0; }
+.conn-item-price { font-size: 13px; font-weight: 700; color: var(--primary-ink, #0f766e); white-space: nowrap; flex-shrink: 0; }
 .conn-item-x { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; background: transparent; color: var(--text-muted); border-radius: 8px; cursor: pointer; flex-shrink: 0; transition: all .12s; }
-.conn-item-x:hover { background: #fee2e2; color: #dc2626; }
+.conn-item-x:hover { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626); }
 
 .conn-item-qty { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .conn-item-qty-lbl { font-size: 11px; color: var(--text-muted); margin-right: 2px; }
-.conn-qty-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid var(--border); background: #f8fafc; color: var(--text); border-radius: 7px; cursor: pointer; transition: all .12s; }
+.conn-qty-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid var(--border); background: var(--surface-hover, #f8fafc); color: var(--text); border-radius: 7px; cursor: pointer; transition: all .12s; }
 .conn-qty-btn:hover:not(:disabled) { background: var(--border, #e2e8f0); }
 .conn-qty-btn:disabled { opacity: .4; cursor: not-allowed; }
 .conn-qty-input { width: 46px; padding: 4px 6px; font-size: 13px; text-align: center; border: 1px solid var(--border); border-radius: 7px; }
@@ -4261,34 +3896,34 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 /* Repeatable picker rows (add-ons / resources) */
 .conn-rows { display: flex; flex-direction: column; gap: 8px; }
 .conn-row { display: flex; align-items: center; gap: 10px; }
-.conn-row-ico { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: #ecfeff; color: #0891b2; flex-shrink: 0; }
-.conn-row-ico.res { background: #f0fdf4; color: #16a34a; }
+.conn-row-ico { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: var(--info-bg, #ecfeff); color: var(--info-ink, #0891b2); flex-shrink: 0; }
+.conn-row-ico.res { background: var(--positive-bg, #f0fdf4); color: var(--positive-ink, #16a34a); }
 .conn-row-picker { flex: 1; min-width: 0; }
 .conn-row-qty { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
 .conn-row-x { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: none; background: transparent; color: var(--text-muted); border-radius: 8px; cursor: pointer; flex-shrink: 0; transition: all .12s; }
-.conn-row-x:hover { background: #fee2e2; color: #dc2626; }
+.conn-row-x:hover { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626); }
 .conn-hint { font-size: 12.5px; color: var(--text-muted); padding: 4px 0; }
 .conn-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
 .conn-ext-wrap { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 
 /* Session-extension discount — toggle block (used in Timeslot + Add-Ons sections) */
-.ext-block { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: #fcfcfd; }
+.ext-block { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; background: var(--surface-hover); }
 .ext-block-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .ext-block-info { min-width: 0; }
 .ext-block-title { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 14px; color: var(--text); }
 .ext-block-title svg { color: var(--text-muted); flex-shrink: 0; }
 .ext-block-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.45; }
 .ext-block-body { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 12px; }
-.ext-type-toggle { display: inline-flex; background: #f1f5f9; border-radius: 8px; padding: 3px; align-self: flex-start; }
+.ext-type-toggle { display: inline-flex; background: var(--bg, #f1f5f9); border-radius: 8px; padding: 3px; align-self: flex-start; }
 .ext-type-toggle button { padding: 6px 14px; font-size: 13px; font-weight: 600; border: none; background: none; color: var(--text-muted); border-radius: 6px; cursor: pointer; transition: all .12s; }
-.ext-type-toggle button.on { background: var(--surface, #ffffff); color: var(--primary); box-shadow: var(--shadow-sm); }
+.ext-type-toggle button.on { background: var(--surface, #ffffff); color: var(--primary-ink); box-shadow: var(--shadow-sm); }
 .ext-value-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ext-value-input { width: 110px; flex-shrink: 0; }
 .ext-value-unit { font-size: 13px; color: var(--text-muted); }
-.conn-add-btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; border: 1.5px dashed var(--primary); background: #f0fdfa; color: var(--primary); font-size: 13.5px; font-weight: 700; border-radius: 9px; cursor: pointer; transition: background .12s; }
-.conn-add-btn:hover { background: #ccfbf1; }
+.conn-add-btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; border: 1.5px dashed var(--primary); background: var(--primary-soft, #f0fdfa); color: var(--primary-ink); font-size: 13.5px; font-weight: 700; border-radius: 9px; cursor: pointer; transition: background .12s; }
+.conn-add-btn:hover { background: var(--primary-soft, #ccfbf1); }
 .conn-create-btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px; border: none; background: none; color: var(--text-muted); font-size: 13px; font-weight: 600; cursor: pointer; }
-.conn-create-btn:hover { color: var(--primary); }
+.conn-create-btn:hover { color: var(--primary-ink); }
 @media (max-width: 600px) {
   .conn-row { flex-wrap: wrap; gap: 8px; }
   .conn-row-ico { display: none; }                 /* decorative — drop it to free space */
@@ -4299,29 +3934,29 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 }
 
 .conn-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 22px; border: 1.5px dashed var(--border); border-radius: 10px; color: var(--text-muted); text-align: center; }
-.conn-empty > span:first-of-type { font-size: 13px; font-weight: 600; color: #475569; }
+.conn-empty > span:first-of-type { font-size: 13px; font-weight: 600; color: var(--text-secondary, #475569); }
 .conn-empty-sub { font-size: 11.5px; }
 
 /* Delete-program choice modal (archive vs delete-now) */
 .del-modal { padding: 22px; }
 .del-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
-.del-ic { flex-shrink: 0; width: 40px; height: 40px; border-radius: 11px; background: #fff7ed; color: #c2410c; display: flex; align-items: center; justify-content: center; }
+.del-ic { flex-shrink: 0; width: 40px; height: 40px; border-radius: 11px; background: var(--warning-bg, #fff7ed); color: var(--warning-ink, #c2410c); display: flex; align-items: center; justify-content: center; }
 .del-title { font-size: 16px; font-weight: 700; color: var(--text); line-height: 1.35; }
 .del-subtitle { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
 .del-option { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
 .del-option-text p { margin: 4px 0 0; font-size: 13px; line-height: 1.55; color: var(--text-muted); }
 .del-option-name { font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; }
-.del-rec { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #047857; background: #d1fae5; border-radius: 999px; padding: 2px 7px; }
+.del-rec { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--positive-ink, #047857); background: var(--positive-bg, #d1fae5); border-radius: 999px; padding: 2px 7px; }
 .del-option-btn { margin-top: 12px; }
-.del-option-danger { border-color: #fecaca; background: #fff5f5; }
-.del-ack { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0; padding: 10px 12px; background: var(--surface, #ffffff); border: 1.5px solid #fca5a5; border-radius: 9px; font-size: 12.5px; line-height: 1.5; color: var(--text); cursor: pointer; }
+.del-option-danger { border-color: var(--danger-border, #fecaca); background: var(--danger-bg); }
+.del-ack { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0; padding: 10px 12px; background: var(--surface, #ffffff); border: 1.5px solid var(--danger-border, #fca5a5); border-radius: 9px; font-size: 12.5px; line-height: 1.5; color: var(--text); cursor: pointer; }
 .del-ack input { margin-top: 2px; flex-shrink: 0; width: 16px; height: 16px; cursor: pointer; accent-color: #dc2626; }
 .del-delete-btn { background: #dc2626; color: #fff; border: 1px solid #dc2626; }
 .del-delete-btn:hover:not(:disabled) { background: #b91c1c; }
 .del-delete-btn:disabled { opacity: .5; cursor: not-allowed; }
 .del-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
 .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid transparent; }
-.btn-ghost:hover { background: #f1f5f9; color: var(--text); }
+.btn-ghost:hover { background: var(--bg, #f1f5f9); color: var(--text); }
 
 /* Image upload */
 .img-drop-zone {
@@ -4330,7 +3965,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
   cursor: pointer; color: var(--text-muted); transition: border-color .15s, background .15s;
 }
 .img-drop-zone:hover, .img-drop-zone.drop-active {
-  border-color: var(--primary); background: #f0fdfb; color: var(--primary);
+  border-color: var(--primary); background: var(--primary-soft); color: var(--primary-ink);
 }
 .img-drop-zone.uploading { pointer-events: none; opacity: .7; }
 .hidden-file-input { display: none; }
@@ -4344,12 +3979,12 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
   cursor: pointer; transition: background .15s;
 }
 .img-remove-btn:hover { background: rgba(0,0,0,.8); }
-.img-upload-error { margin-top: 8px; padding: 10px 14px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; font-size: 13px; color: #be123c; }
+.img-upload-error { margin-top: 8px; padding: 10px 14px; background: var(--danger-bg, #fff1f2); border: 1px solid #fecdd3; border-radius: 8px; font-size: 13px; color: var(--danger-ink, #be123c); }
 .spin-icon { animation: spin 1s linear infinite; }
 
 /* Multi-image gallery (first = cover) */
 .img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 12px; }
-.img-tile { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); aspect-ratio: 4 / 3; background: #f1f5f9; }
+.img-tile { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); aspect-ratio: 4 / 3; background: var(--bg, #f1f5f9); }
 .img-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .img-cover-badge { position: absolute; top: 6px; left: 6px; background: var(--primary); color: #fff; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; }
 .img-remove { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,.55); color: #fff; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .15s; }
@@ -4369,17 +4004,17 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .combo-menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); max-height: 260px; overflow-y: auto; z-index: 10; padding: 4px; }
 .combo-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 10px; font-size: 14px; text-align: left; border-radius: 6px; color: var(--text); }
 .combo-item:hover { background: var(--bg); }
-.combo-item.active { background: #f0fdfa; color: var(--primary); font-weight: 500; }
+.combo-item.active { background: var(--primary-soft, #f0fdfa); color: var(--primary-ink); font-weight: 500; }
 .combo-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .combo-cat { flex-shrink: 0; margin-left: 10px; font-size: 11px; font-weight: 700; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }
 .combo-empty { padding: 12px; font-size: 13px; color: var(--text-muted); text-align: center; }
-.combo-add { display: flex; align-items: center; gap: 6px; width: 100%; padding: 9px 10px; margin-top: 2px; font-size: 13.5px; font-weight: 700; text-align: left; border: none; border-top: 1px solid var(--border); background: none; color: var(--primary); cursor: pointer; border-radius: 0 0 6px 6px; }
-.combo-add:hover { background: #f0fdfa; }
+.combo-add { display: flex; align-items: center; gap: 6px; width: 100%; padding: 9px 10px; margin-top: 2px; font-size: 13.5px; font-weight: 700; text-align: left; border: none; border-top: 1px solid var(--border); background: none; color: var(--primary-ink); cursor: pointer; border-radius: 0 0 6px 6px; }
+.combo-add:hover { background: var(--primary-soft, #f0fdfa); }
 .combo-addpanel { padding: 10px; }
 .combo-add-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
 .combo-add-cats { display: flex; flex-wrap: wrap; gap: 6px; }
 .combo-add-cat { padding: 7px 12px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--surface, #ffffff); color: var(--text); border-radius: 999px; cursor: pointer; }
-.combo-add-cat:hover { border-color: var(--primary); color: var(--primary); background: #f0fdfa; }
+.combo-add-cat:hover { border-color: var(--primary); color: var(--primary-ink); background: var(--primary-soft, #f0fdfa); }
 .combo-add-note { font-size: 11.5px; color: var(--text-muted); margin-top: 8px; line-height: 1.4; }
 /* Read-only derived field (e.g. the category implied by the chosen type) */
 .readonly-field { display: flex; align-items: center; min-height: 38px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; font-weight: 600; }
@@ -4398,8 +4033,8 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
 /* Category / type filter (mirrors the customer storefront) */
 .filter-toggle { display: inline-flex; align-items: center; gap: 6px; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 8px; padding: 7px 13px; font-size: 13.5px; font-weight: 600; color: var(--text); cursor: pointer; white-space: nowrap; }
-.filter-toggle:hover { border-color: var(--primary); color: var(--primary); }
-.filter-toggle.on { border-color: var(--primary); color: var(--primary); background: #f0fdfa; }
+.filter-toggle:hover { border-color: var(--primary); color: var(--primary-ink); }
+.filter-toggle.on { border-color: var(--primary); color: var(--primary-ink); background: var(--primary-soft, #f0fdfa); }
 .filter-toggle-n { background: var(--primary); color: #fff; font-size: 11px; font-weight: 800; min-width: 18px; height: 18px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; }
 /* Listings toolbar: compact search with the filter button at its right end,
    and every filter inside the dropdown panel. */
@@ -4409,7 +4044,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .lf-search input { padding-right: 40px; }
 .lf-filter-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; padding: 5px 7px; border: none; background: transparent; color: var(--text-muted); border-radius: 7px; cursor: pointer; }
 .lf-filter-btn:hover { background: var(--bg); color: var(--text); }
-.lf-filter-btn.on { color: var(--primary); }
+.lf-filter-btn.on { color: var(--primary-ink); }
 .lf-filter-n { background: var(--primary); color: #fff; font-size: 10px; font-weight: 800; min-width: 16px; height: 16px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
 .lf-spacer { flex: 1 1 0; min-width: 0; }
 
@@ -4435,7 +4070,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .flat-list { background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 12px; overflow: visible; }
 /* Two flexible columns (name + location) so width is shared and there's no huge
    empty gap after the listing name. Cap column removed. */
-.flat-header { display: grid; grid-template-columns: 28px 18px minmax(160px, 1.6fr) minmax(130px, 1.1fr) 110px 104px 190px 92px; gap: 10px; align-items: center; padding: 10px 16px; background: #f9fafb; border-bottom: 1px solid var(--border); border-radius: 11px 11px 0 0; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.flat-header { display: grid; grid-template-columns: 28px 18px minmax(160px, 1.6fr) minmax(130px, 1.1fr) 110px 104px 190px 92px; gap: 10px; align-items: center; padding: 10px 16px; background: var(--surface-hover, #f9fafb); border-bottom: 1px solid var(--border); border-radius: 11px 11px 0 0; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .flat-row { display: grid; grid-template-columns: 28px 18px minmax(160px, 1.6fr) minmax(130px, 1.1fr) 110px 104px 190px 92px; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); transition: background 0.1s; }
 /* On phones the fixed columns can't fit — scroll horizontally instead of clipping. */
 @media (max-width: 768px) {
@@ -4453,13 +4088,13 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .flat-th-sort:hover { color:var(--text); }
 /* Slot preview hint */
 .slot-preview { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:12px; margin-bottom:4px; font-size:12.5px; color:var(--text-muted); }
-.slot-preview svg { color:var(--primary); flex-shrink:0; }
+.slot-preview svg { color:var(--primary-ink); flex-shrink:0; }
 .slot-preview-chip { font-family:'SF Mono',Monaco,monospace; font-size:12px; font-weight:600; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:1px 7px; }
-.slot-preview-buffer { font-style:italic; color:#b45309; }
+.slot-preview-buffer { font-style:italic; color:var(--warning-ink, #b45309); }
 .fixed-times-note { font-size:12px; color:var(--text-muted); margin:8px 0; line-height:1.45; }
 .fixed-times-note strong { color:var(--text); font-weight:600; }
 /* Inline text button (e.g. "weekly schedule" link inside hints) */
-.link-btn { background:none; border:0; padding:0; margin:0; font:inherit; color:var(--primary); font-weight:600; text-decoration:underline; cursor:pointer; }
+.link-btn { background:none; border:0; padding:0; margin:0; font:inherit; color:var(--primary-ink); font-weight:600; text-decoration:underline; cursor:pointer; }
 .link-btn:hover { color:var(--primary-dark, #0d9488); }
 /* Start-time mode toggle */
 /* Custom start times — title + toggle header */
@@ -4470,7 +4105,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .sttm-toggle { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .sttm-btn { padding:11px 14px; border:1.5px solid var(--border); border-radius:10px; background:var(--surface, #ffffff); text-align:left; cursor:pointer; transition:all .15s; }
 .sttm-btn:hover { border-color:var(--primary); }
-.sttm-btn.active { border-color:var(--primary); background:#f0fdfa; box-shadow:0 0 0 3px rgba(16,185,129,.12); }
+.sttm-btn.active { border-color:var(--primary); background:var(--primary-soft, #f0fdfa); box-shadow:0 0 0 3px rgba(16,185,129,.12); }
 .sttm-title { font-size:13.5px; font-weight:600; color:var(--text); }
 .sttm-sub { font-size:11.5px; color:var(--text-muted); margin-top:2px; }
 .fixed-times-editor { margin-top:12px; padding:12px; background:var(--bg); border:1px solid var(--border); border-radius:10px; }
@@ -4478,9 +4113,9 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .fixed-times-add .filter-select { max-width:120px; }
 .fixed-times-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
 .fixed-time-chip { display:inline-flex; align-items:center; gap:5px; padding:3px 6px 3px 10px; background:var(--surface, #ffffff); border:1px solid var(--border); border-radius:6px; font-size:12.5px; font-weight:600; font-family:'SF Mono',Monaco,monospace; }
-.fixed-time-chip button { display:inline-flex; width:16px; height:16px; border-radius:4px; background:#f1f5f9; color:var(--text-muted); align-items:center; justify-content:center; }
-.fixed-time-chip button:hover { background:#fee2e2; color:#dc2626; }
-.fixed-times-empty { margin-top:10px; font-size:12px; color:#b45309; }
+.fixed-time-chip button { display:inline-flex; width:16px; height:16px; border-radius:4px; background:var(--bg, #f1f5f9); color:var(--text-muted); align-items:center; justify-content:center; }
+.fixed-time-chip button:hover { background:var(--danger-bg, #fee2e2); color:var(--danger-ink, #dc2626); }
+.fixed-times-empty { margin-top:10px; font-size:12px; color:var(--warning-ink, #b45309); }
 /* Fixed start-times: hour & minute pickers + live preview */
 .ft-pickers { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 @media (max-width:600px){ .ft-pickers { grid-template-columns:1fr; } }
@@ -4490,35 +4125,35 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .ft-col-hint { margin-top:8px; font-size:12px; color:var(--text-muted); }
 .ft-preview { margin-top:14px; padding-top:12px; border-top:1px dashed var(--border); }
 .ft-preview-head { display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--text); margin-bottom:8px; }
-.ft-preview-head svg { color:var(--primary); }
-.ft-preview-count { margin-left:2px; font-size:11px; font-weight:800; color:var(--primary); background:#ccfbf1; border-radius:999px; padding:1px 8px; }
+.ft-preview-head svg { color:var(--primary-ink); }
+.ft-preview-count { margin-left:2px; font-size:11px; font-weight:800; color:var(--primary-ink); background:var(--primary-soft, #ccfbf1); border-radius:999px; padding:1px 8px; }
 .ft-preview-grid { display:flex; flex-wrap:wrap; gap:6px; }
-.ft-preview-chip { font-family:'SF Mono',Monaco,monospace; font-size:12px; font-weight:700; color:var(--primary); background:#f0fdfa; border:1px solid #99f6e4; border-radius:6px; padding:2px 8px; }
+.ft-preview-chip { font-family:'SF Mono',Monaco,monospace; font-size:12px; font-weight:700; color:var(--primary-ink); background:var(--primary-soft, #f0fdfa); border:1px solid var(--primary-border, #99f6e4); border-radius:6px; padding:2px 8px; }
 /* Custom start times: tappable slot toggles (on = offered to customers) */
 .cst-caption { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted); margin-bottom:10px; }
-.cst-caption svg { color:var(--primary); flex-shrink:0; }
+.cst-caption svg { color:var(--primary-ink); flex-shrink:0; }
 .cst-chips { display:flex; flex-wrap:wrap; gap:8px; }
 .cst-chip { display:inline-flex; align-items:center; gap:5px; font-family:'SF Mono',Monaco,monospace; font-size:12.5px; font-weight:700; padding:6px 12px; border-radius:999px; border:1.5px solid var(--border); background:var(--surface, #ffffff); color:var(--text-muted); cursor:pointer; transition:all .12s; }
-.cst-chip:hover { border-color:var(--primary); color:var(--primary); }
+.cst-chip:hover { border-color:var(--primary); color:var(--primary-ink); }
 .cst-chip .cst-chip-check { flex-shrink:0; }
 .cst-chip.on { background:var(--primary); border-color:var(--primary); color:#fff; }
 .cst-chip.on:hover { background:var(--primary-dark, #0d9488); border-color:var(--primary-dark, #0d9488); color:#fff; }
 /* Export choice buttons */
 .export-choice-btn { display:flex;align-items:center;gap:14px;padding:13px 16px;background:var(--bg);border:1.5px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;width:100%;transition:all .15s; }
-.export-choice-btn:hover { border-color:var(--primary);background:#f0f9ff; }
-.export-choice-btn svg { color:var(--primary);flex-shrink:0; }
+.export-choice-btn:hover { border-color:var(--primary);background:var(--info-bg, #f0f9ff); }
+.export-choice-btn svg { color:var(--primary-ink);flex-shrink:0; }
 .export-choice-btn strong { font-size:13.5px;color:var(--text); }
 .export-choice-btn span { font-size:12px;color:var(--text-muted); }
 .flat-row:last-child { border-bottom: 0; }
-.flat-row:hover { background: #fafafa; }
+.flat-row:hover { background: var(--surface-hover, #fafafa); }
 .flat-color-dot { width: 4px; height: 24px; border-radius: 3px; flex-shrink: 0; justify-self: center; }
 .flat-name { min-width: 0; overflow: hidden; }
 .flat-loc { font-size: 13px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .flat-sport, .flat-price, .flat-cap { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .flat-actions { display: flex; gap: 2px; justify-content: flex-end; }
-.flat-row.drag-over { background: #f0fdfa; outline: 2px solid var(--primary); outline-offset: -2px; }
+.flat-row.drag-over { background: var(--primary-soft, #f0fdfa); outline: 2px solid var(--primary); outline-offset: -2px; }
 .flat-row.dragging { opacity: 0.45; }
-.flat-row.is-hidden { opacity: 0.45; background: #f9fafb; }
+.flat-row.is-hidden { opacity: 0.45; background: var(--surface-hover, #f9fafb); }
 .flat-row.is-hidden .listing-name-btn { color: var(--muted); text-decoration: line-through; }
 .flat-grip { margin: 0; }
 
@@ -4532,42 +4167,42 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .listing-drag { margin-right: 4px; }
 .loc-group.drag-over { border-color: var(--primary); box-shadow: 0 0 0 2px #d1fae5; }
 .loc-group.dragging { opacity: 0.5; }
-.listing-row.drag-over { background: #f0fdfa; }
+.listing-row.drag-over { background: var(--primary-soft, #f0fdfa); }
 .listing-row.dragging { opacity: 0.45; }
-.btn-icon.eye-hidden { color: #ef4444; }
-.btn-icon.eye-hidden:hover { background: #fee2e2; color: #dc2626; }
+.btn-icon.eye-hidden { color: var(--danger-ink, #ef4444); }
+.btn-icon.eye-hidden:hover { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626); }
 .btn-icon.paused-icon { color: #f59e0b; }
-.btn-icon.paused-icon:hover { background: #fef3c7; color: #d97706; }
+.btn-icon.paused-icon:hover { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #d97706); }
 
 .eligibility-notice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; border-radius: 8px; font-size: 13px; line-height: 1.5; border: 1px solid; }
-.notice-admin { background: #fef9c3; border-color: #fde047; color: #713f12; }
-.notice-admin-pending { background: #eff6ff; border-color: #bfdbfe; color: #1e3a5f; }
-.notice-admin-pending strong { color: #1d4ed8; }
-.notice-provider { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
-.notice-provider strong { color: #7c2d12; }
-.notice-review { background: #eff6ff; border-color: #bfdbfe; color: #1e3a5f; }
-.notice-review strong { color: #1d4ed8; }
-.notice-pending { font-style: italic; color: #6b7280; }
+.notice-admin { background: var(--warning-bg, #fef9c3); border-color: #fde047; color: var(--warning-ink, #713f12); }
+.notice-admin-pending { background: var(--info-bg, #eff6ff); border-color: var(--info-border, #bfdbfe); color: var(--info-ink, #1e3a5f); }
+.notice-admin-pending strong { color: var(--info-ink, #1d4ed8); }
+.notice-provider { background: var(--warning-bg, #fff7ed); border-color: var(--warning-border, #fed7aa); color: var(--warning-ink, #9a3412); }
+.notice-provider strong { color: var(--warning-ink, #7c2d12); }
+.notice-review { background: var(--info-bg, #eff6ff); border-color: var(--info-border, #bfdbfe); color: var(--info-ink, #1e3a5f); }
+.notice-review strong { color: var(--info-ink, #1d4ed8); }
+.notice-pending { font-style: italic; color: var(--text-muted, #6b7280); }
 
 .listing-pause-block { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; max-width: 300px; }
-.listing-eligibility-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: #b45309; background: #fef3c7; border: 1px solid #fde68a; border-radius: 5px; padding: 2px 7px; flex-shrink: 0; white-space: nowrap; width: fit-content; }
-.listing-eligibility-badge.badge-review { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
-.listing-admin-note { font-size: 12px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 5px 8px; line-height: 1.4; }
-.listing-admin-note.note-review { color: #1e3a5f; background: #eff6ff; border-color: #bfdbfe; }
-.listing-admin-note span { font-weight: 600; color: #78350f; }
-.listing-admin-note.note-review span { color: #1d4ed8; }
-.note-cta { font-style: italic; color: #b45309; font-weight: 400; }
-.note-pending { font-style: italic; color: #6b7280; font-weight: 400; }
+.listing-eligibility-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--warning-ink, #b45309); background: var(--warning-bg, #fef3c7); border: 1px solid var(--warning-border, #fde68a); border-radius: 5px; padding: 2px 7px; flex-shrink: 0; white-space: nowrap; width: fit-content; }
+.listing-eligibility-badge.badge-review { color: var(--info-ink, #1d4ed8); background: var(--info-bg, #eff6ff); border-color: var(--info-border, #bfdbfe); }
+.listing-admin-note { font-size: 12px; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 6px; padding: 5px 8px; line-height: 1.4; }
+.listing-admin-note.note-review { color: var(--info-ink, #1e3a5f); background: var(--info-bg, #eff6ff); border-color: var(--info-border, #bfdbfe); }
+.listing-admin-note span { font-weight: 600; color: var(--warning-ink, #78350f); }
+.listing-admin-note.note-review span { color: var(--info-ink, #1d4ed8); }
+.note-cta { font-style: italic; color: var(--warning-ink, #b45309); font-weight: 400; }
+.note-pending { font-style: italic; color: var(--text-muted, #6b7280); font-weight: 400; }
 
-.pause-info { display: flex; gap: 10px; align-items: flex-start; padding: 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 13px; color: #9a3412; line-height: 1.5; }
-.pause-info strong { color: #7c2d12; }
-.loc-group.is-hidden { opacity: 0.5; background: #f9fafb; border-style: dashed; }
+.pause-info { display: flex; gap: 10px; align-items: flex-start; padding: 12px; background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); border-radius: 8px; font-size: 13px; color: var(--warning-ink, #9a3412); line-height: 1.5; }
+.pause-info strong { color: var(--warning-ink, #7c2d12); }
+.loc-group.is-hidden { opacity: 0.5; background: var(--surface-hover, #f9fafb); border-style: dashed; }
 .loc-group.is-hidden .loc-name-btn { color: var(--muted); text-decoration: line-through; }
-.listing-row.is-hidden { opacity: 0.45; background: #f9fafb; }
+.listing-row.is-hidden { opacity: 0.45; background: var(--surface-hover, #f9fafb); }
 .listing-row.is-hidden .listing-name-btn { color: var(--muted); text-decoration: line-through; }
 
-.acct-icon-sm { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, #ccfbf1, #99f6e4); color: var(--primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.acct-modal-icon { width: 52px; height: 52px; border-radius: 12px; background: linear-gradient(135deg, #ccfbf1, #99f6e4); color: var(--primary); display: flex; align-items: center; justify-content: center; margin: 0 0 14px; }
+.acct-icon-sm { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--primary-soft, #ccfbf1), #99f6e4); color: var(--primary-ink); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.acct-modal-icon { width: 52px; height: 52px; border-radius: 12px; background: linear-gradient(135deg, var(--primary-soft, #ccfbf1), #99f6e4); color: var(--primary-ink); display: flex; align-items: center; justify-content: center; margin: 0 0 14px; }
 
 /* ── Narrow-phone fixes (≤600px; verified against 360/344px) — mobile only,
    desktop layout untouched. ─────────────────────────────────────────────── */
@@ -4617,14 +4252,13 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
      anything: line 1 = name (+meta) with edit/delete on the right; line 2 = the
      placement chips, full width, side-by-side. Status stays just as visible and
      the name is finally readable. */
-  .listing-row { align-items: center; row-gap: 9px; padding: 12px 14px; }
-  .listing-info { flex: 1 1 auto; order: 1; }
+  .listing-row { display: grid; grid-template-columns: 16px 4px minmax(0, 1fr); align-items: start; gap: 10px 8px; padding: 16px 14px; }
+  .listing-info { min-width: 0; grid-column: 3; order: 0; }
   .listing-name-btn { white-space: normal; overflow: visible; overflow-wrap: anywhere; line-height: 1.25; }
-  .listing-actions { order: 2; margin-left: auto; }
+  .listing-actions { grid-column: 3; grid-row: 3; order: 0; margin-left: 0; }
+  .listing-actions .btn-icon { min-width: 38px; min-height: 38px; justify-content: center; align-items: center; border: 1px solid var(--border); border-radius: 8px; }
   .listing-pause-block {
-    order: 3; flex-basis: 100%; max-width: 100%;
-    /* align the chips under the name, past the grip + colour bar */
-    padding-left: 26px;
+    grid-column: 3; grid-row: 2; order: 0; max-width: 100%; padding-left: 0;
   }
   .placement-chips { flex-direction: row; flex-wrap: wrap; gap: 6px; width: 100%; }
   /* a hair more tap area on the chip buttons + open-link at finger size */
@@ -4633,4 +4267,29 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 }
 
 .lf-note { flex-basis: 100%; font-size: 11.5px; color: var(--text-light, #94a3b8); margin-top: 4px; }
+
+/* Nested catalog editors stay compact and touch-friendly. */
+.catalog-item-modal .img-drop-zone { height: auto; min-height: 100px; padding: 14px; gap: 6px; }
+.dp-switch:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 4px; border-radius: 999px; }
+.catalog-item-modal .drop-label { display: flex; flex-direction: column; gap: 4px; }
+@media (max-width: 760px) {
+  .conn-qty-btn, .conn-row-x { width: 44px; height: 44px; }
+  .conn-qty-input { min-height: 44px; }
+  .ext-block-title { flex-wrap: wrap; gap: 6px; }
+  .ext-block-title .dp-rec { display: none; }
+  .cst-chip { min-height: 44px; }
+  .dp-title .dp-rec { display: none; }
+}
+
+.listing-pause-block .placement-chips, .flat-status .placement-chips { gap:6px; }
+.listing-pause-block .chan, .flat-status .chan { display:flex; gap:7px; min-height:34px; border-radius:7px; padding:6px 9px; font-size:12px; width:100%; }
+.listing-pause-block .chan-wrap, .flat-status .chan-wrap { display:flex; align-items:center; gap:4px; }
+.listing-pause-block .chan-name, .flat-status .chan-name { flex:1; text-align:start; }
+.listing-pause-block .chan-suffix, .flat-status .chan-suffix { font-size:11px; font-weight:700; opacity:1; }
+.listing-pause-block .chan-live, .flat-status .chan-live { background:var(--positive-bg); color:var(--positive-ink); border-color:color-mix(in srgb,var(--positive-ink) 25%,var(--border)); }
+.listing-pause-block .chan-off, .flat-status .chan-off { background:var(--bg); color:var(--text-muted); }
+.listing-pause-block .chan-pending, .flat-status .chan-pending { background:var(--warning-bg); color:var(--warning-ink); }
+.listing-pause-block .chan-action, .flat-status .chan-action { background:var(--danger-bg); color:var(--danger-ink); }
+.listing-pause-block .vis-badge, .flat-status .vis-badge { display:inline-flex; align-items:center; gap:5px; background:transparent; color:var(--text-muted); font-weight:500; font-size:11px; padding:0 0 5px; }
+@media(max-width:600px) { .listing-pause-block .chan,.flat-status .chan { min-height:44px; } .listing-pause-block .chan-open,.flat-status .chan-open { min-width:44px; min-height:44px; } }
 </style>

@@ -101,7 +101,7 @@ async function remove(p) {
     <template v-if="view === 'list'">
       <div class="page-header">
         <div>
-          <div class="page-title">Blog</div>
+          <h1 class="page-title">Blog</h1>
           <div class="page-subtitle" v-if="isBiz">Articles shown on the for-businesses site (<code>business.bookboll.com/blog</code>).</div>
           <div class="page-subtitle" v-else>Articles shown on the public marketplace at <code>/blog</code>.</div>
         </div>
@@ -145,7 +145,7 @@ async function remove(p) {
       <div class="page-header">
         <div>
           <button class="blogadm-back" @click="view = 'list'"><X :size="15" /> Close</button>
-          <div class="page-title">{{ form.id ? 'Edit post' : 'New post' }} <span class="blogadm-aud">{{ isBiz ? 'For Business blog' : 'Marketplace blog' }}</span></div>
+          <h1 class="page-title">{{ form.id ? 'Edit post' : 'New post' }} <span class="blogadm-aud">{{ isBiz ? 'For Business blog' : 'Marketplace blog' }}</span></h1>
         </div>
         <div class="blogadm-head-actions">
           <button class="btn btn-secondary" @click="showPreview = !showPreview"><Eye :size="15" /> {{ showPreview ? 'Hide' : 'Preview' }}</button>
@@ -210,39 +210,39 @@ async function remove(p) {
 </template>
 
 <style scoped>
-.page-subtitle code, .blogadm-warn code { background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+.page-subtitle code, .blogadm-warn code { background: var(--bg, #f1f5f9); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 /* Marketplace / For Business publication tabs */
-.blogadm-tabs { display: flex; gap: 6px; margin-bottom: 16px; background: #f1f5f9; border-radius: 12px; padding: 4px; width: fit-content; }
+.blogadm-tabs { display: flex; gap: 6px; margin-bottom: 16px; background: var(--bg, #f1f5f9); border-radius: 12px; padding: 4px; width: fit-content; }
 .blogadm-tab { display: inline-flex; align-items: center; gap: 7px; border: none; background: none; color: var(--text-muted, #64748b); font: inherit; font-weight: 800; font-size: 13.5px; padding: 8px 16px; border-radius: 9px; cursor: pointer; }
-.blogadm-tab.on { background: var(--surface, #ffffff); color: #0f172a; box-shadow: 0 1px 4px rgba(15,23,42,.12); }
-.blogadm-aud { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, white); padding: 3px 10px; border-radius: 999px; vertical-align: middle; margin-left: 8px; }
+.blogadm-tab.on { background: var(--surface, #ffffff); color: var(--text, #0f172a); box-shadow: 0 1px 4px rgba(15,23,42,.12); }
+.blogadm-aud { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--primary-ink); background: color-mix(in srgb, var(--primary) 10%, white); padding: 3px 10px; border-radius: 999px; vertical-align: middle; margin-left: 8px; }
 .blogadm-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .blogadm-back { background: none; border: none; color: var(--text-muted, #64748b); font-weight: 700; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 0 0 6px; }
 .btn:disabled { opacity: .6; cursor: not-allowed; }
 .spin { animation: bspin 1s linear infinite; } @keyframes bspin { to { transform: rotate(360deg); } }
-.blogadm-warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 13.5px; padding: 11px 14px; border-radius: 10px; margin-bottom: 14px; }
+.blogadm-warn { background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); color: var(--warning-ink, #92400e); font-size: 13.5px; padding: 11px 14px; border-radius: 10px; margin-bottom: 14px; }
 .blogadm-empty { text-align: center; color: var(--text-light, #94a3b8); padding: 50px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
 
 .blogadm-list { display: flex; flex-direction: column; gap: 8px; }
 .blogadm-row { display: flex; align-items: center; gap: 14px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 12px 14px; }
-.blogadm-thumb { width: 56px; height: 44px; flex-shrink: 0; border-radius: 9px; background: #f1f5f9; background-size: cover; background-position: center; color: var(--text-light, #94a3b8); display: flex; align-items: center; justify-content: center; }
+.blogadm-thumb { width: 56px; height: 44px; flex-shrink: 0; border-radius: 9px; background: var(--bg, #f1f5f9); background-size: cover; background-position: center; color: var(--text-light, #94a3b8); display: flex; align-items: center; justify-content: center; }
 .blogadm-main { flex: 1; min-width: 0; }
-.blogadm-title { font-size: 15px; font-weight: 800; color: #0f172a; }
+.blogadm-title { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .blogadm-meta { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-light, #94a3b8); margin-top: 3px; flex-wrap: wrap; }
 .blogadm-badge { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; }
-.blogadm-badge.published { background: #dcfce7; color: #15803d; }
-.blogadm-badge.draft { background: #f1f5f9; color: var(--text-muted, #64748b); }
+.blogadm-badge.published { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #15803d); }
+.blogadm-badge.draft { background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); }
 .blogadm-slug { font-family: ui-monospace, monospace; }
 .blogadm-actions { display: flex; gap: 6px; }
-.blogadm-ic { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; display: flex; align-items: center; justify-content: center; cursor: pointer; text-decoration: none; }
-.blogadm-ic:hover { border-color: var(--primary); color: var(--primary); }
-.blogadm-ic.danger:hover { border-color: #fecaca; color: #dc2626; background: #fef2f2; }
+.blogadm-ic { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); display: flex; align-items: center; justify-content: center; cursor: pointer; text-decoration: none; }
+.blogadm-ic:hover { border-color: var(--primary); color: var(--primary-ink); }
+.blogadm-ic.danger:hover { border-color: var(--danger-border, #fecaca); color: var(--danger-ink, #dc2626); background: var(--danger-bg, #fef2f2); }
 
 .blogadm-grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; }
-.blogadm-l { display: block; font-size: 12.5px; font-weight: 800; color: #334155; margin: 14px 0 5px; }
+.blogadm-l { display: block; font-size: 12.5px; font-weight: 800; color: var(--text-secondary, #334155); margin: 14px 0 5px; }
 .blogadm-l:first-child { margin-top: 0; }
 .blogadm-opt { font-weight: 600; color: var(--text-light, #94a3b8); font-size: 11px; }
-.blogadm-in { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: #0f172a; font-family: inherit; }
+.blogadm-in { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: var(--text, #0f172a); font-family: inherit; }
 .blogadm-in:focus { outline: none; border-color: var(--primary); }
 .blogadm-body { font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.6; resize: vertical; }
 .blogadm-slugrow { display: flex; align-items: center; gap: 6px; }
@@ -250,12 +250,12 @@ async function remove(p) {
 .blogadm-preview { margin-top: 16px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 18px; background: var(--surface, #ffffff); position: relative; }
 .blogadm-preview-tag { position: absolute; top: -9px; left: 14px; background: #0f172a; color: #fff; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; padding: 2px 8px; border-radius: 999px; }
 .blogadm-side { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 16px; height: fit-content; }
-.blogadm-cover { width: 100%; height: 130px; border-radius: 10px; background: #f1f5f9; background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: var(--text-light, #94a3b8); }
+.blogadm-cover { width: 100%; height: 130px; border-radius: 10px; background: var(--bg, #f1f5f9); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: var(--text-light, #94a3b8); }
 .blogadm-upload { width: 100%; justify-content: center; margin-top: 10px; cursor: pointer; }
 .blogadm-rm { width: 100%; margin-top: 6px; background: none; border: none; color: var(--text-light, #94a3b8); font-size: 12.5px; font-weight: 700; cursor: pointer; }
-.blogadm-rm:hover { color: #dc2626; }
+.blogadm-rm:hover { color: var(--danger-ink, #dc2626); }
 .blogadm-seo { margin-top: 14px; border-top: 1px solid #eef2f6; padding-top: 12px; }
-.blogadm-seo summary { font-size: 12.5px; font-weight: 800; color: #334155; cursor: pointer; }
+.blogadm-seo summary { font-size: 12.5px; font-weight: 800; color: var(--text-secondary, #334155); cursor: pointer; }
 @media (max-width: 820px) { .blogadm-grid { grid-template-columns: 1fr; } }
 
 /* Phone (360px-class) tuning — mobile-only, no desktop impact */

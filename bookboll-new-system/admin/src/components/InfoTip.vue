@@ -75,7 +75,7 @@ onBeforeUnmount(close)
   color: var(--text-muted); cursor: help; margin-left: 5px; vertical-align: middle;
   border-radius: 50%;
 }
-.infotip:hover, .infotip:focus { color: var(--primary); outline: none; }
+.infotip:hover, .infotip:focus { color: var(--primary-ink); outline: none; }
 </style>
 
 <!-- Popup lives at <body>, so its styles must be global (not scoped). -->

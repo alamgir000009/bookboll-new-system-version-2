@@ -1,4 +1,8 @@
 <script setup>
+import VenueCommercial from './VenueCommercial.vue'
+import VenueTransfer from './VenueTransfer.vue'
+import { isBookbollVenue } from '../lib/finance.js'
+import PhotoOrderEditor from './PhotoOrderEditor.vue'
 /**
  * LocationModal.vue — the ONE shared "New / Edit Location" form.
  *
@@ -27,6 +31,11 @@ import { markDirty, clearDirty, confirmDiscardIfDirty, pushDirtyScope, popDirtyS
 import { saveFormDraft, loadFormDraft, clearFormDraft, draftAgeLabel } from '../lib/formDrafts.js'
 import { askConfirm } from '../lib/confirm.js'
 import WeeklyHours from './WeeklyHours.vue'
+import CreationSteps from './CreationSteps.vue'
+import { VENUE_STEPS, venueIssue } from '../lib/creationFlow.js'
+import { adminBrandVars } from '../lib/adminBrand.js'
+import { fmtRange12 } from '../lib/slots.js'
+import { useEditorDialog } from '../lib/editorDialog.js'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -72,10 +81,55 @@ const countries = ref([])
 const cities = ref([])
 const form = ref(defaultForm())
 const editingId = ref(null)
-const tab = ref('details')           // 'details' | 'schedule'
+const tab = ref('details')
+const commercialDirty = ref(false)
+const commercialBusy = ref(false)
+const transferOpen = ref(false)
+const originalOwnership = ref({ owner_user_id:null, business_id:null })
+const originalBookboll = computed(() => isBookbollVenue(originalOwnership.value))
+function transferred(venue) { transferOpen.value=false; toast.success('Venue transferred'); emit('saved',venue) }
+function beginTransfer() { if (commercialDirty.value) { errorMsg.value='Save or discard the agreement before transferring this venue.'; return }; transferOpen.value=true }
+const bodyEl = ref(null)
+const dialogEl = ref(null)
+const editorKeydown = useEditorDialog(computed(() => props.open), dialogEl)
+const venueDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const venueStepIndex = computed(() => VENUE_STEPS.findIndex(step => step.id === tab.value))
+const venueStep = computed(() => VENUE_STEPS[venueStepIndex.value] || VENUE_STEPS[0])
+const venueStepDescription = computed(() => ({ details: 'Start with the essentials. Required fields are marked with an asterisk.', map: 'Add directions and venue photos. These are optional and can be updated later.', schedule: 'Choose when this venue is open for bookings.', review: 'Check your venue before saving. You can return to any step to make changes.' }[tab.value]))
+const hasMapPin = computed(() => form.value.latitude != null && form.value.latitude !== '' && form.value.longitude != null && form.value.longitude !== '' && !coordsInvalid.value)
+async function goVenueStep(step) {
+  if (saving.value || !VENUE_STEPS.some(item => item.id === step)) return
+  if (step === 'review' && !(await validateVenue())) return
+  tab.value = step
+  await nextTick()
+  if (bodyEl.value) bodyEl.value.scrollTop = 0
+}
+async function validateVenue() {
+  const issue = venueIssue(form.value, coordsInvalid.value)
+  if (!issue) { errorMsg.value = ''; return true }
+  triedSave.value = true
+  errorMsg.value = issue.message
+  tab.value = issue.step
+  await nextTick()
+  const field = bodyEl.value?.querySelector('.input-invalid')
+  field?.scrollIntoView({ block: 'center' })
+  field?.focus({ preventScroll: true })
+  return false
+}
+function saveLocationDraftNow() {
+  if (commercialBusy.value) return
+  if (commercialDirty.value) { errorMsg.value='Save or discard the operating agreement before saving a venue draft.'; return }
+  if (saving.value || uploading.value) return
+  if (!saveFormDraft(locationDraftKey(), locationDraftSnapshot())) { errorMsg.value = 'The draft could not be saved in this browser. Keep this form open and try again.'; return }
+  clearDirty()
+  toast.success('Draft saved in this browser')
+  emit('close')
+}
 const selectedCountryId = ref('')
 const hours = ref(defaultHours())
 const saving = ref(false)
+const loading = ref(false)
+const loadFailed = ref(false)
 const savedFlag = ref(false)
 const errorMsg = ref('')
 // Photo upload state. All four were dropped when image upload moved to the
@@ -247,26 +301,29 @@ watch(() => props.open, async (v) => {
   // so it gets its own dirty scope: closing it must not wipe the outer form's
   // unsaved-changes state.
   if (!v) { destroyMap(); popDirtyScope(); return }
+  loading.value = true
+  loadFailed.value = false
+  try {
   pushDirtyScope()
   errorMsg.value = ''
   triedSave.value = false
   geoStatus.value = 'idle'
   mapsLinkStatus.value = ''
   imgError.value = ''
-  tab.value = props.editing ? '' : 'details'   // editing → open with all cards collapsed
+  tab.value = 'details'
+  commercialDirty.value=false
+  transferOpen.value=false
+  originalOwnership.value={owner_user_id:null,business_id:null}
   await loadRefData()
   if (props.editing) {
     editingExisting.value = true
     editingId.value = props.editing.id
     const res = await fetchVenueDashboard(props.editing.id)
     if (!res.success) {
-      errorMsg.value = firstError(res, 'Could not load location.')
-      form.value = { ...defaultForm(), ...props.editing, photos: normalizePhotos(props.editing), owner_user_id: props.editing.owner_user_id || '' }
-      hours.value = defaultHours()
-      connectedListings.value = []
-      selectedCountryId.value = props.editing.country_id != null ? String(props.editing.country_id) : ''
+      throw new Error(firstError(res, 'Could not load venue settings. Close this form and try again.'))
     } else {
       const loc = res.data?.location || props.editing
+      originalOwnership.value={owner_user_id:loc.owner_user_id || null,business_id:loc.business_id || null,operator_type:loc.operator_type || null}
       form.value = {
         ...defaultForm(),
         ...loc,
@@ -301,9 +358,14 @@ watch(() => props.open, async (v) => {
   // "Save draft" choice for this modal's own dirty scope.
   await offerLocationDraft()
   if (selectedCountryId.value) await ensureCities(selectedCountryId.value)
-  registerDraftSaver(() => saveFormDraft(locationDraftKey(), locationDraftSnapshot()))
+  registerDraftSaver(() => commercialDirty.value || commercialBusy.value ? false : saveFormDraft(locationDraftKey(), locationDraftSnapshot()))
   await nextTick()
-  initMap()   // after any draft restore, so the map pin reflects the draft's coords
+  if (tab.value === 'map') initMap()
+  } catch (error) {
+    loadFailed.value = true
+    clearDirty()
+    errorMsg.value = error?.message || 'Could not load venue settings. Close this form and try again.'
+  } finally { loading.value = false }
 })
 
 // ── Local "save as draft" for the location form ──────────────────────────────
@@ -330,7 +392,7 @@ async function offerLocationDraft() {
 
 // Re-fit the map whenever we return to the details tab (it was display:none).
 watch(tab, async (t) => {
-  if (t === 'details') { await nextTick(); mapInst && mapInst.invalidateSize() }
+  if (t === 'map') { await nextTick(); if (mapInst) mapInst.invalidateSize(); else initMap() }
 })
 
 // ── Leaflet map picker ──
@@ -380,6 +442,11 @@ const coordsInvalid = computed(() => {
 /** Commit a typed value: move the pin to it. */
 function applyTypedCoords() {
   if (coordsInvalid.value) return
+  if (!hasMapPin.value) {
+    markerInst?.remove()
+    markerInst = null
+    return
+  }
   const lat = Number(form.value.latitude)
   const lng = Number(form.value.longitude)
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
@@ -392,9 +459,9 @@ function applyTypedCoords() {
 function initMap() {
   if (!mapEl.value) return
   if (mapInst) { mapInst.invalidateSize(); return }
-  const hasPoint = !!form.value.latitude && !!form.value.longitude
-  const lat = Number(form.value.latitude) || 25.2048
-  const lng = Number(form.value.longitude) || 55.2708
+  const hasPoint = hasMapPin.value
+  const lat = hasPoint ? Number(form.value.latitude) : 25.2048
+  const lng = hasPoint ? Number(form.value.longitude) : 55.2708
   mapInst = L.map(mapEl.value, { zoomControl: true }).setView([lat, lng], hasPoint ? 14 : 5)
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -494,24 +561,20 @@ function removePhoto(i) { form.value.photos.splice(i, 1) }
 function makePrimary(i) { if (i === 0) return; const [p] = form.value.photos.splice(i, 1); form.value.photos.unshift(p) }
 
 // ── Save ──
-// andClose = false → "Save & Continue": persist but keep the drawer open (advance to
-// the next card). andClose = true → final save: persist + close (emit 'saved').
+// Continue only moves between steps; the final action performs the write.
 async function saveAndContinue() {
-  await save(false)
-  if (!errorMsg.value) tab.value = 'schedule'
+  if (saving.value || uploading.value) return
+  if (tab.value === 'details' && !(await validateVenue())) return
+  if (tab.value === 'map' && coordsInvalid.value) { await validateVenue(); return }
+  errorMsg.value = ''
+  triedSave.value = false
+  await goVenueStep(VENUE_STEPS[Math.min(venueStepIndex.value + 1, VENUE_STEPS.length - 1)].id)
 }
 async function save(andClose = true) {
-  if (!canSave.value) {
-    // Red-flag the missing fields and bring the user TO them — a footer message
-    // alone leaves the invalid inputs out of view on a long form.
-    triedSave.value = true
-    errorMsg.value = 'Venue name and city are required.'
-    tab.value = 'details'
-    await nextTick()
-    const el = document.querySelector('.bb-drawer .input-invalid')
-    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); try { el.focus({ preventScroll: true }) } catch { /* selects only */ } }
-    return
-  }
+  if (saving.value || uploading.value || loading.value || loadFailed.value) return
+  if (commercialDirty.value) { errorMsg.value='Save or discard the operating agreement before saving venue details.'; tab.value='details'; return }
+  if (editingExisting.value && (String(form.value.owner_user_id || '') !== String(originalOwnership.value.owner_user_id || '') || String(form.value.business_id || '') !== String(originalOwnership.value.business_id || ''))) { errorMsg.value='Use the reviewed venue transfer process to change business ownership.'; tab.value='details'; return }
+  if (venueIssue(form.value, coordsInvalid.value)) { await validateVenue(); return }
   triedSave.value = false
   saving.value = true
   errorMsg.value = ''
@@ -519,7 +582,7 @@ async function save(andClose = true) {
     const payload = {
       // Empty owner = Bookboll-owned facility (owner_user_id NULL drives the
       // payment-split logic in NewBookingDrawer / wallet).
-      owner_user_id: form.value.owner_user_id || null,
+      ...(editingExisting.value ? {} : { owner_user_id: form.value.owner_user_id || null }),
       name: form.value.name,
       city_id: form.value.city_id || null,
       // These columns are NOT NULL in the DB — store '' (not null) when empty.
@@ -530,8 +593,8 @@ async function save(andClose = true) {
       photos: form.value.photos || [],
       photo_url: form.value.photos?.[0] || '',   // keep legacy single field mirrored
       status: form.value.status || 'active',
-      latitude: form.value.latitude || null,
-      longitude: form.value.longitude || null,
+      latitude: form.value.latitude === '' || form.value.latitude == null ? null : Number(form.value.latitude),
+      longitude: form.value.longitude === '' || form.value.longitude == null ? null : Number(form.value.longitude),
       timezone_override: form.value.timezone_override || null,
       currency_override: form.value.currency_override || null,
       hours: hours.value,
@@ -539,7 +602,7 @@ async function save(andClose = true) {
     const res = editingId.value
       ? await updateVenue(editingId.value, payload)
       : await createVenue(payload)
-    if (!res.success) throw new Error(firstError(res, 'Could not save location.'))
+    if (!res.success) throw new Error(firstError(res, 'Could not save venue.'))
     const saved = res.data?.location
     const locId = saved?.id || editingId.value
     const wasNew = !editingId.value
@@ -562,20 +625,21 @@ async function save(andClose = true) {
     }
 
     if (andClose) {
-      toast.success(wasNew ? 'Location created' : 'Location updated')
+      toast.success(wasNew ? 'Venue created' : 'Venue updated')
       emit('saved', saved)
     } else {
-      toast.success(wasNew ? 'Location created — now set weekly hours' : 'Saved')
+      toast.success(wasNew ? 'Venue created — now set weekly hours' : 'Saved')
     }
   } catch (e) {
-    errorMsg.value = e.message || 'Could not save location. Please try again.'
-    toast.error('Could not save location')
+    errorMsg.value = e.message || 'Could not save venue. Please try again.'
+    toast.error('Could not save venue')
   } finally {
     saving.value = false
   }
 }
 
 async function close() {
+  if (saving.value || commercialBusy.value) return
   const res = await confirmDiscardIfDirty()   // false = stay · true = discard · 'draft' = saved a draft
   if (!res) return
   if (res === 'draft') toast.success('Draft saved — it will be offered when you reopen this form')
@@ -616,119 +680,61 @@ async function applyScheduleToSelected() {
 
 <template>
   <teleport to="body">
+  <VenueTransfer v-if="open && transferOpen" :venue-id="editingId" :venue-name="form.name" @close="transferOpen=false" @transferred="transferred"/>
   <div v-if="open" class="bb-drawer-backdrop" style="z-index:3200" @click.self="close">
-    <div class="bb-drawer" @input="markDirty" @change="markDirty">
+    <div ref="dialogEl" class="bb-drawer creation-drawer" :style="adminBrandVars" role="dialog" aria-modal="true" aria-labelledby="venue-editor-title" @keydown="editorKeydown" @keydown.esc.stop="close" @input="markDirty" @change="markDirty">
       <div class="bb-drawer-header">
         <div>
-          <div class="bb-drawer-title">{{ editingId ? 'Edit Location' : 'New Location' }}</div>
-          <div class="bb-drawer-subtitle">Map, address, photos &amp; weekly hours</div>
+          <div id="venue-editor-title" class="bb-drawer-title">{{ editingExisting ? 'Edit venue' : 'Add a venue' }}</div>
+          <div class="bb-drawer-subtitle">Set up your venue, then add the listings customers can book.</div>
         </div>
-        <button class="bb-drawer-close" @click="close"><X :size="18" /></button>
+        <button class="bb-drawer-close" aria-label="Close venue editor" :disabled="saving" @click="close"><X :size="18" /></button>
       </div>
 
-      <div class="bb-drawer-body lm-body">
-        <!-- ── DETAILS SECTION ── -->
-        <section class="lm-section" :class="{ open: tab === 'details' }">
-          <button type="button" class="lm-section-head" @click="tab = tab === 'details' ? '' : 'details'">
-            <div class="lm-section-title"><div>Location Details</div><div class="lm-section-sub">Name, map, address &amp; photos</div></div>
-            <ChevronDown :size="18" class="lm-chev" :class="{ rot: tab === 'details' }" />
-          </button>
-          <div v-show="tab === 'details'" class="lm-section-body">
+      <div v-if="loading" class="cf-loading" role="status">Loading venue settings…</div>
+      <div v-else-if="loadFailed" class="cf-loading" role="alert">{{ errorMsg }} Your existing venue has not been changed.</div>
+      <div v-show="!loading && !loadFailed" class="cf-workspace" :inert="saving || loading || loadFailed">
+        <CreationSteps :steps="VENUE_STEPS" :active="tab" @select="goVenueStep" />
+        <div ref="bodyEl" class="bb-drawer-body lm-body">
+          <div class="cf-context"><h2>{{ venueStep.label }}</h2><p>{{ venueStepDescription }}</p></div>
+          <div v-show="tab === 'details'" class="cf-form-card">
           <!-- Facility ownership (admins only) -->
           <div v-if="isSuperAdmin || isCountryAdmin" class="form-group" style="margin-bottom:16px;">
             <label class="form-label">Facility ownership</label>
-            <select v-model="form.owner_user_id">
+            <select v-if="!editingExisting" v-model="form.owner_user_id">
               <option value="">Bookboll (own facility)</option>
               <option v-for="p in allBusinessOwners" :key="p.id" :value="p.id">
                 {{ p.business_name || p.full_name }} (@{{ p.username || p.email }})
               </option>
             </select>
-            <div v-if="!form.owner_user_id" class="form-hint">
-              This location belongs to Bookboll — 100% of revenue is retained by the platform. No provider payout applies.
-            </div>
-            <div v-else class="form-hint">
-              Payment will be split: platform commission to Bookboll, remaining balance collected by the provider.
-            </div>
+            <div v-else class="assigned-chip"><Building2 :size="14"/>{{ originalBookboll ? 'Operated by Bookboll' : form.business_name || providerName(form.owner_user_id) || 'External business' }}</div>
+            <div v-if="!form.owner_user_id && !form.business_id" class="form-hint">Bookboll collects venue income. The operating agreement determines rent or the landlord’s share.</div>
+            <div v-else class="form-hint">Bookboll earns the agreed platform fees. The provider’s share is recorded separately.</div>
+            <button v-if="editingExisting && originalBookboll" type="button" class="btn btn-secondary btn-sm" style="margin-top:12px" @click="beginTransfer">Move to an external business</button>
           </div>
           <div v-else class="assigned-chip" style="margin-bottom:16px;">
             <Building2 :size="13" />Business: <strong>{{ providerName(form.owner_user_id) || 'Your business' }}</strong>
           </div>
 
+          <p v-if="!editingExisting && !form.owner_user_id && (isSuperAdmin || isCountryAdmin)" class="fin-notice" style="margin-bottom:16px">Create this venue first, then open it to add rent, revenue sharing and an optional contract.</p>
           <!-- Venue name -->
           <div class="form-group">
-            <label class="form-label">Venue name <span style="color:#dc2626">*</span></label>
-            <input v-model="form.name" :class="{ 'input-invalid': triedSave && !form.name }" placeholder="e.g. Marina Sports Complex" />
-          </div>
-
-          <!-- Map picker -->
-          <div class="form-group" style="margin-top:14px;">
-            <label class="form-label"><MapIcon :size="13" style="vertical-align:-2px;" /> Pin the location on the map</label>
-            <div class="map-toolbar">
-              <span class="map-hint">Click the map or drag the pin to set the exact spot.</span>
-              <button class="btn btn-secondary btn-sm" :disabled="geoStatus === 'detecting'" @click="detectGeoLocation">
-                <LocateFixed :size="13" />
-                {{ geoStatus === 'detecting' ? 'Detecting…' : 'Use my location' }}
-              </button>
-            </div>
-            <div ref="mapEl" class="bb-map"></div>
-            <div v-if="geoStatus === 'error'" class="geo-error" style="margin-top:6px;">Location access denied or unavailable — pin it manually on the map.</div>
-
-            <!-- Editable coordinates, bound to the same fields the map writes: drag
-                 the pin and these fill in; type a value and the pin moves. -->
-            <div class="coord-row">
-              <div class="coord-field">
-                <label class="form-label">Latitude</label>
-                <input
-                  v-model="form.latitude"
-                  type="number" step="any" min="-90" max="90" inputmode="decimal"
-                  placeholder="e.g. 31.4805748"
-                  :class="{ 'input-invalid': coordsInvalid }"
-                  @change="applyTypedCoords" @keyup.enter="applyTypedCoords"
-                />
-              </div>
-              <div class="coord-field">
-                <label class="form-label">Longitude</label>
-                <input
-                  v-model="form.longitude"
-                  type="number" step="any" min="-180" max="180" inputmode="decimal"
-                  placeholder="e.g. 74.3205357"
-                  :class="{ 'input-invalid': coordsInvalid }"
-                  @change="applyTypedCoords" @keyup.enter="applyTypedCoords"
-                />
-              </div>
-            </div>
-            <div v-if="coordsInvalid" class="geo-error" style="margin-top:6px;">
-              Latitude must be between −90 and 90, longitude between −180 and 180 — and both are needed, not one.
-            </div>
-            <div v-else-if="form.latitude && form.longitude" class="geo-success" style="margin-top:6px;">
-              <Check :size="13" />Coordinates set: {{ form.latitude }}, {{ form.longitude }}
-            </div>
-          </div>
-
-          <!-- Google Maps link -->
-          <div class="form-group" style="margin-top:14px;">
-            <label class="form-label">Google Maps link <span class="opt-tag">optional</span></label>
-            <div class="maps-link-row">
-              <input v-model="form.google_maps_url" placeholder="Paste a Google Maps share link…" @blur="applyMapsLink" />
-              <button class="btn btn-secondary btn-sm" @click="applyMapsLink" :disabled="!form.google_maps_url">Locate</button>
-            </div>
-            <div v-if="mapsLinkStatus === 'ok'" class="form-hint" style="color:#059669;">Pin moved to the link's coordinates.</div>
-            <div v-else-if="mapsLinkStatus === 'nocoords'" class="form-hint" style="color:#b45309;">Link saved, but it has no coordinates to read — pin it on the map above.</div>
-            <div v-else class="form-hint">Optional — good for getting Google reviews. Powers the customer "Open in Maps" button; if left blank we use the map pin's coordinates instead. Tip: links with coordinates auto-drop the pin.</div>
+            <label for="venue-name" class="form-label">Venue name <span style="color:var(--danger-ink)">*</span></label>
+            <input id="venue-name" v-model="form.name" :class="{ 'input-invalid': triedSave && !form.name }" placeholder="e.g. Marina Sports Complex" />
           </div>
 
           <!-- Country → City -->
           <div class="form-row" style="margin-top:14px;">
             <div class="form-group">
-              <label class="form-label">Country <span style="color:#dc2626">*</span></label>
-              <select v-model="selectedCountryId" :class="{ 'input-invalid': triedSave && !form.city_id && !selectedCountryId }" @change="onCountryChange">
+              <label for="venue-country" class="form-label">Country <span style="color:var(--danger-ink)">*</span></label>
+              <select id="venue-country" v-model="selectedCountryId" :class="{ 'input-invalid': triedSave && !form.city_id && !selectedCountryId }" @change="onCountryChange">
                 <option value="">Select country</option>
                 <option v-for="co in countries" :key="co.id" :value="co.id">{{ co.name }}</option>
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">City <span style="color:#dc2626">*</span></label>
-              <select v-model="form.city_id" :class="{ 'input-invalid': triedSave && !form.city_id }" :disabled="!selectedCountryId">
+              <label for="venue-city" class="form-label">City <span style="color:var(--danger-ink)">*</span></label>
+              <select id="venue-city" v-model="form.city_id" :class="{ 'input-invalid': triedSave && !form.city_id }" :disabled="!selectedCountryId">
                 <option value="">{{ selectedCountryId ? 'Select city' : 'Select country first' }}</option>
                 <option v-for="c in citiesForCountry" :key="c.id" :value="c.id">{{ c.name }}</option>
               </select>
@@ -738,12 +744,12 @@ async function applyScheduleToSelected() {
           <!-- A payout wallet (any country) enables full online payments anywhere; a local
                wallet for this country is created automatically so earnings stay in local currency. -->
           <p v-if="isProviderScoped && selectedCountryId" class="lm-country-hint">
-            Once you have a payout wallet, full online payments work here too — a {{ selectedCountryName }} wallet is set up automatically using your payout method, so you're paid in local currency.
+            Prices use this venue’s currency. Choose payment options when you create a listing.
           </p>
 
           <!-- Inherited geo preview -->
           <div v-if="resolvedGeo.timezone || resolvedGeo.currency" class="geo-inherited-preview">
-            <div class="geo-inherited-title">Inherited settings for this location</div>
+            <div class="geo-inherited-title">Currency &amp; time zone</div>
             <div class="geo-inherited-pills">
               <span v-if="resolvedGeo.timezone" class="geo-pill"><Clock :size="11" />{{ resolvedGeo.timezone }}</span>
               <span v-if="resolvedGeo.currency" class="geo-pill"><DollarSign :size="11" />{{ resolvedGeo.currencySymbol }} {{ resolvedGeo.currency }}</span>
@@ -756,8 +762,8 @@ async function applyScheduleToSelected() {
               <summary style="font-size:12px; color:var(--text-muted); cursor:pointer;">Charge prices in a different currency</summary>
               <div class="form-row" style="margin-top:10px;">
                 <div class="form-group">
-                  <label class="form-label">Price currency</label>
-                  <select v-model="form.currency_override">
+                  <label for="venue-currency" class="form-label">Price currency</label>
+                  <select id="venue-currency" v-model="form.currency_override">
                     <option :value="null">{{ resolvedGeo.currency ? `${resolvedGeo.currency} — ${resolvedGeo.countryName || 'country'} default` : 'Country default' }}</option>
                     <option v-for="c in ISO_CURRENCIES" :key="c.code" :value="c.code">{{ c.code }} — {{ c.name }}</option>
                   </select>
@@ -769,90 +775,147 @@ async function applyScheduleToSelected() {
 
           <!-- Phone (address is derived from the map pin) -->
           <div class="form-group" style="margin-top:14px;">
-            <label class="form-label">Phone <span class="opt-tag">optional</span></label>
-            <input v-model="form.phone" placeholder="+971 4 000 0000" />
+            <label for="venue-phone" class="form-label">Phone <span class="opt-tag">optional</span></label>
+            <input id="venue-phone" v-model="form.phone" type="tel" placeholder="Business contact number" />
+          </div>
+
+          <!-- Description -->
+          <div class="form-group" style="margin-top:14px;">
+            <label for="venue-description" class="form-label">Description <span class="opt-tag">optional</span></label>
+            <textarea id="venue-description" v-model="form.description" rows="3" placeholder="Describe the facility, parking, amenities…"></textarea>
+          </div>
+
+
+          </div>
+          <VenueCommercial v-if="editingExisting && originalBookboll && (isSuperAdmin || isCountryAdmin)" v-show="tab === 'details'" :venue-id="editingId" :currency="resolvedGeo.currency" @dirty="commercialDirty=$event" @busy="commercialBusy=$event" />
+          <div v-show="tab === 'map'" class="cf-form-card">
+          <!-- Map picker -->
+          <div class="form-group" style="margin-top:14px;">
+            <label class="form-label"><MapIcon :size="13" style="vertical-align:-2px;" /> Pin the location on the map</label>
+            <div class="map-toolbar">
+              <span class="map-hint">Tap the map or drag the pin to your venue.</span>
+              <button class="btn btn-secondary btn-sm" :disabled="geoStatus === 'detecting'" @click="detectGeoLocation">
+                <LocateFixed :size="13" />
+                {{ geoStatus === 'detecting' ? 'Detecting…' : 'Use my location' }}
+              </button>
+            </div>
+            <div ref="mapEl" class="bb-map"></div>
+            <div v-if="geoStatus === 'error'" class="geo-error" style="margin-top:6px;">Location access denied or unavailable — pin it manually on the map.</div>
+
+            <!-- Editable coordinates, bound to the same fields the map writes: drag
+                 the pin and these fill in; type a value and the pin moves. -->
+            <details class="manual-coordinates" :open="coordsInvalid">
+            <summary>Enter coordinates manually</summary>
+            <div class="coord-row">
+              <div class="coord-field">
+                <label for="venue-latitude" class="form-label">Latitude</label>
+                <input
+                  id="venue-latitude"
+                  v-model="form.latitude"
+                  type="number" step="any" min="-90" max="90" inputmode="decimal"
+                  placeholder="−90 to 90"
+                  :class="{ 'input-invalid': coordsInvalid }"
+                  @change="applyTypedCoords" @keyup.enter="applyTypedCoords"
+                />
+              </div>
+              <div class="coord-field">
+                <label for="venue-longitude" class="form-label">Longitude</label>
+                <input
+                  id="venue-longitude"
+                  v-model="form.longitude"
+                  type="number" step="any" min="-180" max="180" inputmode="decimal"
+                  placeholder="−180 to 180"
+                  :class="{ 'input-invalid': coordsInvalid }"
+                  @change="applyTypedCoords" @keyup.enter="applyTypedCoords"
+                />
+              </div>
+            </div>
+            </details>
+            <div v-if="coordsInvalid" class="geo-error" style="margin-top:6px;">
+              Latitude must be between −90 and 90, longitude between −180 and 180 — and both are needed, not one.
+            </div>
+            <div v-else-if="hasMapPin" class="geo-success" style="margin-top:6px;">
+              <Check :size="13" />Map pin added
+            </div>
+          </div>
+
+          <!-- Google Maps link -->
+          <div class="form-group" style="margin-top:14px;">
+            <label for="venue-maps-link" class="form-label">Google Maps link <span class="opt-tag">optional</span></label>
+            <div class="maps-link-row">
+              <input id="venue-maps-link" type="url" v-model="form.google_maps_url" placeholder="Paste a Google Maps link…" @blur="applyMapsLink" />
+              <button class="btn btn-secondary btn-sm" @click="applyMapsLink" :disabled="!form.google_maps_url">Locate</button>
+            </div>
+            <div v-if="mapsLinkStatus === 'ok'" class="form-hint" style="color:var(--positive-ink);">Pin moved to the link's coordinates.</div>
+            <div v-else-if="mapsLinkStatus === 'nocoords'" class="form-hint" style="color:var(--warning-ink);">Link saved, but it has no coordinates to read — pin it on the map above.</div>
+            <div v-else class="form-hint">Customers use this link for directions. Without a link, we use your map pin.</div>
           </div>
 
           <!-- Images -->
           <div class="form-group" style="margin-top:14px;">
             <label class="form-label"><ImageIcon :size="13" style="vertical-align:-2px;" /> Photos <span class="opt-tag">optional</span></label>
             <div
-              class="img-dropzone"
+              class="img-dropzone" role="button" tabindex="0" aria-label="Upload venue photos" @keydown.enter.prevent="!uploading && fileInput?.click()" @keydown.space.prevent="!uploading && fileInput?.click()"
               :class="{ active: dropActive }"
               @dragover.prevent="dropActive = true"
               @dragleave.prevent="dropActive = false"
               @drop.prevent="onDrop"
-              @click="fileInput && fileInput.click()"
+              @click="!uploading && fileInput?.click()"
             >
               <input ref="fileInput" type="file" accept="image/*" multiple style="display:none" @change="onFileChange" />
               <template v-if="uploading">
                 <Loader :size="20" class="spin" /><span>Uploading &amp; compressing…</span>
               </template>
               <template v-else>
-                <Upload :size="20" /><span>Drag &amp; drop images here, or <strong>click to browse</strong></span>
-                <span class="img-sub">Multiple allowed · auto-compressed before upload</span>
+                <Upload :size="20" /><strong>Choose photos</strong>
+                <span class="img-sub">The first photo is your cover. You can change it later.</span>
               </template>
             </div>
             <div v-if="imgError" class="geo-error" style="margin-top:6px;">{{ imgError }}</div>
-            <div v-if="form.photos.length" class="img-grid">
-              <div v-for="(p, i) in form.photos" :key="p + i" class="img-cell" :class="{ primary: i === 0 }">
-                <img :src="p" alt="Location photo" />
-                <span v-if="i === 0" class="primary-badge"><Star :size="10" /> Primary</span>
-                <div class="img-cell-actions">
-                  <button v-if="i !== 0" class="img-mini-btn" title="Make primary" @click.stop="makePrimary(i)"><Star :size="13" /></button>
-                  <button class="img-mini-btn danger" title="Remove" @click.stop="removePhoto(i)"><Trash2 :size="13" /></button>
-                </div>
-              </div>
-            </div>
+            <PhotoOrderEditor :model-value="form.photos" @update:model-value="photos => { form.photos = photos; form.photo_url = photos[0] || ''; markDirty() }" />
           </div>
 
-          <!-- Description -->
-          <div class="form-group" style="margin-top:14px;">
-            <label class="form-label">Description <span class="opt-tag">optional</span></label>
-            <textarea v-model="form.description" rows="3" placeholder="Describe the facility, parking, amenities…"></textarea>
-          </div>
 
-          <div class="lm-foot">
-            <div v-if="errorMsg" class="geo-error lm-foot-err"><TriangleAlert :size="13" /> {{ errorMsg }}</div>
-            <div class="lm-foot-btns">
-              <button class="btn btn-secondary" @click="close">Cancel</button>
-              <button class="btn btn-primary" :disabled="saving" @click="editingExisting ? save() : saveAndContinue()">{{ saving ? 'Saving…' : (editingExisting ? 'Save &amp; Close' : 'Save &amp; Continue') }}</button>
-            </div>
           </div>
-          </div>
-        </section>
-
-        <!-- ── WEEKLY SCHEDULE SECTION ── -->
-        <section class="lm-section" :class="{ open: tab === 'schedule' }">
-          <button type="button" class="lm-section-head" @click="tab = tab === 'schedule' ? '' : 'schedule'">
-            <div class="lm-section-title"><div>Weekly Schedule</div><div class="lm-section-sub">Operating hours that listings inherit by default</div></div>
-            <ChevronDown :size="18" class="lm-chev" :class="{ rot: tab === 'schedule' }" />
-          </button>
-          <div v-show="tab === 'schedule'" class="lm-section-body">
-            <p class="muted" style="margin: 0 0 14px; font-size:13px;">Set operating hours for this location. Listings inherit these hours by default.</p>
+          <div v-if="tab === 'schedule'" class="cf-form-card">
+            <div class="cf-note"><Clock :size="17" /><span><template v-if="!editingExisting">New venues start open 24 hours every day. Adjust the hours below. </template>New listings copy these hours and can have a shorter schedule.</span></div>
             <WeeklyHours v-model="hours" :show-inherit="false" />
-
-            <div class="lm-foot">
-              <div v-if="errorMsg" class="geo-error lm-foot-err"><TriangleAlert :size="13" /> {{ errorMsg }}</div>
-              <div class="lm-foot-btns">
-                <button class="btn btn-secondary" @click="close">Cancel</button>
-                <button class="btn btn-primary" :disabled="!canSave || saving" @click="save()">
-                  {{ saving ? 'Saving…' : (editingExisting ? 'Save &amp; Close' : 'Create location') }}
-                </button>
-              </div>
+          </div>
+          <div v-if="tab === 'review'">
+            <div class="cf-summary"><img v-if="form.photos[0]" :src="form.photos[0]" alt="Venue cover" /><div><h3>{{ form.name || 'Your venue' }}</h3><p>{{ resolvedGeo.cityName }}, {{ resolvedGeo.countryName }}</p></div></div>
+            <div class="cf-review">
+              <section class="cf-review-card"><div class="cf-review-head"><h3>Venue details</h3><button @click="goVenueStep('details')">Edit details</button></div>
+                <dl><dt>Currency</dt><dd>{{ resolvedGeo.currency || 'Country default' }}</dd><dt>Time zone</dt><dd>{{ resolvedGeo.timezone || 'City default' }}</dd><dt>Phone</dt><dd>{{ form.phone || 'Not added' }}</dd></dl>
+                <p v-if="form.description" class="cf-review-text" style="margin-top:14px">{{ form.description }}</p>
+              </section>
+              <section class="cf-review-card"><div class="cf-review-head"><h3>Map &amp; photos</h3><button @click="goVenueStep('map')">Edit map &amp; photos</button></div>
+                <dl><dt>Map pin</dt><dd>{{ hasMapPin ? 'Added' : 'Not added' }}</dd><dt>Address</dt><dd>{{ form.address || 'Not added' }}</dd><dt>Photos</dt><dd>{{ form.photos.length }} added</dd></dl>
+              </section>
+              <section class="cf-review-card"><div class="cf-review-head"><h3>Opening hours</h3><button @click="goVenueStep('schedule')">Edit hours</button></div>
+                <dl><template v-for="day in hours" :key="day.day_of_week"><dt>{{ venueDayNames[day.day_of_week] }}</dt><dd>{{ day.is_open ? day.periods.map(p => p.open_time === p.close_time ? 'Open 24 hours' : fmtRange12(p.open_time, p.close_time)).join(', ') : 'Closed' }}</dd></template></dl>
+              </section>
+              <div class="cf-note"><Building2 :size="17" /><span>A venue holds your address and opening hours. Add a listing to offer a service customers can book.</span></div>
             </div>
           </div>
-        </section>
+        </div>
+      </div>
+      <div v-show="!loading && !loadFailed" class="cf-footer">
+        <p v-if="errorMsg" class="cf-footer-error" role="alert">{{ errorMsg }}</p>
+        <span class="cf-footer-note">{{ saving ? 'Saving your venue…' : 'Changes are saved only when you finish. Drafts stay in this browser.' }}</span>
+        <button class="btn btn-secondary" :disabled="saving || uploading" @click="saveLocationDraftNow">Save draft &amp; exit</button>
+        <button v-if="tab !== 'details'" class="btn btn-secondary" :disabled="saving" @click="goVenueStep(VENUE_STEPS[venueStepIndex - 1].id)">Back</button>
+        <button v-if="tab !== 'review'" class="btn btn-primary" :disabled="saving || uploading" @click="saveAndContinue">{{ tab === 'schedule' ? 'Review venue' : 'Continue' }}</button>
+        <button v-else class="btn btn-primary" :disabled="saving || uploading" @click="save()">{{ saving ? 'Saving…' : (editingExisting ? 'Save changes' : 'Create venue') }}</button>
       </div>
     </div>
   </div>
 
   <!-- Apply the new schedule to connected listings? -->
   <div v-if="applyModal" class="modal-backdrop" style="z-index:4200" @click.self="finishApply">
-    <div class="modal apply-modal">
+    <div class="modal apply-modal" v-dialog="() => !applying && finishApply()">
       <div class="apply-icon"><Clock :size="26" /></div>
       <div class="apply-title">Update connected listings too?</div>
-      <p class="apply-text">You changed this location's weekly schedule. Pick which listings should copy the new hours — unticked ones keep their current schedule. Listings stay independent either way.</p>
+      <p class="apply-text">You changed this venue's weekly schedule. Pick which listings should copy the new hours — unticked ones keep their current schedule. Listings stay independent either way.</p>
       <div class="apply-list">
         <label v-for="l in connectedListings" :key="l.id" class="apply-item" :class="{ on: applyTargets.includes(l.id) }">
           <input type="checkbox" :checked="applyTargets.includes(l.id)" @change="toggleApplyTarget(l.id)" />
@@ -864,7 +927,7 @@ async function applyScheduleToSelected() {
         </label>
       </div>
       <div class="apply-actions">
-        <button class="btn btn-secondary" :disabled="applying" @click="finishApply">Skip</button>
+        <button class="btn btn-secondary" :disabled="applying" @click="finishApply">Keep existing hours</button>
         <button class="btn btn-primary" :disabled="applying || !applyTargets.length" @click="applyScheduleToSelected">{{ applying ? 'Updating…' : (applyTargets.length ? `Update ${applyTargets.length} listing${applyTargets.length !== 1 ? 's' : ''}` : 'Update') }}</button>
       </div>
     </div>
@@ -875,18 +938,18 @@ async function applyScheduleToSelected() {
 <style scoped>
 /* Apply-schedule-to-listings modal */
 .apply-modal { max-width: 460px; width: 100%; padding: 24px; text-align: center; }
-.apply-icon { width: 54px; height: 54px; border-radius: 14px; background: #f0fdfa; color: var(--primary); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+.apply-icon { width: 54px; height: 54px; border-radius: 14px; background: var(--primary-soft, #f0fdfa); color: var(--primary-ink); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
 .apply-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
 .apply-text { font-size: 13.5px; color: var(--text-muted); line-height: 1.55; margin: 0 0 16px; }
 .apply-list { display: flex; flex-direction: column; gap: 8px; text-align: left; margin-bottom: 18px; max-height: 280px; overflow-y: auto; }
 .apply-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: all .12s; }
-.apply-item:hover { border-color: #cbd5e1; }
-.apply-item.on { border-color: var(--primary); background: #f0fdfa; }
+.apply-item:hover { border-color: var(--border-strong, #cbd5e1); }
+.apply-item.on { border-color: var(--primary); background: var(--primary-soft, #f0fdfa); }
 .apply-item input { width: 16px; height: 16px; accent-color: var(--primary); flex-shrink: 0; cursor: pointer; }
 .apply-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.apply-item-name { font-weight: 600; font-size: 13.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.apply-item-name { font-weight: 600; font-size: 13.5px; color: var(--text); overflow-wrap: anywhere; }
 .apply-item-sub { font-size: 11.5px; color: var(--text-muted); text-transform: capitalize; }
-.apply-item-check { color: var(--primary); flex-shrink: 0; }
+.apply-item-check { color: var(--primary-ink); flex-shrink: 0; }
 .apply-actions { display: flex; gap: 10px; }
 .apply-actions .btn { flex: 1; justify-content: center; }
 
@@ -896,14 +959,14 @@ async function applyScheduleToSelected() {
 .lm-section.open { box-shadow:0 4px 16px rgba(15,23,42,.06); }
 /* Read-only field (e.g. country, fixed to the provider's business) */
 .lm-locked-field { display:flex; align-items:center; height:40px; padding:0 12px; border:1px solid var(--border); border-radius:8px; background:var(--bg, #f8fafc); color:var(--text); font-size:14px; font-weight:600; }
-.lm-country-hint { margin:10px 2px 0; font-size:12.5px; line-height:1.45; color:var(--text-muted); background:#f0fdfa; border:1px solid #ccfbf1; border-radius:8px; padding:8px 11px; }
-.lm-country-hint strong { color:var(--brand, #0f766e); font-weight:700; }
+.lm-country-hint { margin:10px 2px 0; font-size:12.5px; line-height:1.45; color:var(--text-muted); background:var(--primary-soft, #f0fdfa); border:1px solid #ccfbf1; border-radius:8px; padding:8px 11px; }
+.lm-country-hint strong { color:var(--primary-ink, #0f766e); font-weight:700; }
 /* Per-card action footer (Cancel + Save) */
 .lm-foot { display:flex; flex-direction:column; gap:8px; margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }
 .lm-foot-btns { display:flex; justify-content:flex-end; gap:10px; }
 .lm-foot-err { margin:0; }
 .lm-section-head { width:100%; display:flex; align-items:center; gap:14px; padding:16px 18px; background:transparent; border:none; cursor:pointer; }
-.lm-section-head:hover { background:#fafafa; }
+.lm-section-head:hover { background:var(--surface-hover, #fafafa); }
 .lm-section-title { flex:1; text-align:left; }
 .lm-section-title > div:first-child { font-weight:600; font-size:14px; color:var(--text); }
 .lm-section-sub { font-size:12px; color:var(--text-muted); margin-top:2px; }
@@ -917,14 +980,18 @@ async function applyScheduleToSelected() {
 .map-hint { font-size:12px; color:var(--text-muted); }
 .bb-map { height:240px; width:100%; border-radius:10px; border:1px solid var(--border); overflow:hidden; z-index:0; }
 
-.coord-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+.manual-coordinates { margin-top: 10px; padding: 4px 0; }
+.manual-coordinates summary { min-height: 44px; align-content: center; font-size: 13px; color: var(--primary-ink); cursor: pointer; }
+.coord-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; margin-top: 10px; }
+.maps-link-row input { min-width: 0; }
+.apply-list { overscroll-behavior: contain; }
 .coord-field { display: flex; flex-direction: column; gap: 5px; }
 @media (max-width: 600px) { .coord-row { grid-template-columns: 1fr; } }
 .maps-link-row { display:flex; gap:8px; }
 .maps-link-row input { flex:1; }
 
-.geo-error { display:flex; align-items:center; gap:6px; font-size:12.5px; color:#dc2626; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:7px 10px; }
-.geo-success { display:flex; align-items:center; gap:6px; font-size:12.5px; color:#059669; font-weight:600; }
+.geo-error { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--danger-ink, #dc2626); background:var(--danger-bg, #fef2f2); border:1px solid var(--danger-border, #fecaca); border-radius:8px; padding:7px 10px; }
+.geo-success { display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--positive-ink, #059669); font-weight:600; }
 
 .geo-inherited-preview { margin-top:14px; background:var(--bg-subtle, #f8fafc); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
 .geo-inherited-title { font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.03em; margin-bottom:8px; }
@@ -933,7 +1000,7 @@ async function applyScheduleToSelected() {
 .geo-pill-muted { color:var(--text-muted); font-weight:500; }
 
 .img-dropzone { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:22px; border:1.5px dashed var(--border); border-radius:10px; color:var(--text-muted); font-size:13px; cursor:pointer; text-align:center; transition:.15s; }
-.img-dropzone:hover, .img-dropzone.active { border-color:var(--primary, #0891b2); background:rgba(8,145,178,.04); color:var(--primary, #0891b2); }
+.img-dropzone:hover, .img-dropzone.active { border-color:var(--primary, #0891b2); background:rgba(8,145,178,.04); color:var(--primary-ink, #0891b2); }
 .img-sub { font-size:11px; opacity:.8; }
 .spin { animation:spin 1s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }

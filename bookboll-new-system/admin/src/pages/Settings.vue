@@ -6,16 +6,19 @@ import { useCurrentUser } from '../lib/currentUser.js'
 import { changeOwnPassword, authError } from '../lib/auth.js'
 import { fetchSettings, updateSettings, asBool, asNumber } from '../lib/settings.js'
 import { useRouter } from 'vue-router'
+import FeatureSearch from '../components/FeatureSearch.vue'
 import { askConfirm } from '../lib/confirm.js'
+import { hasPaidWebsiteDiscount } from '../lib/listingPayments.js'
 import {
   planState, ensurePlan, openUpgrade, endPlan, keepPlan,
-  PREMIUM_PRICE, PREMIUM_YEARLY_TOTAL,
+  PREMIUM_YEARLY_TOTAL,
 } from '../lib/premium.js'
 
 const router = useRouter()
 const { isSuperAdmin, isCountryAdmin, currentUser } = useCurrentUser()
 
 const isAdminView = computed(() => isSuperAdmin.value || isCountryAdmin.value)
+const websiteDiscount = computed(() => hasPaidWebsiteDiscount(planState.value))
 
 const tab = ref('platform')
 const loading = ref(false)
@@ -243,7 +246,7 @@ async function saveProviderProfile() {
     <template v-if="isAdminView">
       <div class="page-header">
         <div>
-          <div class="page-title">Settings</div>
+          <h1 class="page-title">Settings</h1>
           <div class="page-subtitle">Platform-wide configuration and preferences</div>
         </div>
         <button class="btn btn-primary" :disabled="savingAll || loading" @click="saveAllChanges">
@@ -251,16 +254,18 @@ async function saveProviderProfile() {
         </button>
       </div>
 
+      <FeatureSearch />
+
       <div class="grid" style="grid-template-columns: 240px 1fr;">
         <div class="card" style="padding: 12px;">
           <div class="set-nav">
-            <div class="set-item" :class="{active: tab==='platform'}" @click="tab='platform'"><SettingsIcon :size="16" />Platform</div>
-            <div class="set-item" :class="{active: tab==='commission'}" @click="tab='commission'"><DollarSign :size="16" />Commission</div>
-            <div class="set-item" :class="{active: tab==='policies'}" @click="tab='policies'"><FileText :size="16" />Policies</div>
-            <div class="set-item" :class="{active: tab==='notifications'}" @click="tab='notifications'"><Bell :size="16" />Notifications</div>
-            <div class="set-item" :class="{active: tab==='security'}" @click="tab='security'"><Shield :size="16" />Security</div>
-            <div class="set-item" :class="{active: tab==='email'}" @click="tab='email'"><Mail :size="16" />Email Templates</div>
-            <div class="set-item" :class="{active: tab==='regional'}" @click="tab='regional'"><Globe2 :size="16" />Regional</div>
+            <button type="button" class="set-item" :class="{active: tab==='platform'}" @click="tab='platform'"><SettingsIcon :size="16" />Platform</button>
+            <button type="button" class="set-item" :class="{active: tab==='commission'}" @click="tab='commission'"><DollarSign :size="16" />Commission</button>
+            <button type="button" class="set-item" :class="{active: tab==='policies'}" @click="tab='policies'"><FileText :size="16" />Policies</button>
+            <button type="button" class="set-item" :class="{active: tab==='notifications'}" @click="tab='notifications'"><Bell :size="16" />Notifications</button>
+            <button type="button" class="set-item" :class="{active: tab==='security'}" @click="tab='security'"><Shield :size="16" />Security</button>
+            <button type="button" class="set-item" :class="{active: tab==='email'}" @click="tab='email'"><Mail :size="16" />Email Templates</button>
+            <button type="button" class="set-item" :class="{active: tab==='regional'}" @click="tab='regional'"><Globe2 :size="16" />Regional</button>
           </div>
         </div>
 
@@ -284,7 +289,7 @@ async function saveProviderProfile() {
           </div>
           <div v-if="tab==='commission'">
             <h3>Commission Configuration</h3>
-            <p class="muted">Bookboll collects its commission as an online deposit at the time of booking. The customer pays the remaining balance to the provider on arrival.</p>
+            <p class="muted">These are the standard booking commission rates. Bookboll keeps the online deposit fee, or deducts commission from a full online payment. Paid Premium merchants pay half the standard rate on their own-website bookings. Marketplace rates stay the same; connecting payouts does not waive commission.</p>
 
             <div class="info-banner" style="margin-bottom:20px;">
               <Info :size="16" />
@@ -428,49 +433,51 @@ async function saveProviderProfile() {
     <template v-else>
       <div class="page-header">
         <div>
-          <div class="page-title">Settings</div>
+          <h1 class="page-title">Settings</h1>
           <div class="page-subtitle">Manage your business profile and preferences</div>
         </div>
-        <button class="btn btn-primary" :disabled="saving" @click="saveProviderProfile">
-          {{ saving ? 'Saving…' : saved ? 'Saved!' : 'Save Changes' }}
+        <button v-if="providerTab === 'profile' || providerTab === 'account'" class="btn btn-secondary" disabled title="Profile updates are not available yet" @click="saveProviderProfile">
+          Save unavailable
         </button>
       </div>
+
+      <FeatureSearch />
 
       <div class="grid" style="grid-template-columns: 240px 1fr;">
         <div class="card" style="padding: 12px;">
           <div class="set-nav">
-            <div class="set-item" :class="{active: providerTab==='profile'}" @click="providerTab='profile'"><Building2 :size="16" />Business Profile</div>
-            <div class="set-item" :class="{active: providerTab==='account'}" @click="providerTab='account'"><User :size="16" />My Account</div>
-            <div class="set-item" :class="{active: providerTab==='notifications'}" @click="providerTab='notifications'"><Bell :size="16" />Notifications</div>
-            <div class="set-item" :class="{active: providerTab==='security'}" @click="providerTab='security'"><Shield :size="16" />Security</div>
-            <div class="set-item" :class="{active: providerTab==='plan'}" @click="providerTab='plan'"><Crown :size="16" />Plan &amp; billing</div>
+            <button type="button" class="set-item" :class="{active: providerTab==='profile'}" @click="providerTab='profile'"><Building2 :size="16" />Business Profile</button>
+            <button type="button" class="set-item" :class="{active: providerTab==='account'}" @click="providerTab='account'"><User :size="16" />My Account</button>
+            <button type="button" class="set-item" :class="{active: providerTab==='notifications'}" @click="providerTab='notifications'"><Bell :size="16" />Notifications</button>
+            <button type="button" class="set-item" :class="{active: providerTab==='security'}" @click="providerTab='security'"><Shield :size="16" />Security</button>
+            <button type="button" class="set-item" :class="{active: providerTab==='plan'}" @click="providerTab='plan'"><Crown :size="16" />Plan &amp; billing</button>
           </div>
         </div>
 
         <div class="card" style="padding: 28px;">
           <div v-if="providerTab==='profile'">
             <h3>Business Profile</h3>
-            <p class="muted">This information is visible to customers on Bookboll.</p>
-            <div class="form-group"><label class="form-label">Business Name</label><input v-model="providerForm.business_name" placeholder="e.g. Desert Sports Club" /></div>
-            <div class="form-group"><label class="form-label">Phone Number</label><input v-model="providerForm.phone" placeholder="+971 50 000 0000" /></div>
-            <div class="form-group"><label class="form-label">Description</label><textarea v-model="providerForm.description" rows="4" placeholder="Tell customers about your facilities, sports offered, and what makes you unique…"></textarea></div>
+            <p class="muted">Your business information on Bookboll.</p><p class="info-banner"><Info :size="16" />Profile updates are not available here yet. You can edit your public website name and content in My Website.</p>
+            <div class="form-group"><label class="form-label">Business Name</label><input readonly aria-label="Business name" v-model="providerForm.business_name" placeholder="e.g. Desert Sports Club" /></div>
+            <div class="form-group"><label class="form-label">Phone Number</label><input readonly aria-label="Phone number" v-model="providerForm.phone" placeholder="+971 50 000 0000" /></div>
+            <div class="form-group"><label class="form-label">Description</label><textarea readonly aria-label="Business description" v-model="providerForm.description" rows="4" placeholder="Tell customers about your facilities, sports offered, and what makes you unique…"></textarea></div>
           </div>
 
           <div v-if="providerTab==='account'">
             <h3>My Account</h3>
-            <p class="muted">Your personal details as the account owner.</p>
-            <div class="form-group"><label class="form-label">Full Name</label><input v-model="providerForm.full_name" /></div>
+            <p class="muted">Your personal details as the account owner. Profile updates are not available here yet.</p>
+            <div class="form-group"><label class="form-label">Full Name</label><input readonly aria-label="Full name" v-model="providerForm.full_name" /></div>
             <div class="form-group"><label class="form-label">Email</label><input :value="providerForm.email" disabled style="opacity:0.6; cursor:not-allowed;" /></div>
             <div class="info-banner"><Shield :size="16" /><div>Email changes require contacting support to verify your identity.</div></div>
           </div>
 
           <div v-if="providerTab==='notifications'">
             <h3>Notifications</h3>
-            <p class="muted">Choose which events trigger an email or push notification.</p>
-            <label class="toggle"><input type="checkbox" v-model="providerNotifications.newBooking" />New booking received</label>
-            <label class="toggle"><input type="checkbox" v-model="providerNotifications.cancellation" />Booking cancellation</label>
-            <label class="toggle"><input type="checkbox" v-model="providerNotifications.paymentReceived" />Payment received</label>
-            <label class="toggle"><input type="checkbox" v-model="providerNotifications.lowWallet" />Low wallet balance warning</label>
+            <p class="muted">Personal notification preferences are not available yet. These preview switches do not change which messages you receive.</p>
+            <label class="toggle"><input type="checkbox" disabled v-model="providerNotifications.newBooking" />New booking received</label>
+            <label class="toggle"><input type="checkbox" disabled v-model="providerNotifications.cancellation" />Booking cancellation</label>
+            <label class="toggle"><input type="checkbox" disabled v-model="providerNotifications.paymentReceived" />Payment received</label>
+            <label class="toggle"><input type="checkbox" disabled v-model="providerNotifications.lowWallet" />Low wallet balance warning</label>
           </div>
 
           <div v-if="providerTab==='plan'">
@@ -483,17 +490,16 @@ async function saveProviderProfile() {
                   <Crown v-if="planState.is_premium" :size="12" />{{ planState.is_premium ? 'Premium' : 'Free' }}
                 </span>
                 <span v-if="planState.is_premium && planState.billing" class="plan-cycle">
-                  {{ planState.billing === 'yearly' ? `$${PREMIUM_YEARLY_TOTAL}/year` : `$${PREMIUM_PRICE}/month` }}
+                  {{ planState.billing === 'yearly' ? `$${PREMIUM_YEARLY_TOTAL}/year` : 'Existing monthly subscription' }}
                 </span>
               </div>
 
               <p v-if="!planState.is_premium" class="muted" style="margin:0 0 14px;">
-                You're on the free plan. Premium unlocks the blog, marketing emails, exports, promo codes,
-                home banners, widgets, white-label and off-marketplace listings.
+                Your Free plan has no subscription fee. Premium is US$588 per year, billed annually with no free trial. Paid Premium halves your own-website booking commission and adds marketing, exports, promo codes and more.
               </p>
               <template v-else>
                 <div v-if="planTrialActive" class="plan-line">
-                  <Gift :size="14" /> Free trial until <b>{{ fmtPlanDate(planState.trial_ends_at) }}</b> — nothing charged yet.
+                  <Gift :size="14" /> Existing trial ends <b>{{ fmtPlanDate(planState.trial_ends_at) }}</b> — no subscription charge yet. Booking commissions apply.
                 </div>
                 <div v-if="planState.cancel_at_period_end" class="plan-line warn">
                   <AlertTriangle :size="14" /> Ending on <b>{{ fmtPlanDate(planState.renews_at) }}</b>. You keep everything until then.
@@ -519,6 +525,17 @@ async function saveProviderProfile() {
               </div>
             </div>
 
+            <section class="plan-commission" aria-labelledby="plan-commission-title">
+              <h4 id="plan-commission-title">Your booking commissions</h4>
+              <dl>
+                <div><dt>Your own website</dt><dd>{{ websiteDiscount ? 'Half the standard rate' : 'Standard rate' }}<small v-if="websiteDiscount">Paid Premium benefit · 50% lower</small><small v-else>Paid Premium reduces this rate by half</small></dd></div>
+                <div><dt>Bookboll marketplace</dt><dd>Standard rate<small>The same on Free and Premium</small></dd></div>
+              </dl>
+              <p>Your listing’s payment settings show its rate. The website discount applies during your active paid subscription.</p>
+              <p>With <b>deposit + on arrival</b>, Bookboll keeps the online deposit fee and you collect the remaining balance. With <b>full payment online</b>, the fee is deducted before your share reaches your Bookings wallet.</p>
+              <p>Commission applies with or without connected payouts. Only full online payment requires a payout connection.</p>
+            </section>
+
             <div v-if="planState.domain?.domain" class="plan-box" style="margin-top:14px;">
               <div class="plan-hd"><span class="plan-chip">Custom domain</span></div>
               <div class="plan-line"><Globe2 :size="14" /> <b>{{ planState.domain.domain }}</b> — {{ planState.domain.status === 'active' ? 'live' : 'waiting on DNS' }}</div>
@@ -529,10 +546,10 @@ async function saveProviderProfile() {
           <div v-if="providerTab==='security'">
             <h3>Security</h3>
             <p class="muted">Keep your account safe.</p>
-            <div class="form-group"><label class="form-label">Current Password</label><input type="password" placeholder="••••••••" /></div>
-            <div class="form-group"><label class="form-label">New Password</label><input type="password" placeholder="••••••••" /></div>
-            <div class="form-group"><label class="form-label">Confirm New Password</label><input type="password" placeholder="••••••••" /></div>
-            <button class="btn btn-secondary">Update Password</button>
+            <div class="form-group"><label class="form-label">Current Password</label><input v-model="pwCurrent" aria-label="Current password" type="password" autocomplete="current-password" /></div>
+            <div class="form-group"><label class="form-label">New Password</label><input v-model="pwNew" aria-label="New password" type="password" autocomplete="new-password" placeholder="At least 10 characters" /></div>
+            <div class="form-group"><label class="form-label">Confirm New Password</label><input v-model="pwConfirm" aria-label="Confirm new password" type="password" autocomplete="new-password" /></div>
+            <button class="btn btn-primary" :disabled="pwSaving" @click="changePassword">{{ pwSaving ? 'Updating…' : 'Update password' }}</button>
           </div>
         </div>
       </div>
@@ -545,27 +562,35 @@ async function saveProviderProfile() {
 h3 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
 .muted { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
 .plan-box { border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
-.plan-box.prem { border-color: #fbbf24; background: linear-gradient(180deg, #fffbeb 0%, transparent 70%); }
+.plan-commission { margin-top: 20px; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
+.plan-commission h4 { font-size: 16px; margin: 0 0 16px; color: var(--text); }
+.plan-commission dl { margin: 0; }
+.plan-commission dl > div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.plan-commission dt { font-size: 13px; color: var(--text-secondary); }
+.plan-commission dd { margin: 0; font-size: 14px; font-weight: 650; color: var(--text); }
+.plan-commission small { display: block; color: var(--text-muted); font-size: 12px; font-weight: 400; margin-top: 5px; }
+.plan-commission p { margin: 14px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
+.plan-box.prem { border-color: #fbbf24; background: linear-gradient(180deg, var(--warning-bg, #fffbeb) 0%, transparent 70%); }
 .plan-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .plan-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; background: var(--bg); color: var(--text-muted); font-size: 12px; font-weight: 600; }
-.plan-chip.prem { background: #fef3c7; color: #92400e; }
+.plan-chip.prem { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); }
 .plan-cycle { font-size: 13px; color: var(--text-muted); }
 .plan-line { display: flex; align-items: center; gap: 8px; font-size: 13.5px; padding: 5px 0; }
-.plan-line.warn { color: #b45309; }
+.plan-line.warn { color: var(--warning-ink, #b45309); }
 .plan-line.muted-line { color: var(--text-muted); font-size: 12.5px; }
 .plan-actions { margin-top: 16px; }
 .set-nav { display: flex; flex-direction: column; gap: 2px; }
 .set-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; font-size: 14px; color: var(--text-muted); cursor: pointer; transition: all 0.15s; }
 .set-item:hover { background: var(--bg); color: var(--text); }
-.set-item.active { background: #ccfbf1; color: var(--primary); font-weight: 500; }
+.set-item.active { background: var(--primary-soft, #ccfbf1); color: var(--primary-ink); font-weight: 500; }
 .toggle { display: flex; align-items: center; gap: 10px; padding: 14px; border-bottom: 1px solid var(--border); font-size: 14px; cursor: pointer; }
 .toggle input { width: auto; }
-.info-banner { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; background: #ccfbf1; border-radius: 8px; color: #0f766e; font-size: 13px; margin-top: 12px; }
-.inline-link { background: none; border: none; color: var(--primary); text-decoration: underline; cursor: pointer; font-size: 13px; padding: 0; }
-.policy-card { background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 16px 18px; }
+.info-banner { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; background: var(--primary-soft, #ccfbf1); border-radius: 8px; color: var(--primary-ink, #0f766e); font-size: 13px; margin-top: 12px; }
+.inline-link { background: none; border: none; color: var(--primary-ink); text-decoration: underline; cursor: pointer; font-size: 13px; padding: 0; }
+.policy-card { background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 16px 18px; }
 .policy-card-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
 .policy-list { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; color: var(--text-muted); }
-.policy-info-box { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 10px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 12.5px; color: #1e40af; line-height: 1.5; }
+.policy-info-box { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 10px 12px; background: var(--info-bg, #eff6ff); border: 1px solid var(--info-border, #bfdbfe); border-radius: 8px; font-size: 12.5px; color: var(--info-ink, #1e40af); line-height: 1.5; }
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr !important; }
   /* Sidebar nav becomes a horizontally scrollable pill row (scrolls inside its card,

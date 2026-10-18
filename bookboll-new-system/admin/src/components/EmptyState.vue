@@ -47,7 +47,7 @@ defineEmits(['action'])
   background: var(--bg-subtle, #f1f5f9); color: var(--text-light, #94a3b8); margin-bottom: 8px;
 }
 .empty-state.compact .empty-icon { width: 48px; height: 48px; border-radius: 13px; }
-.empty-title { font-size: 16px; font-weight: 700; color: #0f172a; }
+.empty-title { font-size: 16px; font-weight: 700; color: var(--text, #0f172a); }
 .empty-message { font-size: 13.5px; color: var(--text-muted, #64748b); line-height: 1.5; margin: 0; max-width: 360px; }
 .empty-action { margin-top: 12px; }
 </style>

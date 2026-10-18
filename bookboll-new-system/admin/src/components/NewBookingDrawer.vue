@@ -16,6 +16,7 @@ import { notifyBookingConfirmation } from '../customer/notificationDispatch.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
+import { localCalendarDate } from '../lib/calendarDate.js'
 
 const { role, isSuperAdmin, isCountryAdmin, currentOwnerUserId } = useCurrentUser()
 const isBookbollSide = computed(() => isSuperAdmin.value || isCountryAdmin.value || role.value === 'platform_staff')
@@ -35,6 +36,7 @@ const locations     = ref([])
 const listings      = ref([])
 const customers     = ref([])
 const loadingMaster = ref(false)
+const masterError = ref('')
 
 // Providers can only book at their own venues (no owner link → none). Platform:
 // super admin books anywhere; country_admin/platform_staff only in jurisdiction.
@@ -49,7 +51,9 @@ const venueOptions = computed(() =>
 
 async function loadMaster() {
   loadingMaster.value = true
+  masterError.value = ''
   const res = await fetchBookingLookups({ withCustomers: true })
+  if (!res.success) masterError.value = firstError(res, 'Booking options could not load. Please try again.')
   const d = res.success ? (res.data || {}) : {}
   locations.value = (d.locations || []).filter(l => l.status === 'active')
   listings.value  = (d.listings || []).filter(l => l.status === 'active')
@@ -84,7 +88,7 @@ const pendingPresetSlot = ref('')
 const venueId       = ref('')
 const listingId     = ref('')
 const customerId    = ref('')
-const bookingDate   = ref(new Date().toISOString().slice(0, 10))
+const bookingDate   = ref(localCalendarDate())
 const paymentMethod = ref('')
 const notes         = ref('')
 const selectedSlot  = ref(null)
@@ -262,7 +266,7 @@ async function loadListingAddons() {
     return
   }
   addonsLoading.value = true
-  const occ = await fetchBookingOccupancy(listingId.value, bookingDate.value || new Date().toISOString().slice(0, 10))
+  const occ = await fetchBookingOccupancy(listingId.value, bookingDate.value || localCalendarDate())
   addonsLoading.value = false
   listingAddons.value = ((occ.success ? occ.data?.add_ons : null) || []).filter(a => a && (a.status || 'active') === 'active')
 }
@@ -382,7 +386,7 @@ const calendarDays = computed(() => {
   return days
 })
 
-const todayIso = new Date().toISOString().slice(0, 10)
+const todayIso = computed(() => { props.open; return localCalendarDate() })
 
 async function toggleRecurringDate(iso) {
   if (!iso || iso < todayIso || iso === bookingDate.value) return
@@ -515,7 +519,7 @@ async function requestClose() {
 function resetForm() {
   clearDirty()
   venueId.value = ''; listingId.value = ''; customerId.value = ''
-  bookingDate.value = new Date().toISOString().slice(0, 10)
+  bookingDate.value = localCalendarDate()
   paymentMethod.value = ''; notes.value = ''; selectedSlot.value = null
   players.value = 1; saveError.value = ''; showAddCustomer.value = false
   existingBookings.value = []; listingAddons.value = []; addonQty.value = {}
@@ -550,40 +554,45 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 <template>
   <Teleport to="body">
     <div v-if="open" class="nbm-backdrop" @click.self="requestClose">
-      <div class="nbm-panel" @input="markDirty" @change="markDirty">
+      <div class="nbm-panel" v-dialog="requestClose" @input="markDirty" @change="markDirty">
 
         <!-- Header -->
         <div class="nbm-header">
           <div>
-            <div class="nbm-title">New Booking</div>
-            <div class="nbm-subtitle">Create a manual booking</div>
+            <div class="nbm-title">New booking</div>
+            <div class="nbm-subtitle">Choose a listing and time, then record the customer and payment.</div>
           </div>
-          <button class="nbm-close" @click="requestClose"><X :size="18" /></button>
+          <button class="nbm-close" aria-label="Close booking form" @click="requestClose"><X :size="18" /></button>
         </div>
 
         <div class="nbm-body">
 
           <!-- ── Basic Information ── -->
-          <div class="nbm-section-label">Basic Information</div>
+          <div class="nbm-section-label">Booking details</div>
+          <div v-if="masterError" class="nbm-error" role="alert">
+            <AlertCircle :size="16" /><span>{{ masterError }}</span>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="loadingMaster" @click="loadMaster">Try again</button>
+          </div>
 
           <!-- Venue -->
           <div class="nbm-field">
             <label class="nbm-label">Venue <span class="nbm-req">*</span></label>
             <div class="nbm-select-wrap">
               <MapPin :size="15" class="nbm-field-icon" />
-              <select v-model="venueId" class="nbm-select nbm-select-with-icon">
-                <option value="">Select Venue</option>
+              <select v-model="venueId" aria-label="Venue" :disabled="loadingMaster" class="nbm-select nbm-select-with-icon">
+                <option value="">{{ loadingMaster ? 'Loading venues…' : 'Select venue' }}</option>
                 <option v-for="loc in venueOptions" :key="loc.id" :value="loc.id">{{ loc.name }}</option>
               </select>
               <ChevronDown :size="15" class="nbm-select-arrow" />
             </div>
+            <p v-if="!loadingMaster && !masterError && !venueOptions.length" class="nbm-subtitle" role="status">No active venues are available to this account. Check your venue status and team access in Listings.</p>
           </div>
 
           <!-- Listing -->
           <div class="nbm-field">
             <label class="nbm-label">Listing <span class="nbm-req">*</span></label>
             <div class="nbm-select-wrap">
-              <select v-model="listingId" class="nbm-select" :disabled="!venueId">
+              <select v-model="listingId" aria-label="Listing" class="nbm-select" :disabled="!venueId">
                 <option value="">{{ venueId ? 'Select Listing' : 'Select a venue first' }}</option>
                 <option v-for="l in venueListings" :key="l.id" :value="l.id">{{ l.name }}</option>
               </select>
@@ -633,12 +642,12 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
                   <div class="nbm-customer-name">{{ selectedCustomer.full_name }}</div>
                   <div class="nbm-customer-sub">{{ selectedCustomer.phone || selectedCustomer.email || '' }}</div>
                 </div>
-                <button class="nbm-customer-clear" @click.stop="customerId = ''"><X :size="13" /></button>
+                <button class="nbm-customer-clear" aria-label="Remove selected customer" @click.stop="customerId = ''"><X :size="13" /></button>
               </div>
               <div v-else>
                 <input
                   v-model="customerSearch"
-                  placeholder="Search by name, phone or email..."
+                  placeholder="Search by name, phone or email..." aria-label="Search customers"
                   class="nbm-input"
                   @focus="showCustomerDropdown = true"
                   @blur="setTimeout(() => showCustomerDropdown = false, 180)"
@@ -670,7 +679,7 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
                    .lazy: native date inputs fire `input` per SEGMENT while typing,
                    so an eager v-model wrote partial values into state mid-edit.
                    min blocks booking days that are already gone. -->
-              <input type="date" v-model.lazy="bookingDate" :min="todayIso" class="nbm-input" />
+              <input type="date" v-model.lazy="bookingDate" aria-label="Booking date" :min="todayIso" class="nbm-input" />
             </div>
           </div>
 
@@ -814,12 +823,12 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
           </template>
 
           <!-- ── Payment ── -->
-          <div class="nbm-section-label">Payment</div>
+          <div class="nbm-section-label">Payment &amp; notes</div>
 
           <div class="nbm-field">
             <label class="nbm-label">Payment Method <span class="nbm-req">*</span></label>
             <div class="nbm-select-wrap">
-              <select v-model="paymentMethod" class="nbm-select">
+              <select v-model="paymentMethod" aria-label="Payment method" class="nbm-select">
                 <option value="" disabled>Select payment method</option>
                 <option value="payment_skipped">Skip payment</option>
                 <option value="cash">Pay on Arrival</option>
@@ -855,7 +864,7 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
                     </div>
                   </div>
                 </div>
-                <button class="nbm-promo-remove" @click="removePromo"><X :size="13" /></button>
+                <button class="nbm-promo-remove" @click="removePromo" aria-label="Close"><X :size="13" /></button>
               </div>
               <div v-else class="nbm-promo-input-row">
                 <input v-model="promoInput" placeholder="Enter promo code" class="nbm-input nbm-promo-input"
@@ -939,36 +948,36 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
   display: flex; align-items: flex-start; justify-content: space-between;
   padding: 20px 20px 16px; border-bottom: 1px solid var(--border, #e2e8f0); flex-shrink: 0;
 }
-.nbm-title { font-size: 17px; font-weight: 700; color: #0f172a; }
+.nbm-title { font-size: 17px; font-weight: 700; color: var(--text, #0f172a); }
 .nbm-subtitle { font-size: 12px; color: var(--text-light, #94a3b8); margin-top: 2px; }
 .nbm-close {
-  width: 32px; height: 32px; border-radius: 8px; border: none; background: #f1f5f9;
+  width: 32px; height: 32px; border-radius: 8px; border: none; background: var(--bg, #f1f5f9);
   display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-muted, #64748b);
 }
-.nbm-close:hover { background: var(--border, #e2e8f0); color: #0f172a; }
+.nbm-close:hover { background: var(--border, #e2e8f0); color: var(--text, #0f172a); }
 
 .nbm-body { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
 
 .nbm-section-label {
   font-size: 11px; font-weight: 700; color: var(--text-light, #94a3b8);
   text-transform: uppercase; letter-spacing: .07em;
-  padding-bottom: 4px; border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 4px; border-bottom: 1px solid var(--border, #f1f5f9);
 }
 
 .nbm-field { display: flex; flex-direction: column; gap: 7px; }
-.nbm-label { font-size: 13px; font-weight: 600; color: #374151; display: flex; align-items: center; gap: 6px; }
+.nbm-label { font-size: 13px; font-weight: 600; color: var(--text-secondary, #374151); display: flex; align-items: center; gap: 6px; }
 .nbm-label-hint { font-size: 11px; font-weight: 400; color: var(--text-light, #94a3b8); }
 .nbm-label-row { display: flex; align-items: center; justify-content: space-between; }
-.nbm-req { color: #ef4444; }
+.nbm-req { color: var(--danger-ink, #ef4444); }
 .nbm-add-link {
   display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500;
-  color: #3b82f6; background: none; border: none; cursor: pointer; padding: 0;
+  color: var(--info-ink, #3b82f6); background: none; border: none; cursor: pointer; padding: 0;
 }
 .nbm-add-link:hover { text-decoration: underline; }
 
 .nbm-input {
   width: 100%; padding: 9px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 9px;
-  font-size: 13.5px; color: #0f172a; background: var(--surface, #ffffff); box-sizing: border-box;
+  font-size: 13.5px; color: var(--text, #0f172a); background: var(--surface, #ffffff); box-sizing: border-box;
   transition: border-color .15s, box-shadow .15s;
 }
 .nbm-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.1); }
@@ -977,7 +986,7 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 .nbm-field-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-light, #94a3b8); pointer-events: none; }
 .nbm-textarea {
   width: 100%; padding: 9px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 9px;
-  font-size: 13.5px; color: #0f172a; background: var(--surface, #ffffff); box-sizing: border-box;
+  font-size: 13.5px; color: var(--text, #0f172a); background: var(--surface, #ffffff); box-sizing: border-box;
   resize: vertical; font-family: inherit; min-height: 72px;
   transition: border-color .15s, box-shadow .15s;
 }
@@ -987,7 +996,7 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 .nbm-select-wrap { position: relative; }
 .nbm-select {
   width: 100%; padding: 9px 36px 9px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 9px;
-  font-size: 13.5px; color: #0f172a; background: var(--surface, #ffffff); appearance: none; cursor: pointer;
+  font-size: 13.5px; color: var(--text, #0f172a); background: var(--surface, #ffffff); appearance: none; cursor: pointer;
   transition: border-color .15s, box-shadow .15s; box-sizing: border-box;
 }
 .nbm-select-with-icon { padding-left: 36px; }
@@ -1000,17 +1009,17 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 .nbm-stepper-disabled { opacity: .4; pointer-events: none; }
 .nbm-step-btn {
   width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border, #e2e8f0);
-  background: #f8fafc; display: flex; align-items: center; justify-content: center;
-  cursor: pointer; color: #374151; transition: all .15s;
+  background: var(--surface-hover, #f8fafc); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text-secondary, #374151); transition: all .15s;
 }
-.nbm-step-btn:hover:not(:disabled) { background: var(--border, #e2e8f0); border-color: #cbd5e1; }
+.nbm-step-btn:hover:not(:disabled) { background: var(--border, #e2e8f0); border-color: var(--border-strong, #cbd5e1); }
 .nbm-step-btn:disabled { opacity: .4; cursor: not-allowed; }
-.nbm-step-val { min-width: 28px; text-align: center; font-size: 14px; font-weight: 700; color: #0f172a; }
+.nbm-step-val { min-width: 28px; text-align: center; font-size: 14px; font-weight: 700; color: var(--text, #0f172a); }
 .nbm-step-hint { font-size: 11px; color: var(--text-light, #94a3b8); margin-left: 4px; }
 
 /* Add customer */
 .nbm-add-customer {
-  background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
   padding: 14px; display: flex; flex-direction: column; gap: 8px;
 }
 .nbm-btn-save-customer {
@@ -1023,7 +1032,7 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 /* Customer picker */
 .nbm-customer-selected {
   display: flex; align-items: center; gap: 10px; padding: 10px 12px;
-  border: 1px solid var(--border, #e2e8f0); border-radius: 9px; background: #f8fafc; cursor: pointer;
+  border: 1px solid var(--border, #e2e8f0); border-radius: 9px; background: var(--surface-hover, #f8fafc); cursor: pointer;
 }
 .nbm-customer-avatar {
   width: 34px; height: 34px; border-radius: 50%; background: #0f172a; color: #fff;
@@ -1032,13 +1041,13 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 }
 .nbm-customer-avatar.sm { width: 30px; height: 30px; font-size: 11px; }
 .nbm-customer-info { flex: 1; }
-.nbm-customer-name { font-size: 13.5px; font-weight: 600; color: #0f172a; }
+.nbm-customer-name { font-size: 13.5px; font-weight: 600; color: var(--text, #0f172a); }
 .nbm-customer-sub { font-size: 12px; color: var(--text-muted, #64748b); }
 .nbm-customer-clear {
   background: none; border: none; cursor: pointer; color: var(--text-light, #94a3b8); padding: 4px;
   display: flex; align-items: center;
 }
-.nbm-customer-clear:hover { color: #ef4444; }
+.nbm-customer-clear:hover { color: var(--danger-ink, #ef4444); }
 .nbm-customer-dropdown {
   position: absolute; z-index: 100; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0);
   border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.1);
@@ -1048,35 +1057,35 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 .nbm-customer-option {
   display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background .1s;
 }
-.nbm-customer-option:hover { background: #f8fafc; }
+.nbm-customer-option:hover { background: var(--surface-hover, #f8fafc); }
 
 /* Slots */
 .nbm-slots-placeholder {
   display: flex; align-items: center; gap: 8px; padding: 14px 16px;
-  background: #f8fafc; border: 1px dashed var(--border, #e2e8f0); border-radius: 10px; font-size: 13px; color: var(--text-light, #94a3b8);
+  background: var(--surface-hover, #f8fafc); border: 1px dashed var(--border, #e2e8f0); border-radius: 10px; font-size: 13px; color: var(--text-light, #94a3b8);
 }
 .nbm-closed-note {
   display: flex; align-items: flex-start; gap: 8px; padding: 12px 14px;
-  background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; font-size: 13px; color: #b91c1c; font-weight: 600;
+  background: var(--danger-bg, #fef2f2); border: 1px solid var(--danger-border, #fecaca); border-radius: 10px; font-size: 13px; color: var(--danger-ink, #b91c1c); font-weight: 600;
 }
 .nbm-special-note {
   display: flex; align-items: center; gap: 6px; padding: 7px 11px; margin-bottom: 8px;
-  background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; font-size: 12px; color: #4338ca; font-weight: 600;
+  background: var(--info-bg, #eef2ff); border: 1px solid var(--purple-border, #c7d2fe); border-radius: 8px; font-size: 12px; color: var(--purple-ink, #4338ca); font-weight: 600;
 }
 .nbm-slots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .nbm-slot {
   display: flex; flex-direction: column; align-items: center; padding: 9px 6px;
   border: 1.5px solid var(--border, #e2e8f0); border-radius: 9px; background: var(--surface, #ffffff); cursor: pointer; transition: all .15s;
 }
-.nbm-slot:hover:not(:disabled) { border-color: #3b82f6; background: #eff6ff; }
-.nbm-slot-selected { border-color: #3b82f6 !important; background: #eff6ff !important; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
-.nbm-slot-taken { background: #f8fafc; border-color: #f1f5f9; cursor: not-allowed; opacity: .45; }
-.nbm-slot-time  { font-size: 12.5px; font-weight: 700; color: #0f172a; }
+.nbm-slot:hover:not(:disabled) { border-color: #3b82f6; background: var(--info-bg, #eff6ff); }
+.nbm-slot-selected { border-color: #3b82f6 !important; background: var(--info-bg, #eff6ff) !important; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+.nbm-slot-taken { background: var(--surface-hover, #f8fafc); border-color: var(--border, #f1f5f9); cursor: not-allowed; opacity: .45; }
+.nbm-slot-time  { font-size: 12.5px; font-weight: 700; color: var(--text, #0f172a); }
 .nbm-slot-end   { font-size: 11px; color: var(--text-light, #94a3b8); margin-top: 1px; }
-.nbm-slot-price { font-size: 11px; font-weight: 600; color: #16a34a; margin-top: 3px; }
+.nbm-slot-price { font-size: 11px; font-weight: 600; color: var(--positive-ink, #16a34a); margin-top: 3px; }
 .nbm-slot-summary {
   display: flex; align-items: center; gap: 6px; padding: 8px 12px;
-  background: #eff6ff; border-radius: 8px; font-size: 13px; color: #1e40af; margin-top: 4px;
+  background: var(--info-bg, #eff6ff); border-radius: 8px; font-size: 13px; color: var(--info-ink, #1e40af); margin-top: 4px;
 }
 .nbm-spin { animation: nbmSpinAnim 1s linear infinite; }
 @keyframes nbmSpinAnim { to { transform: rotate(360deg); } }
@@ -1084,21 +1093,21 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 /* Toggle row */
 .nbm-toggle-row {
   display: flex; align-items: center; justify-content: space-between; padding: 10px 14px;
-  background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 10px;
   cursor: pointer; user-select: none; transition: background .15s;
 }
-.nbm-toggle-row:hover { background: #f1f5f9; }
+.nbm-toggle-row:hover { background: var(--bg, #f1f5f9); }
 .nbm-toggle-row-sm { padding: 8px 12px; }
-.nbm-toggle-label { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: #374151; }
-.nbm-toggle-icon { color: #cbd5e1; transition: color .2s; }
-.nbm-toggle-on   { color: #3b82f6; }
+.nbm-toggle-label { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--text-secondary, #374151); }
+.nbm-toggle-icon { color: var(--text-light, #cbd5e1); transition: color .2s; }
+.nbm-toggle-on   { color: var(--info-ink, #3b82f6); }
 
 /* Calendar */
 .nbm-calendar-wrap {
-  background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px; margin-top: 4px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px; margin-top: 4px;
 }
 .nbm-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.nbm-cal-month { font-size: 13.5px; font-weight: 700; color: #0f172a; }
+.nbm-cal-month { font-size: 13.5px; font-weight: 700; color: var(--text, #0f172a); }
 .nbm-cal-nav {
   width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff);
   display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-muted, #64748b); transition: all .15s;
@@ -1111,17 +1120,17 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 .nbm-cal-empty { width: 100%; height: 100%; }
 .nbm-cal-btn {
   width: 100%; height: 100%; border-radius: 7px; border: none; background: transparent; cursor: pointer;
-  font-size: 12px; font-weight: 500; color: #374151;
+  font-size: 12px; font-weight: 500; color: var(--text-secondary, #374151);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   position: relative; transition: all .15s;
 }
 .nbm-cal-btn:hover:not(:disabled) { background: var(--border, #e2e8f0); }
-.nbm-cal-today       { font-weight: 700; color: #3b82f6; }
+.nbm-cal-today       { font-weight: 700; color: var(--info-ink, #3b82f6); }
 .nbm-cal-primary     { background: #0f172a !important; color: #fff !important; font-weight: 700; cursor: default; }
 .nbm-cal-selected    { background: #3b82f6 !important; color: #fff !important; font-weight: 700; }
-.nbm-cal-available   { background: #dcfce7; color: #16a34a; font-weight: 600; }
+.nbm-cal-available   { background: var(--positive-bg, #dcfce7); color: var(--positive-ink, #16a34a); font-weight: 600; }
 .nbm-cal-available:hover { background: #bbf7d0 !important; }
-.nbm-cal-unavailable { background: #fff1f2 !important; color: #fca5a5 !important; cursor: not-allowed !important; }
+.nbm-cal-unavailable { background: var(--danger-bg, #fff1f2) !important; color: #fca5a5 !important; cursor: not-allowed !important; }
 .nbm-cal-past        { opacity: .35; cursor: not-allowed !important; }
 .nbm-cal-x           { position: absolute; font-size: 9px; bottom: 2px; color: #f87171; line-height: 1; }
 .nbm-cal-legend {
@@ -1131,10 +1140,10 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 .nbm-leg           { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .nbm-leg-primary   { background: #0f172a; }
 .nbm-leg-selected  { background: #3b82f6; }
-.nbm-leg-unavail   { background: #fff1f2; border: 1px solid #fca5a5; }
+.nbm-leg-unavail   { background: var(--danger-bg, #fff1f2); border: 1px solid var(--danger-border, #fca5a5); }
 .nbm-recurring-summary {
   display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 12px;
-  background: #eff6ff; border-radius: 8px; font-size: 12px; color: #1e40af;
+  background: var(--info-bg, #eff6ff); border-radius: 8px; font-size: 12px; color: var(--info-ink, #1e40af);
 }
 
 /* Add-ons */
@@ -1143,19 +1152,19 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
   display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
   border: 1px solid var(--border, #e2e8f0); border-radius: 10px; background: var(--surface, #ffffff); gap: 10px;
 }
-.nbm-addon-oos { opacity: .5; background: #f8fafc; }
+.nbm-addon-oos { opacity: .5; background: var(--surface-hover, #f8fafc); }
 .nbm-addon-info { flex: 1; min-width: 0; }
-.nbm-addon-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #0f172a; }
+.nbm-addon-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text, #0f172a); }
 .nbm-addon-icon { color: var(--text-light, #94a3b8); flex-shrink: 0; }
 .nbm-addon-desc { font-size: 11.5px; color: var(--text-muted, #64748b); margin-top: 2px; }
-.nbm-addon-price { font-size: 12px; font-weight: 500; color: #16a34a; margin-top: 3px; }
+.nbm-addon-price { font-size: 12px; font-weight: 500; color: var(--positive-ink, #16a34a); margin-top: 3px; }
 .nbm-badge-oos {
-  font-size: 10px; font-weight: 600; color: #ef4444; background: #fef2f2;
-  border-radius: 4px; padding: 1px 6px; border: 1px solid #fecaca;
+  font-size: 10px; font-weight: 600; color: var(--danger-ink, #ef4444); background: var(--danger-bg, #fef2f2);
+  border-radius: 4px; padding: 1px 6px; border: 1px solid var(--danger-border, #fecaca);
 }
 .nbm-badge-low {
-  font-size: 10px; font-weight: 600; color: #d97706; background: #fffbeb;
-  border-radius: 4px; padding: 1px 6px; border: 1px solid #fde68a;
+  font-size: 10px; font-weight: 600; color: var(--warning-ink, #d97706); background: var(--warning-bg, #fffbeb);
+  border-radius: 4px; padding: 1px 6px; border: 1px solid var(--warning-border, #fde68a);
 }
 
 /* Promo code */
@@ -1171,37 +1180,37 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 .nbm-btn-apply-promo:disabled { opacity: .5; cursor: not-allowed; }
 .nbm-promo-applied {
   display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
-  background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 9px;
+  background: var(--positive-bg, #f0fdf4); border: 1px solid var(--positive-border, #bbf7d0); border-radius: 9px;
 }
-.nbm-promo-applied-info { display: flex; align-items: flex-start; gap: 8px; color: #166534; }
-.nbm-promo-code { font-size: 13px; font-weight: 700; color: #166534; }
-.nbm-promo-savings { font-size: 11.5px; color: #16a34a; margin-top: 1px; }
+.nbm-promo-applied-info { display: flex; align-items: flex-start; gap: 8px; color: var(--positive-ink, #166534); }
+.nbm-promo-code { font-size: 13px; font-weight: 700; color: var(--positive-ink, #166534); }
+.nbm-promo-savings { font-size: 11.5px; color: var(--positive-ink, #16a34a); margin-top: 1px; }
 .nbm-promo-remove {
   background: none; border: none; cursor: pointer; color: #86efac; padding: 2px; display: flex; align-items: center;
 }
-.nbm-promo-remove:hover { color: #ef4444; }
-.nbm-promo-error { font-size: 12px; color: #dc2626; padding: 0 2px; }
+.nbm-promo-remove:hover { color: var(--danger-ink, #ef4444); }
+.nbm-promo-error { font-size: 12px; color: var(--danger-ink, #dc2626); padding: 0 2px; }
 
 /* Price summary */
 .nbm-price-summary {
-  background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px;
+  background: var(--surface-hover, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px;
   display: flex; flex-direction: column; gap: 8px;
 }
-.nbm-price-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #475569; }
-.nbm-price-discount { color: #16a34a; }
+.nbm-price-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--text-secondary, #475569); }
+.nbm-price-discount { color: var(--positive-ink, #16a34a); }
 .nbm-price-total {
-  font-size: 15px; font-weight: 700; color: #0f172a;
+  font-size: 15px; font-weight: 700; color: var(--text, #0f172a);
   padding-top: 8px; border-top: 1px solid var(--border, #e2e8f0); margin-top: 2px;
 }
 .nbm-price-recurring {
-  font-size: 13px; font-weight: 600; color: #3b82f6;
-  padding-top: 6px; border-top: 1px dashed #bfdbfe; margin-top: 2px;
+  font-size: 13px; font-weight: 600; color: var(--info-ink, #3b82f6);
+  padding-top: 6px; border-top: 1px dashed var(--info-border, #bfdbfe); margin-top: 2px;
 }
 
 /* Error */
 .nbm-error {
   display: flex; align-items: center; gap: 8px; padding: 10px 14px;
-  background: #fef2f2; border: 1px solid #fecaca; border-radius: 9px; font-size: 13px; color: #dc2626;
+  background: var(--danger-bg, #fef2f2); border: 1px solid var(--danger-border, #fecaca); border-radius: 9px; font-size: 13px; color: var(--danger-ink, #dc2626);
 }
 
 /* Footer */
@@ -1210,9 +1219,9 @@ function fmt(n) { return Number(n).toLocaleString(undefined, { minimumFractionDi
 }
 .nbm-btn-cancel {
   flex: 1; padding: 10px; border-radius: 9px; border: 1px solid var(--border, #e2e8f0);
-  background: #f8fafc; color: #475569; font-size: 14px; font-weight: 500; cursor: pointer; transition: all .15s;
+  background: var(--surface-hover, #f8fafc); color: var(--text-secondary, #475569); font-size: 14px; font-weight: 500; cursor: pointer; transition: all .15s;
 }
-.nbm-btn-cancel:hover { background: #f1f5f9; }
+.nbm-btn-cancel:hover { background: var(--bg, #f1f5f9); }
 .nbm-btn-save {
   flex: 2; display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 10px; border-radius: 9px; border: none; background: #0f172a; color: #fff;

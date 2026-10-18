@@ -1,4 +1,5 @@
 <script setup>
+import ExportDialog from '../components/ExportDialog.vue'
 /**
  * Subscribers.vue — the subscribers table for class/subscription programs.
  * Split out of the old "Classes & Subscriptions" page so programs and subscribers
@@ -65,8 +66,12 @@ function subExportStatus(s) {
   if (s.status === 'past_due') return 'Past due'
   return 'Active'
 }
-function exportSubs() {
-  downloadCSV(filteredSortedSubs.value, subExportColumns(), 'subscriptions')
+const showExportModal = ref(false)
+function exportSubs(useFilters) {
+  if (!canExport.value) return
+  if (!requirePremium('exports')) { showExportModal.value = false; return }
+  downloadCSV(useFilters ? filteredSortedSubs.value : scopedSubscriptions.value, subExportColumns(), 'subscriptions')
+  showExportModal.value = false
 }
 
 // When embedded (inside the Customers page's "Members" tab) the page title/padding are
@@ -494,7 +499,7 @@ const activeSubFilterCount = computed(() => [
   subDateFrom.value, subDateTo.value, subAmountMin.value, subAmountMax.value,
 ].filter(Boolean).length)
 
-const filteredSortedSubs = computed(() => {
+const scopedSubscriptions = computed(() => {
   let list = subscriptions.value.slice()
   if (!isSuperAdmin.value) {
     // Providers: their own programs' members. country_admin / platform_staff:
@@ -503,6 +508,10 @@ const filteredSortedSubs = computed(() => {
     const mine = myProgramIds.value
     list = list.filter(s => mine.has(s.program_id))
   }
+  return list
+})
+const filteredSortedSubs = computed(() => {
+  let list = scopedSubscriptions.value.slice()
   const q = subSearch.value.trim().toLowerCase()
   if (q) {
     list = list.filter(s =>
@@ -665,14 +674,15 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 </script>
 
 <template>
+  <ExportDialog :open="showExportModal" title="Export subscriptions" noun="subscriptions" :filtered-count="filteredSortedSubs.length" :all-count="scopedSubscriptions.length" @close="showExportModal = false" @export="exportSubs" />
   <div :class="embedded ? 'sub-embed' : 'page'">
     <div class="page-header">
       <div v-if="!embedded">
-        <div class="page-title">Subscriptions</div>
-        <div class="page-subtitle">Add, cancel &amp; manage membership subscribers — with trial &amp; billing status.</div>
+        <h1 class="page-title">Subscriptions</h1>
+        <div class="page-subtitle">Manage members, billing status and upcoming renewals..</div>
       </div>
       <div class="sub-head-actions">
-        <button v-if="canExport" class="btn btn-secondary" @click="requirePremium('exports') && exportSubs()"><Download :size="14" />Export<span v-if="!isPremium" class="prem-lock">Premium</span></button>
+        <button v-if="canExport" class="btn btn-secondary" @click="showExportModal = true"><Download :size="14" />Export<span v-if="!isPremium" class="prem-lock">Premium</span></button>
         <button v-if="canManageSubs" class="btn btn-primary" @click="openNewSub('')"><Plus :size="16" />Add subscriber</button>
       </div>
     </div>
@@ -763,7 +773,7 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
           <div class="bulk-actions">
             <button v-if="canExport" class="bulk-btn" @click="requirePremium('exports') && bulkExportSelected()"><Download :size="14" />Export selected<span v-if="!isPremium" class="prem-lock">Premium</span></button>
             <button v-if="canManageSubs" class="bulk-btn danger" @click="bulkCancelSelected"><X :size="14" />Cancel selected</button>
-            <button class="bulk-deselect" @click="clearSelection"><X :size="15" /></button>
+            <button class="bulk-deselect" @click="clearSelection" aria-label="Clear selection"><X :size="15" /></button>
           </div>
         </div>
       </Transition>
@@ -885,7 +895,7 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 
     <!-- ── Subscription detail drawer ──────────────────────────────────────── -->
     <div v-if="detailSub" class="drawer-backdrop" @click.self="closeSubDetail">
-      <div class="sub-drawer">
+      <div class="sub-drawer" v-dialog="closeSubDetail" aria-label="Membership subscriber details">
         <div class="sd-head">
           <div class="sd-head-main">
             <div class="sd-avatar">{{ (detailSub.customer_name || detailSub.customer_email || '?')[0].toUpperCase() }}</div>
@@ -894,7 +904,7 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
               <div class="sd-email">{{ detailSub.customer_email || '—' }}</div>
             </div>
           </div>
-          <button class="btn-icon" @click="closeSubDetail"><X :size="18"/></button>
+          <button class="btn-icon" @click="closeSubDetail" aria-label="Close"><X :size="18"/></button>
         </div>
 
         <div class="sd-body">
@@ -974,10 +984,10 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 
     <!-- Sign-up answers -->
     <div v-if="answersFor" class="modal-backdrop" @click.self="answersFor = null">
-      <div class="modal answers-modal">
+      <div class="modal answers-modal" v-dialog>
         <div class="modal-header">
           <div class="modal-title">{{ answersFor.customer_name }} — sign-up answers</div>
-          <button class="btn-icon" @click="answersFor = null"><X :size="18" /></button>
+          <button class="btn-icon" @click="answersFor = null" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <FormAnswers :fields="asFields(programById(answersFor.program_id)?.signup_form)" :answers="answersFor.form_answers || {}" />
@@ -987,10 +997,10 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 
     <!-- CANCELLATION SAVE-OFFER MODAL -->
     <div v-if="cancelModal" class="modal-backdrop" @click.self="cancelModal = null">
-      <div class="modal save-offer-modal">
+      <div class="modal save-offer-modal" v-dialog>
         <div class="modal-header">
           <div class="modal-title">Before you cancel {{ cancelModal.sub.customer_name || 'this member' }}…</div>
-          <button class="btn-icon" @click="cancelModal = null"><X :size="18" /></button>
+          <button class="btn-icon" @click="cancelModal = null" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -1021,45 +1031,45 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 
     <!-- ADD SUBSCRIBER MODAL -->
     <div v-if="subModal" class="modal-backdrop" @click.self="requestCloseSub">
-      <div class="modal" @input="markDirty" @change="markDirty">
+      <div class="modal" v-dialog="requestCloseSub" @input="markDirty" @change="markDirty">
         <div class="modal-header">
           <div class="modal-title">Add Subscriber</div>
-          <button class="btn-icon" @click="requestCloseSub"><X :size="18" /></button>
+          <button class="btn-icon" @click="requestCloseSub" aria-label="Close"><X :size="18" /></button>
         </div>
         <div class="modal-body">
           <div class="form-group"><label class="form-label">Program *</label>
-            <select v-model="subForm.program_id" :class="{ 'input-invalid': subTriedSave && !subForm.program_id }">
+            <select aria-label="Membership program" v-model="subForm.program_id" :class="{ 'input-invalid': subTriedSave && !subForm.program_id }">
               <option value="">Select a program</option>
               <option v-for="p in activePrograms" :key="p.id" :value="p.id">{{ p.name }} · {{ intervalLabel(p.billing_interval) }}</option>
             </select>
             <div class="field-hint">Only approved, active programs can accept members.</div>
           </div>
           <div class="form-group"><label class="form-label">Customer Name *</label>
-            <input v-model="subForm.customer_name" :class="{ 'input-invalid': subTriedSave && !subForm.customer_name?.trim() }" />
+            <input aria-label="Customer name" v-model="subForm.customer_name" :class="{ 'input-invalid': subTriedSave && !subForm.customer_name?.trim() }" />
           </div>
           <div class="form-group"><label class="form-label">Customer Email</label>
-            <input type="email" v-model="subForm.customer_email" />
+            <input aria-label="Customer email" type="email" v-model="subForm.customer_email" />
           </div>
           <div class="form-group"><label class="form-label">Start Date</label>
-            <input type="date" v-model="subForm.started_at" />
+            <input aria-label="Membership start date" type="date" v-model="subForm.started_at" />
           </div>
 
           <!-- Comp / free member: waive the card + trial consent and record a $0 membership. -->
           <label class="comp-row">
             <input type="checkbox" v-model="subForm.comp" />
             <span>
-              <b>Comp this member (no charge)</b>
-              <span class="comp-hint">Adds a free $0 membership — no card, no trial, no billing.</span>
+              <b>Give a complimentary membership</b>
+              <span class="comp-hint">This member will not be charged. No payment method is needed.</span>
             </span>
           </label>
           <div v-if="subForm.comp" class="form-group">
             <label class="form-label">Comp reason (optional)</label>
-            <input v-model="subForm.comp_reason" placeholder="e.g. staff, sponsor, goodwill" />
+            <input aria-label="Complimentary membership reason" v-model="subForm.comp_reason" placeholder="e.g. staff, sponsor, goodwill" />
           </div>
 
-          <div v-if="!subForm.comp" class="form-group"><label class="form-label">Card on file (token) *</label>
-            <input v-model="subForm.card_on_file_id" placeholder="card_xxxxxxxxxxxx" :class="{ 'input-invalid': subTriedSave && !subForm.card_on_file_id }" />
-            <div class="field-hint">{{ subUpfront ? 'A payment method is required — this plan is charged today.' : 'A payment method is required to start the free trial. Card is not charged until the trial ends.' }}</div>
+          <div v-if="!subForm.comp" class="form-group"><label class="form-label">Saved payment reference *</label>
+            <input aria-label="Saved payment reference" v-model="subForm.card_on_file_id" placeholder="Reference from your payment provider" aria-describedby="saved-payment-help" :class="{ 'input-invalid': subTriedSave && !subForm.card_on_file_id }" />
+            <div id="saved-payment-help" class="field-hint">Use an existing saved payment reference, never a card number. {{ subUpfront ? 'A payment method is required — this plan is charged today.' : 'A payment method is required to start the free trial. Card is not charged until the trial ends.' }}</div>
           </div>
 
           <div v-if="!subForm.comp && programById(subForm.program_id) && subPlan" class="disclosure disclosure-trial">
@@ -1118,32 +1128,32 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 .sub-summary-row { display: flex; align-items: center; gap: 0; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 12px; padding: 0 4px; margin-bottom: 12px; flex-wrap: wrap; overflow: hidden; }
 .sub-stat { display: flex; flex-direction: column; align-items: center; padding: 12px 20px; gap: 2px; }
 .sub-stat-val { font-size: 17px; font-weight: 700; color: var(--text); line-height: 1.2; white-space: nowrap; }
-.sub-stat-val.trial { color: #b45309; }
-.sub-stat-val.paid { color: #059669; }
-.sub-stat-val.cancelled { color: #dc2626; }
-.sub-stat-val.mrr { color: #0891b2; font-size: 14px; }
-.sub-stat-val.payout { color: #059669; font-size: 14px; }
-.sub-stat-val.platform { color: #b45309; font-size: 14px; }
-.sub-stat-val.conversion { color: #7c3aed; }
-.sub-stat-val.churn { color: #dc2626; }
+.sub-stat-val.trial { color: var(--warning-ink, #b45309); }
+.sub-stat-val.paid { color: var(--positive-ink, #059669); }
+.sub-stat-val.cancelled { color: var(--danger-ink, #dc2626); }
+.sub-stat-val.mrr { color: var(--info-ink, #0891b2); font-size: 14px; }
+.sub-stat-val.payout { color: var(--positive-ink, #059669); font-size: 14px; }
+.sub-stat-val.platform { color: var(--warning-ink, #b45309); font-size: 14px; }
+.sub-stat-val.conversion { color: var(--purple-ink, #7c3aed); }
+.sub-stat-val.churn { color: var(--danger-ink, #dc2626); }
 .sub-stat-lbl { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .sub-stat-sep { width: 1px; height: 32px; background: var(--border); margin: 0 4px; }
 
 .status-pills { display: flex; gap: 5px; flex-wrap: wrap; }
 .status-pill { padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 500; border: 1px solid var(--border); background: var(--surface, #ffffff); color: var(--text-muted); cursor: pointer; transition: all 0.15s; white-space: nowrap; }
-.status-pill:hover { border-color: var(--primary); color: var(--primary); }
+.status-pill:hover { border-color: var(--primary); color: var(--primary-ink); }
 .status-pill.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 .filter-toggle-btn { position: relative; }
-.filter-toggle-btn.filter-active { border-color: var(--primary); color: var(--primary); }
+.filter-toggle-btn.filter-active { border-color: var(--primary); color: var(--primary-ink); }
 .filter-badge { background: var(--primary); color: #fff; border-radius: 999px; font-size: 10px; padding: 0 5px; margin-left: 4px; }
 
-.filter-panel { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+.filter-panel { background: var(--surface-hover, #f8fafc); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
 .filter-panel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
 .filter-panel-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 
 .sub-table-wrap { padding: 0; overflow-x: auto; }
 .sub-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.sub-table thead tr { background: #f8fafc; border-bottom: 2px solid var(--border); }
+.sub-table thead tr { background: var(--surface-hover, #f8fafc); border-bottom: 2px solid var(--border); }
 .sub-table th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); white-space: nowrap; user-select: none; }
 .sub-table th.sortable { cursor: pointer; }
 .sub-table th.sortable:hover { color: var(--text); }
@@ -1159,43 +1169,43 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 .sub-prog-name { font-weight: 500; color: var(--text); }
 .sub-meta { font-size: 12px; color: var(--text-muted); }
 .mono { font-variant-numeric: tabular-nums; }
-.provider-share { color: #065f46; }
-.platform-fee { color: #92400e; }
+.provider-share { color: var(--positive-ink, #065f46); }
+.platform-fee { color: var(--warning-ink, #92400e); }
 .sessions-count { display: inline-flex; align-items: center; justify-content: center; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
-.trial-days-left { background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+.trial-days-left { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
 .sub-status-badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid; }
-.sub-status-badge.badge-trial { background: #fffbeb; color: #b45309; border-color: #fde68a; }
-.sub-status-badge.badge-paid { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
-.sub-status-badge.badge-cancelled { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-.sub-status-badge.badge-comp { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; margin-left: 6px; }
-.sub-status-badge.badge-paused { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
-.sub-status-badge.badge-pastdue { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+.sub-status-badge.badge-trial { background: var(--warning-bg, #fffbeb); color: var(--warning-ink, #b45309); border-color: var(--warning-border, #fde68a); }
+.sub-status-badge.badge-paid { background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #065f46); border-color: var(--positive-border, #a7f3d0); }
+.sub-status-badge.badge-cancelled { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #b91c1c); border-color: var(--danger-border, #fecaca); }
+.sub-status-badge.badge-comp { background: var(--purple-bg, #f5f3ff); color: var(--purple-ink, #6d28d9); border-color: var(--purple-border, #ddd6fe); margin-left: 6px; }
+.sub-status-badge.badge-paused { background: var(--info-bg, #eff6ff); color: var(--info-ink, #1d4ed8); border-color: var(--info-border, #bfdbfe); }
+.sub-status-badge.badge-pastdue { background: var(--warning-bg, #fff7ed); color: var(--warning-ink, #c2410c); border-color: var(--warning-border, #fed7aa); }
 .sub-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
 /* Paused / past-due summary stat colours */
-.sub-stat-val.paused { color: #1d4ed8; }
-.sub-stat-val.pastdue { color: #c2410c; }
+.sub-stat-val.paused { color: var(--info-ink, #1d4ed8); }
+.sub-stat-val.pastdue { color: var(--warning-ink, #c2410c); }
 
 /* Past-due / dunning strip */
-.sub-pastdue-strip { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
+.sub-pastdue-strip { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); color: var(--warning-ink, #9a3412); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
 .pd-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pd-left strong { color: #7c2d12; }
-.pd-sub { color: #b45309; font-size: 12px; }
+.pd-left strong { color: var(--warning-ink, #7c2d12); }
+.pd-sub { color: var(--warning-ink, #b45309); font-size: 12px; }
 .sub-pastdue-strip .btn { margin-left: auto; }
 
 /* Cancellation-reason breakdown */
 .sub-reason-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 12px; font-size: 12px; }
 .srs-label { color: var(--text-muted); font-weight: 600; }
-.srs-chip { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 999px; padding: 3px 10px; }
+.srs-chip { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #b91c1c); border: 1px solid var(--danger-border, #fecaca); border-radius: 999px; padding: 3px 10px; }
 
 /* Selection checkbox column + selected row (ported from Customers.vue) */
 .th-check, .td-check { width: 38px; padding-left: 14px !important; padding-right: 4px !important; }
 .row-checkbox { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; display: block; }
-.sub-table tbody tr.row-selected td { background: #f0fdfb !important; }
+.sub-table tbody tr.row-selected td { background: var(--primary-soft) !important; }
 
 /* Detail-drawer status alert */
-.sd-alert { font-size: 12.5px; color: #9a3412; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 8px 10px; }
-.sd-alert.paused { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
+.sd-alert { font-size: 12.5px; color: var(--warning-ink, #9a3412); background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fed7aa); border-radius: 8px; padding: 8px 10px; }
+.sd-alert.paused { color: var(--info-ink, #1d4ed8); background: var(--info-bg, #eff6ff); border-color: var(--info-border, #bfdbfe); }
 
 /* Bulk action bar (ported from Customers.vue) */
 .bulk-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: linear-gradient(90deg, #0f766e 0%, #0d9488 100%); color: #fff; font-size: 13px; border-radius: 10px; margin-bottom: 12px; }
@@ -1218,26 +1228,26 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 .save-offer-modal { max-width: 460px; }
 .save-offer-block { margin-top: 6px; }
 .save-offer-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: 8px; }
-.save-offer-cta { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; padding: 12px; margin-bottom: 8px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; cursor: pointer; color: #065f46; transition: all 0.15s; }
-.save-offer-cta:hover { background: #d1fae5; }
+.save-offer-cta { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; padding: 12px; margin-bottom: 8px; background: var(--positive-bg, #ecfdf5); border: 1px solid var(--positive-border, #a7f3d0); border-radius: 10px; cursor: pointer; color: var(--positive-ink, #065f46); transition: all 0.15s; }
+.save-offer-cta:hover { background: var(--positive-bg, #d1fae5); }
 .save-offer-cta b { display: block; font-size: 13.5px; }
 .save-offer-cta small { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
 /* Comp / free member */
-.comp-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px; margin-bottom: 14px; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 10px; cursor: pointer; }
+.comp-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px; margin-bottom: 14px; background: var(--purple-bg, #f5f3ff); border: 1px solid var(--purple-border, #ddd6fe); border-radius: 10px; cursor: pointer; }
 .comp-row input { margin-top: 2px; }
-.comp-row b { display: block; font-size: 13.5px; color: #5b21b6; }
+.comp-row b { display: block; font-size: 13.5px; color: var(--purple-ink, #5b21b6); }
 .comp-hint { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.sd-comp-reason { font-size: 12.5px; color: #6d28d9; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 8px; padding: 8px 10px; }
+.sd-comp-reason { font-size: 12.5px; color: var(--purple-ink, #6d28d9); background: var(--purple-bg, #f5f3ff); border: 1px solid var(--purple-border, #ddd6fe); border-radius: 8px; padding: 8px 10px; }
 
 .disclosure { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-top: 14px; background: var(--surface, #ffffff); }
 .disclosure-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; }
 .disclosure-body { font-size: 13px; color: var(--text); line-height: 1.55; }
-.disclosure-trial { background: #fffbeb; border-color: #fde68a; }
-.disclosure-trial .disclosure-head { color: #92400e; }
+.disclosure-trial { background: var(--warning-bg, #fffbeb); border-color: var(--warning-border, #fde68a); }
+.disclosure-trial .disclosure-head { color: var(--warning-ink, #92400e); }
 .split-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.split-chip { font-size: 12px; font-weight: 600; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 8px; padding: 4px 9px; }
-.split-chip.platform { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+.split-chip { font-size: 12px; font-weight: 600; background: var(--positive-bg, #ecfdf5); color: var(--positive-ink, #065f46); border: 1px solid var(--positive-border, #a7f3d0); border-radius: 8px; padding: 4px 9px; }
+.split-chip.platform { background: var(--warning-bg, #fff7ed); color: var(--warning-ink, #9a3412); border-color: var(--warning-border, #fed7aa); }
 .consent-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; padding: 10px; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; cursor: pointer; }
 .consent-row input { margin-top: 2px; }
 .field-hint { font-size: 12px; color: var(--text-muted); margin-top: 5px; }
@@ -1267,9 +1277,9 @@ const activePrograms = computed(() => programs.value.filter(x => x.status === 'a
 .sd-ledger-amt { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 .sd-ledger-to { color: var(--text-muted); }
 .sd-ledger-date { color: var(--text-muted); font-size: 12px; }
-.sd-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); background: #f9fafb; flex-wrap: wrap; }
-.btn-danger-soft { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
-.btn-danger-soft:hover { background: #fee2e2; }
+.sd-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); background: var(--surface-hover, #f9fafb); flex-wrap: wrap; }
+.btn-danger-soft { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #dc2626); border: 1px solid var(--danger-border, #fecaca); }
+.btn-danger-soft:hover { background: var(--danger-bg, #fee2e2); }
 @media (max-width: 520px) {
   .sub-drawer { width: 100%; }
   .sd-grid { grid-template-columns: 1fr; }
