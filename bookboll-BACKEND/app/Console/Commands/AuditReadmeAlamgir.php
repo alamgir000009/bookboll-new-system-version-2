@@ -224,7 +224,45 @@ class AuditReadmeAlamgir extends Command
             'migration 2026_10_19_000005 — preserves historical fees'
         );
 
-        // 9. Country/city availability
+        // 9. Loyalty: country scoping and the checkout quote
+        $this->check(
+            'Schema: loyalty_points.country_id',
+            Schema::hasColumn('loyalty_points', 'country_id'),
+            'migration 2026_10_19_000007 — balances are per country'
+        );
+        $this->check(
+            'Schema: loyalty_checkout_quotes',
+            Schema::hasTable('loyalty_checkout_quotes'),
+            'migration 2026_10_19_000008'
+        );
+        $this->check(
+            'Route: POST customer/loyalty/checkout-quote',
+            $this->hasRoute('POST', 'customer/loyalty/checkout-quote'),
+            'readmeAlamgir redemption contract §2'
+        );
+        $this->check(
+            'Rewards never exceed Bookboll own share',
+            (function () {
+                // 100 order, 15 commission, plenty of points -> at most 15.
+                $r = \App\Support\LoyaltyRedemption::quote(
+                    ['commission' => 1500, 'event_fee' => 0, 'booking_fee' => 0],
+                    10000, 10000, 1000000, 100, 100, null, 'QAR'
+                );
+
+                return $r['discount_minor'] === 1500;
+            })(),
+            'LoyaltyRedemption'
+        );
+        $this->check(
+            'Zero commission funds nothing (never a default rate)',
+            \App\Support\LoyaltyRedemption::quote(
+                ['commission' => 0, 'event_fee' => 0, 'booking_fee' => 0],
+                10000, 10000, 1000000, 100, 100, null, 'QAR'
+            )['points'] === 0,
+            'the old membership path fell back to 15%'
+        );
+
+        // 10. Country/city availability
         $this->check(
             'Route: marketplace/countries',
             $this->hasRoute('GET', 'marketplace/countries'),
@@ -254,8 +292,10 @@ class AuditReadmeAlamgir extends Command
             'Provider settings profile/account + notification preferences',
             'Secure saved-payment-method picker for subscribers',
             'Mobile-app adoption APIs',
-            'Country-scoped loyalty balances (/customer/loyalty returns a global balance)',
-            'POST /customer/loyalty/checkout-quote and its enforcement',
+            'Loyalty redemption ENFORCEMENT on the five payment endpoints, and the'
+                .' membership / host_game / host_tournament quote kinds (the quote'
+                .' endpoint, funding rule and country scoping are DONE;'
+                .' redemption_checkout_v1 stays false until enforcement lands)',
             'Cookie/tracking infrastructure audit (deployment task, not code)',
         ] as $i => $item) {
             $this->line(sprintf('  %2d. %s', $i + 1, $item));
