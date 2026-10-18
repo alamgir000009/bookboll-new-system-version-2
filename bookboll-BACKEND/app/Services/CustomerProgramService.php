@@ -10,6 +10,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\LoyaltyProgram;
 use App\Models\OfferRedemption;
 use App\Models\Payment;
+use App\Support\StripeDocumentLink;
 use App\Models\ProviderWallet;
 use App\Models\User;
 use App\Models\Schedule;
@@ -1280,7 +1281,8 @@ class CustomerProgramService
         float $amountPaid,
         float $loyalty,
         string $reference = '',
-        ?string $chargedCurrency = null
+        ?string $chargedCurrency = null,
+        ?string $invoiceUrl = null
     ): void {
         $program = $sub->program;
         if (! $program) {
@@ -1368,6 +1370,12 @@ class CustomerProgramService
         $desc = $sub->first_charge_at ? 'Membership renewal' : 'First membership charge';
         $now = now();
 
+        // Stripe's hosted page for the invoice that collected this money, so the
+        // dashboard can hand staff the document Stripe issued. Stored rather
+        // than re-fetched per row; a non-Stripe value is dropped here so it can
+        // never be served as a link.
+        $invoiceUrl = StripeDocumentLink::sanitize($invoiceUrl);
+
         Payment::create([
             'subscription_id' => $sub->id,
             'source_type'     => 'subscription',
@@ -1381,6 +1389,7 @@ class CustomerProgramService
             'date'            => $now->toDateString(),
             'notes'           => $loyalty > 0 ? "{$desc} (− {$currency} {$loyalty} loyalty)" : $desc,
             'payment_id'      => $reference ?: 'sub-c-'.Str::uuid(),
+            'stripe_invoice_url' => $invoiceUrl,
             'user_id'         => $user?->id,
         ]);
 
@@ -1397,6 +1406,7 @@ class CustomerProgramService
             'date'            => $now->toDateString(),
             'notes'           => $desc,
             'payment_id'      => 'sub-e-'.Str::uuid(),
+            'stripe_invoice_url' => $invoiceUrl,
             'user_id'         => $user?->id,
         ]);
 

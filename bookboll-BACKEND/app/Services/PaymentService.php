@@ -8,6 +8,7 @@ use App\Support\TenantOrigins;
 use App\Models\Listing;
 use App\Services\BookingWalletService;
 use App\Models\Payment;
+use App\Support\StripeDocumentLink;
 use App\Models\Venue;
 use Barryvdh\DomPDF\Facade\Pdf;
 use BookingPaymentMethod;
@@ -150,6 +151,10 @@ class PaymentService
                 'source_type',
                 'subscription_id',
                 'marked_paid_by',
+                // Needed by mapDashboardPayment — an explicit select that omits
+                // these would serve every Stripe document link as null.
+                'stripe_invoice_url',
+                'stripe_receipt_url',
                 'created_by',
                 'created_at',
                 'updated_at',
@@ -187,6 +192,10 @@ class PaymentService
                 'source_type',
                 'subscription_id',
                 'marked_paid_by',
+                // Needed by mapDashboardPayment — an explicit select that omits
+                // these would serve every Stripe document link as null.
+                'stripe_invoice_url',
+                'stripe_receipt_url',
                 'created_by',
                 'created_at',
                 'updated_at',
@@ -652,12 +661,65 @@ class PaymentService
             return $out ?: [];
         };
 
+        // What is still owed, per currency. A deposit booking carries its arrival
+        // balance as its own `remaining` row, and an unpaid full payment carries
+        // the whole price, so summing the outstanding rows covers both without a
+        // special case. The count beside it is taken from the same rows, so the
+        // card's amount and its "N pending payments" cannot disagree.
+        $outstanding = $this->outstandingPayments($clean($query));
+
+        $pendingByCurrency = (clone $outstanding)
+            ->selectRaw("COALESCE(NULLIF(currency, ''), '?') as currency_code, SUM(amount) as total")
+            ->groupBy('currency_code')
+            ->pluck('total', 'currency_code');
+
         return [
-            'total'       => $fmt($byCurrency),
-            'to_bookboll' => $fmt($toBookboll),
-            'to_provider' => $fmt($toProvider),
-            'pending'     => (int) $clean($query)->where('status', 'pending')->count(),
+            'total'          => $fmt($byCurrency),
+            'to_bookboll'    => $fmt($toBookboll),
+            'to_provider'    => $fmt($toProvider),
+            'pending'        => (int) (clone $outstanding)->count(),
+            'pending_amount' => $fmt($pendingByCurrency),
         ];
+    }
+
+    /**
+     * Payment rows that represent money still to collect.
+     *
+     * Deliberately narrower than "status is not paid":
+     *   • `unpaid` counts as outstanding — the dashboard already shows those
+     *     rows as pending, so the KPI has to agree with the table.
+     *   • cancelled and refunded rows are not owed by anyone.
+     *   • a cancelled booking's unpaid row is not collectable either, so it is
+     *     not advertised as an uncollected amount.
+     *   • provider slot blocks are a provider reserving their own court; they
+     *     were never a marketplace sale and are not a receivable.
+     *   • the split commission/earning ledger rows are an allocation of money
+     *     already taken, so including them would count the same money twice.
+     */
+    protected function outstandingPayments($query)
+    {
+        return $query
+            ->whereIn('status', [PaymentStatus::PENDING, PaymentStatus::UNPAID])
+            ->whereIn('type', [PaymentType::FULL, PaymentType::DEPOSIT, PaymentType::REMAINING])
+            ->where(function ($q) {
+                $q->whereNull('booking_id')
+                    ->orWhereHas('booking', function ($b) {
+                        // payment_method and payment_status are both nullable, and
+                        // legacy rows leave them blank. `NOT IN` is unknown for
+                        // NULL, which would silently drop those bookings from the
+                        // receivable, so each test keeps its NULL rows explicitly.
+                        $b->where(fn ($w) => $w
+                                ->whereNull('payment_method')
+                                ->orWhere('payment_method', '!=', BookingPaymentMethod::PAYMENT_SKIPPED))
+                            ->where(fn ($w) => $w
+                                ->whereNull('payment_status')
+                                ->orWhereNotIn('payment_status', [
+                                    BookingPaymentStatus::PAYMENT_SKIPPED,
+                                    BookingPaymentStatus::CANCELLED,
+                                ]))
+                            ->where('status', '!=', BookingStatus::CANCELLED);
+                    });
+            });
     }
 
     protected function mapDashboardPayment(Payment $p, ?string $currencyFallback = null, $owner = null): array
@@ -685,6 +747,8 @@ class PaymentService
             $paidAt = $p->date ?: $p->created_at;
         }
 
+        $status = in_array((string) $p->status, ['pending', 'unpaid'], true) ? 'pending' : (string) $p->status;
+
         return [
             'id'              => (string) $p->id,
             'payment_id'      => $p->payment_id,
@@ -696,7 +760,18 @@ class PaymentService
             'amount'          => (float) $p->amount,
             'currency'        => $currency,
             'recipient'       => $recipient,
-            'status'          => in_array((string) $p->status, ['pending', 'unpaid'], true) ? 'pending' : (string) $p->status,
+            'status'          => $status,
+            // Stripe's own hosted invoice/receipt page, so staff can print or
+            // download the document Stripe issued. Only for money Stripe
+            // actually captured, and only ever a stripe.com https link —
+            // anything else is served as null, which the dashboard shows as
+            // "not available yet" rather than opening an unknown host.
+            'stripe_invoice_url' => StripeDocumentLink::appliesTo($method, $status)
+                ? StripeDocumentLink::sanitize($p->stripe_invoice_url)
+                : null,
+            'stripe_receipt_url' => StripeDocumentLink::appliesTo($method, $status)
+                ? StripeDocumentLink::sanitize($p->stripe_receipt_url)
+                : null,
             'paid_at'         => $paidAt ? \Carbon\Carbon::parse($paidAt)->toIso8601String() : null,
             'marked_paid_by'  => $p->marked_paid_by ? (string) $p->marked_paid_by : ($p->created_by ? (string) $p->created_by : null),
             'notes'           => $p->notes ?: '',

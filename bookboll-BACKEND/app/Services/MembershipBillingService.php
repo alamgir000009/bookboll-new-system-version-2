@@ -356,7 +356,11 @@ class MembershipBillingService
             // the money that moved, not what the program was configured with.
             $this->programs->recordSubscriptionCharge(
                 $sub, $gross, $loyalty, (string) ($invoice->id ?? ''),
-                strtoupper((string) ($invoice->currency ?? '')) ?: null
+                strtoupper((string) ($invoice->currency ?? '')) ?: null,
+                // Stripe's own hosted invoice page — captured here while the
+                // webhook object is in hand, so Payments can offer the document
+                // without calling Stripe once per listed row.
+                is_string($invoice->hosted_invoice_url ?? null) ? $invoice->hosted_invoice_url : null
             );
 
             $sub->update([

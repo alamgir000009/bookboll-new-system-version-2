@@ -11,6 +11,7 @@ use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\LoyaltyPoint;
 use App\Models\Payment;
+use App\Support\StripeDocumentLink;
 use App\Models\Promocode;
 use App\Models\Resource;
 use App\Models\Schedule;
@@ -5083,11 +5084,13 @@ class BookingService
             $paidAt = $paidAt . 'T00:00:00';
         }
 
+        $method = $this->toDashboardPaymentMethod($p->method);
+
         return [
             'id'           => (string) $p->id,
             'booking_id'   => $p->booking_id ? (string) $p->booking_id : null,
             'payment_type' => $type,
-            'method'       => $this->toDashboardPaymentMethod($p->method),
+            'method'       => $method,
             'amount'       => (float) $p->amount,
             // Was hardcoded 'AED' — every payment on a booking read as AED no
             // matter what was actually charged. The payment row carries the real
@@ -5095,6 +5098,14 @@ class BookingService
             // venue, and to nothing rather than a code nobody was charged.
             'currency'     => $p->currency ?: ($currencyFallback ?: ''),
             'status'       => $status,
+            // Same contract as the Payments dashboard row, so the booking
+            // drawer offers the identical Stripe document action.
+            'stripe_invoice_url' => StripeDocumentLink::appliesTo($method, $status)
+                ? StripeDocumentLink::sanitize($p->stripe_invoice_url)
+                : null,
+            'stripe_receipt_url' => StripeDocumentLink::appliesTo($method, $status)
+                ? StripeDocumentLink::sanitize($p->stripe_receipt_url)
+                : null,
             'paid_at'      => $status === 'paid' ? $paidAt : null,
             'created_at'   => $p->created_at?->toIso8601String(),
         ];

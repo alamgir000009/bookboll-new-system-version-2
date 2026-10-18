@@ -28,6 +28,16 @@ class BrandResolutionService
     public const DEFAULT_PRIMARY = '#0f766e';
     public const DEFAULT_ACCENT  = '#14b8a6';
 
+    /**
+     * The storefront sections a provider can hide from the Site page. Kept in
+     * one list so the public projection and the dashboard agree on the keys —
+     * a section missing from here would always read as visible, which is how
+     * hidden locations kept showing on the live site.
+     */
+    public const HOME_SECTIONS = [
+        'hero', 'listings', 'programs', 'about', 'blog', 'locations', 'contact',
+    ];
+
     public function resolve(Request $request)
     {
         $slug    = strtolower(trim((string) $request->query('slug', '')));
@@ -256,6 +266,34 @@ class BrandResolutionService
         return array_values(array_filter($raw, fn ($c) => is_string($c) && $c !== ''));
     }
 
+    /**
+     * Which homepage sections are switched on, as real booleans for every known
+     * key. A section is hidden only when it was explicitly turned off: a missing
+     * key, a null or an unreadable value all stay visible, so an existing site
+     * never loses content because a setting was never saved. Legacy rows that
+     * stored the string "false" are read as off rather than shipped to the
+     * storefront as a truthy string.
+     *
+     * @return array<string, bool>
+     */
+    public static function homeSections(array $home): array
+    {
+        $saved = is_array($home['sections'] ?? null) ? $home['sections'] : [];
+
+        $out = [];
+        foreach (self::HOME_SECTIONS as $key) {
+            $raw = $saved[$key] ?? null;
+            // null and '' mean "never set", not "off" — filter_var reads both as
+            // false, which would hide a section nobody switched off.
+            $flag = ($raw === null || $raw === '')
+                ? null
+                : filter_var($raw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            $out[$key] = $flag ?? true;
+        }
+
+        return $out;
+    }
+
     /** About / Contact content, always the full shape so the storefront can read it flat. */
     protected function pages(Business $b): array
     {
@@ -271,7 +309,10 @@ class BrandResolutionService
         $home    = is_array($pg['home'] ?? null) ? $pg['home'] : [];
 
         return [
-            'home'    => ['hero_image' => (string) ($home['hero_image'] ?? '')],
+            'home'    => [
+                'hero_image' => (string) ($home['hero_image'] ?? ''),
+                'sections'   => self::homeSections($home),
+            ],
             'about'   => array_merge(['text' => (string) ($about['text'] ?? '')], $hero($about)),
             'contact' => array_merge([
                 'phone'     => (string) ($contact['phone'] ?? ''),

@@ -30,6 +30,8 @@ class Payment extends Model
         'paid_at',
         'marked_paid_by',
         'payment_intent_id',
+        'stripe_invoice_url',
+        'stripe_receipt_url',
     ];
 
     protected $casts = [
