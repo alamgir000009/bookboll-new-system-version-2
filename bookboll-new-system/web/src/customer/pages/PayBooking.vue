@@ -112,33 +112,33 @@ async function pay() {
 <style scoped>
 .pb { max-width: 460px; margin: 0 auto; padding: 8px 0 40px; }
 .pb-msg { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 60px 20px; color: var(--text-muted, #64748b); font-size: 14px; }
-.pb-err { color: #b91c1c; }
+.pb-err { color: var(--danger-ink, #b91c1c); }
 .pb-spin { animation: pbspin 1s linear infinite; } @keyframes pbspin { to { transform: rotate(360deg); } }
 
 .pb-card { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 22px 20px; }
-.pb-h1 { font-size: 21px; font-weight: 900; color: #0f172a; margin: 0 0 14px; }
-.pb-venue { border: 1px solid #eef2f6; background: #f8fafc; border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
-.pb-venue-name { font-size: 15px; font-weight: 800; color: #0f172a; }
+.pb-h1 { font-size: 21px; font-weight: 900; color: var(--text, #0f172a); margin: 0 0 14px; }
+.pb-venue { border: 1px solid var(--border, #eef2f6); background: var(--canvas, #f8fafc); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+.pb-venue-name { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .pb-venue-meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 5px; font-size: 12.5px; color: var(--text-muted, #64748b); }
 .pb-venue-meta span { display: inline-flex; align-items: center; gap: 5px; }
 .pb-ref { font-size: 11.5px; font-weight: 800; letter-spacing: .08em; color: var(--text-light, #94a3b8); margin-top: 7px; }
 
-.pb-bill { border: 1px solid #eef2f6; border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
-.pb-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; font-size: 13.5px; color: #334155; border-bottom: 1px solid #f1f5f9; }
+.pb-bill { border: 1px solid var(--border, #eef2f6); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
+.pb-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; font-size: 13.5px; color: var(--text-secondary, #334155); border-bottom: 1px solid var(--border, #f1f5f9); }
 .pb-row:last-child { border-bottom: none; }
-.pb-discount span { color: #16a34a; }
-.pb-due { background: #f8fafc; }
-.pb-due span { font-weight: 900; color: #0f172a; font-size: 15px; }
+.pb-discount span { color: var(--success-ink, #16a34a); }
+.pb-due { background: var(--canvas, #f8fafc); }
+.pb-due span { font-weight: 900; color: var(--text, #0f172a); font-size: 15px; }
 
-.pb-paid-note { display: flex; align-items: center; gap: 8px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; border-radius: 12px; padding: 12px 14px; font-size: 13.5px; font-weight: 700; }
+.pb-paid-note { display: flex; align-items: center; gap: 8px; background: var(--success-bg, #f0fdf4); border: 1px solid var(--success-border, #bbf7d0); color: var(--success-ink, #166534); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; font-weight: 700; }
 
-.pb-payhead { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: #334155; margin: 2px 0 10px; }
+.pb-payhead { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: var(--text-secondary, #334155); margin: 2px 0 10px; }
 .pb-in { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 11px; padding: 12px 14px; font-size: 15px; margin-bottom: 10px; }
 .pb-in:focus { outline: none; border-color: var(--brand, #0f766e); }
 .pb-row2 { display: flex; gap: 10px; }
 .pb-row2 .pb-in { flex: 1; min-width: 0; }
 .pb-secure { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.5; color: var(--text-muted, #64748b); margin: 2px 0 14px; }
-.pb-payerr { display: flex; align-items: center; gap: 7px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 9px 12px; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.pb-payerr { display: flex; align-items: center; gap: 7px; color: var(--danger-ink, #b91c1c); background: var(--danger-bg, #fef2f2); border: 1px solid var(--danger-border, #fecaca); border-radius: 10px; padding: 9px 12px; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
 .pb-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; background: var(--brand, #0f766e); color: #fff; border: none; border-radius: 999px; padding: 14px; font-size: 15.5px; font-weight: 800; cursor: pointer; min-height: 50px; }
 .pb-btn:disabled { opacity: .7; }
 

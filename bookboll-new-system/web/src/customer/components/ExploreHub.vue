@@ -55,28 +55,28 @@ onMounted(async () => { if (!isWhiteLabel.value) groups.value = await loadDirect
 </template>
 
 <style scoped>
-.xh { border-top: 1px solid var(--border, #e2e8f0); background: #f8fafc; margin-top: 36px; }
+.xh { border-top: 1px solid var(--border, #e2e8f0); background: var(--canvas, #f8fafc); margin-top: 36px; }
 .xh-inner { max-width: 1100px; margin: 0 auto; padding: 30px 18px 14px; }
 .xh-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.xh-head h2 { font-size: 16px; font-weight: 800; color: #0f172a; margin: 0; }
+.xh-head h2 { font-size: 16px; font-weight: 800; color: var(--text, #0f172a); margin: 0; }
 .xh-all-links { display: inline-flex; gap: 14px; }
-.xh-all { font-size: 13px; font-weight: 700; color: var(--brand); text-decoration: none; }
+.xh-all { font-size: 13px; font-weight: 700; color: var(--brand-ink, var(--brand)); text-decoration: none; }
 /* For-business uses the fixed recruit teal (a Bookboll-platform CTA, not the site brand). */
-.xh-biz { color: #0f766e; }
+.xh-biz { color: var(--success-ink, #0f766e); }
 .xh-city-sub { margin-top: 4px; }
 .xh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 24px; }
-.xh-country { border-bottom: 1px solid #eef2f6; }
-.xh-country summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; padding: 11px 0; font-size: 14px; font-weight: 800; color: #0f172a; }
+.xh-country { border-bottom: 1px solid var(--border, #eef2f6); }
+.xh-country summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; padding: 11px 0; font-size: 14px; font-weight: 800; color: var(--text, #0f172a); }
 .xh-country summary::-webkit-details-marker { display: none; }
 .xh-caret { color: var(--text-light, #94a3b8); transition: transform .15s; }
 .xh-country[open] .xh-caret { transform: rotate(180deg); }
 .xh-cities { padding: 0 0 12px; display: flex; flex-direction: column; gap: 8px; }
 .xh-city { font-size: 12.5px; line-height: 1.7; color: var(--text-light, #94a3b8); }
-.xh-city-name { font-weight: 700; color: #334155; text-decoration: none; }
-.xh-city a:hover { color: var(--brand); text-decoration: underline; }
+.xh-city-name { font-weight: 700; color: var(--text-secondary, #334155); text-decoration: none; }
+.xh-city a:hover { color: var(--brand-ink, var(--brand)); text-decoration: underline; }
 .xh-sport a { color: var(--text-muted, #64748b); text-decoration: none; }
 .xh-sep { color: #cbd5e1; margin: 0 5px; }
-.xh-country-link { font-size: 12.5px; font-weight: 700; color: var(--brand); text-decoration: none; margin-top: 2px; }
+.xh-country-link { font-size: 12.5px; font-weight: 700; color: var(--brand-ink, var(--brand)); text-decoration: none; margin-top: 2px; }
 
 /* ---- Mobile polish (pass 2): tame the keyword-link wall, calm the chrome ---- */
 @media (max-width: 760px) {

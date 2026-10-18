@@ -14,7 +14,7 @@ const route = useRoute()
 const router = useRouter()
 
 // On the session's own listing page the card becomes a compact, read-only timer (slots are
-// managed via the page itself); elsewhere it's the full card with Continue / Release.
+// managed via the page itself); elsewhere it's the full card with Continue / Discard.
 const onOwnListing = computed(() =>
   !!checkoutSession.value && route.path === `/listings/${checkoutSession.value.listingId}`)
 const show = computed(() => !!checkoutSession.value && checkoutRemaining.value > 0)
@@ -44,7 +44,7 @@ function close() { endCheckoutSession() }
 
     <!-- Full card with actions elsewhere on the storefront -->
     <div v-else-if="show" class="crc" :class="{ urgent }">
-      <button type="button" class="crc-x" @click="close" aria-label="Release slots and close"><X :size="15" /></button>
+      <button type="button" class="crc-x" @click="close" aria-label="Discard checkout and release held slots"><X :size="15" /></button>
       <div class="crc-timer"><Clock :size="15" /> <span class="crc-mmss">{{ mmss }}</span> <span class="crc-held">held</span></div>
       <div class="crc-name">{{ checkoutSession.listingName }}</div>
       <div v-if="checkoutSession.locationName" class="crc-loc"><MapPin :size="12" /> {{ checkoutSession.locationName }}</div>
@@ -55,7 +55,7 @@ function close() { endCheckoutSession() }
       </div>
       <div class="crc-actions">
         <button type="button" class="crc-go" @click="resume">Continue checkout <ArrowRight :size="15" /></button>
-        <button type="button" class="crc-cancel" @click="close">Release</button>
+        <button type="button" class="crc-cancel" @click="close">Discard</button>
       </div>
     </div>
   </transition>
@@ -67,29 +67,30 @@ function close() { endCheckoutSession() }
   box-shadow: 0 16px 40px rgba(15,23,42,.18); border-top: 3px solid var(--brand, #0f766e); }
 .crc.urgent { border-top-color: #dc2626; }
 .crc-x { position: absolute; top: 9px; right: 9px; width: 26px; height: 26px; border-radius: 8px; border: none;
-  background: #f1f5f9; color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.crc-x:hover { background: #fee2e2; color: #dc2626; }
+  background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.crc-x:hover { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626); }
 .crc-timer { display: inline-flex; align-items: center; gap: 5px; color: var(--brand, #0f766e); font-weight: 700; font-size: 12.5px; }
-.crc.urgent .crc-timer { color: #dc2626; }
+.crc.urgent .crc-timer { color: var(--danger-ink, #dc2626); }
 .crc-mmss { font-variant-numeric: tabular-nums; font-weight: 900; font-size: 14px; }
 .crc-held { color: var(--text-light, #94a3b8); font-weight: 600; }
-.crc-name { font-size: 15px; font-weight: 800; color: #0f172a; margin-top: 5px; line-height: 1.25; }
+.crc-name { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); margin-top: 5px; line-height: 1.25; }
 .crc-loc { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted, #64748b); margin-top: 2px; }
-.crc-meta { font-size: 12.5px; color: #475569; margin-top: 6px; }
-.crc-total { font-weight: 700; color: #0f172a; }
+.crc-meta { font-size: 12.5px; color: var(--text-secondary, #475569); margin-top: 6px; }
+.crc-total { font-weight: 700; color: var(--text, #0f172a); }
 .crc-actions { display: flex; align-items: center; gap: 8px; margin-top: 11px; }
 .crc-go { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   background: var(--brand, #0f766e); color: #fff; border: none; border-radius: 10px; padding: 10px;
   font-size: 13.5px; font-weight: 800; cursor: pointer; }
 .crc-go:hover { filter: brightness(.95); }
-.crc-cancel { background: none; border: none; color: var(--text-light, #94a3b8); font-size: 12.5px; font-weight: 700; cursor: pointer; padding: 6px 4px; }
-.crc-cancel:hover { color: #dc2626; }
+.crc-cancel { background: var(--danger-bg, #fee2e2); border: 1px solid var(--danger-border, #fecaca); border-radius: 9px; color: var(--danger-ink, #dc2626); font-size: 12.5px; font-weight: 700; cursor: pointer; min-height: 44px; padding: 10px 12px; }
+.crc-cancel:hover { border-color: var(--danger-ink, #dc2626); }
+.crc-cancel:focus-visible { outline: 2px solid var(--danger-ink, #dc2626); outline-offset: 2px; }
 
 /* Compact read-only variant shown on the booking page itself */
 .crc-compact { width: auto; max-width: 320px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
 .crc-compact .crc-timer { font-size: 18px; }
 .crc-compact .crc-mmss { font-size: 20px; }
-.crc-compact-meta { font-size: 12.5px; font-weight: 700; color: #0f172a; line-height: 1.3; }
+.crc-compact-meta { font-size: 12.5px; font-weight: 700; color: var(--text, #0f172a); line-height: 1.3; }
 .crc-compact-meta .crc-total { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted, #64748b); }
 
 .crc-enter-active, .crc-leave-active { transition: opacity .2s, transform .2s; }

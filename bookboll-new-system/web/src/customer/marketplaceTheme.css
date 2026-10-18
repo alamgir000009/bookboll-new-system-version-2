@@ -1,0 +1,75 @@
+/* Storefront tokens live on the root so teleported calendars and dialogs share
+   the theme. No image filters: photos, logos and configured banners stay true. */
+html.cust-shell {
+  --primary: var(--brand);
+  --canvas: #f8fafc;
+  --text-secondary: #475569;
+  --text-light: #64748b;
+  --border-strong: #94a3b8;
+  --brand-ink: color-mix(in srgb, var(--brand) 65%, #142132);
+  --brand-tint: color-mix(in srgb, var(--brand) 8%, var(--surface));
+  --success-ink: #166534;
+  --success-bg: #f0fdf4;
+  --success-border: #86efac;
+  --warning-ink: #854d0e;
+  --warning-bg: #fffbeb;
+  --warning-border: #f4cc73;
+  --danger-ink: #b91c1c;
+  --danger-bg: #fef2f2;
+  --danger-border: #fca5a5;
+  --info-ink: #1e40af;
+  --info-bg: #eff6ff;
+  --info-border: #93c5fd;
+  --violet-ink: #6d28d9;
+  --violet-bg: #f5f3ff;
+  --violet-border: #c4b5fd;
+  color-scheme: light;
+  background: var(--canvas);
+}
+
+html.cust-shell.cust-dark {
+  color-scheme: dark;
+  --canvas: #0d1421;
+  --surface: #162132;
+  --card: #162132;
+  --bg: #1e2b3e;
+  --border: #2d3e55;
+  --border-strong: #4a5e79;
+  --text: #f1f5fb;
+  --text-secondary: #c4cfde;
+  --text-muted: #a6b5ca;
+  --text-light: #91a4be;
+  --brand-ink: color-mix(in srgb, var(--brand) 55%, #ffffff);
+  --brand-tint: color-mix(in srgb, var(--brand) 15%, var(--surface));
+  --success-ink: #7cdbaf;
+  --success-bg: #14362f;
+  --success-border: #2a6656;
+  --warning-ink: #f4c478;
+  --warning-bg: #362b1b;
+  --warning-border: #755933;
+  --danger-ink: #ffaaaa;
+  --danger-bg: #3b222b;
+  --danger-border: #794252;
+  --info-ink: #9bc7ff;
+  --info-bg: #1a2e4d;
+  --info-border: #365982;
+  --violet-ink: #c4b9ff;
+  --violet-bg: #2b2746;
+  --violet-border: #58517c;
+  --shadow-sm: 0 1px 2px #00000014;
+  --shadow: 0 3px 12px #0000001a;
+  --shadow-lg: 0 16px 48px #00000040;
+}
+
+html.cust-shell body { background: var(--canvas); color: var(--text); }
+html.cust-shell ::selection { color: var(--text); background: color-mix(in srgb, var(--brand) 30%, var(--surface)); }
+html.cust-shell :focus-visible { outline-color: var(--brand-ink, var(--brand)); }
+html.cust-dark.cust-shell input::placeholder,
+html.cust-dark.cust-shell textarea::placeholder { color: var(--text-light); opacity: 1; }
+html.cust-dark.cust-shell .cust-signin { background: var(--bg); border: 1px solid var(--border-strong); color: var(--text); }
+html.cust-dark.cust-shell .cust-logo-img { background-color: transparent; }
+html.cust-dark.cust-shell .cust-menu { box-shadow: var(--shadow-lg); }
+html.cust-dark.cust-shell .category-photo { border-color: var(--surface); }
+html.cust-dark.cust-shell .welcome-cta { background: white; color: var(--brand); }
+/* Keep configured promo colors and photo overlays independent of text tokens. */
+html.cust-dark.cust-shell .hs { color-scheme: light; }

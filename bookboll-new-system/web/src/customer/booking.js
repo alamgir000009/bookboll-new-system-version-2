@@ -77,15 +77,14 @@ export function addonAmount(addon, qty) {
  */
 export function effectivePaymentOptions(po, { surface = 'marketplace', providerHasPayout = false } = {}) {
   if (surface !== 'site') return po
-  // No saved options row yet → pay on arrival. A deposit is NOT assumed: the server
-  // charges from the listing's own payment_options, so a made-up percentage here
-  // would quote a figure nothing collects.
-  if (!po) return { deposit_enabled: false, online_payment_enabled: false, cash_on_arrival: true, deposit_percentage: 0, deposit_amount: 0 }
+  // Own-site bookings require a configured online method. Never fall back to cash
+  // or invent a deposit: the API must quote the amount it will actually charge.
   return {
-    deposit_enabled: !!po.site_deposit_enabled,
-    online_payment_enabled: !!po.site_online_enabled && !!providerHasPayout,
-    cash_on_arrival: !!po.site_cash_enabled,
-    deposit_percentage: Number(po.site_deposit_percentage) || 0,
+    requireConfiguredMethods: true,
+    deposit_enabled: !!po?.site_deposit_enabled,
+    online_payment_enabled: !!po?.site_online_enabled && !!providerHasPayout,
+    cash_on_arrival: false,
+    deposit_percentage: Number(po?.site_deposit_percentage) || 0,
     deposit_amount: 0,
   }
 }
@@ -106,7 +105,7 @@ export function paymentPlan(location, paymentOptions) {
     if (o.online_payment_enabled) methods.push('online')
     if (o.deposit_enabled && hasDeposit) methods.push('deposit')
     if (o.cash_on_arrival) methods.push('cash')
-    if (methods.length) return { bookbollOwned, methods, depositPct, depositAmount }
+    if (methods.length || o.requireConfiguredMethods) return { bookbollOwned, methods, depositPct, depositAmount }
   }
   // Nothing usable configured → ownership decides. A provider listing takes the money
   // on arrival rather than inventing a deposit it cannot charge.

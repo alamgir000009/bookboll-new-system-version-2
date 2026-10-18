@@ -9,7 +9,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { selectedCountry } from '../../lib/customerSession.js'
+import { selectedCountry, isCustomer, customer } from '../../lib/customerSession.js'
+import { isWhiteLabel } from '../../lib/brand.js'
+import { isEmbedded } from '../../lib/embed.js'
+import AppDownloadCard from '../../components/AppDownloadCard.vue'
+import { appPromptContext } from '../../lib/mobileApps.js'
 import { loadBookingsByIds } from '../../customer/apiBooking.js'
 import { endCheckoutSession } from '../../customer/bookingSession.js'
 import { fmt12 } from '../../lib/slots.js'
@@ -22,6 +26,9 @@ const route = useRoute()
 const router = useRouter()
 const bookings = ref([])
 const loading = ref(true)
+// A checkout return URL alone is not proof of a successful booking.
+const appContext = computed(() => !loading.value && bookings.value.some(b => ['confirmed', 'completed'].includes(b.booking_status))
+  ? appPromptContext({ audience: 'customer', signedIn: isCustomer.value, completed: true, whiteLabel: isWhiteLabel.value, embedded: isEmbedded() }) : null)
 
 const cur = computed(() => selectedCountry.value?.currency_code || 'AED')
 const total = computed(() => bookings.value.reduce((n, b) => n + (Number(b.total) || 0), 0))
@@ -106,6 +113,7 @@ onMounted(async () => {
         </button>
       </div>
     </template>
+    <AppDownloadCard :account-id="customer?.id" audience="customer" :context="appContext" />
   </div>
 </template>
 
@@ -117,7 +125,7 @@ onMounted(async () => {
 .ty-tick {
   width: 60px; height: 60px; margin: 0 auto 14px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: #dcfce7; color: #16a34a;
+  background: var(--success-bg, #dcfce7); color: var(--success-ink, #16a34a);
 }
 .ty-head h1 { font-size: 24px; font-weight: 800; margin: 0 0 6px; }
 .ty-head p { margin: 0; opacity: .75; font-size: 14px; }
@@ -133,8 +141,8 @@ onMounted(async () => {
 
 .ty-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .ty-tag { font-size: 11.5px; padding: 3px 8px; border-radius: 999px; background: rgba(127, 127, 127, .12); text-transform: capitalize; }
-.ty-tag-ok { background: #dcfce7; color: #15803d; }
-.ty-tag-due { background: #fef3c7; color: #92400e; text-transform: none; }
+.ty-tag-ok { background: var(--success-bg, #dcfce7); color: var(--success-ink, #15803d); }
+.ty-tag-due { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); text-transform: none; }
 
 .ty-sum { border-top: 1px solid var(--line, #e5e7eb); margin-top: 4px; padding-top: 12px; }
 .ty-sum-row { display: flex; justify-content: space-between; font-size: 14px; padding: 3px 0; }

@@ -4,6 +4,8 @@ import { customer, isCustomer } from '../../lib/customerSession.js'
 import { loadMyHostedGames, loadMyJoinRequests } from '../../customer/apiGames.js'
 import { Gamepad2, Plus, Users, Bell, ArrowRight, CalendarDays, Ticket } from 'lucide-vue-next'
 import { useSeo } from '../../lib/seo.js'
+import PersonalPage from '../components/PersonalPage.vue'
+const view = ref('joined')
 useSeo({ title: 'My events', noindex: true, path: '/my-games' })
 
 const hosted = ref([])
@@ -31,20 +33,16 @@ const reqStatus = { pending: { t: 'Pending', c: 'p' }, accepted: { t: "You're in
 </script>
 
 <template>
-  <div class="mg">
-    <div v-if="!isCustomer" class="cmsg">Please <router-link to="/account">sign in</router-link> to see your games.</div>
+  <PersonalPage title="My events" description="Keep track of the events you join and the ones you host.">
+    <template #actions><router-link to="/host-game" class="personal-button primary"><Plus :size="17" />Host an event</router-link></template>
+    <div v-if="!isCustomer" class="cmsg">Please <router-link to="/account">sign in</router-link> to see your events.</div>
     <div v-else-if="loading" class="cmsg">Loading…</div>
     <template v-else>
-      <div class="mg-head">
-        <h1><Ticket :size="24" /> My Events</h1>
-        <div class="mg-head-actions">
-          <router-link to="/host-game" class="mg-host"><Plus :size="17" /> Host an event</router-link>
-        </div>
-      </div>
-
+      <div class="personal-tools"><div class="personal-tabs" aria-label="Your event activity"><button :aria-pressed="view === 'joined'" @click="view = 'joined'">Participating <span>{{ joined.length }}</span></button><button :aria-pressed="view === 'hosted'" @click="view = 'hosted'">Hosting <span>{{ hosted.length }}</span></button></div><router-link to="/games" class="personal-button">Browse events</router-link></div>
+      <section v-if="view === 'hosted'">
       <!-- Hosting -->
-      <h2 class="mg-h2">Games I'm hosting</h2>
-      <div v-if="!hosted.length" class="mg-empty">You're not hosting any games yet.</div>
+      <h2 class="personal-section-title">Events you host</h2>
+      <div v-if="!hosted.length" class="personal-empty"><CalendarDays :size="36" /><h2>Bring people together</h2><p>Create an event, choose a venue and manage your guest list here.</p><router-link to="/host-game" class="personal-button primary">Host your first event</router-link></div>
       <div v-else class="mg-list">
         <component v-for="g in hosted" :key="g.id" :is="isRemoved(g) ? 'div' : 'router-link'" :to="isRemoved(g) ? undefined : gameLink(g)" class="mg-row" :class="{ 'mg-row-removed': isRemoved(g) }">
           <div class="mg-icon host"><Gamepad2 :size="20" /></div>
@@ -56,7 +54,7 @@ const reqStatus = { pending: { t: 'Pending', c: 'p' }, accepted: { t: "You're in
             <span v-if="isRemoved(g)" class="mg-removed" :title="g.moderation_reason || ''">Removed by Bookboll</span>
             <span v-else-if="g.status === 'cancelled'" class="mg-cancelled">Cancelled</span>
             <template v-else>
-              <span v-if="g.pendingCount" class="mg-pending"><Bell :size="13" /> {{ g.pendingCount }} new</span>
+              <span v-if="g.pendingCount" class="mg-pending"><Bell :size="13" /> {{ g.pendingCount }} pending</span>
               <span class="mg-joined"><Users :size="13" /> {{ g.acceptedCount }}/{{ g.max_players }}</span>
             </template>
             <ArrowRight v-if="!isRemoved(g)" :size="16" class="mg-arrow" />
@@ -64,89 +62,26 @@ const reqStatus = { pending: { t: 'Pending', c: 'p' }, accepted: { t: "You're in
         </component>
       </div>
 
+      </section><section v-else>
       <!-- Joined -->
-      <h2 class="mg-h2">Games I've requested</h2>
-      <div v-if="!joined.length" class="mg-empty">You haven't requested to join any games yet.</div>
+      <h2 class="personal-section-title">Your places and join requests</h2>
+      <div v-if="!joined.length" class="personal-empty"><Ticket :size="36" /><h2>Find your next event</h2><p>Join a game or meet people who share your interests. Your confirmed places and pending requests will appear here.</p><router-link to="/games" class="personal-button primary">Explore events</router-link></div>
       <div v-else class="mg-list">
-        <router-link v-for="r in joined" :key="r.id" :to="r.game ? gameLink(r.game) : '/games'" class="mg-row">
+        <component v-for="r in joined" :key="r.id" :is="isRemoved(r.game) ? 'div' : 'router-link'" :to="isRemoved(r.game) ? undefined : r.game ? gameLink(r.game) : '/games'" class="mg-row">
           <div class="mg-icon join"><Users :size="20" /></div>
           <div class="mg-info">
-            <div class="mg-title">{{ r.game?.title || r.game?.sport || 'Game' }}</div>
+            <div class="mg-title">{{ r.game?.title || r.game?.sport || 'Event' }}</div>
             <div class="mg-meta"><CalendarDays :size="13" /> {{ dlabel(r.game?.game_date) }} · {{ r.game?.locationName }}</div>
           </div>
-          <span class="mg-status" :class="'s-' + (reqStatus[r.status]?.c || 'p')">{{ reqStatus[r.status]?.t || r.status }}</span>
-        </router-link>
+          <span v-if="isRemoved(r.game)" class="mg-removed">Removed by Bookboll</span><span v-else class="mg-status" :class="'s-' + (reqStatus[r.status]?.c || 'p')">{{ reqStatus[r.status]?.t || r.status }}</span>
+        </component>
       </div>
+      </section>
     </template>
-  </div>
+  </PersonalPage>
 </template>
 
 <style scoped>
-.mg { max-width: 640px; }
-.cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
-.cmsg a { color: var(--brand); font-weight: 700; }
-.mg-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.mg-head h1 { font-size: 26px; font-weight: 900; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 10px; }
-.mg-head h1 svg { color: var(--brand); flex-shrink: 0; }
-.mg-host { display: inline-flex; align-items: center; gap: 6px; background: #059669; color: #fff; font-weight: 800; padding: 10px 16px; border-radius: 999px; text-decoration: none; font-size: 14px; }
-.mg-head-actions { display: flex; gap: 8px; align-items: center; }
-.mg-h2 { font-size: 17px; font-weight: 800; color: #0f172a; margin: 26px 0 12px; }
-.mg-empty { color: var(--text-light, #94a3b8); background: #f8fafc; border-radius: 12px; padding: 22px; text-align: center; font-size: 14px; }
-.mg-list { display: flex; flex-direction: column; gap: 10px; }
-.mg-row { display: flex; align-items: center; gap: 14px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 14px 16px; text-decoration: none; }
-.mg-row:hover { border-color: #cbd5e1; }
-.mg-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
-.mg-icon.host { background: linear-gradient(135deg,#10b981,#059669); }
-.mg-icon.join { background: linear-gradient(135deg,#2563eb,#1d4ed8); }
-.mg-info { flex: 1; min-width: 0; }
-.mg-title { font-size: 15.5px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mg-meta { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-muted, #64748b); margin-top: 3px; }
-.mg-right { display: flex; align-items: center; gap: 10px; }
-.mg-pending { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 800; color: #92400e; background: #fef3c7; padding: 4px 9px; border-radius: 999px; }
-.mg-joined { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 700; color: #475569; }
-.mg-arrow { color: var(--text-muted, #64748b); }
-.mg-row:hover .mg-arrow { color: var(--brand); }
-.mg-status { font-size: 12px; font-weight: 800; padding: 5px 11px; border-radius: 999px; white-space: nowrap; }
-.s-p { background: #fef3c7; color: #92400e; }
-.s-a { background: #dcfce7; color: #166534; }
-.s-r { background: #f1f5f9; color: var(--text-muted, #64748b); }
-.mg-row-removed { opacity: .75; cursor: default; }
-.mg-removed { font-size: 12px; font-weight: 800; padding: 5px 11px; border-radius: 999px; background: #fee2e2; color: #991b1b; white-space: nowrap; }
-.mg-cancelled { font-size: 12px; font-weight: 800; padding: 5px 11px; border-radius: 999px; background: #f1f5f9; color: var(--text-muted, #64748b); white-space: nowrap; }
-
-@media (max-width: 760px) {
-  /* Stack header so the Host CTA is the one clear primary action, reachable immediately */
-  .mg-head { flex-direction: column; align-items: stretch; gap: 10px; }
-  .mg-head h1 { font-size: 20px; }
-  .mg-head-actions { flex-direction: column; align-items: stretch; }
-  .mg-host { width: 100%; justify-content: center; padding: 13px 16px; font-size: 15px; min-height: 48px; box-sizing: border-box; }
-
-  /* Tighten section rhythm to cut scroll above the second list */
-  .mg-h2 { margin: 18px 0 10px; font-size: 16px; }
-  .mg-empty { padding: 18px; }
-
-  /* Tighten rows and let status/meta chips wrap instead of forcing sideways scroll */
-  .mg-row { padding: 12px 13px; gap: 11px; }
-  .mg-right { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-  .mg-arrow { display: none; }
-
-  /* Let the event title breathe across up to two lines rather than a hard ellipsis */
-  .mg-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-
-  /* One tidy meta line per row: date stays visible, long venue names truncate */
-  .mg-meta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mg-meta svg { vertical-align: -2px; margin-right: 4px; }
-
-  /* Calm chrome: mute the gradient icon tiles to tint + colored glyph so the
-     Host CTA and pending badge lead; slim to 40px to shorten rows */
-  .mg-icon { width: 40px; height: 40px; }
-  .mg-icon.host { background: #ecfdf5; color: #059669; }
-  .mg-icon.join { background: #eff6ff; color: #2563eb; }
-
-  /* Scale the decorative h1 icon down to match the 20px mobile title */
-  .mg-head h1 svg { width: 20px; height: 20px; }
-
-  /* Less dead space on signed-out / loading states */
-  .cmsg { padding: 32px 16px; }
-}
+.cmsg { padding: 40px 24px; text-align: center; color: var(--text-muted); }.mg-list { display: grid; gap: 12px; }.mg-row { display: flex; align-items: center; gap: 16px; padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; text-decoration: none; color: var(--text); }.mg-row:hover { border-color: var(--brand-ink, var(--brand)); }.mg-icon { width: 48px; height: 48px; flex-shrink: 0; display: grid; place-items: center; border-radius: 12px; background: var(--canvas); color: var(--brand-ink, var(--brand)); }.mg-info { flex: 1; min-width: 0; }.mg-title { font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }.mg-meta { color: var(--text-muted); font-size: 13px; margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }.mg-right { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }.mg-joined { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }.mg-status, .mg-pending, .mg-removed, .mg-cancelled { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; border-radius: 6px; padding: 6px 10px; background: var(--canvas); color: var(--text-muted); }.s-a { background: var(--success-bg); color: var(--success-ink); }.s-p, .mg-pending { background: var(--warning-bg); color: var(--warning-ink); }.mg-removed { color: var(--danger-ink); background: var(--danger-bg); }
+@media(max-width: 600px) { .mg-row { padding: 18px 14px; gap: 12px; flex-wrap: wrap; }.mg-info { flex-basis: calc(100% - 60px); }.mg-right, .mg-status, .mg-removed { margin-inline-start: 60px; }.mg-right .mg-removed { margin: 0; } }
 </style>

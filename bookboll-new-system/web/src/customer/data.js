@@ -6,6 +6,7 @@
  * Games, tournaments and social live in apiGames.js / apiPublicProfile.js.
  */
 import { apiFetch } from '../lib/api.js'
+import { attachCategoryPopularity } from './categoryPopularity.js'
 import { selectedCity, selectedCountry } from '../lib/customerSession.js'
 import {
   apiLoadPrograms,
@@ -49,6 +50,7 @@ async function marketplaceQuery(cityId, extra = {}) {
   if (name) q.city = name
   const iso = extra.iso || extra.country_iso || selectedCountry.value?.iso_code || ''
   if (iso) q.country_iso = iso
+  if (selectedCountry.value?.id && iso === selectedCountry.value?.iso_code) q.country_id = selectedCountry.value.id
   let slug = extra.brand_slug || ''
   if (!slug) {
     try {
@@ -65,9 +67,10 @@ async function marketplaceQuery(cityId, extra = {}) {
 // is shown by the pin. Cards link to the venue detail page (keyed by location id).
 export async function loadFacilities(cityId, extra = {}) {
   if (!cityId && !extra.name && !selectedCity.value?.name) return []
-  const res = await apiFetch('/marketplace/listings', { query: await marketplaceQuery(cityId, extra) })
+  const query = await marketplaceQuery(cityId, extra)
+  const res = await apiFetch('/marketplace/listings', { query })
   if (!res.success) return []
-  return Array.isArray(res.data?.listings) ? res.data.listings : []
+  return attachCategoryPopularity(Array.isArray(res.data?.listings) ? res.data.listings : [], query, res.data || {})
 }
 
 // One card per LOCATION (venue): the venue name is the headline, with its court
@@ -133,10 +136,10 @@ export async function loadProgram(id) {
 }
 
 // Customer self-enrolment (marketplace membership checkout) — Laravel authoritative.
-export async function enrollInProgram(program, { customer, answers = {}, discount = 0, loyaltyRedeem = 0 } = {}) {
+export async function enrollInProgram(program, { customer, answers = {}, discount = 0, promocode = null, rewards = null } = {}) {
   if (!program?.id) return { error: 'Program not found.' }
   if (!customer?.id) return { error: 'Please sign in to continue.' }
-  return apiEnrollInProgram(program, { answers, discount, loyaltyRedeem })
+  return apiEnrollInProgram(program, { answers, discount, promocode, rewards })
 }
 
 // A customer's membership subscriptions (for the "My memberships" page / account widget).

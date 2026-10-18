@@ -2,9 +2,11 @@ import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createHead } from '@unhead/vue'
 import './style.css'
+import './customer/discovery.css'
+import './customer/communityJourney.css'
 import App from './App.vue'
 import { installUnsavedGuards } from './lib/unsavedGuard.js'
-import { resolveBrand, isWhiteLabel, brandShows, moduleForPath, brandPageEnabled, activeBrand } from './lib/brand.js'
+import { resolveBrand, isWhiteLabel, brandShows, moduleForPath, brandPageEnabled, brandSectionEnabled, activeBrand } from './lib/brand.js'
 import { isScopedEmbed, embedAllows, embedHome } from './lib/embed.js'
 import { ensureDefaultLocation, ensureBrandLocation } from './lib/customerSession.js'
 import { i18n } from './lib/i18n.js'
@@ -48,6 +50,7 @@ import Terms from './customer/pages/Terms.vue'
 import AboutSite from './customer/pages/AboutSite.vue'
 import ContactSite from './customer/pages/ContactSite.vue'
 import PayBooking from './customer/pages/PayBooking.vue'
+import MarketplaceSearch from './customer/pages/Search.vue'
 
 const customer = (path, component) => ({ path, component, alias: path === '/' ? '/ar' : `/ar${path}`, meta: { area: 'customer' } })
 
@@ -57,9 +60,14 @@ function goBusiness(path = '/') {
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
-  scrollBehavior() { return { top: 0 } },
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    if (to.path === from.path && to.hash === from.hash) return false
+    return { top: 0 }
+  },
   routes: [
     customer('/', CustomerHome),
+    customer('/search', MarketplaceSearch),
     customer('/facilities', Facilities),
     customer('/facilities/:id/:slug?', FacilityDetail),
     customer('/locations', Locations),
@@ -155,6 +163,10 @@ const router = createRouter({
   ],
 })
 
+// Keep a provider preview scoped when customers follow links or refresh a detail page.
+const providerPreviewQuery = Object.fromEntries(
+  [...new URLSearchParams(window.location.search)].filter(([key, value]) => ['b', 'bid', 'preview'].includes(key) && value),
+)
 router.beforeEach(async (to) => {
   const area = to.meta?.area || 'customer'
   const barePath = to.path === '/ar' ? '/' : to.path.startsWith('/ar/') ? to.path.slice(3) : to.path
@@ -164,7 +176,11 @@ router.beforeEach(async (to) => {
   }
   if (area === 'customer' && isScopedEmbed() && !embedAllows(barePath)) return embedHome()
   if (area === 'customer' && isWhiteLabel.value) {
-    const blocked = ['/rewards', '/u/', '/messages', '/my-games', '/communities', '/my-communities']
+    if (barePath === '/locations' && !brandSectionEnabled('locations')) return '/'
+    if (Object.entries(providerPreviewQuery).some(([key, value]) => to.query[key] !== value)) {
+      return { path: to.path, query: { ...to.query, ...providerPreviewQuery }, hash: to.hash }
+    }
+    const blocked = ['/search', '/rewards', '/u/', '/messages', '/my-games', '/communities', '/my-communities']
     if (blocked.some(p => barePath === p || barePath.startsWith(p))) return '/'
     const mod = moduleForPath(barePath)
     if (mod && !brandShows(mod) && !isScopedEmbed()) return '/'

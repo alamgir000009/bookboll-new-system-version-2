@@ -85,23 +85,23 @@ useSeo(() => {
 </template>
 
 <style scoped>
-.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; }
+.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-ink, var(--brand)); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; }
 /* City cross-links under the article — quiet ghost pills (home-page register) */
 .bp-cities { margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--border, #e8edf3); }
-.bp-cities-h { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: #334155; margin-bottom: 10px; }
-.bp-cities-h svg { color: var(--brand); }
+.bp-cities-h { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--text-secondary, #334155); margin-bottom: 10px; }
+.bp-cities-h svg { color: var(--brand-ink, var(--brand)); }
 .bp-cities-row { display: flex; flex-wrap: wrap; gap: 7px; }
 .bp-city { font-size: 12.5px; font-weight: 600; color: var(--text-muted, #64748b); border: 1px solid var(--border, #e8edf3); border-radius: 999px; padding: 6px 13px; text-decoration: none; transition: border-color .12s, color .12s; }
-.bp-city:hover { border-color: var(--brand-accent); color: var(--brand); }
+.bp-city:hover { border-color: var(--brand-accent); color: var(--brand-ink, var(--brand)); }
 .cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
 .bp-article { max-width: 720px; margin: 0 auto; }
 .bp-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-.bp-tag { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--brand); background: color-mix(in srgb, var(--brand) 12%, white); padding: 3px 10px; border-radius: 999px; }
-.bp-title { font-size: 34px; font-weight: 900; color: #0f172a; line-height: 1.15; margin: 0 0 12px; }
+.bp-tag { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--brand-ink, var(--brand)); background: color-mix(in srgb, var(--brand) 12%, var(--surface, white)); padding: 3px 10px; border-radius: 999px; }
+.bp-title { font-size: 34px; font-weight: 900; color: var(--text, #0f172a); line-height: 1.15; margin: 0 0 12px; }
 .bp-meta { display: flex; flex-wrap: wrap; gap: 16px; color: var(--text-muted, #64748b); font-size: 13.5px; font-weight: 600; margin-bottom: 20px; }
 .bp-meta span { display: inline-flex; align-items: center; gap: 6px; }
 .bp-cover { height: 360px; border-radius: 18px; background-size: cover; background-position: center; margin-bottom: 24px; }
-.bp-lede { font-size: 18px; line-height: 1.6; color: #334155; font-weight: 500; margin: 0 0 20px; }
+.bp-lede { font-size: 18px; line-height: 1.6; color: var(--text-secondary, #334155); font-weight: 500; margin: 0 0 20px; }
 
 /* Mobile: cut vertical scroll above the article body (the primary "action" on a read page). */
 @media (max-width: 760px) {
@@ -117,19 +117,19 @@ useSeo(() => {
 
 <!-- Non-scoped so it styles the v-html markdown output -->
 <style>
-.blog-content { font-size: 16.5px; line-height: 1.75; color: #1e293b; overflow-wrap: break-word; }
+.blog-content { font-size: 16.5px; line-height: 1.75; color: var(--text, #1e293b); overflow-wrap: break-word; }
 .blog-content pre { overflow-x: auto; max-width: 100%; }
 .blog-content table { display: block; overflow-x: auto; max-width: 100%; }
-.blog-content h2 { font-size: 24px; font-weight: 800; color: #0f172a; margin: 32px 0 12px; }
-.blog-content h3 { font-size: 20px; font-weight: 800; color: #0f172a; margin: 26px 0 10px; }
-.blog-content h4 { font-size: 17px; font-weight: 800; color: #0f172a; margin: 22px 0 8px; }
+.blog-content h2 { font-size: 24px; font-weight: 800; color: var(--text, #0f172a); margin: 32px 0 12px; }
+.blog-content h3 { font-size: 20px; font-weight: 800; color: var(--text, #0f172a); margin: 26px 0 10px; }
+.blog-content h4 { font-size: 17px; font-weight: 800; color: var(--text, #0f172a); margin: 22px 0 8px; }
 .blog-content p { margin: 0 0 16px; }
 .blog-content ul, .blog-content ol { margin: 0 0 16px; padding-left: 24px; }
 .blog-content li { margin: 4px 0; }
 .blog-content a { color: var(--brand, #0f766e); text-decoration: underline; }
-.blog-content strong { font-weight: 800; color: #0f172a; }
-.blog-content code { background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: .9em; font-family: ui-monospace, monospace; overflow-wrap: break-word; }
-.blog-content blockquote { margin: 0 0 16px; padding: 8px 18px; border-left: 4px solid var(--brand-accent, #14b8a6); background: #f8fafc; color: #475569; border-radius: 0 8px 8px 0; }
+.blog-content strong { font-weight: 800; color: var(--text, #0f172a); }
+.blog-content code { background: var(--bg, #f1f5f9); padding: 1px 6px; border-radius: 5px; font-size: .9em; font-family: ui-monospace, monospace; overflow-wrap: break-word; }
+.blog-content blockquote { margin: 0 0 16px; padding: 8px 18px; border-left: 4px solid var(--brand-accent, #14b8a6); background: var(--canvas, #f8fafc); color: var(--text-secondary, #475569); border-radius: 0 8px 8px 0; }
 .blog-content img { max-width: 100%; border-radius: 12px; margin: 8px 0; }
 
 /* Mobile: tighten body heading rhythm so content reads dense but breathable on a phone. */

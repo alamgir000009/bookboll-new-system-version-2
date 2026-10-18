@@ -16,6 +16,8 @@ const props = defineProps({
   defaultIso: { type: String, default: '' },
   placeholder: { type: String, default: 'Phone number' },
   invalid: { type: Boolean, default: false },
+  inputId: { type: String, default: undefined },
+  describedBy: { type: String, default: undefined },
 })
 const emit = defineEmits(['update:modelValue', 'blur'])
 
@@ -56,7 +58,7 @@ watch(() => props.defaultIso, (v) => { if (!national.value && v) iso.value = v.t
     </button>
     <span class="pin-div"></span>
     <Phone :size="15" class="pin-ico" />
-    <input class="pin-num" :value="national" @input="onNational" @blur="emit('blur')" :placeholder="placeholder" inputmode="tel" autocomplete="tel-national" />
+    <input :id="inputId" :aria-describedby="describedBy" :aria-invalid="invalid" :aria-label="inputId ? undefined : placeholder" class="pin-num" :value="national" @input="onNational" @blur="emit('blur')" :placeholder="placeholder" inputmode="tel" autocomplete="tel-national" />
 
     <div v-if="open" class="pin-pop">
       <div class="pin-search"><Search :size="14" /><input v-model="search" placeholder="Search country or code" autofocus /></div>
@@ -78,30 +80,30 @@ watch(() => props.defaultIso, (v) => { if (!national.value && v) iso.value = v.t
 .pin.open, .pin:focus-within { border-color: var(--brand-accent); }
 .pin.bad { border-color: #dc2626; }
 .pin.bad:focus-within { border-color: #dc2626; }
-.pin-dial { display: flex; align-items: center; gap: 5px; height: 100%; padding: 0 10px 0 12px; border: none; background: none; cursor: pointer; border-radius: 10px 0 0 10px; font-size: 14.5px; font-weight: 700; color: #0f172a; white-space: nowrap; }
+.pin-dial { display: flex; align-items: center; gap: 5px; height: 100%; padding: 0 10px 0 12px; border: none; background: none; cursor: pointer; border-radius: 10px 0 0 10px; font-size: 14.5px; font-weight: 700; color: var(--text, #0f172a); white-space: nowrap; }
 .pin-flag { font-size: 16px; line-height: 1; }
 .pin-code { font-variant-numeric: tabular-nums; }
 .pin-chev { color: var(--text-light, #94a3b8); flex-shrink: 0; }
 .pin-div { width: 1px; height: 22px; background: var(--border, #e2e8f0); flex-shrink: 0; }
 .pin-ico { color: var(--text-light, #94a3b8); margin: 0 8px; flex-shrink: 0; }
-.pin-num { flex: 1; min-width: 0; border: none; outline: none; background: none; font-size: 15px; color: #0f172a; padding: 0 12px 0 0; height: 100%; }
+.pin input.pin-num { flex: 1; min-width: 0; border: none; outline: none; box-shadow: none; background: none; font-size: 15px; color: var(--text, #0f172a); padding: 0 12px 0 0; height: 100%; }
 
 .pin-pop { position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; width: 280px; max-width: 88vw; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; box-shadow: 0 16px 40px rgba(15,23,42,.18); overflow: hidden; }
-.pin-search { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: var(--text-muted, #64748b); }
-.pin-search input { flex: 1; border: none; outline: none; font-size: 14px; background: none; color: #0f172a; }
+.pin-search { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-bottom: 1px solid var(--border, #f1f5f9); color: var(--text-muted, #64748b); }
+.pin .pin-search input { flex: 1; border: none; outline: none; font-size: 14px; background: none; color: var(--text, #0f172a); }
 .pin-list { list-style: none; margin: 0; padding: 4px; max-height: 240px; overflow-y: auto; }
 .pin-list li { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; }
-.pin-list li:hover { background: #f1f5f9; }
-.pin-list li.on { background: color-mix(in srgb, var(--brand) 18%, white); }
-.pin-name { flex: 1; min-width: 0; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pin-list li:hover { background: var(--bg, #f1f5f9); }
+.pin-list li.on { background: color-mix(in srgb, var(--brand) 18%, var(--surface, white)); }
+.pin-name { flex: 1; min-width: 0; color: var(--text, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pin-ldial { color: var(--text-muted, #64748b); font-weight: 700; font-variant-numeric: tabular-nums; }
 .pin-empty { padding: 14px; text-align: center; color: var(--text-light, #94a3b8); font-size: 13.5px; }
 .pin-backdrop { position: fixed; inset: 0; z-index: 50; }
 
 /* Phone: lift the editable fields to 16px so focusing them never zooms iOS Safari. */
 @media (max-width: 760px) {
-  .pin-num { font-size: 16px; }
+  .pin input.pin-num { font-size: 16px; }
   .pin-dial { font-size: 16px; }
-  .pin-search input { font-size: 16px; }
+  .pin .pin-search input { font-size: 16px; }
 }
 </style>

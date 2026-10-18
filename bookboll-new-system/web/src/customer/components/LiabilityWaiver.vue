@@ -51,16 +51,16 @@ const agreeLabel = computed(() => props.kind === 'join'
 </template>
 
 <style scoped>
-.wv { border: 1.5px solid #fde68a; background: #fffbeb; border-radius: 14px; padding: 15px 16px; margin: 14px 0; }
-.wv-head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 900; color: #92400e; margin-bottom: 10px; }
+.wv { border: 1.5px solid var(--warning-border, #fde68a); background: var(--warning-bg, #fffbeb); border-radius: 14px; padding: 15px 16px; margin: 14px 0; }
+.wv-head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 900; color: var(--warning-ink, #92400e); margin-bottom: 10px; }
 .wv-list { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .wv-list li { display: flex; align-items: flex-start; gap: 10px; }
-.wv-ico { flex-shrink: 0; width: 28px; height: 28px; border-radius: 8px; background: #fef3c7; color: #b45309; display: flex; align-items: center; justify-content: center; }
-.wv-txt { font-size: 13px; color: #475569; line-height: 1.5; }
-.wv-txt b { color: #0f172a; }
-.wv-agree { display: flex; align-items: flex-start; gap: 10px; margin-top: 13px; padding-top: 13px; border-top: 1px dashed #fcd34d; cursor: pointer; }
+.wv-ico { flex-shrink: 0; width: 28px; height: 28px; border-radius: 8px; background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #b45309); display: flex; align-items: center; justify-content: center; }
+.wv-txt { font-size: 13px; color: var(--text-secondary, #475569); line-height: 1.5; }
+.wv-txt b { color: var(--text, #0f172a); }
+.wv-agree { display: flex; align-items: flex-start; gap: 10px; margin-top: 13px; padding-top: 13px; border-top: 1px dashed var(--warning-border, #fcd34d); cursor: pointer; }
 .wv-agree input { position: absolute; opacity: 0; width: 0; height: 0; }
-.wv-box { flex-shrink: 0; width: 24px; height: 24px; border-radius: 7px; border: 2px solid #cbd5e1; background: var(--surface, #ffffff); display: flex; align-items: center; justify-content: center; color: transparent; transition: .12s; }
+.wv-box { flex-shrink: 0; width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--border-strong, #cbd5e1); background: var(--surface, #ffffff); display: flex; align-items: center; justify-content: center; color: transparent; transition: .12s; }
 .wv-agree.on .wv-box { background: #16a34a; border-color: #16a34a; color: #fff; }
-.wv-agree-t { font-size: 13.5px; font-weight: 700; color: #0f172a; line-height: 1.45; }
+.wv-agree-t { font-size: 13.5px; font-weight: 700; color: var(--text, #0f172a); line-height: 1.45; }
 </style>

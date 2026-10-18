@@ -12,6 +12,7 @@
 
 // Selectable button actions (customer-facing routes). `to` is the destination.
 export const BANNER_ACTIONS = [
+  { key: 'business', label: 'Bookboll for Business (guests)', to: '/for-business' },
   { key: 'none',            label: 'No button',           to: null },
   { key: 'signin',          label: 'Sign in',             to: '/account' },
   { key: 'book_venue',      label: 'All venues (browse)', to: '/facilities' },
@@ -33,6 +34,7 @@ export const BANNER_ACTIONS = [
 export const LISTING_ACTION_PATH = { venue: '/listings/', program: '/programs/', event: '/games/' }
 
 export const DEFAULT_BUTTON_TEXT = {
+  business: 'Explore Bookboll for Business',
   signin: 'Sign in', book_venue: 'Book a venue', join_event: 'Join an event',
   host_event: 'Host an event', get_membership: 'Get a membership', rewards: 'My rewards',
   blog: 'Read the blog', all_venues: 'Browse venues', all_memberships: 'Browse memberships',
@@ -87,8 +89,8 @@ export function defaultBanners({ platform = true, brandName = '' } = {}) {
     return normalizeBanners([{
       heading: 'Play more. Hangout. Near you.',
       subheading: 'Book courts, join games and find classes in {city}.',
-      audience: 'all', action: 'signin', button_text: 'Sign in to earn rewards',
-    }])
+      audience: 'out', action: 'signin', button_text: 'Sign in to earn rewards',
+    }, recruitmentBanner()])
   }
   // An EXACT copy of the provider site's default hero (BusinessHome): brand
   // gradient (bg empty → brand colors), centered layout with the logo, the
@@ -101,6 +103,14 @@ export function defaultBanners({ platform = true, brandName = '' } = {}) {
     audience: 'all', layout: 'center', show_logo: true,
     actions: ['book_venue', 'get_membership'], button_text: 'Book Now',
   }])
+}
+
+/** Editable guest-only recruitment preset. Saved banner collections always take priority. */
+export function recruitmentBanner() {
+  return { id: '__business_recruitment', heading: 'Your venue. More ways to get booked.',
+    subheading: 'Your own booking website, a place on Bookboll and one dashboard to run your business.',
+    audience: 'out', action: 'business', actions: ['business'], bg: '#075e54',
+    text_color: '#ffffff', button_color: '#ffffff', button_text: 'Explore Bookboll for Business' }
 }
 
 /** Coerce stored value (jsonb array or JSON string) into a clean banner array. */
@@ -146,10 +156,11 @@ export function visibleBanners(raw, ctx = {}) {
   const c = typeof ctx === 'boolean' ? { signedIn: ctx } : (ctx || {})
   const { signedIn = false, countryId = null, cityId = null } = c
   return normalizeBanners(raw).filter(b => {
+    if (signedIn && (b.action === 'business' || b.actions?.includes('business'))) return false
     const audOk = b.audience === 'all' || (b.audience === 'in' && signedIn) || (b.audience === 'out' && !signedIn)
     if (!audOk) return false
-    const countryOk = !b.countries.length || (countryId && b.countries.includes(countryId))
-    const cityOk = !b.cities.length || (cityId && b.cities.includes(cityId))
+    const countryOk = !b.countries.length || (countryId && b.countries.some(id => String(id) === String(countryId)))
+    const cityOk = !b.cities.length || (cityId && b.cities.some(id => String(id) === String(cityId)))
     return countryOk && cityOk
   })
 }

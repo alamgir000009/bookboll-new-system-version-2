@@ -68,10 +68,11 @@ const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 <template>
   <div class="cal">
     <div class="cal-head">
-      <button type="button" class="cal-nav" :disabled="!canPrev" @click="prev"><ChevronLeft :size="18" /></button>
+      <button type="button" class="cal-nav" aria-label="Previous month" :disabled="!canPrev" @click="prev"><ChevronLeft :size="18" /></button>
       <div class="cal-title">{{ monthLabel }}</div>
-      <button type="button" class="cal-nav" :disabled="!canNext" @click="next"><ChevronRight :size="18" /></button>
+      <button type="button" class="cal-nav" aria-label="Next month" :disabled="!canNext" @click="next"><ChevronRight :size="18" /></button>
     </div>
+    <p v-if="priceFor && currency" class="cal-price-note">From prices in {{ currency }}</p>
     <div class="cal-grid cal-wd">
       <div v-for="w in WEEKDAYS" :key="w" class="cal-wd-cell">{{ w }}</div>
     </div>
@@ -79,9 +80,10 @@ const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
       <template v-for="(c, ci) in week" :key="ci">
         <button v-if="c" type="button" class="cal-day"
           :class="{ today: c.isToday, selected: c.selected, past: c.past, 'has-price': c.price != null }"
+          :aria-label="`${monthLabel}, ${c.day}${c.price != null ? ', from ' + currency + ' ' + fmtMoney(c.price) : ''}`"
           :disabled="c.past" @click="pick(c)">
           <span class="cal-num">{{ c.day }}</span>
-          <span v-if="c.price != null" class="cal-price" :class="'price-' + c.tier">{{ currency }} {{ fmtMoney(c.price) }}</span>
+          <span v-if="c.price != null" class="cal-price" :class="'price-' + c.tier"><span class="cal-currency">{{ currency }} </span>{{ fmtMoney(c.price) }}</span>
         </button>
         <span v-else class="cal-empty"></span>
       </template>
@@ -92,26 +94,27 @@ const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 <style scoped>
 .cal { border: 1px solid var(--border, #e2e8f0); border-radius: 16px; padding: 14px 16px 14px; background: var(--surface, #ffffff); width: 380px; max-width: 92vw; }
 .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.cal-title { font-size: 15.5px; font-weight: 800; color: #0f172a; }
-.cal-nav { width: 34px; height: 34px; border-radius: 9px; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.cal-nav:hover:not(:disabled) { border-color: var(--brand-accent); color: var(--brand); }
+.cal-price-note { font-size: 12px; color: var(--text-muted, #64748b); margin: 0 0 10px; text-align: center; }
+.cal-title { font-size: 15.5px; font-weight: 800; color: var(--text, #0f172a); }
+.cal-nav { width: 34px; height: 34px; border-radius: 9px; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.cal-nav:hover:not(:disabled) { border-color: var(--brand-accent); color: var(--brand-ink, var(--brand)); }
 .cal-nav:disabled { opacity: .35; cursor: not-allowed; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .cal-wd { margin-bottom: 4px; }
 .cal-wd-cell { text-align: center; font-size: 11px; font-weight: 700; color: var(--text-light, #94a3b8); padding: 4px 0; }
 .cal-day { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1px; min-height: 46px; padding: 4px 1px; border: none; background: none; border-radius: 10px; cursor: pointer; }
-.cal-day:hover:not(:disabled):not(.selected) { background: color-mix(in srgb, var(--brand) 8%, white); }
-.cal-num { font-size: 13.5px; font-weight: 700; color: #0f172a; line-height: 1.1; }
+.cal-day:hover:not(:disabled):not(.selected) { background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
+.cal-num { font-size: 13.5px; font-weight: 700; color: var(--text, #0f172a); line-height: 1.1; }
 .cal-day.today { box-shadow: inset 0 0 0 1.5px #99f6e4; }
 .cal-day.selected { background: var(--brand); }
-.cal-day.selected .cal-num { color: #fff; }
-.cal-day.selected .cal-price { color: #fff !important; }
+.cal-day.selected .cal-num { color: var(--brand-on, #fff); }
+.cal-day.selected .cal-price { color: var(--brand-on, #fff) !important; }
 .cal-day.past { cursor: not-allowed; }
 .cal-day.past .cal-num { color: #cbd5e1; }
 .cal-price { font-size: 9.5px; font-weight: 800; line-height: 1.05; white-space: nowrap; }
-.price-low { color: #16a34a; }   /* green — cheapest */
-.price-mid { color: #d97706; }   /* amber — mid */
-.price-high { color: #ea580c; }  /* orange — priciest */
+.price-low { color: var(--success-ink, #16a34a); }   /* green — cheapest */
+.price-mid { color: var(--warning-ink, #d97706); }   /* amber — mid */
+.price-high { color: var(--warning-ink, #ea580c); }  /* orange — priciest */
 .cal-empty { min-height: 46px; }
 
 /* ── Mobile (≈375px): full-width calendar, 44px tap targets, shorter footprint ── */
@@ -123,6 +126,7 @@ const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
   .cal-wd-cell { font-size: 12px; }
   .cal-num { font-size: 15px; }
   .cal-price { font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .cal-currency { display: none; }
   .cal-day { min-height: 44px; min-width: 0; }
   .cal-empty { min-height: 44px; min-width: 0; }
 }

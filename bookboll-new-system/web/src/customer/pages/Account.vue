@@ -8,6 +8,7 @@ import { uploadImage } from '../../lib/imageUpload.js'
 import { profileStrength } from '../../lib/social.js'
 import { useSeo } from '../../lib/seo.js'
 import { ensureSignedIn } from '../../lib/authGate.js'
+import PersonalPage from '../components/PersonalPage.vue'
 useSeo({ title: 'My account', noindex: true, path: '/account' })
 import BrandMark from '../../components/BrandMark.vue'
 import { User, Mail, LogOut, Trophy, Ticket, Sparkles, CalendarCheck, Dumbbell, Camera, Plus, X, ArrowRight, Loader, Check, Lock, Globe } from 'lucide-vue-next'
@@ -118,7 +119,8 @@ function signOut() { customerSignOut(); router.push('/') }
 </script>
 
 <template>
-  <div class="acc">
+  <PersonalPage :title="signedIn ? 'Account settings' : 'My account'" description="Your profile, privacy and communication preferences.">
+  <div class="acc" :class="{ 'acc-signed-in': signedIn }">
     <!-- Signed in (Sanctum token required — leftover demo sessions cannot load Laravel profile) -->
     <template v-if="signedIn && loading">
       <div class="acc-msg">Loading…</div>
@@ -127,6 +129,7 @@ function signOut() { customerSignOut(); router.push('/') }
       <div class="acc-msg acc-msg-err">{{ loadError }}</div>
     </template>
     <template v-else-if="signedIn">
+      <aside class="acc-summary">
       <div class="acc-prof">
         <div class="acc-avatar-wrap">
           <div class="acc-avatar" :class="{ img: avatarUrl }" :style="avatarUrl ? { backgroundImage: `url(${avatarUrl})` } : {}" @click="pickAvatar" title="Change profile picture">
@@ -145,16 +148,25 @@ function signOut() { customerSignOut(); router.push('/') }
         </div>
       </div>
 
+      <div class="acc-links">
+        <router-link to="/my-bookings" class="acc-link"><CalendarCheck :size="20" /><span>My Bookings</span></router-link>
+        <router-link to="/my-memberships" class="acc-link"><Dumbbell :size="20" /><span>My Memberships</span></router-link>
+        <router-link v-if="!isWhiteLabel" to="/rewards" class="acc-link"><Trophy :size="20" /><span>My Rewards</span></router-link>
+        <router-link v-if="brandShows('events')" to="/my-games" class="acc-link"><Ticket :size="20" /><span>My Events</span></router-link>
+      </div>
+      <button class="acc-out" @click="signOut"><LogOut :size="17" /> Sign out</button>
+      </aside>
       <div class="acc-edit">
-        <div class="acc-edit-h">Edit profile</div>
-        <label class="acc-l">Display name</label>
-        <div class="acc-field"><User :size="18" /><input v-model="edit.full_name" placeholder="Your name" /></div>
+        <section class="acc-section" aria-labelledby="profile-section">
+        <h2 id="profile-section" class="acc-section-title">Profile details</h2><p class="acc-section-intro">Choose the name and introduction people see on Bookboll.</p>
+        <label class="acc-l" for="account-name">Display name</label>
+        <div class="acc-field"><User :size="18" /><input id="account-name" autocomplete="name" v-model="edit.full_name" placeholder="Your name" /></div>
 
         <!-- Social profile (bio, strength, privacy, photos) — marketplace only. A provider's
              white-label site is a basic booking/membership site, so it's hidden there. -->
         <template v-if="!isWhiteLabel">
-          <label class="acc-l">Bio <span class="acc-opt acc-opt-dup">a short intro shown on your profile</span></label>
-          <textarea v-model="edit.bio" class="acc-bio" rows="3" maxlength="300" placeholder="Tell others about you — your sports, level, what you're looking for…"></textarea>
+          <label class="acc-l" for="account-bio">Bio <span class="acc-opt acc-opt-dup">a short intro shown on your profile</span></label>
+          <textarea id="account-bio" v-model="edit.bio" class="acc-bio" rows="3" maxlength="300" placeholder="Tell others about you — your sports, level, what you're looking for…"></textarea>
           <div class="acc-bio-count">{{ (edit.bio || '').length }}/300</div>
 
           <!-- Profile strength: nudges completion (this is what hosts see when accepting you) -->
@@ -164,13 +176,14 @@ function signOut() { customerSignOut(); router.push('/') }
             </div>
             <div class="acc-strength-bar"><div class="acc-strength-fill" :style="{ width: strength.score + '%' }"></div></div>
             <div v-if="strength.missing.length" class="acc-strength-tips">
-              A complete profile gets accepted into events more often. Still to add: {{ strength.missing.join(' · ') }}.
+              Help other players and hosts get to know you. Still to add: {{ strength.missing.join(' · ') }}.
             </div>
             <div v-else class="acc-strength-tips done"><Check :size="13" /> Looking great — your profile is complete!</div>
           </div>
 
+          <h3 class="acc-subsection-title">Profile visibility</h3>
           <!-- Private account: gate who can see your posts/photos behind follow-accept -->
-          <button type="button" class="acc-priv" :class="{ on: edit.is_private }" @click="edit.is_private = !edit.is_private">
+          <button type="button" role="switch" :aria-checked="edit.is_private" aria-label="Private profile" class="acc-priv" :class="{ on: edit.is_private }" @click="edit.is_private = !edit.is_private">
             <component :is="edit.is_private ? Lock : Globe" :size="18" />
             <span class="acc-priv-txt">
               <b>{{ edit.is_private ? 'Private account' : 'Public account' }}</b>
@@ -179,11 +192,11 @@ function signOut() { customerSignOut(); router.push('/') }
             <span class="acc-toggle" :class="{ on: edit.is_private }"><span class="acc-knob"></span></span>
           </button>
 
-          <label class="acc-l">Your photos <span class="acc-opt">shown on your public profile</span></label>
-          <p class="acc-hint">Tap your avatar above to set a profile picture, and the tile below to add more photos.</p>
+          <h3 class="acc-subsection-title">Profile photos</h3>
+          <p class="acc-hint">Change your profile picture beside your name, or add other photos below.</p>
           <div class="acc-gallery">
             <div v-for="(img, i) in edit.photos" :key="img" class="acc-gimg" :style="{ backgroundImage: `url(${img})` }">
-              <button class="acc-gimg-x" @click="removePhoto(i)" title="Remove"><X :size="12" /></button>
+              <button class="acc-gimg-x" @click="removePhoto(i)" :aria-label="`Remove photo ${i + 1}`" title="Remove"><X :size="12" /></button>
             </div>
             <button class="acc-gadd" :disabled="galBusy" @click="pickGallery">
               <Loader v-if="galBusy" :size="18" class="acc-spin" />
@@ -194,36 +207,35 @@ function signOut() { customerSignOut(); router.push('/') }
         </template>
         <div v-if="imgErr" class="acc-err">{{ imgErr }}</div>
 
+        </section>
+        <section class="acc-section" aria-labelledby="preferences-section">
         <!-- Marketing preferences — per-channel consent, editable any time. Shown on the
              marketplace AND white-label sites (providers may message their own customers). -->
-        <label class="acc-l">Marketing preferences <span class="acc-opt acc-opt-dup">choose how you'd like to hear about offers &amp; news</span></label>
-        <button type="button" class="acc-priv acc-priv-mkt" :class="{ on: edit.marketing_email }" @click="edit.marketing_email = !edit.marketing_email">
+        <h2 id="preferences-section" class="acc-section-title">Messages &amp; offers</h2><p class="acc-section-intro">Choose where you receive marketing messages. Save your changes below.</p>
+        <button type="button" role="switch" :aria-checked="edit.marketing_email" aria-label="Marketing by email" class="acc-priv acc-priv-mkt" :class="{ on: edit.marketing_email }" @click="edit.marketing_email = !edit.marketing_email">
           <Mail :size="18" />
           <span class="acc-priv-txt"><b>Email</b><small>Offers, news &amp; updates by email. One-click unsubscribe in every message.</small></span>
           <span class="acc-toggle" :class="{ on: edit.marketing_email }"><span class="acc-knob"></span></span>
         </button>
-        <button type="button" class="acc-priv acc-priv-mkt" :class="{ on: edit.marketing_sms }" @click="edit.marketing_sms = !edit.marketing_sms">
+        <button type="button" role="switch" :aria-checked="edit.marketing_sms" aria-label="Marketing by sms" class="acc-priv acc-priv-mkt" :class="{ on: edit.marketing_sms }" @click="edit.marketing_sms = !edit.marketing_sms">
           <Mail :size="18" />
           <span class="acc-priv-txt"><b>SMS</b><small>Time-sensitive offers &amp; reminders by text message.</small></span>
           <span class="acc-toggle" :class="{ on: edit.marketing_sms }"><span class="acc-knob"></span></span>
         </button>
-        <button type="button" class="acc-priv acc-priv-mkt" :class="{ on: edit.marketing_whatsapp }" @click="edit.marketing_whatsapp = !edit.marketing_whatsapp">
+        <button type="button" role="switch" :aria-checked="edit.marketing_whatsapp" aria-label="Marketing by whatsapp" class="acc-priv acc-priv-mkt" :class="{ on: edit.marketing_whatsapp }" @click="edit.marketing_whatsapp = !edit.marketing_whatsapp">
           <Mail :size="18" />
           <span class="acc-priv-txt"><b>WhatsApp</b><small>Offers &amp; updates via WhatsApp.</small></span>
           <span class="acc-toggle" :class="{ on: edit.marketing_whatsapp }"><span class="acc-knob"></span></span>
         </button>
 
+        </section>
+        <div class="acc-save">
+        <p class="acc-save-hint">Profile and preference changes apply when you save. Your profile picture saves immediately.</p>
         <div v-if="saveErr" class="acc-err">{{ saveErr }}</div>
-        <button class="acc-btn" :disabled="saving || avatarBusy || galBusy" @click="saveProfile">{{ saving ? 'Saving…' : (saved ? 'Saved!' : 'Save profile') }}</button>
+        <button class="acc-btn" :disabled="saving || avatarBusy || galBusy" @click="saveProfile">{{ saving ? 'Saving…' : (saved ? 'Changes saved' : 'Save changes') }}</button>
+        </div>
       </div>
 
-      <div class="acc-links">
-        <router-link to="/my-bookings" class="acc-link"><CalendarCheck :size="20" /><span>My Bookings</span></router-link>
-        <router-link to="/my-memberships" class="acc-link"><Dumbbell :size="20" /><span>My Memberships</span></router-link>
-        <router-link v-if="!isWhiteLabel" to="/rewards" class="acc-link"><Trophy :size="20" /><span>My Rewards</span></router-link>
-        <router-link v-if="brandShows('events')" to="/my-games" class="acc-link"><Ticket :size="20" /><span>My Events</span></router-link>
-      </div>
-      <button class="acc-out" @click="signOut"><LogOut :size="17" /> Sign out</button>
     </template>
 
     <!-- Signed out -->
@@ -238,37 +250,38 @@ function signOut() { customerSignOut(); router.push('/') }
       <div v-if="isWhiteLabel" class="acc-powered"><span v-if="platformBrand.logo" class="acc-powered-bb acc-powered-img" :style="{ backgroundImage: `url(${platformBrand.logo})` }"></span><span v-else class="acc-powered-bb"><BrandMark /></span> Powered by <strong>{{ platformBrand.name || 'Bookboll' }}</strong> <span class="acc-powered-tag">· one account for every Bookboll venue</span></div>
     </template>
   </div>
+  </PersonalPage>
 </template>
 
 <style scoped>
 .acc { max-width: 440px; margin: 0 auto; }
 .acc-msg { text-align: center; padding: 50px 20px; color: var(--text-light, #94a3b8); }
-.acc-msg-err { color: #dc2626; }
-.acc-hero { text-align: center; color: var(--brand); margin-bottom: 22px; }
-.acc-hero h1 { font-size: 25px; font-weight: 900; color: #0f172a; margin: 12px 0 6px; }
+.acc-msg-err { color: var(--danger-ink, #dc2626); }
+.acc-hero { text-align: center; color: var(--brand-ink, var(--brand)); margin-bottom: 22px; }
+.acc-hero h1 { font-size: 25px; font-weight: 900; color: var(--text, #0f172a); margin: 12px 0 6px; }
 .acc-hero p { font-size: 14.5px; color: var(--text-muted, #64748b); line-height: 1.5; margin: 0; }
 .acc-card { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 22px; }
-.acc-l { display: block; font-size: 13.5px; font-weight: 700; color: #334155; margin: 14px 0 6px; }
+.acc-l { display: block; font-size: 13.5px; font-weight: 700; color: var(--text-secondary, #334155); margin: 14px 0 6px; }
 .acc-opt { font-size: 11.5px; font-weight: 600; color: var(--text-light, #94a3b8); }
 .acc-field { display: flex; align-items: center; gap: 10px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 0 14px; color: var(--text-light, #94a3b8); }
 .acc-field:focus-within { border-color: var(--brand-accent); }
-.acc-field input { flex: 1; border: none; outline: none; padding: 13px 0; font-size: 15px; color: #0f172a; background: transparent; }
-.acc-err { font-size: 13.5px; color: #dc2626; margin-top: 12px; }
-.acc-mkt { margin-top: 14px; background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; }
-.acc-mkt-head { font-size: 12.5px; font-weight: 800; color: #334155; margin-bottom: 8px; }
-.acc-mcheck { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; color: #475569; margin-inline-end: 16px; cursor: pointer; }
+.acc-field input { flex: 1; border: none; outline: none; padding: 13px 0; font-size: 15px; color: var(--text, #0f172a); background: transparent; }
+.acc-err { font-size: 13.5px; color: var(--danger-ink, #dc2626); margin-top: 12px; }
+.acc-mkt { margin-top: 14px; background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; }
+.acc-mkt-head { font-size: 12.5px; font-weight: 800; color: var(--text-secondary, #334155); margin-bottom: 8px; }
+.acc-mcheck { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; color: var(--text-secondary, #475569); margin-inline-end: 16px; cursor: pointer; }
 .acc-mcheck input { width: 16px; height: 16px; }
 .acc-mkt-note { font-size: 11px; color: var(--text-light, #94a3b8); line-height: 1.5; margin: 9px 0 0; }
 .acc-btn { width: 100%; background: var(--brand); color: #fff; font-weight: 800; font-size: 16px; padding: 14px; border: none; border-radius: 12px; cursor: pointer; margin-top: 18px; }
 .acc-btn:disabled { opacity: .6; }
 .acc-fine { text-align: center; font-size: 12.5px; color: var(--text-light, #94a3b8); margin: 12px 0 0; }
 .acc-field-end { flex-shrink: 0; }
-.acc-ok { color: #16a34a; }
-.acc-known { display: flex; align-items: flex-start; gap: 8px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; border-radius: 10px; padding: 11px 12px; font-size: 13px; font-weight: 600; line-height: 1.45; margin-top: 12px; }
+.acc-ok { color: var(--success-ink, #16a34a); }
+.acc-known { display: flex; align-items: flex-start; gap: 8px; background: var(--success-bg, #f0fdf4); border: 1px solid var(--success-border, #bbf7d0); color: var(--success-ink, #15803d); border-radius: 10px; padding: 11px 12px; font-size: 13px; font-weight: 600; line-height: 1.45; margin-top: 12px; }
 .acc-known svg { flex-shrink: 0; margin-top: 1px; }
 /* Powered-by uses Bookboll's own teal (not the provider brand) — it represents Bookboll. */
 .acc-powered { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 16px; font-size: 12.5px; color: var(--text-light, #94a3b8); font-weight: 600; }
-.acc-powered strong { color: #475569; }
+.acc-powered strong { color: var(--text-secondary, #475569); }
 .acc-powered-bb { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg,#14b8a6,#0f766e); color: #fff; font-size: 9.5px; font-weight: 800; }
 .acc-powered-img { background-size: cover; background-position: center; }
 
@@ -284,37 +297,37 @@ function signOut() { customerSignOut(); router.push('/') }
 .acc-cam:disabled { opacity: .7; }
 .acc-file { display: none; }
 .acc-prof-id { min-width: 0; }
-.acc-name { font-size: 20px; font-weight: 800; color: #0f172a; }
+.acc-name { font-size: 20px; font-weight: 800; color: var(--text, #0f172a); }
 .acc-email { font-size: 14px; color: var(--text-muted, #64748b); }
-.acc-viewprofile { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 700; color: var(--brand); text-decoration: none; margin-top: 5px; }
+.acc-viewprofile { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 700; color: var(--brand-ink, var(--brand)); text-decoration: none; margin-top: 5px; }
 .acc-viewprofile:hover { text-decoration: underline; }
 
 /* profile editor */
 .acc-edit { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 20px; margin-top: 14px; }
 .acc-edit-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-light, #94a3b8); margin-bottom: 4px; }
-.acc-bio { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 11px 13px; font-size: 14.5px; color: #0f172a; font-family: inherit; resize: vertical; outline: none; }
+.acc-bio { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 11px 13px; font-size: 14.5px; color: var(--text, #0f172a); font-family: inherit; resize: vertical; outline: none; }
 .acc-bio:focus { border-color: var(--brand-accent); }
 .acc-bio-count { text-align: right; font-size: 11px; color: var(--text-light, #94a3b8); margin-top: 3px; }
 
 /* Profile strength meter */
-.acc-strength { margin-top: 14px; background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; }
-.acc-strength-top { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 700; color: #475569; }
-.acc-strength-top b { color: #0f172a; }
+.acc-strength { margin-top: 14px; background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; }
+.acc-strength-top { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 700; color: var(--text-secondary, #475569); }
+.acc-strength-top b { color: var(--text, #0f172a); }
 .acc-strength-bar { height: 7px; border-radius: 999px; background: var(--border, #e2e8f0); overflow: hidden; margin: 8px 0; }
 .acc-strength-fill { height: 100%; border-radius: 999px; transition: width .25s; }
 .acc-strength.weak .acc-strength-fill { background: #f59e0b; }
 .acc-strength.ok .acc-strength-fill { background: #3b82f6; }
 .acc-strength.strong .acc-strength-fill { background: #10b981; }
 .acc-strength-tips { font-size: 12px; color: var(--text-muted, #64748b); line-height: 1.45; }
-.acc-strength-tips.done { display: flex; align-items: center; gap: 5px; color: #059669; font-weight: 700; }
+.acc-strength-tips.done { display: flex; align-items: center; gap: 5px; color: var(--success-ink, #059669); font-weight: 700; }
 
 /* Private toggle */
-.acc-priv { width: 100%; display: flex; align-items: center; gap: 12px; margin-top: 14px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 12px; padding: 13px 14px; cursor: pointer; text-align: left; color: #334155; }
+.acc-priv { width: 100%; display: flex; align-items: center; gap: 12px; margin-top: 14px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 12px; padding: 13px 14px; cursor: pointer; text-align: left; color: var(--text-secondary, #334155); }
 .acc-priv:hover { border-color: var(--brand-accent); }
-.acc-priv.on { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 5%, white); }
-.acc-priv > svg { color: var(--brand); flex-shrink: 0; }
+.acc-priv.on { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 5%, var(--surface, white)); }
+.acc-priv > svg { color: var(--brand-ink, var(--brand)); flex-shrink: 0; }
 .acc-priv-txt { flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.acc-priv-txt b { font-size: 14px; color: #0f172a; }
+.acc-priv-txt b { font-size: 14px; color: var(--text, #0f172a); }
 .acc-priv-txt small { font-size: 11.5px; color: var(--text-light, #94a3b8); line-height: 1.4; }
 .acc-toggle { flex-shrink: 0; width: 40px; height: 23px; border-radius: 999px; background: #cbd5e1; position: relative; transition: background .15s; }
 .acc-toggle.on { background: var(--brand); }
@@ -325,15 +338,15 @@ function signOut() { customerSignOut(); router.push('/') }
 .acc-gimg { position: relative; width: 78px; height: 78px; border-radius: 12px; background-size: cover; background-position: center; border: 1px solid var(--border, #e2e8f0); }
 .acc-gimg-x { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; border: none; background: rgba(15,23,42,.78); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .acc-gimg-x:hover { background: #ef4444; }
-.acc-gadd { width: 78px; height: 78px; border-radius: 12px; border: 1.5px dashed #cbd5e1; background: #f8fafc; color: var(--brand); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; font-weight: 700; cursor: pointer; }
+.acc-gadd { width: 78px; height: 78px; border-radius: 12px; border: 1.5px dashed var(--border-strong, #cbd5e1); background: var(--canvas, #f8fafc); color: var(--brand-ink, var(--brand)); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; font-weight: 700; cursor: pointer; }
 .acc-hint { font-size: 12px; color: var(--text-light, #94a3b8); margin: 0 0 10px; line-height: 1.4; }
-.acc-gadd:hover:not(:disabled) { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, white); }
+.acc-gadd:hover:not(:disabled) { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
 .acc-spin { animation: accspin 1s linear infinite; } @keyframes accspin { to { transform: rotate(360deg); } }
 
 .acc-links { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 16px 0; }
-.acc-link { display: flex; flex-direction: column; align-items: center; gap: 8px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 18px 10px; text-decoration: none; color: var(--brand); font-weight: 800; font-size: 13px; text-align: center; }
-.acc-link:hover { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, white); }
-.acc-out { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--surface, #ffffff); border: 1.5px solid #fecaca; color: #dc2626; font-weight: 800; font-size: 15px; padding: 13px; border-radius: 12px; cursor: pointer; }
+.acc-link { display: flex; flex-direction: column; align-items: center; gap: 8px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 18px 10px; text-decoration: none; color: var(--brand-ink, var(--brand)); font-weight: 800; font-size: 13px; text-align: center; }
+.acc-link:hover { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
+.acc-out { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--surface, #ffffff); border: 1.5px solid var(--danger-border, #fecaca); color: var(--danger-ink, #dc2626); font-weight: 800; font-size: 15px; padding: 13px; border-radius: 12px; cursor: pointer; }
 
 /* Phone: tighten the signed-out sign-in flow so the email input + CTA sit higher,
    stop iOS zoom-on-focus (16px inputs), enlarge tap targets, and lay marketing rows
@@ -391,4 +404,7 @@ function signOut() { customerSignOut(); router.push('/') }
   /* "Works everywhere" is already said by the hero + the .acc-known banner */
   .acc-powered-tag { display: none; }
 }
+.acc.acc-signed-in { max-width: none; display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 28px; align-items: start; }.acc-summary { min-width: 0; }.acc-prof { flex-direction: column; align-items: flex-start; padding: 22px; }.acc-email { overflow-wrap: anywhere; }.acc-links { grid-template-columns: 1fr; gap: 0; margin-top: 16px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }.acc-link { flex-direction: row; justify-content: flex-start; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; min-height: 52px; padding: 14px 18px; }.acc-link:last-child { border-bottom: 0; }.acc-edit { margin: 0; padding: 0; background: transparent; border: 0; }.acc-section { padding: 26px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); margin-bottom: 20px; }.acc-section-title { font-size: 19px; margin: 0 0 8px; font-weight: 700; }.acc-section-intro, .acc-save-hint { color: var(--text-muted); font-size: 13px; line-height: 1.6; margin: 0 0 18px; }.acc-subsection-title { font-size: 15px; margin: 26px 0 10px; }.acc-priv { min-height: 70px; border-radius: 10px; }.acc-priv-mkt { margin-bottom: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 16px 0; }.acc-priv-mkt:last-child { border-bottom: 0; }.acc-save { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px 24px; }.acc-save-hint { flex: 1 1 240px; margin: 0; }.acc-save .acc-btn { width: auto; min-width: 160px; margin: 0; font-size: 14px; }.acc-cam { width: 36px; height: 36px; }.acc-gimg-x { min-width: 32px; min-height: 32px; }.acc-field input { min-width: 0; }.acc-out { min-height: 44px; }
+@media(max-width:860px) { .acc.acc-signed-in { grid-template-columns: 1fr; gap: 22px; }.acc-prof { flex-direction: row; align-items: center; }.acc-links { grid-template-columns: 1fr 1fr; }.acc-link { font-size: 12px; padding: 12px; border-bottom: 0; }.acc-section { padding: 20px 16px; }.acc-bio, .acc-field input { font-size: 16px; }.acc-save .acc-btn { width: 100%; } }
+@media(max-width:860px) { .acc-summary { display: contents; }.acc-prof { grid-row: 1; }.acc-edit { grid-row: 2; }.acc-links { grid-row: 3; }.acc-out { grid-row: 4; } }
 </style>

@@ -171,7 +171,7 @@ export function websiteLd() {
     url: `https://${BRAND_APEX}/`,
     potentialAction: {
       '@type': 'SearchAction',
-      target: `https://${BRAND_APEX}/facilities?q={search_term_string}`,
+      target: `https://${BRAND_APEX}/search?q={search_term_string}`,
       'query-input': 'required name=search_term_string',
     },
   }

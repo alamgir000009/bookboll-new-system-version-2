@@ -104,55 +104,16 @@ const filtered = computed(() => {
 </script>
 
 <template>
-  <div>
-    <div class="ph"><h1><Dumbbell :size="24" /> Memberships in {{ selectedCity?.name }}</h1><p>Gyms, training and memberships you can subscribe to.</p></div>
-    <div class="fac-bar">
-      <!-- ONE clean field: search with the filter toggle living INSIDE it -->
-      <div class="fac-search-wrap">
-        <div class="csearch fac-csearch">
-          <Search :size="17" />
-          <input v-model="q" placeholder="Search membership or sport…" />
-          <button type="button" class="fac-ficon" :class="{ on: showFilters || activeFilters }" aria-label="Filters" @click="showFilters = !showFilters">
-            <SlidersHorizontal :size="17" /><span v-if="activeFilters" class="fac-filter-n">{{ activeFilters }}</span>
-          </button>
-        </div>
-
-        <!-- Floating filter panel: pill selections, closes on outside tap -->
-        <div v-if="showFilters" class="fac-panel">
-          <div v-if="availCategories.length" class="fac-frow">
-            <span class="fac-flabel">Category</span>
-            <div class="fac-chips">
-              <button :class="{ on: fCat === 'all' }" @click="fCat = 'all'">All</button>
-              <button v-for="c in availCategories" :key="c.key" :class="{ on: fCat === c.key }" @click="fCat = c.key">{{ c.label }}</button>
-            </div>
-          </div>
-          <div v-if="availTypes.length" class="fac-frow">
-            <span class="fac-flabel">Type</span>
-            <div class="fac-chips">
-              <button :class="{ on: fSub === 'all' }" @click="fSub = 'all'">All</button>
-              <button v-for="s in availTypes" :key="s" :class="{ on: fSub === s }" @click="fSub = s">{{ s }}</button>
-            </div>
-          </div>
-          <div v-if="audChips.length > 1" class="fac-frow">
-            <span class="fac-flabel">Who for</span>
-            <div class="fac-chips">
-              <button v-for="c in audChips" :key="c.key" :class="{ on: aud === c.key }" @click="aud = c.key">{{ c.label }}</button>
-            </div>
-          </div>
-          <div class="fac-panel-foot">
-            <button class="fac-clear" :disabled="!activeFilters" @click="clearFilters">Clear all</button>
-            <button class="fac-done" @click="showFilters = false">Done</button>
-          </div>
-        </div>
-      </div>
+  <div class="discovery">
+    <header class="discover-head"><div><h1><Dumbbell :size="29" /> Memberships{{ selectedCity?.name ? ' in ' + selectedCity.name : '' }}</h1><p>Build a routine you enjoy. Explore gym access, guided classes and academy programs.</p></div></header>
+    <div class="discover-tools"><label class="discover-search"><Search :size="21" /><input v-model="q" type="search" aria-label="Search memberships" placeholder="Search by membership, activity or sport" /></label>
+      <div v-if="availCategories.length" class="discover-filters" aria-label="Membership category"><button class="discover-filter" :class="{on:fCat==='all'}" :aria-pressed="fCat==='all'" @click="fCat='all'">All memberships</button><button v-for="category in availCategories" :key="category.key" class="discover-filter" :class="{on:fCat===category.key}" :aria-pressed="fCat===category.key" @click="fCat=category.key">{{ category.label }}</button></div>
+      <div v-if="all.length" class="membership-filters"><label>Who’s it for?<select v-model="aud"><option v-for="option in audChips" :key="option.key" :value="option.key">{{ option.label }}</option></select></label><label v-if="availTypes.length">Activity<select v-model="fSub"><option value="all">All activities</option><option v-for="sport in availTypes" :key="sport">{{ sport }}</option></select></label><button v-if="activeFilters || q" class="discover-text-button" @click="q='';clearFilters()">Reset filters</button></div>
     </div>
-
-    <div v-if="loading" class="cmsg">Loading…</div>
-    <div v-else-if="!filtered.length" class="cempty"><Dumbbell :size="36" /><span>No memberships found.</span></div>
-    <div v-else class="cgrid">
-      <ProgramCard v-for="p in filtered" :key="p.id" :program="{ ...p, cityName: selectedCity?.name }" />
-    </div>
-
+    <div v-if="loading" class="discover-loading" role="status">Finding memberships…</div>
+    <template v-else><div v-if="filtered.length" class="discover-result-head"><h2>{{ filtered.length }} memberships to explore</h2><p>Choose a plan that fits your routine</p></div><div v-if="filtered.length" class="cgrid"><ProgramCard v-for="p in filtered" :key="p.id" :program="{ ...p, cityName: selectedCity?.name }" /></div>
+      <div v-else class="discover-empty"><Dumbbell :size="40" /><h2>{{ q || activeFilters ? 'No memberships match your search' : 'Memberships are on their way' }}</h2><p>{{ q || activeFilters ? 'Try another activity or clear the filters to explore all memberships.' : 'Gym passes, classes and academy programs in ' + (selectedCity?.name || 'your city') + ' will appear here as businesses add them.' }}</p><button v-if="q || activeFilters" class="discover-action" @click="q='';clearFilters()">Clear search &amp; filters</button></div>
+    </template>
     <!-- Provider recruitment — straight after the listings, BEFORE the SEO sections -->
     <RecruitBanner :city-name="selectedCity?.name" category="membership" />
 
@@ -168,29 +129,29 @@ const filtered = computed(() => {
 </template>
 
 <style scoped>
-.ph h1 { font-size: 25px; font-weight: 900; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 10px; }
-.ph h1 svg { color: var(--brand); flex-shrink: 0; }
+.ph h1 { font-size: 25px; font-weight: 900; color: var(--text, #0f172a); margin: 0; display: flex; align-items: center; gap: 10px; }
+.ph h1 svg { color: var(--brand-ink, var(--brand)); flex-shrink: 0; }
 .ph p { font-size: 14.5px; color: var(--text-muted, #64748b); margin: 6px 0 18px; }
 .csearch { display: flex; align-items: center; gap: 10px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 16px; margin-bottom: 20px; color: var(--text-light, #94a3b8); max-width: 480px; }
-.csearch input { flex: 1; border: none; outline: none; font-size: 15px; color: #0f172a; }
+.csearch input { flex: 1; border: none; outline: none; font-size: 15px; color: var(--text, #0f172a); }
 /* One clean field (dashboard style): search input with the filter icon INSIDE it
    (mirrors Facilities.vue's fac-* styles) */
 .fac-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
 .fac-search-wrap { position: relative; flex: 1; min-width: 200px; max-width: 480px; }
 .fac-bar .csearch { margin-bottom: 0; max-width: none; width: 100%; padding: 6px 6px 6px 13px; border-radius: 10px; }
 .fac-ficon { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; border: none; background: none; color: var(--text-muted, #64748b); cursor: pointer; padding: 7px 8px; border-radius: 8px; }
-.fac-ficon:hover { color: var(--brand); background: #f1f5f9; }
-.fac-ficon.on { color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, white); }
+.fac-ficon:hover { color: var(--brand-ink, var(--brand)); background: var(--bg, #f1f5f9); }
+.fac-ficon.on { color: var(--brand-ink, var(--brand)); background: color-mix(in srgb, var(--brand) 10%, var(--surface, white)); }
 .fac-filter-n { background: var(--brand); color: #fff; font-size: 10.5px; font-weight: 800; min-width: 16px; height: 16px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
 .fac-panel { position: absolute; top: calc(100% + 6px); inset-inline-start: 0; z-index: 50; width: min(480px, calc(100vw - 32px)); background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 32px rgba(0, 0, 0, .14); display: flex; flex-direction: column; gap: 12px; }
 .fac-frow { display: flex; align-items: flex-start; gap: 12px; }
 .fac-flabel { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-light, #94a3b8); width: 70px; flex-shrink: 0; padding-top: 7px; }
 .fac-chips { display: flex; flex-wrap: wrap; gap: 7px; flex: 1; min-width: 0; }
-.fac-chips button { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; font-weight: 700; font-size: 13px; padding: 6px 13px; border-radius: 999px; cursor: pointer; }
+.fac-chips button { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); font-weight: 700; font-size: 13px; padding: 6px 13px; border-radius: 999px; cursor: pointer; }
 .fac-chips button:hover { border-color: var(--brand-accent); }
 .fac-chips button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
-.fac-panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 1px solid #eef2f6; }
-.fac-clear { background: none; border: none; color: #dc2626; font-weight: 700; font-size: 13px; cursor: pointer; padding: 2px; }
+.fac-panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border, #eef2f6); }
+.fac-clear { background: none; border: none; color: var(--danger-ink, #dc2626); font-weight: 700; font-size: 13px; cursor: pointer; padding: 2px; }
 .fac-clear:disabled { color: #cbd5e1; cursor: default; }
 .fac-clear:not(:disabled):hover { text-decoration: underline; }
 .fac-done { background: var(--brand); color: #fff; border: none; border-radius: 999px; font-weight: 800; font-size: 13px; padding: 8px 18px; cursor: pointer; }
@@ -200,16 +161,16 @@ const filtered = computed(() => {
 .cempty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px; color: var(--text-light, #94a3b8); }
 /* FAQ — same look as the city landing pages' FAQ */
 .prog-faq { margin: 44px 0 16px; max-width: 760px; }
-.prog-faq h2 { font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 12px; }
+.prog-faq h2 { font-size: 20px; font-weight: 800; color: var(--text, #0f172a); margin: 0 0 12px; }
 /* Quiet divider-list FAQ (same treatment as the homepage) */
 .prog-faq-item { border-bottom: 1px solid var(--border, #e8edf3); }
 .prog-faq-item:last-child { border-bottom: none; }
-.prog-faq-item summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; list-style: none; padding: 13px 2px; font-size: 14px; font-weight: 600; color: #334155; cursor: pointer; }
+.prog-faq-item summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; list-style: none; padding: 13px 2px; font-size: 14px; font-weight: 600; color: var(--text-secondary, #334155); cursor: pointer; }
 .prog-faq-item summary::-webkit-details-marker { display: none; }
 .prog-faq-item summary::after { content: '+'; font-size: 17px; font-weight: 400; color: var(--text-light, #94a3b8); flex-shrink: 0; transition: transform .15s; }
-.prog-faq-item[open] summary { color: #0f172a; }
-.prog-faq-item[open] summary::after { transform: rotate(45deg); color: var(--brand); }
-.prog-faq-item summary:hover { color: var(--brand); }
+.prog-faq-item[open] summary { color: var(--text, #0f172a); }
+.prog-faq-item[open] summary::after { transform: rotate(45deg); color: var(--brand-ink, var(--brand)); }
+.prog-faq-item summary:hover { color: var(--brand-ink, var(--brand)); }
 .prog-faq-item p { font-size: 13.5px; color: var(--text-muted, #64748b); line-height: 1.65; margin: 0; padding: 0 24px 14px 2px; }
 
 /* ── Phone: match storefront mobile conventions — get browsing above the fold ── */
@@ -244,4 +205,5 @@ const filtered = computed(() => {
   .prog-faq { margin: 32px 0 8px; }
   .prog-faq h2 { font-size: 17px; } /* section heading — one clear step below the 21px page h1 */
 }
+.membership-filters { display: flex; flex-wrap: wrap; gap: 14px 24px; margin-top: 18px; }.membership-filters label { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-secondary); }.membership-filters select { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font: inherit; }.cgrid { margin-bottom: 30px; grid-template-columns: repeat(auto-fill,minmax(270px,1fr)); }.prog-faq { max-width: 850px; margin-top: 40px; }
 </style>

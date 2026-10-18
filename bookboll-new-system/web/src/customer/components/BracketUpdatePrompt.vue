@@ -91,24 +91,24 @@ function dateLabel(d) {
 <style scoped>
 .bu-back { position: fixed; inset: 0; z-index: 320; background: rgba(15,23,42,.55); display: flex; align-items: center; justify-content: center; padding: 18px; overflow-y: auto; }
 .bu { position: relative; width: 440px; max-width: 100%; max-height: 88vh; overflow-y: auto; background: var(--surface, #ffffff); border-radius: 18px; padding: 20px 20px 16px; box-shadow: 0 24px 60px rgba(15,23,42,.3); }
-.bu-x { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 10px; border: none; background: #f1f5f9; color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.bu-head { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 900; color: #0f172a; }
+.bu-x { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 10px; border: none; background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.bu-head { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 900; color: var(--text, #0f172a); }
 .bu-head svg { color: #e11d48; }
 .bu-sub { font-size: 13px; color: var(--text-muted, #64748b); line-height: 1.45; margin: 6px 0 12px; }
-.bu-done { display: flex; align-items: center; gap: 6px; color: #166534; font-weight: 700; }
+.bu-done { display: flex; align-items: center; gap: 6px; color: var(--success-ink, #166534); font-weight: 700; }
 .bu-card { border: 1.5px solid var(--border, #e2e8f0); border-radius: 14px; padding: 12px 13px; margin-bottom: 10px; }
 .bu-meta { display: flex; flex-direction: column; gap: 2px; margin-bottom: 9px; }
-.bu-meta b { font-size: 13.5px; color: #0f172a; }
+.bu-meta b { font-size: 13.5px; color: var(--text, #0f172a); }
 .bu-meta span { font-size: 12px; color: var(--text-light, #94a3b8); font-weight: 600; }
 .bu-teams { display: flex; align-items: center; gap: 8px; }
-.bu-team { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 11px 8px; min-height: 44px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 11px; background: var(--surface, #ffffff); font-size: 13px; font-weight: 800; color: #0f172a; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: border-color .12s, background .12s; }
-.bu-team:hover { border-color: #e11d48; background: #fff1f2; }
+.bu-team { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 11px 8px; min-height: 44px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 11px; background: var(--surface, #ffffff); font-size: 13px; font-weight: 800; color: var(--text, #0f172a); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: border-color .12s, background .12s; }
+.bu-team:hover { border-color: #e11d48; background: var(--danger-bg, #fff1f2); }
 .bu-team:disabled { opacity: .6; cursor: default; }
 .bu-team svg { flex-shrink: 0; color: #e11d48; }
 .bu-vs { flex-shrink: 0; font-size: 11px; font-weight: 800; color: var(--text-light, #94a3b8); text-transform: uppercase; }
-.bu-err { font-size: 12.5px; color: #b91c1c; background: #fee2e2; border-radius: 9px; padding: 8px 11px; margin-bottom: 10px; }
+.bu-err { font-size: 12.5px; color: var(--danger-ink, #b91c1c); background: var(--danger-bg, #fee2e2); border-radius: 9px; padding: 8px 11px; margin-bottom: 10px; }
 .bu-later { width: 100%; padding: 10px; border: none; background: none; color: var(--text-light, #94a3b8); font-size: 13px; font-weight: 700; cursor: pointer; }
-.bu-later:hover { color: #475569; }
+.bu-later:hover { color: var(--text-secondary, #475569); }
 .bu-spin { animation: buspin 1s linear infinite; }
 @keyframes buspin { to { transform: rotate(360deg); } }
 

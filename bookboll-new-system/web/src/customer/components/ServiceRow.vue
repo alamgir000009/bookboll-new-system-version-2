@@ -1,45 +1,68 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onUpdated, onBeforeUnmount } from 'vue'
 import { ChevronLeft, ChevronRight, ArrowRight, Info } from 'lucide-vue-next'
 
 defineProps({
+  tone: { type: String, default: '' },
   title:   { type: String, required: true },
   subtitle:{ type: String, default: '' },
+  showSubtitle: { type: Boolean, default: false },
   viewAll: { type: String, default: '' },   // route path for "View all"
   icon:    { type: [Object, Function], default: null },   // optional Lucide icon component
 })
 const track = ref(null)
+const hasOverflow = ref(false)
+const canPrevious = ref(false)
+const canNext = ref(false)
+let resizeObserver
+function measureScroll() {
+  const el = track.value
+  if (!el) return
+  const remaining = el.scrollWidth - el.clientWidth
+  const position = Math.abs(el.scrollLeft)
+  hasOverflow.value = remaining > 3
+  canPrevious.value = position > 3
+  canNext.value = position < remaining - 3
+}
+onMounted(() => {
+  resizeObserver = new ResizeObserver(measureScroll)
+  resizeObserver.observe(track.value)
+  measureScroll()
+})
+onUpdated(measureScroll)
+onBeforeUnmount(() => resizeObserver?.disconnect())
 function scrollBy(dir) {
   if (!track.value) return
   // In RTL the scroll axis is reversed, so flip the sign so "next" always moves to the
   // next card visually regardless of direction.
   const rtl = getComputedStyle(track.value).direction === 'rtl'
   const amount = Math.round(track.value.clientWidth * 0.8) * (rtl ? -1 : 1)
-  track.value.scrollBy({ left: dir * amount, behavior: 'smooth' })
+  track.value.scrollBy({ left: dir * amount, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
 }
 </script>
 
 <template>
-  <section class="sr">
+  <section class="sr" :class="tone ? `sr-tone sr-${tone}` : ''">
     <div class="sr-head">
       <div>
         <h2 class="sr-title">
-          <component :is="icon" v-if="icon" :size="20" class="sr-title-ico" />{{ title }}
-          <span v-if="subtitle" class="sr-info" tabindex="0" :aria-label="subtitle">
+          <span v-if="icon" class="sr-icon-wrap"><component :is="icon" :size="20" class="sr-title-ico" /></span>{{ title }}
+          <span v-if="subtitle && !showSubtitle" class="sr-info" tabindex="0" :aria-label="subtitle">
             <Info :size="15" />
             <span class="sr-tip">{{ subtitle }}</span>
           </span>
         </h2>
+        <p v-if="subtitle && showSubtitle" class="sr-subtitle">{{ subtitle }}</p>
       </div>
       <div class="sr-head-right">
         <router-link v-if="viewAll" :to="viewAll" class="sr-viewall">View all <ArrowRight :size="15" /></router-link>
-        <div class="sr-arrows">
-          <button class="sr-arrow" type="button" aria-label="Previous" @click="scrollBy(-1)"><ChevronLeft :size="18" /></button>
-          <button class="sr-arrow" type="button" aria-label="Next" @click="scrollBy(1)"><ChevronRight :size="18" /></button>
+        <div v-if="hasOverflow" class="sr-arrows">
+          <button class="sr-arrow" type="button" :aria-label="`Previous ${title.toLowerCase()}`" :disabled="!canPrevious" @click="scrollBy(-1)"><ChevronLeft :size="18" /></button>
+          <button class="sr-arrow" type="button" :aria-label="`Next ${title.toLowerCase()}`" :disabled="!canNext" @click="scrollBy(1)"><ChevronRight :size="18" /></button>
         </div>
       </div>
     </div>
-    <div ref="track" class="sr-track">
+    <div ref="track" class="sr-track" @scroll.passive="measureScroll">
       <slot />
     </div>
   </section>
@@ -47,23 +70,26 @@ function scrollBy(dir) {
 
 <style scoped>
 .sr { margin-bottom: 30px; }
+.sr-subtitle { margin: 5px 0 0; color: var(--text-muted); font-size: 14px; }
 .sr-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.sr-title { font-size: 21px; font-weight: 800; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 9px; }
-.sr-title-ico { color: var(--brand); flex-shrink: 0; }
+.sr-title { font-size: 21px; font-weight: 800; color: var(--text, #0f172a); margin: 0; display: flex; align-items: center; gap: 9px; }
+.sr-title-ico { color: var(--brand-ink, var(--brand)); flex-shrink: 0; }
 /* subtitle is now an info tooltip next to the title */
 .sr-info { position: relative; display: inline-flex; align-items: center; color: var(--text-light, #94a3b8); cursor: help; }
-.sr-info:hover, .sr-info:focus-visible { color: var(--brand); outline: none; }
+.sr-info:hover, .sr-info:focus-visible { color: var(--brand-ink, var(--brand)); outline: none; }
 /* display:none while idle so the (invisible) bubble never adds to page width / horizontal
    scroll on narrow screens. Width is clamped to the viewport so it stays on-screen when shown. */
 .sr-tip { position: absolute; top: calc(100% + 9px); left: 50%; transform: translateX(-50%); z-index: 30; width: max-content; max-width: min(240px, calc(100vw - 28px)); background: #0f172a; color: #fff; font-size: 12.5px; font-weight: 500; line-height: 1.45; text-align: left; padding: 8px 11px; border-radius: 9px; box-shadow: 0 10px 26px rgba(15,23,42,.28); pointer-events: none; display: none; }
 .sr-tip::before { content: ''; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-bottom-color: #0f172a; }
 .sr-info:hover .sr-tip, .sr-info:focus-visible .sr-tip { display: block; }
 .sr-head-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-.sr-viewall { display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 700; color: var(--brand); text-decoration: none; white-space: nowrap; }
+.sr-viewall { display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 700; color: var(--brand-ink, var(--brand)); text-decoration: none; white-space: nowrap; }
 .sr-viewall:hover { text-decoration: underline; }
 .sr-arrows { display: flex; gap: 6px; }
-.sr-arrow { width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.sr-arrow:hover { border-color: var(--brand-accent); color: var(--brand); }
+.sr-arrow { width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.sr-arrow:hover:not(:disabled) { border-color: var(--brand-accent); color: var(--brand-ink, var(--brand)); }
+.sr-arrow:disabled { opacity: .35; cursor: default; }
+.sr-arrow:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
 /* RTL: flip the chevron glyphs so ‹ / › point the correct way for right-to-left scrolling. */
 [dir="rtl"] .sr-arrow svg { transform: scaleX(-1); }
 
@@ -109,4 +135,25 @@ function scrollBy(dir) {
   /* #6: trim track padding while preserving the scroll-snap peek that hints the row scrolls */
   .sr-track { gap: 12px; padding: 2px 2px 8px; }
 }
+
+/* Each marketplace feature section sits on its own soft shade of its accent hue
+   (venues blue, events amber, communities green, memberships violet). The panel
+   mixes the accent ink into the surface so it follows light/dark and brand themes. */
+.sr-tone{--row-panel:color-mix(in srgb,var(--row-ink) 8%,var(--surface,#fff));--row-line:color-mix(in srgb,var(--row-ink) 16%,var(--border,#e2e8f0));background:var(--row-panel);border:1px solid var(--row-line);border-radius:20px;padding:22px 22px 12px}
+html.cust-dark .sr-tone{--row-panel:color-mix(in srgb,var(--row-ink) 11%,var(--surface,#162132));--row-line:color-mix(in srgb,var(--row-ink) 22%,var(--border,#2d3e55))}
+/* Action-button colour per section: filled buttons inside a section use these so
+   they match its panel. Light: deep accent + white text (AA). Dark: light accent + deep text. */
+.sr-venues{--row-cta:#1d4ed8;--row-cta-hover:#1e40af;--row-cta-text:#fff}
+.sr-events{--row-cta:#b45309;--row-cta-hover:#92400e;--row-cta-text:#fff}
+.sr-communities{--row-cta:#15803d;--row-cta-hover:#166534;--row-cta-text:#fff}
+.sr-memberships{--row-cta:#6d28d9;--row-cta-hover:#5b21b6;--row-cta-text:#fff}
+html.cust-dark .sr-venues{--row-cta:#93c5fd;--row-cta-hover:#bfdbfe;--row-cta-text:#0b1b33}
+html.cust-dark .sr-events{--row-cta:#f4c478;--row-cta-hover:#f8d79f;--row-cta-text:#2a1d07}
+html.cust-dark .sr-communities{--row-cta:#7cdbaf;--row-cta-hover:#a3e8c8;--row-cta-text:#0b2a20}
+html.cust-dark .sr-memberships{--row-cta:#c4b9ff;--row-cta-hover:#d9d2ff;--row-cta-text:#1e1640}
+.sr-tone .sr-head{border-bottom-color:var(--row-line)!important}
+.sr-tone .sr-icon-wrap{background:color-mix(in srgb,var(--row-ink) 14%,var(--surface,#fff))!important}
+@media(max-width:600px){.sr-tone{border-radius:16px;padding:16px 14px 8px;margin-left:-4px;margin-right:-4px}}
+.sr-icon-wrap{display:inline-flex}.sr-tone{--row-ink:var(--info-ink);--row-bg:var(--info-bg)}.sr-events{--row-ink:var(--warning-ink);--row-bg:var(--warning-bg)}.sr-communities{--row-ink:var(--success-ink);--row-bg:var(--success-bg)}.sr-memberships{--row-ink:var(--violet-ink);--row-bg:var(--violet-bg)}.sr-tone .sr-head{align-items:center;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:20px}.sr-tone .sr-icon-wrap{width:38px;height:38px;align-items:center;justify-content:center;background:var(--row-bg);border-radius:11px}.sr-tone .sr-title{gap:12px;font-size:22px}.sr-tone .sr-title-ico{color:var(--row-ink)}.sr-tone .sr-subtitle{margin:4px 0 0 50px;font-size:13px}.sr-tone .sr-viewall{color:var(--row-ink);font-size:13px}.sr-tone .sr-head-right{align-self:center}@media(max-width:600px){.sr-tone .sr-title{font-size:19px;gap:9px}.sr-tone .sr-icon-wrap{width:32px;height:32px;border-radius:9px}.sr-tone .sr-subtitle{margin-left:41px;max-width:33ch;font-size:12px}.sr-tone .sr-head{gap:10px}.sr-tone .sr-viewall{font-size:12px;white-space:nowrap}}
+
 </style>

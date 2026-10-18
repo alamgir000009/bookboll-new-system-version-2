@@ -140,14 +140,16 @@ export function slotConflicts(slot, bookings, buffer = 0) {
   })
 }
 
-/** Human label for a duration value, e.g. 90 -> "1h 30m". */
+/** Customer-facing duration, e.g. 90 -> "1 hr 30 min". */
 export function durationLabel(mins) {
-  const n = Number(mins) || 0
+  const value = Number(mins)
+  if (!Number.isFinite(value) || value <= 0) return ''
+  const n = Math.round(value)
   const h = Math.floor(n / 60)
   const m = n % 60
-  if (h && m) return `${h}h ${m}m`
-  if (h) return `${h}h`
-  return `${m}m`
+  if (h && m) return `${h} hr ${m} min`
+  if (h) return `${h} hr`
+  return `${m} min`
 }
 
 /**

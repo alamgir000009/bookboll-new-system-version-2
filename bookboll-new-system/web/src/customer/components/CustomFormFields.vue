@@ -69,18 +69,18 @@ const isChecked = (id, opt) => Array.isArray(props.modelValue[id]) && props.mode
 <style scoped>
 .cff { display: flex; flex-direction: column; gap: 14px; }
 .cff-label { display: block; font-size: 13.5px; font-weight: 700; color: var(--text, #0f172a); margin-bottom: 6px; }
-.cff-req { color: #dc2626; margin-left: 3px; }
-.cff-input { width: 100%; min-height: 42px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: #0f172a; background: var(--surface, #ffffff); box-sizing: border-box; }
+.cff-req { color: var(--danger-ink, #dc2626); margin-left: 3px; }
+.cff-input { width: 100%; min-height: 42px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: var(--text, #0f172a); background: var(--surface, #ffffff); box-sizing: border-box; }
 .cff-input:focus { outline: none; border-color: var(--brand, #0f766e); }
 .cff-area { resize: vertical; }
 .cff-field.err .cff-input { border-color: #dc2626; }
 .cff-chips, .cff-opts { display: flex; flex-wrap: wrap; gap: 8px; }
 .cff-opts { flex-direction: column; gap: 7px; }
-.cff-chip { padding: 9px 18px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; background: var(--surface, #ffffff); font-size: 14px; font-weight: 700; color: #475569; cursor: pointer; }
-.cff-chip.on { border-color: var(--brand, #0f766e); background: color-mix(in srgb, var(--brand, #0f766e) 10%, white); color: var(--brand, #0f766e); }
-.cff-opt { display: flex; align-items: center; gap: 9px; font-size: 14px; color: #0f172a; cursor: pointer; }
+.cff-chip { padding: 9px 18px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; background: var(--surface, #ffffff); font-size: 14px; font-weight: 700; color: var(--text-secondary, #475569); cursor: pointer; }
+.cff-chip.on { border-color: var(--brand, #0f766e); background: color-mix(in srgb, var(--brand, #0f766e) 10%, var(--surface, white)); color: var(--brand, #0f766e); }
+.cff-opt { display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--text, #0f172a); cursor: pointer; }
 .cff-opt input { width: 17px; height: 17px; accent-color: var(--brand, #0f766e); }
-.cff-err { font-size: 12px; color: #dc2626; margin-top: 5px; font-weight: 600; }
+.cff-err { font-size: 12px; color: var(--danger-ink, #dc2626); margin-top: 5px; font-weight: 600; }
 
 /* Phone (customer-shell breakpoint) */
 @media (max-width: 760px) {

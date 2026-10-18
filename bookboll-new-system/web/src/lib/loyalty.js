@@ -95,14 +95,11 @@ export function maxRedeemable({ points, platformFee, orderTotal, cfg = DEFAULT_L
 // User::addLoyaltyPoints() once, guarded against double-credit, on confirmation.
 // Calling award from the client would only ever have double-counted.
 //
-// Redeeming: the API has no redeem-at-checkout parameter yet
-// (customerBookingValidationRules accepts promocode / gift-card fields only), so
-// nothing can be spent from here. ListingDetail no longer offers the option;
-// ProgramDetail and HostGame still render it against the Supabase games domain
-// and are unchanged by design.
-//
-// TODO: implement both server-side (a loyalty_points_redeemed booking param plus a
-// debit ledger entry) and re-enable the checkout UI.
+// Checkout redemption now uses CheckoutRewards.vue + checkoutRewards.js. They
+// require a country-confirmed balance and an explicit server quote; old APIs
+// cannot accidentally display a discount they would ignore. Laravel must implement
+// the contract in readmeAlamgir.md before enabling redemption_checkout_v1.
+// These legacy ledger helpers remain no-ops; no browser code may debit a balance.
 
 /** @deprecated No-op. Laravel awards points server-side on booking confirmation. */
 export async function awardLoyalty() {

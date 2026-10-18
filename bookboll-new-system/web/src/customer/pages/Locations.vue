@@ -41,7 +41,7 @@ onMounted(load)
   <div class="loc cust-page">
     <header class="loc-hero">
       <h1>Our locations</h1>
-      <p>Browse {{ isWhiteLabel && activeBrand ? activeBrand.name + '’s' : 'our' }} venues, see opening hours and book a court or space.</p>
+      <p>Explore {{ isWhiteLabel && activeBrand ? activeBrand.name + '’s' : 'our' }} venues, see opening hours and browse available listings.</p>
     </header>
 
     <div v-if="locations.length > 3" class="loc-search">
@@ -58,7 +58,7 @@ onMounted(load)
 
     <div v-else class="loc-list">
       <div v-for="l in filtered" :key="l.id" class="loc-card" :class="{ open: openId === l.id }">
-        <button type="button" class="loc-head" @click="toggle(l.id)">
+        <button type="button" class="loc-head" :aria-expanded="openId === l.id" :aria-controls="`location-${l.id}`" @click="toggle(l.id)">
           <div class="loc-thumb" :style="l.photo ? { backgroundImage: `url(${l.photo})` } : {}">
             <Building2 v-if="!l.photo" :size="22" />
           </div>
@@ -76,7 +76,7 @@ onMounted(load)
           <ChevronDown :size="20" class="loc-chev" />
         </button>
 
-        <div v-if="openId === l.id" class="loc-body">
+        <div v-if="openId === l.id" :id="`location-${l.id}`" class="loc-body">
           <div class="loc-cols">
             <!-- Schedule -->
             <div class="loc-block">
@@ -129,28 +129,28 @@ onMounted(load)
 .loc-card { border: 1px solid var(--border, #e2e8f0); border-radius: 16px; background: var(--surface, #ffffff); overflow: hidden; transition: border-color .12s, box-shadow .12s; }
 .loc-card.open { border-color: var(--brand-accent, #14b8a6); box-shadow: 0 10px 30px rgba(15,23,42,.07); }
 .loc-head { width: 100%; display: flex; align-items: center; gap: 15px; padding: 16px 18px; background: none; border: none; cursor: pointer; text-align: left; }
-.loc-head:hover { background: #f8fafc; }
-.loc-thumb { width: 60px; height: 60px; border-radius: 13px; background: #f1f5f9; background-size: cover; background-position: center; color: var(--brand, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.loc-head:hover { background: var(--canvas, #f8fafc); }
+.loc-thumb { width: 60px; height: 60px; border-radius: 13px; background: var(--bg, #f1f5f9); background-size: cover; background-position: center; color: var(--brand, #0f766e); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .loc-main { flex: 1; min-width: 0; }
 .loc-name { font-size: 17px; font-weight: 800; color: var(--text, #0f172a); }
 .loc-meta { font-size: 13px; color: var(--text-muted, #64748b); margin-top: 2px; }
 .loc-meta span { display: inline-flex; align-items: center; gap: 5px; }
 .loc-meta svg { color: var(--text-light, #94a3b8); }
 .loc-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.loc-tag { font-size: 11.5px; font-weight: 700; color: #334155; background: #f1f5f9; border-radius: 999px; padding: 3px 10px; }
+.loc-tag { font-size: 11.5px; font-weight: 700; color: var(--text-secondary, #334155); background: var(--bg, #f1f5f9); border-radius: 999px; padding: 3px 10px; }
 .loc-tag.muted { color: var(--text-muted, #64748b); }
-.loc-tag.price { color: var(--brand, #0f766e); background: color-mix(in srgb, var(--brand, #0f766e) 10%, white); }
+.loc-tag.price { color: var(--brand, #0f766e); background: color-mix(in srgb, var(--brand, #0f766e) 10%, var(--surface, white)); }
 .loc-chev { color: var(--text-light, #94a3b8); flex-shrink: 0; transition: transform .18s; }
 .loc-card.open .loc-chev { transform: rotate(180deg); }
 
-.loc-body { padding: 4px 18px 20px; border-top: 1px solid #eef2f6; }
+.loc-body { padding: 4px 18px 20px; border-top: 1px solid var(--border, #eef2f6); }
 .loc-cols { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 24px; margin-top: 16px; }
 .loc-block-h { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted, #64748b); margin-bottom: 10px; }
 .loc-block-h svg { color: var(--brand, #0f766e); }
 .loc-sched { display: flex; flex-direction: column; gap: 1px; }
-.loc-srow { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 4px 0; border-bottom: 1px dashed #f1f5f9; }
-.loc-day { font-weight: 800; color: #334155; }
-.loc-time { color: #0f172a; font-weight: 600; }
+.loc-srow { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 4px 0; border-bottom: 1px dashed var(--border, #f1f5f9); }
+.loc-day { font-weight: 800; color: var(--text-secondary, #334155); }
+.loc-time { color: var(--text, #0f172a); font-weight: 600; }
 .loc-srow.closed .loc-day, .loc-srow.closed .loc-time { color: var(--text-light, #94a3b8); font-weight: 600; }
 .loc-nohours { font-size: 13px; color: var(--text-light, #94a3b8); }
 .loc-maps { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--brand, #0f766e); text-decoration: none; }
@@ -158,8 +158,8 @@ onMounted(load)
 
 .loc-svc-list { display: flex; flex-direction: column; gap: 8px; }
 .loc-svc { display: flex; align-items: center; gap: 12px; padding: 9px 11px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; text-decoration: none; background: var(--surface, #ffffff); }
-.loc-svc:hover { border-color: var(--brand-accent, #14b8a6); background: #f8fafc; }
-.loc-svc-thumb { width: 46px; height: 46px; border-radius: 10px; background: #f1f5f9; background-size: cover; background-position: center; flex-shrink: 0; }
+.loc-svc:hover { border-color: var(--brand-accent, #14b8a6); background: var(--canvas, #f8fafc); }
+.loc-svc-thumb { width: 46px; height: 46px; border-radius: 10px; background: var(--bg, #f1f5f9); background-size: cover; background-position: center; flex-shrink: 0; }
 .loc-svc-main { flex: 1; min-width: 0; }
 .loc-svc-name { font-size: 14.5px; font-weight: 700; color: var(--text, #0f172a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .loc-svc-sub { display: flex; gap: 10px; font-size: 12.5px; color: var(--text-muted, #64748b); margin-top: 2px; }
@@ -189,8 +189,8 @@ onMounted(load)
   .loc-svc-thumb { width: 64px; height: auto; aspect-ratio: 4 / 3; }
 
   /* Flatten card-inside-card: tint instead of inner border */
-  .loc-svc { border: none; background: #f8fafc; }
-  .loc-svc:hover { background: #f1f5f9; }
+  .loc-svc { border: none; background: var(--canvas, #f8fafc); }
+  .loc-svc:hover { background: var(--bg, #f1f5f9); }
 
   /* 360px pass: comfortable tap target for the directions link */
   .loc-maps { padding: 10px 0; margin-top: 4px; min-height: 44px; align-items: center; }

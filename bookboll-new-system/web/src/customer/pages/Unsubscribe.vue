@@ -62,9 +62,9 @@ onMounted(async () => {
 .unsub { display: flex; justify-content: center; padding: 28px 16px; }
 .unsub-card { width: 460px; max-width: 100%; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 20px; padding: 34px 26px 22px; text-align: center; }
 .unsub-ic { width: 60px; height: 60px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px; }
-.unsub-ic.ok { background: #f0fdf4; color: #16a34a; }
-.unsub-ic.err { background: #fef2f2; color: #dc2626; }
-.unsub h1 { font-size: 22px; font-weight: 900; color: #0f172a; margin: 8px 0 8px; }
+.unsub-ic.ok { background: var(--success-bg, #f0fdf4); color: var(--success-ink, #16a34a); }
+.unsub-ic.err { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #dc2626); }
+.unsub h1 { font-size: 22px; font-weight: 900; color: var(--text, #0f172a); margin: 8px 0 8px; }
 .unsub p { font-size: 14.5px; color: var(--text-muted, #64748b); line-height: 1.55; margin: 0 auto 8px; max-width: 360px; }
 .unsub-fine { font-size: 12.5px; color: var(--text-light, #94a3b8); }
 .unsub-btn { display: inline-block; margin-top: 14px; background: var(--brand, #0f766e); color: #fff; font-weight: 800; font-size: 15px; padding: 12px 22px; border-radius: 12px; text-decoration: none; }

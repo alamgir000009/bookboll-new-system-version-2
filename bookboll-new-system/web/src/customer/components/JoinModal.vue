@@ -102,23 +102,23 @@ function submit() {
 <style scoped>
 .jm-overlay { position: fixed; inset: 0; z-index: 300; background: rgba(15,23,42,.55); display: flex; align-items: center; justify-content: center; padding: 18px; overflow-y: auto; }
 .jm { position: relative; width: 440px; max-width: 100%; background: var(--surface, #ffffff); border-radius: 20px; padding: 24px 22px 20px; box-shadow: 0 24px 60px rgba(0,0,0,.3); margin: auto; }
-.jm-x { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; border: none; background: #f1f5f9; color: #475569; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.jm-x { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--bg, #f1f5f9); color: var(--text-secondary, #475569); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .jm-x:hover { background: var(--border, #e2e8f0); }
-.jm-head { font-size: 20px; font-weight: 900; color: #0f172a; }
+.jm-head { font-size: 20px; font-weight: 900; color: var(--text, #0f172a); }
 .jm-sub { font-size: 13px; color: var(--text-muted, #64748b); margin: 5px 0 14px; line-height: 1.5; }
-.jm-l { display: block; font-size: 12.5px; font-weight: 700; color: #334155; margin: 11px 0 5px; }
+.jm-l { display: block; font-size: 12.5px; font-weight: 700; color: var(--text-secondary, #334155); margin: 11px 0 5px; }
 .jm-opt { font-size: 10.5px; font-weight: 700; color: var(--text-light, #94a3b8); }
 .jm-in { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 11px 13px; font-size: 15px; outline: none; }
 .jm-in:focus { border-color: var(--brand-accent); }
 .jm-ta { resize: vertical; font-family: inherit; }
-.jm-custom { margin-top: 16px; padding-top: 14px; border-top: 1px solid #eef2f6; }
-.jm-custom-h { font-size: 12.5px; font-weight: 800; color: #0f172a; margin-bottom: 10px; }
-.jm-waiver { margin-top: 14px; background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-.jm-w-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #475569; }
-.jm-w-ico { flex-shrink: 0; color: var(--brand); display: inline-flex; }
-.jm-err { font-size: 13px; color: #dc2626; margin-top: 12px; }
+.jm-custom { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border, #eef2f6); }
+.jm-custom-h { font-size: 12.5px; font-weight: 800; color: var(--text, #0f172a); margin-bottom: 10px; }
+.jm-waiver { margin-top: 14px; background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.jm-w-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary, #475569); }
+.jm-w-ico { flex-shrink: 0; color: var(--brand-ink, var(--brand)); display: inline-flex; }
+.jm-err { font-size: 13px; color: var(--danger-ink, #dc2626); margin-top: 12px; }
 .jm-actions { display: flex; gap: 10px; margin-top: 18px; }
-.jm-cancel { flex-shrink: 0; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); color: #334155; font-weight: 700; font-size: 14.5px; padding: 13px 18px; border-radius: 12px; cursor: pointer; }
+.jm-cancel { flex-shrink: 0; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); color: var(--text-secondary, #334155); font-weight: 700; font-size: 14.5px; padding: 13px 18px; border-radius: 12px; cursor: pointer; }
 .jm-send { flex: 1; background: var(--brand); color: #fff; font-weight: 800; font-size: 14.5px; padding: 13px 18px; border: none; border-radius: 12px; cursor: pointer; }
 .jm-send:disabled { opacity: .6; }
 

@@ -1,4 +1,5 @@
 <script setup>
+import PersonalPage from '../components/PersonalPage.vue'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { customer, isCustomer, updateCustomerProfile, uploadCustomerAvatar } from '../../lib/customerSession.js'
@@ -218,8 +219,9 @@ onUnmounted(() => window.removeEventListener('keydown', onLbKey))
 </script>
 
 <template>
-  <div>
-    <button type="button" class="cback" @click="goBack"><ArrowLeft :size="16" /> Back</button>
+  <PersonalPage :title="isSelf ? 'My profile' : undefined" :description="isSelf ? 'Your public presence, photos and updates on Bookboll.' : undefined" :navigation="isSelf">
+  <div class="profile-page">
+    <button v-if="!isSelf" type="button" class="cback" @click="goBack"><ArrowLeft :size="16" /> Back</button>
     <div v-if="loading" class="cmsg">Loading…</div>
     <div v-else-if="!profile" class="cmsg">This profile isn't available.</div>
     <template v-else>
@@ -232,13 +234,13 @@ onUnmounted(() => window.removeEventListener('keydown', onLbKey))
         </div>
         <input v-if="isSelf" ref="avatarInput" type="file" accept="image/*" class="pp-file" @change="onAvatarFile" />
         <div class="pp-id">
-          <h1>{{ profile.name }} <Lock v-if="profile.isPrivate" :size="15" class="pp-lock" title="Private account" /></h1>
+          <component :is="isSelf ? 'h2' : 'h1'" class="pp-name">{{ profile.name }} <Lock v-if="profile.isPrivate" :size="15" class="pp-lock" title="Private account" /></component>
           <div v-if="memberSince" class="pp-since"><CalendarDays :size="14" /> Member since {{ memberSince }}</div>
           <p v-if="profile.bio && (canView || isSelf)" class="pp-bio">{{ profile.bio }}</p>
           <!-- Actions -->
           <div v-if="isSelf" class="pp-selfwrap">
             <router-link to="/account" class="pp-editbtn"><Pencil :size="14" /> Edit profile</router-link>
-            <span class="pp-self"><ShieldCheck :size="13" /> Tap your photo to change it — photos &amp; posts save automatically.</span>
+            <span class="pp-self"><ShieldCheck :size="13" /> This is how other players see your profile.</span>
           </div>
           <div v-else class="pp-actions">
             <button class="pp-follow" :class="followState" :disabled="followBusy" @click="goFollow">
@@ -292,9 +294,11 @@ onUnmounted(() => window.removeEventListener('keydown', onLbKey))
       <template v-else>
         <div v-if="editErr" class="pp-editerr">{{ editErr }}</div>
 
+        <div class="pp-content"><section class="pp-activity" aria-label="Profile updates">
+        <h2 class="personal-section-title">Updates</h2>
         <!-- Post composer (self) -->
         <div v-if="isSelf" class="pp-compose">
-          <textarea v-model="postBody" class="pp-compose-txt" rows="2" maxlength="1000" placeholder="Share an update, a match recap, who you're looking to play with…"></textarea>
+          <textarea aria-label="Write a profile update" v-model="postBody" class="pp-compose-txt" rows="2" maxlength="1000" placeholder="Share an update, a match recap, who you're looking to play with…"></textarea>
           <div v-if="postPhotos.length" class="pp-compose-imgs">
             <div v-for="(p, i) in postPhotos" :key="p" class="pp-compose-img" :style="{ backgroundImage: `url(${p})` }"><button class="pp-compose-x" aria-label="Remove photo" @click="removeComposerPhoto(i)"><X :size="12" /></button></div>
           </div>
@@ -321,13 +325,16 @@ onUnmounted(() => window.removeEventListener('keydown', onLbKey))
         </div>
         <div v-else-if="!isSelf" class="pp-empty"><Users :size="28" /><span>No posts yet.</span></div>
 
+        </section><aside class="pp-about">
+        <h2 v-if="profile.photos.length || isSelf" class="personal-section-title">Photos</h2>
+        <p v-if="isSelf" class="pp-photo-help">Add moments from your games. Photos and posts save immediately.</p>
         <!-- Photos -->
         <div v-if="profile.photos.length || isSelf" class="pp-photos">
           <div v-for="(p, i) in profile.photos" :key="p" class="pp-photo" :style="{ backgroundImage: `url(${p})` }" title="View photo" @click="openLightbox(profile.photos, i)">
             <button v-if="isSelf" class="pp-photo-x" @click.stop="removePhoto(i)" title="Remove photo" aria-label="Remove photo"><X :size="13" /></button>
           </div>
           <button v-if="isSelf" class="pp-photo-add" :disabled="galBusy" @click="pickPhotos">
-            <Loader v-if="galBusy" :size="18" class="pp-spin" /><template v-else><Plus :size="18" /><span>Add</span></template>
+            <Loader v-if="galBusy" :size="18" class="pp-spin" /><template v-else><Plus :size="18" /><span>Add photos</span></template>
           </button>
           <input v-if="isSelf" ref="galInput" type="file" accept="image/*" multiple class="pp-file" @change="onPhotoFiles" />
         </div>
@@ -357,13 +364,14 @@ onUnmounted(() => window.removeEventListener('keydown', onLbKey))
           <h2><Trophy :size="18" /> Hosting now</h2>
           <div class="pp-grid"><GameCard v-for="g in profile.hostedOpen" :key="g.id" :game="g" /></div>
         </div>
+        </aside></div>
       </template>
     </template>
 
     <!-- Followers / following modal -->
     <Teleport to="body">
       <div v-if="listOpen" class="pp-modal" @click.self="listOpen = false">
-        <div class="pp-modal-card">
+        <div class="pp-modal-card" role="dialog" aria-modal="true" :aria-label="listKind === 'followers' ? 'Followers' : 'Following'">
           <div class="pp-modal-head"><b>{{ listKind === 'followers' ? 'Followers' : 'Following' }}</b><button aria-label="Close" @click="listOpen = false"><X :size="18" /></button></div>
           <div v-if="listLoading" class="pp-modal-msg">Loading…</div>
           <div v-else-if="!listPeople.length" class="pp-modal-msg">No one yet.</div>
@@ -380,7 +388,7 @@ onUnmounted(() => window.removeEventListener('keydown', onLbKey))
 
     <!-- fullscreen image viewer -->
     <Teleport to="body">
-      <div v-if="lbOpen" class="pp-lb" @click.self="closeLb">
+      <div v-if="lbOpen" class="pp-lb" role="dialog" aria-modal="true" aria-label="Photo viewer" @click.self="closeLb">
         <button class="pp-lb-x" @click="closeLb" aria-label="Close"><X :size="22" /></button>
         <button v-if="lbList.length > 1" class="pp-lb-nav prev" @click.stop="lbPrev" aria-label="Previous"><ChevronLeft :size="26" /></button>
         <img :src="lbList[lbIdx]" class="pp-lb-img" :alt="`${profile?.name || 'Profile'} — photo ${lbIdx + 1} of ${lbList.length}`" decoding="async" />
@@ -389,10 +397,11 @@ onUnmounted(() => window.removeEventListener('keydown', onLbKey))
       </div>
     </Teleport>
   </div>
+  </PersonalPage>
 </template>
 
 <style scoped>
-.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; background: none; border: none; padding: 0; cursor: pointer; font-family: inherit; }
+.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-ink, var(--brand)); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; background: none; border: none; padding: 0; cursor: pointer; font-family: inherit; }
 .cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
 
 .pp-head { display: flex; align-items: flex-start; gap: 18px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 20px; padding: 22px 24px; }
@@ -403,41 +412,41 @@ onUnmounted(() => window.removeEventListener('keydown', onLbKey))
 .pp-avatar.editable:hover .pp-avatar-ov, .pp-avatar.viewable:hover .pp-avatar-ov { opacity: 1; }
 .pp-file { display: none; }
 .pp-id { min-width: 0; flex: 1; }
-.pp-id h1 { font-size: 24px; font-weight: 900; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 8px; }
+.pp-id h1 { font-size: 24px; font-weight: 900; color: var(--text, #0f172a); margin: 0; display: flex; align-items: center; gap: 8px; }
 .pp-lock { color: var(--text-light, #94a3b8); }
 .pp-since { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--text-muted, #64748b); margin-top: 5px; }
-.pp-bio { font-size: 14px; color: #334155; line-height: 1.5; margin: 10px 0 0; white-space: pre-wrap; }
-.pp-self { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, white); border: 1px solid #99f6e4; padding: 4px 10px; border-radius: 999px; margin-top: 10px; }
+.pp-bio { font-size: 14px; color: var(--text-secondary, #334155); line-height: 1.5; margin: 10px 0 0; white-space: pre-wrap; }
+.pp-self { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--brand-ink, var(--brand)); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); border: 1px solid var(--success-border, #99f6e4); padding: 4px 10px; border-radius: 999px; margin-top: 10px; }
 .pp-selfwrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .pp-selfwrap .pp-self { margin-top: 0; }
 .pp-editbtn { display: inline-flex; align-items: center; gap: 6px; background: var(--brand); color: #fff; border: none; font: inherit; font-weight: 800; font-size: 13.5px; padding: 9px 16px; border-radius: 999px; cursor: pointer; text-decoration: none; }
 .pp-editbtn:hover { opacity: .92; }
 .pp-actions { display: flex; gap: 10px; margin-top: 12px; }
 .pp-follow { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: 999px; border: none; background: var(--brand); color: #fff; font-weight: 800; font-size: 14px; cursor: pointer; }
-.pp-follow.following, .pp-follow.pending { background: #f1f5f9; color: #334155; border: 1.5px solid var(--border, #e2e8f0); }
+.pp-follow.following, .pp-follow.pending { background: var(--bg, #f1f5f9); color: var(--text-secondary, #334155); border: 1.5px solid var(--border, #e2e8f0); }
 .pp-follow:disabled { opacity: .6; }
-.pp-msg { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: 999px; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #334155; font-weight: 800; font-size: 14px; cursor: pointer; }
-.pp-msg:hover { border-color: var(--brand-accent); color: var(--brand); }
+.pp-msg { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: 999px; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #334155); font-weight: 800; font-size: 14px; cursor: pointer; }
+.pp-msg:hover { border-color: var(--brand-accent); color: var(--brand-ink, var(--brand)); }
 
 .pp-stats { display: flex; gap: 10px; margin: 16px 0 24px; }
 /* Street-cred badges */
 .pp-props { display: flex; gap: 8px; flex-wrap: wrap; margin: -12px 0 24px; }
 .pp-props:not(:first-child) { margin-top: -12px; }
-.pp-prop { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; padding: 6px 12px; border-radius: 999px; }
+.pp-prop { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); padding: 6px 12px; border-radius: 999px; }
 .pp-prop b { font-weight: 900; }
 .pp-stat { flex: 1; max-width: 150px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 16px; padding: 14px; text-align: center; cursor: default; }
 .pp-stat.link { cursor: pointer; }
 .pp-stat.link:hover { border-color: var(--brand-accent); }
-.pp-stat b { display: block; font-size: 22px; font-weight: 900; color: #0f172a; line-height: 1; }
+.pp-stat b { display: block; font-size: 22px; font-weight: 900; color: var(--text, #0f172a); line-height: 1; }
 .pp-stat span { font-size: 12px; color: var(--text-muted, #64748b); font-weight: 600; }
 button.pp-stat { font: inherit; }
 
 .pp-reqs { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 16px; padding: 16px 18px; margin-bottom: 22px; }
-.pp-reqs h2 { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 800; color: #0f172a; margin: 0 0 12px; }
-.pp-reqs h2 svg { color: var(--brand); }
+.pp-reqs h2 { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 800; color: var(--text, #0f172a); margin: 0 0 12px; }
+.pp-reqs h2 svg { color: var(--brand-ink, var(--brand)); }
 .pp-reqs-n { font-size: 12px; background: var(--brand); color: #fff; border-radius: 999px; padding: 1px 8px; }
-.pp-req { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid #f1f5f9; }
-.pp-req-who { display: flex; align-items: center; gap: 10px; font-weight: 700; color: #0f172a; text-decoration: none; font-size: 14px; }
+.pp-req { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border, #f1f5f9); }
+.pp-req-who { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text, #0f172a); text-decoration: none; font-size: 14px; }
 .pp-req-av { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg,var(--brand-accent),var(--brand)); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; flex-shrink: 0; }
 .pp-req-av.img { background-size: cover; background-position: center; }
 .pp-req-btns { display: flex; gap: 8px; }
@@ -446,20 +455,20 @@ button.pp-stat { font: inherit; }
 
 .pp-private { text-align: center; color: var(--text-light, #94a3b8); background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 44px 24px; }
 .pp-private svg { color: #cbd5e1; }
-.pp-private h2 { font-size: 18px; font-weight: 800; color: #334155; margin: 12px 0 6px; }
+.pp-private h2 { font-size: 18px; font-weight: 800; color: var(--text-secondary, #334155); margin: 12px 0 6px; }
 .pp-private p { font-size: 14px; margin: 0; max-width: 360px; margin: 0 auto; line-height: 1.5; }
 
-.pp-editerr { font-size: 13px; color: #dc2626; margin: 0 0 12px; }
+.pp-editerr { font-size: 13px; color: var(--danger-ink, #dc2626); margin: 0 0 12px; }
 
 /* Composer */
 .pp-compose { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 16px; padding: 14px 16px; margin-bottom: 18px; }
-.pp-compose-txt { width: 100%; box-sizing: border-box; border: none; outline: none; resize: vertical; font-family: inherit; font-size: 15px; color: #0f172a; }
+.pp-compose-txt { width: 100%; box-sizing: border-box; border: none; outline: none; resize: vertical; font-family: inherit; font-size: 15px; color: var(--text, #0f172a); }
 .pp-compose-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .pp-compose-img { position: relative; width: 72px; height: 72px; border-radius: 10px; background-size: cover; background-position: center; border: 1px solid var(--border, #e2e8f0); }
 .pp-compose-x { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; border: none; background: rgba(15,23,42,.78); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.pp-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #f1f5f9; padding-top: 10px; margin-top: 4px; }
-.pp-compose-add { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #334155; font-weight: 700; font-size: 13.5px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
-.pp-compose-add:hover:not(:disabled) { border-color: var(--brand-accent); color: var(--brand); }
+.pp-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border, #f1f5f9); padding-top: 10px; margin-top: 4px; }
+.pp-compose-add { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #334155); font-weight: 700; font-size: 13.5px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+.pp-compose-add:hover:not(:disabled) { border-color: var(--brand-accent); color: var(--brand-ink, var(--brand)); }
 .pp-compose-post { border: none; background: var(--brand); color: #fff; font-weight: 800; font-size: 14px; padding: 9px 22px; border-radius: 999px; cursor: pointer; }
 .pp-compose-post:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -469,8 +478,8 @@ button.pp-stat { font: inherit; }
 .pp-post-top { display: flex; align-items: center; justify-content: space-between; }
 .pp-post-time { font-size: 12px; color: var(--text-light, #94a3b8); font-weight: 600; }
 .pp-post-del { border: none; background: none; color: #cbd5e1; cursor: pointer; padding: 2px; }
-.pp-post-del:hover { color: #ef4444; }
-.pp-post-body { font-size: 14.5px; color: #0f172a; line-height: 1.55; margin: 6px 0 0; white-space: pre-wrap; }
+.pp-post-del:hover { color: var(--danger-ink, #ef4444); }
+.pp-post-body { font-size: 14.5px; color: var(--text, #0f172a); line-height: 1.55; margin: 6px 0 0; white-space: pre-wrap; }
 .pp-post-imgs { display: grid; gap: 6px; margin-top: 10px; }
 .pp-post-imgs.n1 { grid-template-columns: 1fr; }
 .pp-post-imgs.n2 { grid-template-columns: 1fr 1fr; }
@@ -482,23 +491,23 @@ button.pp-stat { font: inherit; }
 .pp-photo { position: relative; height: 110px; border-radius: 12px; background-size: cover; background-position: center; border: 1px solid var(--border, #e2e8f0); cursor: zoom-in; }
 .pp-photo-x { position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(15,23,42,.78); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .pp-photo-x:hover { background: #ef4444; }
-.pp-photo-add { height: 110px; border-radius: 12px; border: 1.5px dashed #cbd5e1; background: #f8fafc; color: var(--brand); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; font-weight: 700; cursor: pointer; }
-.pp-photo-add:hover:not(:disabled) { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, white); }
+.pp-photo-add { height: 110px; border-radius: 12px; border: 1.5px dashed var(--border-strong, #cbd5e1); background: var(--canvas, #f8fafc); color: var(--brand-ink, var(--brand)); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; font-weight: 700; cursor: pointer; }
+.pp-photo-add:hover:not(:disabled) { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
 .pp-spin { animation: ppspin 1s linear infinite; } @keyframes ppspin { to { transform: rotate(360deg); } }
 
 .pp-section { margin-bottom: 26px; }
-.pp-section h2 { display: flex; align-items: center; gap: 9px; font-size: 19px; font-weight: 800; color: #0f172a; margin: 0 0 14px; }
-.pp-section h2 svg { color: var(--brand); }
+.pp-section h2 { display: flex; align-items: center; gap: 9px; font-size: 19px; font-weight: 800; color: var(--text, #0f172a); margin: 0 0 14px; }
+.pp-section h2 svg { color: var(--brand-ink, var(--brand)); }
 .pp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
 .pp-grid :deep(.gc) { width: auto; }
 /* Communities the player owns / belongs to */
 .pp-comm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px 18px; }
 .pp-comm { display: flex; align-items: center; gap: 14px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 14px; text-decoration: none; }
 .pp-comm:hover { border-color: #0d9488; }
-.pp-comm-cover { position: relative; width: 52px; height: 52px; flex-shrink: 0; border-radius: 12px; background: #f0fdfa center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: #0d9488; }
+.pp-comm-cover { position: relative; width: 52px; height: 52px; flex-shrink: 0; border-radius: 12px; background: var(--success-bg, #f0fdfa) center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: #0d9488; }
 .pp-comm-role { position: absolute; bottom: -7px; left: 50%; transform: translateX(-50%); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; background: #0d9488; color: #fff; padding: 2px 7px; border-radius: 999px; white-space: nowrap; box-shadow: 0 0 0 2px var(--surface, #ffffff); }
 .pp-comm-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.pp-comm-name { font-size: 14.5px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pp-comm-name { font-size: 14.5px; font-weight: 800; color: var(--text, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pp-comm-meta { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-muted, #64748b); }
 .pp-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px; color: var(--text-light, #94a3b8); }
 
@@ -509,8 +518,8 @@ button.pp-stat { font: inherit; }
 .pp-modal-head button { border: none; background: none; cursor: pointer; color: var(--text-muted, #64748b); }
 .pp-modal-msg { padding: 30px; text-align: center; color: var(--text-light, #94a3b8); }
 .pp-modal-list { overflow-y: auto; padding: 8px; }
-.pp-modal-row { display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 10px; border: none; background: none; cursor: pointer; font-size: 14.5px; font-weight: 700; color: #0f172a; text-align: left; border-radius: 10px; }
-.pp-modal-row:hover { background: #f1f5f9; }
+.pp-modal-row { display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 10px; border: none; background: none; cursor: pointer; font-size: 14.5px; font-weight: 700; color: var(--text, #0f172a); text-align: left; border-radius: 10px; }
+.pp-modal-row:hover { background: var(--bg, #f1f5f9); }
 
 .pp-lb { position: fixed; inset: 0; z-index: 220; background: rgba(2,6,23,.93); display: flex; align-items: center; justify-content: center; padding: 30px; }
 .pp-lb-img { max-width: 92vw; max-height: 88vh; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
@@ -548,8 +557,8 @@ button.pp-stat { font: inherit; }
   /* Stats — one bordered strip with hairline dividers (2×2 kept) */
   .pp-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 12px 0 16px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 16px; overflow: hidden; }
   .pp-stat { max-width: none; padding: 10px; border: none; border-radius: 0; background: none; }
-  .pp-stat:nth-child(even) { border-left: 1px solid #f1f5f9; }
-  .pp-stat:nth-child(n+3) { border-top: 1px solid #f1f5f9; }
+  .pp-stat:nth-child(even) { border-left: 1px solid var(--border, #f1f5f9); }
+  .pp-stat:nth-child(n+3) { border-top: 1px solid var(--border, #f1f5f9); }
   .pp-stat b { font-size: 19px; font-weight: 800; }
 
   /* Composer — 16px input avoids iOS zoom */
@@ -587,4 +596,6 @@ button.pp-stat { font: inherit; }
   .pp-lb-nav.prev { left: 6px; }
   .pp-lb-nav.next { right: 6px; }
 }
+.pp-head { padding: 28px; border-radius: 14px; }.pp-id .pp-name { font-size: 28px; margin: 0; line-height: 1.25; letter-spacing: -.02em; }.pp-self { border: 0; background: transparent; padding: 0; font-weight: 400; }.pp-editbtn { min-height: 44px; box-sizing: border-box; }.pp-stats { gap: 0; border-bottom: 1px solid var(--border); margin: 0 0 28px; padding: 12px 0; }.pp-stat { max-width: none; background: transparent; border: 0; border-radius: 0; padding: 14px 20px; }.pp-stat + .pp-stat { border-inline-start: 1px solid var(--border); }.pp-stat b { font-size: 22px; margin-bottom: 6px; }.pp-content { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(270px, 1fr); gap: 28px; }.pp-activity, .pp-about { min-width: 0; }.pp-compose-txt { background: transparent; min-height: 100px; }.pp-compose { padding: 20px; }.pp-compose-txt:focus-visible { outline: 2px solid var(--brand-ink, var(--brand)); outline-offset: 4px; }.pp-compose-add, .pp-compose-post { min-height: 44px; }.pp-photo-help { font-size: 13px; color: var(--text-muted); line-height: 1.55; margin: -4px 0 14px; }.pp-photos { grid-template-columns: repeat(3,minmax(0,1fr)); }.pp-photo, .pp-photo-add { height: auto; aspect-ratio: 1; }.pp-photo-x, .pp-compose-x { width: 32px; height: 32px; }.pp-comm-grid { grid-template-columns: 1fr; gap: 10px; }.pp-comm-name { white-space: normal; }.pp-comm-role { position: static; transform: none; margin-top: 3px; font-size: 10px; text-transform: none; }.pp-modal-head button, .pp-post-del { min-height: 44px; min-width: 44px; }.pp-post-del { color: var(--text-muted); }
+@media(max-width:760px) { .pp-content { grid-template-columns: 1fr; gap: 22px; }.pp-head { padding: 20px 16px; align-items: flex-start; }.pp-id .pp-name { font-size: 22px; }.pp-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); background: transparent; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; }.pp-stat { padding: 12px 4px; }.pp-stat:nth-child(n+3) { border-top: 0; }.pp-stat b { font-size: 20px; }.pp-stat span { font-size: 11px; }.pp-compose { padding: 16px; } }
 </style>

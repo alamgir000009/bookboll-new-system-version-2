@@ -1,13 +1,13 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { appBaseUrl } from '../../lib/appBase.js'
 import { useRouter, useRoute } from 'vue-router'
-import { selectedCity, selectedCountry, customer, isCustomer, loadCustomerLoyalty } from '../../lib/customerSession.js'
+import { selectedCity, selectedCountry, customer, isCustomer } from '../../lib/customerSession.js'
 import { isWhiteLabel } from '../../lib/brand.js'
-import { loadLoyaltyConfig, maxRedeemable } from '../../lib/loyalty.js'
+import CheckoutRewards from '../components/CheckoutRewards.vue'
 import { ensureSignedIn } from '../../lib/authGate.js'
 import { useSeo } from '../../lib/seo.js'
-useSeo({ title: 'Host a game, hangout or tournament', description: 'Set up your own pickup game, social hangout or tournament, pick a venue and invite players — host free on Bookboll.', path: '/host-game' })
+useSeo({ title: 'Host a game, hangout or tournament', description: 'Set up your own pickup game, social hangout or tournament, pick a venue and invite players — host on Bookboll.', path: '/host-game' })
 import { loadLocations, loadFacility, loadFacilities, loadListing } from '../../customer/data.js'
 import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, ownSpotMinFee, ownSpotMinFeeCurrency, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit, createTournament, courtPaymentPlan, splitCourt, PAY_METHOD_LABEL } from '../../customer/apiGames.js'
 import { PLAY_FORMATS } from '../../customer/matchmaking.js'
@@ -18,10 +18,13 @@ import { getPrefillPhone, saveCustomerPhone } from '../../customer/customerPhone
 import { loadStripeConnect, loadStripeCountries, startStripeConnect, syncStripeConnect, saveStripeKeys, disconnectStripe, isStripeConnected } from '../../customer/hostPayouts.js'
 import { TEAM_OPTIONS, roundsFor, matchesInRound, totalGames, roundName, fmtTime, consecutiveSlots, normTime, addMinutes } from '../../customer/bracket.js'
 import PhoneInput from '../components/PhoneInput.vue'
+import EventFeeSummary from '../components/EventFeeSummary.vue'
+import { validateHostBasics } from '../../lib/hostBasics.js'
+import { validateHostMedia } from '../../lib/hostMedia.js'
 import LiabilityWaiver from '../components/LiabilityWaiver.vue'
 import VenueBrowse from '../components/VenueBrowse.vue'
 import CustomFormBuilder from '../../components/CustomFormBuilder.vue'
-import { ArrowLeft, ArrowRight, Trophy, Gamepad2, Info, Sparkles, Check, MapPin, Clock, UsersRound, Loader, Calendar, Building2, X, Plus, Pencil, Gift, EyeOff, ImagePlus, Copy, Share2, ShieldCheck, CreditCard, Banknote, Zap, RefreshCw, Hourglass, Ticket } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, Trophy, Gamepad2, Info, Sparkles, Check, MapPin, Clock, UsersRound, Loader, Calendar, Building2, X, Plus, Pencil, Gift, EyeOff, ImagePlus, Copy, Share2, ShieldCheck, CreditCard, Banknote, Zap, RefreshCw, Hourglass, CalendarDays } from 'lucide-vue-next'
 import { subcategoriesFor } from '../../lib/venueCategories.js'
 import { uploadImage } from '../../lib/imageUpload.js'
 import { durationLabel, SLOT_DURATIONS, toMinutes, endMinutes } from '../../lib/slots.js'
@@ -71,25 +74,35 @@ const f = ref({
   host_name: '', host_phone: '', host_whatsapp: '',
   request_deadline: '',   // optional (recommended) cut-off for join requests/applications
 })
+const titleInput = ref(null), sportInput = ref(null), capacityInput = ref(null), priceInput = ref(null)
+const basicsErrors = computed(() => validateHostBasics(f.value, type.value))
 const hostWaiver = ref(false)   // must agree to the liability waiver before publishing
 
-// ── Event photos (optional): drop/pick → compress → our own storage. First = cover. ──
+// ── Event photos (at least one required for games and hangouts): drop/pick → compress → our own storage. First = cover. ──
 const imgUploading = ref(false)
 const imgError = ref('')
 const dropActive = ref(false)
 const gFileInput = ref(null)
+const descriptionInput = ref(null), photoButton = ref(null), mediaAttempted = ref(false)
+const mediaErrors = computed(() => validateHostMedia(f.value, { photosRequired: isGameLike.value }))
 function pickGameFiles() { gFileInput.value?.click() }
 async function addGameImages(files) {
+  if (imgUploading.value) return
   const list = Array.from(files || []).filter(file => file.type?.startsWith('image/'))
   if (!list.length) return
   imgError.value = ''; imgUploading.value = true
-  for (const file of list) {
-    const res = await uploadImage(file, 'games')
-    if (res.error) { imgError.value = res.error; break }
-    f.value.images.push(res.url)
+  try {
+    for (const file of list) {
+      const res = await uploadImage(file, 'games')
+      if (res.error || !res.url) { imgError.value = res.error || 'The photo could not be uploaded. Please try again.'; break }
+      f.value.images.push(res.url)
+    }
+  } catch {
+    imgError.value = 'The photo could not be uploaded. Please try again.'
+  } finally {
+    imgUploading.value = false
+    if (gFileInput.value) gFileInput.value.value = ''
   }
-  imgUploading.value = false
-  if (gFileInput.value) gFileInput.value.value = ''
 }
 function onGameFilesChange(e) { addGameImages(e.target.files) }
 function onGameDrop(e) { dropActive.value = false; addGameImages(e.dataTransfer?.files) }
@@ -183,7 +196,7 @@ onMounted(async () => {
     if (hostDraft.basics) Object.assign(f.value, hostDraft.basics)
     // Court + time picked → Contact (step 3). Otherwise land where the host left
     // off — the autosaved step (hard-reload recovery) or Location & Schedule.
-    step.value = pendingCourtId ? 3 : (hostDraft.step >= 1 && hostDraft.step <= 3 ? hostDraft.step : 2)
+    step.value = pendingCourtId ? 3 : (hostDraft.step >= 1 && hostDraft.step <= 4 ? hostDraft.step : 2)
     if (pendingCourtId) gCourtLoading.value = true
     clearHostDraft()
   } else if (dType === 'tournament') {
@@ -201,7 +214,7 @@ onMounted(async () => {
       step.value = 3                        // land back on the bracket chart
     } else {
       // Autosaved before teams were picked (hard-reload recovery) → resume the step.
-      step.value = hostDraft.step >= 1 && hostDraft.step <= 4 ? hostDraft.step : 1
+      step.value = hostDraft.step >= 1 && hostDraft.step <= 5 ? hostDraft.step : 1
     }
     clearHostDraft()
   }
@@ -214,7 +227,7 @@ onMounted(async () => {
   }
 
   loadMyManagedCommunities()
-  loadLoy()   // host's loyalty balance + country config, for the "pay now" redemption option
+
   await Promise.all([probeGames(), probeTournaments(), probeHangoutLocation()])
   const [locs, courts] = await Promise.all([loadLocations(selectedCity.value?.id), loadFacilities(selectedCity.value?.id)])
   venues.value = locs            // venues (locations) — name lookups
@@ -302,9 +315,11 @@ const supportsRounds = computed(() => {
 // If the sport changes to one that can't run rounds, drop any format the host had picked.
 watch(supportsRounds, (ok) => { if (!ok) { f.value.play_format = ''; f.value.courts_count = 1; f.value.team_size = 2 } })
 const steps = computed(() => type.value === 'tournament'
-  ? ['Basics', 'Teams', 'Schedule', 'Contact']
-  : ['Basics', 'Location & Schedule', 'Contact'])
+  ? ['Details', 'Teams', 'Schedule', 'Contact & rules', 'Review']
+  : ['Details & tickets', 'Place & time', 'Contact & rules', 'Review'])
 const lastStep = computed(() => steps.value.length)
+const stepHeading = ref(null)
+watch(step, async () => { await nextTick(); stepHeading.value?.focus({ preventScroll: true }); stepHeading.value?.scrollIntoView({block:'start',behavior:'auto'}) })
 
 // ── Hangout: WHERE it's hosted is a screen of its own ─────────────────────────
 // A hangout runs either at a Bookboll venue (browse → open a court → book a slot) or
@@ -329,7 +344,8 @@ const isWideStep = computed(() =>
 // A clear title + helper line for every step, so each screen reads as a designed page.
 const stepHead = computed(() => {
   const T = type.value, S = step.value, city = selectedCity.value?.name || 'your city'
-  if (S === lastStep.value) return { title: 'Contact & publish', sub: 'Add how players reach you, then review the details and publish.' }
+  if (S === lastStep.value) return { title: 'Review your event', sub: 'Check your event, what guests pay and what you pay before publishing.' }
+  if (S === lastStep.value - 1) return { title: 'Contact & joining rules', sub: 'Tell guests how to reach you and decide when requests close.' }
   if (T === 'tournament') {
     if (S === 1) return { title: 'Tournament basics', sub: 'Name it, set the entry fee and an optional prize pot.' }
     if (S === 2) return { title: 'Format', sub: 'Choose how many teams will play.' }
@@ -348,7 +364,7 @@ const stepHead = computed(() => {
   return { title: '', sub: '' }
 })
 
-function chooseType(t) { type.value = t; step.value = 1; err.value = '' }
+function chooseType(t) { type.value = t; step.value = 1; err.value = ''; mediaAttempted.value = false }
 
 // ── GAME: slot loading ──
 async function loadGameSlots() {
@@ -555,42 +571,31 @@ const hostCharge = computed(() => {
 // host setting a price found out what it costs them at the very end. These reuse the
 // same percentage and rounding as hostCharge, so the preview and the bill can't disagree.
 const feeUnit = computed(() => type.value === 'tournament' ? 'team' : type.value === 'event' ? 'person' : 'player')
-const feeUnits = computed(() => feeUnit.value + 's')
+const feeUnits = computed(() => feeUnit.value === 'person' ? 'people' : feeUnit.value + 's')
 // How many heads the fee is charged on: the roster cap (games/hangouts) or the bracket
 // size (tournaments — not chosen until step 2, so 0 there means "not known yet").
 const feeCount = computed(() => type.value === 'tournament' ? (Number(numTeams.value) || 0) : (Number(f.value.max_players) || 0))
 const feePerHead = computed(() => seatFeeAt(Number(f.value.price_per_person) || 0, seatPct.value))
 const feeTotal = computed(() => seatFeeAt((Number(f.value.price_per_person) || 0) * feeCount.value, seatPct.value))
 const feeNet = computed(() => Math.max(0, (Number(f.value.price_per_person) || 0) - feePerHead.value))
-// "Players" / "Teams" / "People" — the same word the note opens its last sentence with.
-const feeUnitsCap = computed(() => feeUnits.value[0].toUpperCase() + feeUnits.value.slice(1))
 
-// ── Host loyalty redemption (Bookboll marketplace only) ──────────────────────
-// The HOST is paying Bookboll now (court deposit/full + seats service fee — all
-// Bookboll's money). Points are redeemed ENTIRELY from that Bookboll-owned "due now",
-// so the venue's on-arrival balance (the provider's share) is never reduced. Joiners
-// pay the host offline and have NO Bookboll fee, so they get no redemption — by design.
-const loyaltyCfg = ref(null)
-const loyaltyBalance = ref(0)
-const useLoyalty = ref(false)
-const loyaltyCountryId = computed(() => selectedCountry.value?.id || null)
-const loyaltyMax = computed(() => loyaltyCfg.value
-  ? maxRedeemable({ points: loyaltyBalance.value, platformFee: hostCharge.value.dueNow, orderTotal: hostCharge.value.dueNow, cfg: loyaltyCfg.value })
-  : { points: 0, amount: 0 })
-// Points are held in the host's own currency, and the own-spot publish fee is in
-// USD with no rate to convert between them — the server refuses points against it,
-// so the wizard must not offer them either.
-const loyaltyEligible = computed(() => !isWhiteLabel.value && isCustomer.value && !hostCharge.value.ownSpotMin && hostCharge.value.dueNow > 0 && loyaltyMax.value.amount > 0)
-const loyaltyAmount = computed(() => (loyaltyEligible.value && useLoyalty.value) ? loyaltyMax.value.amount : 0)
-const loyaltyPoints = computed(() => (loyaltyEligible.value && useLoyalty.value) ? loyaltyMax.value.points : 0)
+// The full court payment may include provider revenue. Only an explicit
+// server quote of commission + Bookboll fees can fund a rewards discount.
+const rewardSelection = ref(null)
+const rewardsControl = ref(null)
+const loyaltyCountryId = computed(() => ownSpot.value || type.value === 'tournament' ? selectedCountry.value?.id : gCourtObj.value?.country_id || selectedCountry.value?.id || null)
+const rewardsCheckout = computed(() => ({
+  game_type:type.value,listing_id:ownSpot.value ? null : gCourt.value,
+  country_id:loyaltyCountryId.value,city_id:selectedCity.value?.id,
+  game_date:ownSpot.value ? f.value.own_date : gDate.value,
+  start_time:gameRange.value.start,end_time:gameRange.value.end,
+  price_per_person:Number(f.value.price_per_person)||0,max_players:Number(f.value.max_players)||0,
+  num_teams:Number(numTeams.value)||0,ticket_mode:effectiveTicketMode.value,
+  payment_method:payMethod.value,community_id:communityId.value || null,
+  matches:type.value === 'tournament' ? rounds.value.flatMap((rd,r)=>rd.games.map((gm,g)=>({round:r,index:g,listing_id:gm.listing_id,date:gm.date,start_time:gm.slot?.start_time,end_time:gm.slot?.end_time}))) : [],
+}))
+const loyaltyAmount = computed(() => rewardSelection.value?.amount || 0)
 const dueNowNet = computed(() => Math.max(0, +(hostCharge.value.dueNow - loyaltyAmount.value).toFixed(2)))
-async function loadLoy() {
-  useLoyalty.value = false; loyaltyCfg.value = null; loyaltyBalance.value = 0
-  if (isWhiteLabel.value || !isCustomer.value) return
-  const [cfg, bal] = await Promise.all([loadLoyaltyConfig(loyaltyCountryId.value), loadCustomerLoyalty()])
-  loyaltyCfg.value = cfg
-  loyaltyBalance.value = Number(bal?.points || 0)
-}
 
 // The event's START as a datetime-local string ("YYYY-MM-DDTHH:MM"), used to cap the
 // "request to join" deadline — you can't apply once the event has started. Games/hangouts
@@ -927,14 +932,28 @@ const orderError = computed(() => {
 })
 
 // ── navigation + validation ──
-function validateStep() {
+function validateStep(checkStep = step.value) {
   err.value = ''
-  if (step.value === 1) {
-    if (!f.value.title.trim()) return (err.value = type.value === 'tournament' ? 'Give your tournament a name.' : type.value === 'event' ? 'Give your event a title.' : 'Give your game a title, e.g. "Friday 5-a-side".'), false
-    if (type.value !== 'event' && !f.value.sport.trim()) return (err.value = 'Which sport is it?'), false
+  if (checkStep === 1) {
+    mediaAttempted.value = true
+    const firstInvalid = Object.keys(basicsErrors.value)[0]
+    if (firstInvalid) {
+      err.value = basicsErrors.value[firstInvalid]
+      nextTick(() => {
+        const field = ({ title: titleInput, sport: sportInput, max_players: capacityInput, price_per_person: priceInput })[firstInvalid]?.value
+        field?.scrollIntoView({ block: 'center', behavior: 'auto' })
+        field?.focus({ preventScroll: true })
+      })
+      return false
+    }
+    if (mediaErrors.value.description || mediaErrors.value.images) {
+      err.value = mediaErrors.value.description || mediaErrors.value.images
+      nextTick(() => (mediaErrors.value.description ? descriptionInput.value : photoButton.value)?.focus())
+      return false
+    }
   }
   if (isGameLike.value) {
-    if (step.value === 2) {
+    if (checkStep === 2) {
       if (needsSpotChoice.value) return (err.value = "Choose where you'll host it — a Bookboll venue or your own spot."), false
       if (ownSpot.value) {
         if (!f.value.loc_name.trim()) return (err.value = 'Give your spot a name (shown publicly).'), false
@@ -945,10 +964,10 @@ function validateStep() {
       }
     }
   } else {
-    if (step.value === 2) {
+    if (checkStep === 2) {
       if (!numTeams.value) return (err.value = 'Choose how many teams will play.'), false
     }
-    if (step.value === 3) {
+    if (checkStep === 3) {
       if (!allGamesScheduled.value) return (err.value = 'Tap every game in the bracket to set its court, date & time.'), false
       if (slotClashes.value) return (err.value = slotClashes.value), false
       if (orderError.value) return (err.value = orderError.value), false
@@ -956,7 +975,14 @@ function validateStep() {
   }
   return true
 }
-function next() { if (validateStep()) step.value++ }
+function next() {
+  if (imgUploading.value) { err.value = 'Wait for your photos to finish uploading.'; return }
+  if (step.value === lastStep.value - 1) {
+    if (!f.value.host_name.trim() || !(f.value.host_whatsapp.trim() || f.value.host_phone.trim())) { err.value = 'Add your name and a WhatsApp or phone number.'; return }
+    if (f.value.request_deadline && eventStartLocal.value && new Date(f.value.request_deadline) >= new Date(eventStartLocal.value)) { err.value = 'Set the join deadline before your event starts.'; return }
+  }
+  if (validateStep()) step.value++
+}
 // Backing all the way out to the type chooser is an explicit "start over" —
 // drop the autosaved draft so it doesn't resurrect on the next visit.
 function back() {
@@ -983,7 +1009,7 @@ function continueDraft() {
   if (dType === 'game' || dType === 'event') {
     type.value = dType
     if (hostDraft.basics) Object.assign(f.value, hostDraft.basics)
-    step.value = hostDraft.step >= 1 && hostDraft.step <= 3 ? hostDraft.step : 2
+    step.value = hostDraft.step >= 1 && hostDraft.step <= 4 ? hostDraft.step : 2
   } else if (dType === 'tournament') {
     type.value = 'tournament'
     if (hostDraft.basics) Object.assign(f.value, hostDraft.basics)
@@ -996,7 +1022,7 @@ function continueDraft() {
       activeBracketRound.value = hostDraft.matchRound != null ? hostDraft.matchRound : defaultBracketRound()
       step.value = 3
     } else {
-      step.value = hostDraft.step >= 1 && hostDraft.step <= 4 ? hostDraft.step : 1
+      step.value = hostDraft.step >= 1 && hostDraft.step <= 5 ? hostDraft.step : 1
     }
   }
   clearHostDraft()
@@ -1004,6 +1030,7 @@ function continueDraft() {
 
 // ── publish ──
 async function publishGame() {
+  if (rewardSelection.value && !rewardsControl.value?.validate()) { err.value = 'Review your refreshed points discount before publishing.'; return }
   saving.value = true
   const own = ownSpot.value
   const seats = Number(f.value.max_players) || 10
@@ -1027,7 +1054,7 @@ async function publishGame() {
     approval_mode: f.value.approval_mode,
     // The server prices the bill and reserves the court — it only needs to know
     // how the host wants to collect seat money and how many points to spend.
-    loyalty_redeem: loyaltyAmount.value,
+    rewards: rewardSelection.value,
     ticket_mode: effectiveTicketMode.value,
     payment_method: payMethod.value || null,
     // Saved with the game itself, so there's no follow-up write to go wrong.
@@ -1048,6 +1075,7 @@ async function publishGame() {
   published.value = { id: res.game.id, type: type.value }   // show the share modal
 }
 async function publishTournament() {
+  if (rewardSelection.value && !rewardsControl.value?.validate()) { err.value = 'Review your refreshed points discount before publishing.'; return }
   saving.value = true
   const res = await createTournament({
     host_customer_id: isCustomer.value ? customer.value.id : null,
@@ -1056,7 +1084,7 @@ async function publishTournament() {
     title: f.value.title, sport: f.value.sport, skill_level: f.value.skill_level, description: f.value.description,
     price_per_person: Number(f.value.price_per_person) || 0, num_teams: numTeams.value,
     prize_pot: prizeTotal.value, prize_note: prizeBreakdown.value,
-    loyalty_redeem: loyaltyAmount.value,
+    rewards: rewardSelection.value,
     ticket_mode: effectiveTicketMode.value,
     payment_method: payMethod.value || null,
     approval_mode: f.value.approval_mode,
@@ -1082,7 +1110,10 @@ async function publishTournament() {
 // "Publish" first validates + checks contact, then pops the "important bits" waiver modal.
 const showWaiver = ref(false)
 async function publish() {
-  if (!validateStep()) return
+  if (imgUploading.value) { err.value = 'Wait for your photos to finish uploading.'; return }
+  for (let checkStep = 1; checkStep < lastStep.value; checkStep++) {
+    if (!validateStep(checkStep)) { step.value = checkStep; return }
+  }
   // Mandatory: must have a Bookboll account before publishing (the host is linked to it).
   if (!isCustomer.value && !(await ensureSignedIn())) return
   if (!f.value.host_name.trim() || !(f.value.host_whatsapp.trim() || f.value.host_phone.trim())) { err.value = 'Add your name and a WhatsApp/phone so players can reach you.'; return }
@@ -1210,12 +1241,12 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 </script>
 
 <template>
-  <div class="hg" :class="{ 'hg-wide': isWideStep }">
+  <div class="hg" :class="{ 'hg-wide': isWideStep, 'hg-choosing': !type, 'hg-reviewing': step===lastStep }">
     <router-link :to="communityId ? `/communities/${communityId}` : '/games'" class="cback"><ArrowLeft :size="16" /> Back to {{ communityId ? 'community' : 'events' }}</router-link>
 
     <!-- games not enabled yet -->
     <div v-if="gamesEnabled === false" class="hg-signin">
-      <Ticket :size="34" /><h2>Events are coming soon!</h2>
+      <CalendarDays :size="34" /><h2>Events are coming soon!</h2>
       <p>Hosting isn't switched on just yet. Check back shortly.</p>
       <router-link to="/" class="hg-signin-btn">Back to home</router-link>
     </div>
@@ -1231,7 +1262,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
     <template v-else-if="!type">
       <div v-if="communityId && communityName" class="hg-community-chip"><UsersRound :size="13" /> Posting to <b>{{ communityName }}</b></div>
       <h1>What are you hosting{{ communityId && communityName ? ' for ' + communityName : '' }}?</h1>
-      <p class="hg-sub">Pick one. You can set everything up in under a minute.</p>
+      <p class="hg-sub">Choose the kind of gathering you have in mind. We’ll guide you through the details, location and costs.</p>
 
       <!-- Unfinished draft: continue it, or start something new below -->
       <div v-if="draftAvailable" class="hg-draft">
@@ -1263,13 +1294,13 @@ function goToPublished() { const p = publishedPath.value; published.value = null
       <div class="hg-choose">
         <button class="hg-choice" @click="chooseType('game')">
           <div class="hg-choice-ico game"><Gamepad2 :size="30" /></div>
-          <div class="hg-choice-t">A Game</div>
-          <div class="hg-choice-d">A one-off pickup game. Pick a venue & time, set a price, players request to join.</div>
+          <div class="hg-choice-t">Host a game</div>
+          <div class="hg-choice-d">For football, pickleball and other sports. Choose the level, book a listing and bring players together.</div><span class="hg-choice-go">Set up a game <ArrowRight :size="17" /></span>
         </button>
         <button class="hg-choice" @click="chooseType('event')">
           <div class="hg-choice-ico event"><Calendar :size="30" /></div>
-          <div class="hg-choice-t">A Hangout</div>
-          <div class="hg-choice-d">A casual get-together — book a venue or use your own spot. Set who can join; no sport or skill needed.</div>
+          <div class="hg-choice-t">Plan a hangout</div>
+          <div class="hg-choice-d">For picnics, board games or a casual meetup. Choose your place and decide who can join.</div><span class="hg-choice-go">Set up a hangout <ArrowRight :size="17" /></span>
         </button>
         <!-- <button class="hg-choice" :disabled="tournamentsEnabled === false" @click="chooseType('tournament')">
           <div class="hg-choice-ico tourn"><Trophy :size="30" /></div>
@@ -1284,7 +1315,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
         <div class="hg-how-steps">
           <div class="hg-how-step"><span class="hg-how-n">1</span><div><b>Set it up</b><span>Pick the type, choose a venue or your own spot, then set the time, price and photos.</span></div></div>
           <div class="hg-how-step"><span class="hg-how-n">2</span><div><b>People request to join</b><span>Your event is listed on Bookboll and shareable by link — players send a request.</span></div></div>
-          <div class="hg-how-step"><span class="hg-how-n">3</span><div><b>Accept &amp; meet up</b><span>Review who's requesting, accept your players, and settle payment in person.</span></div></div>
+          <div class="hg-how-step"><span class="hg-how-n">3</span><div><b>Accept &amp; meet up</b><span>Manage requests, share updates and welcome your guests.</span></div></div>
         </div>
         <div class="hg-rules"><ShieldCheck :size="16" /><span><b>Keep it respectful.</b> Bookboll events are public group activities — no private, unsafe or indecent gatherings. Hosts who break this can be removed.</span></div>
       </div>
@@ -1293,22 +1324,22 @@ function goToPublished() { const p = publishedPath.value; published.value = null
     <!-- WIZARD -->
     <template v-else>
       <!-- progress -->
-      <div class="hg-steps">
+      <nav class="hg-steps" aria-label="Event creation progress">
         <template v-for="(s, i) in steps" :key="s">
-          <div class="hg-step" :class="{ on: step === i + 1, done: step > i + 1 }">
+          <button type="button" class="hg-step" :aria-label="`Step ${i + 1}: ${s}`" :class="{ on: step === i + 1, done: step > i + 1 }" :disabled="i+1>step || saving" :aria-current="step===i+1 ? 'step' : undefined" @click="step=i+1;err=''">
             <span class="hg-step-n"><Check v-if="step > i + 1" :size="13" /><template v-else>{{ i + 1 }}</template></span>
             <span class="hg-step-t">{{ s }}</span>
-          </div>
+          </button>
           <span v-if="i < steps.length - 1" class="hg-step-bar" :class="{ done: step > i + 1 }"></span>
         </template>
-      </div>
+      </nav>
 
       <div class="hg-stephead">
         <div v-if="communityId && communityName" class="hg-community-chip"><UsersRound :size="13" /> Posting to <b>{{ communityName }}</b></div>
         <div class="hg-badge" :class="type">
           <component :is="type === 'tournament' ? Trophy : type === 'event' ? Calendar : Gamepad2" :size="15" /> {{ type === 'tournament' ? 'Tournament' : type === 'event' ? 'Hangout' : 'Game' }}
         </div>
-        <h2 class="hg-steptitle">{{ stepHead.title }}</h2>
+        <span class="hg-stepcount">Step {{ step }} of {{ lastStep }}</span><h2 ref="stepHeading" tabindex="-1" class="hg-steptitle">{{ stepHead.title }}</h2>
         <p v-if="stepHead.sub" class="hg-stepsub">{{ stepHead.sub }}</p>
       </div>
 
@@ -1334,13 +1365,15 @@ function goToPublished() { const p = publishedPath.value; published.value = null
       <!-- STEP 1 — basics (both) -->
       <div v-if="step === 1" class="hg-card">
         <label class="hg-l">{{ type === 'tournament' ? 'Tournament name *' : type === 'event' ? 'Hangout title *' : 'Title *' }}</label>
-        <input v-model="f.title" class="hg-in" :placeholder="type === 'tournament' ? 'e.g. Ramadan Cup' : type === 'event' ? 'e.g. Sunday picnic & football' : 'e.g. Friday night 5-a-side'" />
+        <input ref="titleInput" required :aria-invalid="mediaAttempted && !!basicsErrors.title" :aria-describedby="mediaAttempted && basicsErrors.title ? 'host-title-error' : undefined" aria-label="Event title" v-model="f.title" class="hg-in" :placeholder="type === 'tournament' ? 'e.g. Ramadan Cup' : type === 'event' ? 'e.g. Sunday picnic & football' : 'e.g. Friday night 5-a-side'" />
+        <p v-if="mediaAttempted && basicsErrors.title" id="host-title-error" class="hg-field-error">{{ basicsErrors.title }}</p>
         <div class="hg-row">
           <div class="hg-sport-wrap">
             <label class="hg-l">{{ type === 'event' ? 'Activity (optional)' : 'Sport *' }}</label>
-            <input v-model="f.sport" class="hg-in"
+            <input ref="sportInput" :required="type !== 'event'" :aria-invalid="mediaAttempted && !!basicsErrors.sport" :aria-describedby="mediaAttempted && basicsErrors.sport ? 'host-sport-error' : undefined" aria-label="Sport or activity" v-model="f.sport" class="hg-in"
                    :placeholder="type === 'event' ? 'Football, bowling, board games…' : 'Search or type a sport…'"
                    @focus="sportOpen = true" @input="sportOpen = true" @blur="onSportBlur" />
+            <p v-if="mediaAttempted && basicsErrors.sport" id="host-sport-error" class="hg-field-error">{{ basicsErrors.sport }}</p>
             <div v-if="sportOpen" class="hg-sport-dd">
               <button v-for="t in filteredSports" :key="t" type="button" class="hg-sport-opt"
                       :class="{ on: f.sport === t }" @mousedown.prevent="pickSport(t)">{{ t }}</button>
@@ -1354,15 +1387,15 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           </div>
         </div>
         <div class="hg-row">
-          <div v-if="isGameLike"><label class="hg-l">{{ type === 'event' ? 'Max people' : 'Max players' }}</label><input v-model.number="f.max_players" type="number" min="2" class="hg-in" /></div>
+          <div v-if="isGameLike"><label class="hg-l">{{ type === 'event' ? 'Max people' : 'Max players' }}</label><input ref="capacityInput" :aria-invalid="mediaAttempted && !!basicsErrors.max_players" :aria-describedby="mediaAttempted && basicsErrors.max_players ? 'host-capacity-error' : undefined" aria-label="Maximum attendees" v-model.number="f.max_players" type="number" min="2" class="hg-in" /><p v-if="mediaAttempted && basicsErrors.max_players" id="host-capacity-error" class="hg-field-error">{{ basicsErrors.max_players }}</p></div>
           <div v-if="isGameLike" class="hg-wl">
             <div class="hg-prize-tl">
               <div class="hg-prize-tt"><Hourglass :size="15" /> Waitlist when full?</div>
               <div class="hg-prize-td">People can queue — they get in automatically when a spot frees.</div>
             </div>
-            <button type="button" class="hg-switch" :class="{ on: f.allow_waitlist }" @click="f.allow_waitlist = !f.allow_waitlist" :aria-pressed="f.allow_waitlist"><span class="hg-switch-k"></span></button>
+            <button type="button" class="hg-switch" aria-label="Enable waitlist when full" :class="{ on: f.allow_waitlist }" @click="f.allow_waitlist = !f.allow_waitlist" :aria-pressed="f.allow_waitlist"><span class="hg-switch-k"></span></button>
           </div>
-          <div><label class="hg-l">{{ type === 'tournament' ? 'Entry fee per team' : 'Price per person' }} ({{ currency }})</label><input v-model="f.price_per_person" type="number" min="0" class="hg-in" placeholder="0" /></div>
+          <div><label class="hg-l">{{ type === 'tournament' ? 'Entry fee per team' : 'Price per person' }} ({{ currency }})</label><input ref="priceInput" :aria-invalid="mediaAttempted && !!basicsErrors.price_per_person" :aria-describedby="mediaAttempted && basicsErrors.price_per_person ? 'host-price-error' : undefined" aria-label="Price per person" v-model="f.price_per_person" type="number" min="0" class="hg-in" placeholder="0" /><p v-if="mediaAttempted && basicsErrors.price_per_person" id="host-price-error" class="hg-field-error">{{ basicsErrors.price_per_person }}</p></div>
         </div>
         <div v-if="!(Number(f.price_per_person) > 0)" class="hg-note" :class="{ 'hg-feenote': ownSpot }">
           <Info :size="14" />
@@ -1375,38 +1408,11 @@ function goToPublished() { const p = publishedPath.value; published.value = null
             instead and you pay the usual {{ seatPct }}% of seats, with nothing flat on top.
           </span>
           <span v-else>
-            {{ type === 'tournament' ? 'Teams' : type === 'event' ? 'People' : 'Players' }} pay you {{ type === 'tournament' ? 'their entry fee' : type === 'event' ? 'directly' : 'their seat price' }} on arrival — that part isn't handled by Bookboll.
+            Free for guests. You’ll review venue costs and any hosting fee before publishing.
           </span>
         </div>
 
-        <!-- Priced: what Bookboll's cut costs PER HEAD, right where the price is set -->
-        <div v-else class="hg-note hg-feenote">
-          <Info :size="14" />
-          <!-- Own spot, priced: no court to pay for, but Bookboll's seats cut still applies -->
-          <span v-if="ownSpot">
-            No venue to pay for. Bookboll's fee is
-            <b>{{ seatPct }}% — {{ currency }} {{ feePerHead.toLocaleString() }} per {{ feeUnit }}</b><template v-if="effectiveTicketMode === 'stripe'">, split from each Stripe ticket automatically — nothing upfront</template><template v-else-if="feeCount">: <b>{{ currency }} {{ feeTotal.toLocaleString() }}</b> for {{ feeCount }} {{ feeCount === 1 ? feeUnit : feeUnits }}, paid when you publish</template><template v-else>, paid when you publish</template>.
-            {{ feeUnitsCap }} pay you {{ currency }} {{ Number(f.price_per_person).toLocaleString() }} each, directly.
-          </span>
-          <!-- Stripe tickets: the fee comes out of each ticket instead of upfront -->
-          <span v-else-if="effectiveTicketMode === 'stripe'">
-            Bookboll's fee is <b>{{ seatPct }}% — {{ currency }} {{ feePerHead.toLocaleString() }} per {{ feeUnit }}</b>,
-            split from each Stripe ticket automatically. Nothing upfront: a {{ feeUnit }} pays
-            {{ currency }} {{ Number(f.price_per_person).toLocaleString() }} and
-            <b>{{ currency }} {{ feeNet.toLocaleString() }}</b> reaches your Stripe.
-          </span>
-          <!-- Pay on arrival: the fee is charged upfront, on the full roster -->
-          <span v-else>
-            Bookboll's fee is <b>{{ seatPct }}% — {{ currency }} {{ feePerHead.toLocaleString() }} per {{ feeUnit }}</b>.
-            <template v-if="feeCount">
-              For {{ feeCount }} {{ feeCount === 1 ? feeUnit : feeUnits }} that's
-              <b>{{ currency }} {{ feeTotal.toLocaleString() }}</b>, paid when you publish and non-refundable.
-            </template>
-            <template v-else>You pay it when you publish, and it's non-refundable.</template>
-            {{ feeUnitsCap }} pay you {{ currency }} {{ Number(f.price_per_person).toLocaleString() }} each on arrival.
-            <template v-if="type === 'event' && !f.spot_mode"> Hosting at your own spot instead? Then there's no fee at all.</template>
-          </span>
-        </div>
+        <EventFeeSummary v-else :currency="currency" :rate="seatPct" :price="Number(f.price_per_person)" :per-head="feePerHead" :total="feeTotal" :net="feeNet" :count="feeCount" :unit="feeUnit" :units="feeUnits" :online="effectiveTicketMode === 'stripe'" :own-spot="ownSpot" />
 
         <!-- Paid events (all types): how joiners pay — on arrival (default) or online via the host's Stripe -->
         <div v-if="Number(f.price_per_person) > 0" class="hg-tickets">
@@ -1572,30 +1578,36 @@ function goToPublished() { const p = publishedPath.value; published.value = null
         </template>
 
         <!-- Description (+ Photos for games/hangouts) side-by-side to use the width -->
-        <div :class="{ 'hg-twocol': isGameLike }">
+        <section class="hg-media" aria-labelledby="host-media-heading">
+          <h2 id="host-media-heading">{{ isGameLike ? 'Photos & description' : 'Event description' }}</h2>
+          <p class="hg-media-help">{{ isGameLike ? 'Add a description and at least one photo so guests know what to expect.' : 'Tell teams what to expect at your tournament.' }}</p>
+          <div :class="{ 'hg-twocol': isGameLike }">
           <div>
-            <label class="hg-l">About your event</label>
-            <textarea v-model="f.description" class="hg-in hg-ta" :rows="isGameLike ? 6 : 3" placeholder="Tell players what to expect — the format, who should come, what to bring, the vibe. This becomes the 'About this event' section on your event page."></textarea>
+            <label for="host-description" class="hg-l">About your event <span class="hg-required">Required</span></label>
+            <textarea id="host-description" ref="descriptionInput" required :aria-invalid="mediaAttempted && !!mediaErrors.description" :aria-describedby="mediaAttempted && mediaErrors.description ? 'host-description-error' : undefined" v-model="f.description" class="hg-in hg-ta" :rows="isGameLike ? 6 : 3" placeholder="Tell players what to expect — the format, who should come, what to bring, the vibe. This becomes the 'About this event' section on your event page."></textarea>
+            <p v-if="mediaAttempted && mediaErrors.description" id="host-description-error" class="hg-field-error">{{ mediaErrors.description }}</p>
           </div>
           <div v-if="isGameLike">
-            <label class="hg-l">Photos <span class="hg-opt">(optional)</span></label>
-            <div class="hg-drop" :class="{ on: dropActive }" @dragover.prevent="dropActive = true" @dragleave.prevent="dropActive = false" @drop.prevent="onGameDrop">
+            <div id="host-photos-label" class="hg-l">Photos <span class="hg-required">Required</span></div>
+            <div class="hg-drop" role="group" aria-labelledby="host-photos-label" :class="{ on: dropActive }" @dragover.prevent="dropActive = true" @dragleave.prevent="dropActive = false" @drop.prevent="onGameDrop">
               <div v-if="f.images.length" class="hg-imgs">
                 <div v-for="(img, i) in f.images" :key="img" class="hg-img" :style="{ backgroundImage: `url(${img})` }">
                   <span v-if="i === 0" class="hg-img-cover">Cover</span>
                   <button type="button" class="hg-img-x" @click="removeGameImage(i)" title="Remove photo"><X :size="13" /></button>
                 </div>
               </div>
-              <button type="button" class="hg-drop-btn" :disabled="imgUploading" @click="pickGameFiles">
+              <button id="host-photos" ref="photoButton" type="button" class="hg-drop-btn" :aria-describedby="mediaAttempted && mediaErrors.images ? 'host-photos-hint host-photos-error' : 'host-photos-hint'" :disabled="imgUploading" @click="pickGameFiles">
                 <Loader v-if="imgUploading" :size="15" class="hg-spin" /><ImagePlus v-else :size="15" />
                 {{ imgUploading ? 'Uploading…' : (f.images.length ? 'Add more photos' : 'Upload photos') }}
               </button>
               <input ref="gFileInput" type="file" accept="image/*" multiple class="hg-file" @change="onGameFilesChange" />
-              <div class="hg-drop-hint">Drag &amp; drop or click — the first photo is the cover. Auto-compressed.</div>
+              <div id="host-photos-hint" class="hg-drop-hint">Upload at least one photo. The first photo is your cover. You can also drag &amp; drop images here.</div>
             </div>
-            <div v-if="imgError" class="hg-img-err">{{ imgError }}</div>
+            <div v-if="imgError" class="hg-img-err" role="alert">{{ imgError }}</div>
+            <p v-if="mediaAttempted && mediaErrors.images" id="host-photos-error" class="hg-field-error">{{ mediaErrors.images }}</p>
           </div>
-        </div>
+          </div>
+        </section>
       </div>
 
       <!-- STEP 2 (game/hangout) — book a venue OR (hangout) use your own spot -->
@@ -1635,16 +1647,16 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
           <!-- hangout · own spot (no venue booking) -->
           <div v-if="ownSpot" class="hg-card">
-            <label class="hg-l">Spot name * <span class="hg-opt">shown publicly</span></label>
-            <input v-model="f.loc_name" class="hg-in" placeholder="e.g. JBR Beach · Marina / My rooftop" />
-            <label class="hg-l">Exact address / details <span class="hg-opt">optional</span></label>
-            <input v-model="f.loc_address" class="hg-in" placeholder="Building, street, map pin, parking…" />
+            <label for="host-spot-name" class="hg-l">Spot name * <span class="hg-opt">shown publicly</span></label>
+            <input id="host-spot-name" v-model="f.loc_name" class="hg-in" placeholder="e.g. JBR Beach · Marina / My rooftop" />
+            <label for="host-spot-address" class="hg-l">Exact address / details <span class="hg-opt">optional</span></label>
+            <input id="host-spot-address" v-model="f.loc_address" class="hg-in" placeholder="Building, street, map pin, parking…" />
             <div class="hg-row">
-              <div><label class="hg-l">Date *</label><input v-model="f.own_date" type="date" :min="today" class="hg-in" /></div>
-              <div><label class="hg-l">Start time *</label><input v-model="f.own_start" type="time" class="hg-in" /></div>
+              <div><label for="host-date" class="hg-l">Date *</label><input id="host-date" v-model="f.own_date" type="date" :min="today" class="hg-in" /></div>
+              <div><label for="host-time" class="hg-l">Start time *</label><input id="host-time" v-model="f.own_start" type="time" class="hg-in" /></div>
             </div>
             <label class="hg-l">How long does it run?</label>
-            <select v-model.number="gameHours" class="hg-in">
+            <select aria-label="Event duration" v-model.number="gameHours" class="hg-in">
               <option v-for="d in GAME_DURATIONS" :key="d.value" :value="d.value">{{ d.label }}</option>
             </select>
             <div v-if="f.own_start" class="hg-note"><Clock :size="14" /> Runs ~{{ fmtTime(normTime(f.own_start)) }}–{{ fmtTime(addMinutes(normTime(f.own_start), gameHours * 60)) }} ({{ durLabel(gameHours) }}).</div>
@@ -1654,7 +1666,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
                 <div class="hg-prize-tt"><EyeOff :size="16" /> Hide the exact spot?</div>
                 <div class="hg-prize-td">Only people you accept see the address; everyone else sees just the name.</div>
               </div>
-              <button type="button" class="hg-switch" :class="{ on: f.hide_location }" @click="f.hide_location = !f.hide_location" :aria-pressed="f.hide_location"><span class="hg-switch-k"></span></button>
+              <button type="button" class="hg-switch" aria-label="Hide the exact spot" :class="{ on: f.hide_location }" @click="f.hide_location = !f.hide_location" :aria-pressed="f.hide_location"><span class="hg-switch-k"></span></button>
             </div>
             <div class="hg-note"><Info :size="14" /> Your <b>spot name</b> is always shown publicly{{ f.hide_location ? '; the exact address stays private until you accept someone.' : '.' }}</div>
             <!-- No court and no seats means nothing for Bookboll to take a cut of, so a
@@ -1844,12 +1856,12 @@ function goToPublished() { const p = publishedPath.value; published.value = null
       </template>
 
       <!-- LAST STEP — contact + review -->
-      <div v-if="step === lastStep" class="hg-card">
-        <div class="hg-final">
-        <div class="hg-final-main">
+      <div v-if="step >= lastStep - 1" class="hg-card">
+        <div class="hg-final" :class="{review:step===lastStep}">
+        <div v-if="step===lastStep-1" class="hg-final-main">
         <h3 class="hg-h3">How players reach you</h3>
         <div class="hg-column">
-          <div><label class="hg-l">Your name *</label><input v-model="f.host_name" class="hg-in" /></div>
+          <div><label class="hg-l">Your name *</label><input aria-label="Host name" v-model="f.host_name" class="hg-in" /></div>
           <div><label class="hg-l">WhatsApp *</label><PhoneInput v-model="f.host_whatsapp" :default-iso="selectedCountry?.iso_code" placeholder="WhatsApp number" /></div>
         </div>
         <label class="hg-l">Phone (optional)</label>
@@ -1869,7 +1881,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
         <!-- Optional live rounds: the game-day matchmaking engine — only for small
              court/racket sports (1–2 per side), never team sports like football. -->
-        <template v-if="type === 'game' && supportsRounds">
+        <details v-if="type === 'game' && supportsRounds" class="hg-disclosure"><summary>Live rounds <span>Optional</span></summary>
           <label class="hg-l">Run live rounds on game day? <span class="hg-opt">optional — auto-mixed matchups on your courts</span></label>
           <div class="hg-format-grid">
             <button type="button" class="hg-format" :class="{ on: !f.play_format }" @click="f.play_format = ''">
@@ -1896,16 +1908,16 @@ function goToPublished() { const p = publishedPath.value; published.value = null
             </div>
             <div class="hg-hint">On game day you'll get a "Run rounds" panel: generate a round, tap the winners per court, and a live leaderboard updates automatically.</div>
           </div>
-        </template>
+        </details>
         </div><!-- /hg-final-main -->
 
-        <aside class="hg-final-side">
+        <aside v-if="step===lastStep" class="hg-final-side">
         <div class="hg-review">
-          <div class="hg-review-h">Ready to publish</div>
-          <div class="hg-review-row"><span>{{ f.title || (type === 'tournament' ? 'Tournament' : 'Game') }}</span><b>{{ f.sport }}</b></div>
+          <div class="hg-review-h">Your event <button type="button" class="hg-review-edit" @click="step=1"><Pencil :size="14" /> Edit details</button></div>
+          <h3 class="hg-review-title">{{ f.title }}</h3><p v-if="f.sport" class="hg-review-sport">{{ f.sport }}</p>
           <template v-if="isGameLike && gameRange">
-            <div v-if="ownSpot" class="hg-review-row"><span>Where</span><b>{{ f.loc_name }}<span v-if="f.hide_location"> · exact spot hidden</span></b></div>
-            <div class="hg-review-row"><span>When</span><b>{{ ownSpot ? f.own_date : gDate }} · {{ fmtTime(gameRange.start) }}–{{ fmtTime(gameRange.end) }}<span v-if="ownSpot" class="hg-review-dur"> ({{ durLabel(gameHours) }})</span></b></div>
+            <div v-if="!ownSpot" class="hg-review-row"><span>Venue</span><b>{{ gVenueName }}</b><button type="button" class="hg-review-edit" @click="step=2">Change</button></div><div v-if="ownSpot" class="hg-review-row"><span>Where</span><b>{{ f.loc_name }}<span v-if="f.hide_location"> · exact spot hidden</span></b></div>
+            <div class="hg-review-row"><span>When</span><b>{{ fmtDate(ownSpot ? f.own_date : gDate) }} · {{ fmtTime(gameRange.start) }}–{{ fmtTime(gameRange.end) }}<span v-if="ownSpot" class="hg-review-dur"> ({{ durLabel(gameHours) }})</span></b></div>
             <div class="hg-review-row"><span>{{ type === 'event' ? 'People' : 'Players' }}</span><b>up to {{ f.max_players }}</b></div>
             <div class="hg-review-row"><span>Joining</span><b>{{ f.approval_mode === 'instant' ? 'Instant — no approval' : 'You approve requests' }}</b></div>
             <div v-if="Number(f.price_per_person) > 0" class="hg-review-row"><span>Tickets</span><b>{{ effectiveTicketMode === 'stripe' ? 'Online via Stripe' : 'Pay on arrival' }}</b></div>
@@ -1916,7 +1928,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
             <div class="hg-review-row"><span>Joining</span><b>{{ f.approval_mode === 'instant' ? 'Instant — no approval' : 'You approve registrations' }}</b></div>
             <div v-if="Number(f.price_per_person) > 0" class="hg-review-row"><span>Entry fees</span><b>{{ effectiveTicketMode === 'stripe' ? 'Online via Stripe' : 'Pay on arrival' }}</b></div>
           </template>
-          <div v-if="prizeTotal > 0" class="hg-review-row hg-review-prize"><span><Gift :size="14" /> Prize pot</span><b>{{ currency }} {{ prizeTotal.toLocaleString() }}<span v-if="prizeBreakdown"> · {{ prizeBreakdown }}</span></b></div>
+          <div class="hg-review-contact"><b>{{ f.host_name }}</b><span>{{ f.host_whatsapp || f.host_phone }}</span><button type="button" class="hg-review-edit" @click="step=lastStep-1">Edit contact &amp; rules</button></div><div v-if="prizeTotal > 0" class="hg-review-row hg-review-prize"><span><Gift :size="14" /> Prize pot</span><b>{{ currency }} {{ prizeTotal.toLocaleString() }}<span v-if="prizeBreakdown"> · {{ prizeBreakdown }}</span></b></div>
         </div>
 
         <div class="hg-pay">
@@ -1945,15 +1957,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           <div v-else class="hg-pay-row"><span>Service fee · {{ seatPct }}% of {{ type === 'tournament' ? 'team entries' : 'seats' }} <span class="hg-pay-nr">non-refundable</span></span><b>{{ hostCharge.cur }} {{ hostCharge.serviceFee.toLocaleString() }}</b></div>
           <div class="hg-pay-row hg-pay-total"><span>Total due now</span><b>{{ hostCharge.cur }} {{ hostCharge.dueNow.toLocaleString() }}</b></div>
 
-          <!-- Loyalty (Bookboll marketplace) — the host redeems points against what THEY pay
-               Bookboll now; the venue's on-arrival balance is never reduced. -->
-          <label v-if="loyaltyEligible" class="hg-loy">
-            <input type="checkbox" v-model="useLoyalty" class="hg-loy-cb" />
-            <span class="hg-loy-txt">
-              <span class="hg-loy-lbl"><Gift :size="14" /> Use {{ loyaltyMax.points.toLocaleString() }} loyalty points</span>
-              <span class="hg-loy-sub">− {{ hostCharge.cur }} {{ Number(loyaltyMax.amount).toLocaleString() }} off · {{ loyaltyBalance.toLocaleString() }} available</span>
-            </span>
-          </label>
+          <CheckoutRewards v-if="!isWhiteLabel" ref="rewardsControl" v-model="rewardSelection" :kind="type === 'tournament' ? 'host_tournament' : 'host_game'" :country-id="loyaltyCountryId" :currency="hostCharge.cur" :checkout="rewardsCheckout" :total="hostCharge.courtTotal + hostCharge.serviceFee" :due-now="hostCharge.dueNow" :active="step === lastStep && !hostCharge.ownSpotMin" />
           <div v-if="loyaltyAmount > 0" class="hg-pay-row hg-pay-charged"><span>Charged today with points off</span><b>{{ hostCharge.cur }} {{ dueNowNet.toLocaleString() }}</b></div>
 
           <template v-if="arrivalBreakdown.length">
@@ -1977,18 +1981,18 @@ function goToPublished() { const p = publishedPath.value; published.value = null
         </aside>
         </div><!-- /hg-final -->
 
-        <div class="hg-signup">
-          <h3 class="hg-h3">Sign-up questions <span class="hg-opt">optional</span></h3>
+        <details v-if="step===lastStep-1" class="hg-signup hg-disclosure"><summary>Sign-up questions <span>Optional</span></summary>
+
           <p class="hg-signup-sub">Ask people anything when they request to join (e.g. position, kit size, dietary needs).</p>
           <CustomFormBuilder v-model:fields="signupForm" />
-        </div>
+        </details>
       </div>
 
-      <div v-if="err" class="hg-err">{{ err }}</div>
+      <div v-if="err" class="hg-err" role="alert">{{ err }}</div>
 
       <div v-if="!(type === 'tournament' && step === 3 && schedulingMatch)" class="hg-actions">
         <button class="hg-back" @click="back"><ArrowLeft :size="16" /> Back</button>
-        <button v-if="step < lastStep && !needsSpotChoice" class="hg-next" @click="next">Continue <ArrowRight :size="16" /></button>
+        <button v-if="step < lastStep && !needsSpotChoice" class="hg-next" @click="next">{{ step===lastStep-1 ? 'Review event' : 'Continue' }} <ArrowRight :size="16" /></button>
         <button v-else-if="step >= lastStep" class="hg-submit" :disabled="saving" @click="publish">{{ saving ? 'Publishing…' : (dueNowNet > 0 ? `Pay ${hostCharge.cur} ${dueNowNet.toLocaleString()} & publish` : (type === 'tournament' ? 'Publish tournament' : type === 'event' ? 'Publish hangout' : 'Publish game')) }}</button>
       </div>
     </template>
@@ -2029,8 +2033,8 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
 <style scoped>
 .hg { max-width: 880px; margin: 0 auto; }
-.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; }
-.hg h1 { font-size: 27px; font-weight: 900; color: #0f172a; margin: 0; }
+.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-ink, var(--brand)); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; }
+.hg h1 { font-size: 27px; font-weight: 900; color: var(--text, #0f172a); margin: 0; }
 .hg-sub { font-size: 14.5px; color: var(--text-muted, #64748b); margin: 8px 0 18px; line-height: 1.5; }
 
 /* type chooser */
@@ -2039,30 +2043,30 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-choice:hover:not(:disabled) { border-color: var(--brand-accent); transform: translateY(-2px); }
 .hg-choice:disabled { opacity: .55; cursor: not-allowed; }
 .hg-choice-ico { width: 56px; height: 56px; border-radius: 14px; display: flex; align-items: center; justify-content: center; color: #fff; margin-bottom: 12px; }
-.hg-choice-ico.game { background: linear-gradient(135deg,#2563eb,#1d4ed8); }
-.hg-choice-ico.tourn { background: linear-gradient(135deg,#f43f5e,#e11d48); }
+.hg-choice-ico.game { background: var(--brand-tint); color: var(--brand-ink); }
+.hg-choice-ico.tourn { background: var(--danger-bg); color: var(--danger-ink); }
 .hg-choice-ico.event { background: linear-gradient(135deg,#f59e0b,#d97706); }
-.hg-choice-t { font-size: 18px; font-weight: 900; color: #0f172a; }
+.hg-choice-t { font-size: 18px; font-weight: 900; color: var(--text, #0f172a); }
 .hg-choice-d { font-size: 13.5px; color: var(--text-muted, #64748b); line-height: 1.5; margin-top: 5px; }
-.hg-choice-soon { display: inline-block; margin-top: 10px; font-size: 11.5px; font-weight: 800; color: #be123c; background: #fff1f2; padding: 3px 9px; border-radius: 999px; }
+.hg-choice-soon { display: inline-block; margin-top: 10px; font-size: 11.5px; font-weight: 800; color: var(--danger-ink, #be123c); background: var(--danger-bg, #fff1f2); padding: 3px 9px; border-radius: 999px; }
 
 /* chooser: how it works + rules */
 .hg-how { margin-top: 30px; }
 .hg-how-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-light, #94a3b8); margin-bottom: 14px; text-align: center; }
 .hg-how-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .hg-how-step { display: flex; gap: 11px; align-items: flex-start; }
-.hg-how-n { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 13px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
-.hg-how-step b { display: block; font-size: 14px; font-weight: 800; color: #0f172a; }
-.hg-how-step span { font-size: 12.5px; color: var(--text-muted, #64748b); line-height: 1.45; }
-.hg-rules { display: flex; align-items: flex-start; gap: 9px; margin-top: 18px; background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; font-size: 12.5px; color: #475569; line-height: 1.5; }
-.hg-rules svg { color: var(--brand); flex-shrink: 0; margin-top: 1px; }
-.hg-rules b { color: #0f172a; }
+.hg-how-n { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: var(--brand-contrast, #fff); font-size: 13px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.hg-how-step b { display: block; font-size: 14px; font-weight: 800; color: var(--text, #0f172a); }
+.hg-how-step > div > span { font-size: 12.5px; color: var(--text-muted, #64748b); line-height: 1.45; }
+.hg-rules { display: flex; align-items: flex-start; gap: 9px; margin-top: 18px; background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; font-size: 12.5px; color: var(--text-secondary, #475569); line-height: 1.5; }
+.hg-rules svg { color: var(--brand-ink, var(--brand)); flex-shrink: 0; margin-top: 1px; }
+.hg-rules b { color: var(--text, #0f172a); }
 @media (max-width: 640px) { .hg-how-steps { grid-template-columns: 1fr; } }
 
 /* stepper */
 .hg-steps { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .hg-step { display: inline-flex; align-items: center; gap: 7px; color: var(--text-light, #94a3b8); font-weight: 800; font-size: 13px; }
-.hg-step.on { color: #0f172a; }
+.hg-step.on { color: var(--text, #0f172a); }
 .hg-step-n { width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%; background: var(--border, #e2e8f0); color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 900; }
 .hg-step.on .hg-step-n { background: var(--brand); color: #fff; }
 .hg-step.done .hg-step-n { background: #16a34a; color: #fff; }
@@ -2073,60 +2077,60 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
 /* per-step header */
 .hg-stephead { margin-bottom: 18px; }
-.hg-steptitle { font-size: 23px; font-weight: 900; color: #0f172a; margin: 10px 0 4px; letter-spacing: -.01em; }
+.hg-steptitle { font-size: 23px; font-weight: 900; color: var(--text, #0f172a); margin: 10px 0 4px; letter-spacing: -.01em; }
 .hg-stepsub { font-size: 14.5px; color: var(--text-muted, #64748b); line-height: 1.5; margin: 0; max-width: 620px; }
 .hg-format-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
-.hg-format { display: flex; flex-direction: column; align-items: center; gap: 4px; border: 2px solid var(--border, #e2e8f0); background: none; border-radius: 12px; padding: 12px 8px; cursor: pointer; font: inherit; color: #475569; text-align: center; }
-.hg-format b { font-size: 13px; color: #0f172a; }
+.hg-format { display: flex; flex-direction: column; align-items: center; gap: 4px; border: 2px solid var(--border, #e2e8f0); background: none; border-radius: 12px; padding: 12px 8px; cursor: pointer; font: inherit; color: var(--text-secondary, #475569); text-align: center; }
+.hg-format b { font-size: 13px; color: var(--text, #0f172a); }
 .hg-format span { font-size: 10.5px; color: var(--text-muted, #64748b); line-height: 1.3; }
-.hg-format.on { border-color: #0d9488; background: #f0fdfa; }
+.hg-format.on { border-color: #0d9488; background: var(--success-bg, #f0fdfa); }
 .hg-format.on svg { color: #0d9488; }
-.hg-format-opts { background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+.hg-format-opts { background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
 .hg-lock-chips { display: flex; gap: 8px; flex-wrap: wrap; }
-.hg-lock-chip { border: 1.5px solid var(--border, #e2e8f0); background: none; color: #475569; font-weight: 700; font-size: 12.5px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+.hg-lock-chip { border: 1.5px solid var(--border, #e2e8f0); background: none; color: var(--text-secondary, #475569); font-weight: 700; font-size: 12.5px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
 .hg-lock-chip.on { background: #0f172a; border-color: #0f172a; color: #fff; }
-.hg-community-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: #0d9488; background: #f0fdfa; border: 1px solid #99f6e4; padding: 5px 12px; border-radius: 999px; margin-bottom: 10px; }
+.hg-community-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: #0d9488; background: var(--success-bg, #f0fdfa); border: 1px solid var(--success-border, #99f6e4); padding: 5px 12px; border-radius: 999px; margin-bottom: 10px; }
 .hg-community-chip b { font-weight: 900; }
 .hg-cv { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.hg-cv-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; background: none; border: 1.5px solid var(--border, #e2e8f0); border-radius: 14px; padding: 13px 14px; cursor: pointer; font: inherit; color: #475569; }
+.hg-cv-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; background: none; border: 1.5px solid var(--border, #e2e8f0); border-radius: 14px; padding: 13px 14px; cursor: pointer; font: inherit; color: var(--text-secondary, #475569); }
 .hg-cv-opt svg { color: var(--text-muted, #64748b); }
-.hg-cv-opt b { font-size: 14.5px; font-weight: 800; color: #0f172a; margin-top: 2px; }
+.hg-cv-opt b { font-size: 14.5px; font-weight: 800; color: var(--text, #0f172a); margin-top: 2px; }
 .hg-cv-opt span { font-size: 12px; color: var(--text-muted, #64748b); line-height: 1.4; }
-.hg-cv-opt.on { border-color: #0d9488; background: #f0fdfa; }
+.hg-cv-opt.on { border-color: #0d9488; background: var(--success-bg, #f0fdfa); }
 .hg-cv-opt.on svg, .hg-cv-opt.on b { color: #0d9488; }
 @media (max-width: 560px) { .hg-cv { grid-template-columns: 1fr; } }
-.hg-hold { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 13px; color: #0369a1; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 12px; padding: 9px 12px; margin-bottom: 14px; }
+.hg-hold { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 13px; color: var(--info-ink, #0369a1); background: var(--info-bg, #f0f9ff); border: 1px solid var(--info-border, #bae6fd); border-radius: 12px; padding: 9px 12px; margin-bottom: 14px; }
 .hg-hold-t { flex: 1; min-width: 180px; line-height: 1.35; }
 .hg-hold-t b { font-variant-numeric: tabular-nums; font-weight: 900; }
-.hg-hold.warn { color: #b45309; background: #fffbeb; border-color: #fde68a; }
+.hg-hold.warn { color: var(--warning-ink, #b45309); background: var(--warning-bg, #fffbeb); border-color: var(--warning-border, #fde68a); }
 .hg-hold-btn { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; background: var(--surface, #ffffff); border: 1px solid currentColor; color: inherit; font: inherit; font-weight: 800; font-size: 12px; padding: 6px 11px; border-radius: 999px; cursor: pointer; }
 .hg-hold-btn:disabled { opacity: .6; cursor: default; }
 
 .hg-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 800; padding: 5px 12px; border-radius: 999px; margin-bottom: 0; }
-.hg-badge.game { background: #dbeafe; color: #1d4ed8; }
-.hg-badge.tournament { background: #ffe4e6; color: #be123c; }
-.hg-badge.event { background: #fef3c7; color: #b45309; }
+.hg-badge.game { background: var(--info-bg, #dbeafe); color: var(--info-ink, #1d4ed8); }
+.hg-badge.tournament { background: var(--danger-bg, #ffe4e6); color: var(--danger-ink, #be123c); }
+.hg-badge.event { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #b45309); }
 /* Hangout "where will you host it?" — the venue flow and the own-spot flow each get
    a screen of their own, chosen on cards in the same language as the type chooser. */
 .hg-spotchoose { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); margin-top: 2px; }
-.hg-choice-ico.venue { background: linear-gradient(135deg,#0f766e,#0d5f58); }
-.hg-choice-ico.own { background: linear-gradient(135deg,#7c3aed,#6d28d9); }
+.hg-choice-ico.venue { background: var(--success-bg); color: var(--success-ink); }
+.hg-choice-ico.own { background: var(--violet-bg); color: var(--violet-ink); }
 .hg-choice-tags { display: flex; flex-direction: column; gap: 6px; margin-top: 13px; }
 .hg-choice-tags span { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--text-muted, #64748b); }
-.hg-choice-fee { color: #b45309; }
+.hg-choice-fee { color: var(--warning-ink, #b45309); }
 /* Chosen path, with the way back to the choice */
 .hg-modebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--bg, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 9px 10px 9px 14px; margin-bottom: 14px; }
-.hg-modebar-t { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 800; color: #0f172a; }
-.hg-modebar-x { border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #0f172a; font-weight: 800; font-size: 12.5px; padding: 6px 13px; border-radius: 9px; cursor: pointer; }
+.hg-modebar-t { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 800; color: var(--text, #0f172a); }
+.hg-modebar-x { border: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text, #0f172a); font-weight: 800; font-size: 12.5px; padding: 6px 13px; border-radius: 9px; cursor: pointer; }
 .hg-modebar-x:hover { border-color: var(--brand-accent); }
 
 .hg-card { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 16px 18px; margin-bottom: 14px; }
-.hg-h3 { font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 14px; }
-.hg-signup { margin-top: 18px; padding-top: 16px; border-top: 1px solid #eef2f6; }
+.hg-h3 { font-size: 17px; font-weight: 800; color: var(--text, #0f172a); margin: 0 0 14px; }
+.hg-signup { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border, #eef2f6); }
 .hg-signup .hg-h3 { margin-bottom: 4px; }
-.hg-opt { font-size: 11.5px; font-weight: 700; color: var(--text-muted, #64748b); background: #f1f5f9; border-radius: 999px; padding: 2px 9px; vertical-align: middle; margin-left: 6px; }
+.hg-opt { font-size: 11.5px; font-weight: 700; color: var(--text-muted, #64748b); background: var(--bg, #f1f5f9); border-radius: 999px; padding: 2px 9px; vertical-align: middle; margin-left: 6px; }
 .hg-signup-sub { font-size: 13px; color: var(--text-muted, #64748b); margin: 0 0 12px; }
-.hg-l { display: block; font-size: 13.5px; font-weight: 700; color: #334155; margin: 10px 0 5px; }
+.hg-l { display: block; font-size: 13.5px; font-weight: 700; color: var(--text-secondary, #334155); margin: 10px 0 5px; }
 .hg-card > .hg-l:first-child, .hg-final-main > .hg-l:first-child, .hg-twocol > div > .hg-l:first-child { margin-top: 0; }
 /* Two-column field layouts — use the horizontal space, cut vertical height. */
 .hg-twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; align-items: start; }
@@ -2136,7 +2140,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-final-side > .hg-review, .hg-final-side > .hg-pay { margin-top: 0; }
 .hg-final-side > .hg-pay { margin-top: 12px; }
 @media (max-width: 760px) { .hg-twocol, .hg-final { grid-template-columns: 1fr; } }
-.hg-opt { font-size: 11px; font-weight: 700; color: var(--text-light, #94a3b8); background: #f1f5f9; padding: 1px 7px; border-radius: 999px; margin-left: 4px; }
+.hg-opt { font-size: 11px; font-weight: 700; color: var(--text-light, #94a3b8); background: var(--bg, #f1f5f9); padding: 1px 7px; border-radius: 999px; margin-left: 4px; }
 .hg-in { width: 100%; box-sizing: border-box; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 12px 14px; font-size: 15px; outline: none; background: var(--surface, #ffffff); }
 .hg-in:focus { border-color: var(--brand-accent); }
 .hg-ta { resize: vertical; font-family: inherit; }
@@ -2145,19 +2149,19 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-note > svg { position: absolute; left: 0; top: 2px; }
 /* Fee preview: it quotes real money, so it sits a shade darker than a plain hint */
 .hg-feenote { color: var(--text-muted, #64748b); font-size: 13px; line-height: 1.5; }
-.hg-feenote b { color: #0f172a; font-weight: 800; }
+.hg-feenote b { color: var(--text, #0f172a); font-weight: 800; }
 
 /* How-players-pay ticket-mode cards (paid games/hangouts) */
 .hg-tickets { margin-top: 14px; }
 .hg-tk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
 .hg-tk { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; padding: 13px 14px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 14px; background: var(--surface, #ffffff); cursor: pointer; transition: border-color .15s, box-shadow .15s; }
-.hg-tk:hover { border-color: #cbd5e1; }
+.hg-tk:hover { border-color: var(--border-strong, #cbd5e1); }
 .hg-tk.on { border-color: var(--brand, #16a34a); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand, #16a34a) 12%, transparent); }
-.hg-tk-t { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13.5px; font-weight: 800; color: #0f172a; }
+.hg-tk-t { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13.5px; font-weight: 800; color: var(--text, #0f172a); }
 .hg-tk-d { font-size: 12px; color: var(--text-muted, #64748b); line-height: 1.45; }
-.hg-tk-chip { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: #166534; background: #dcfce7; padding: 2px 7px; border-radius: 999px; }
-.hg-tk-connect { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px; border: 1px dashed #cbd5e1; border-radius: 10px; font-size: 12.5px; color: #475569; line-height: 1.45; }
-.hg-tk-connect.ok { border-style: solid; border-color: #bbf7d0; background: #f0fdf4; color: #166534; font-weight: 700; }
+.hg-tk-chip { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--success-ink, #166534); background: var(--success-bg, #dcfce7); padding: 2px 7px; border-radius: 999px; }
+.hg-tk-connect { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--border-strong, #cbd5e1); border-radius: 10px; font-size: 12.5px; color: var(--text-secondary, #475569); line-height: 1.45; }
+.hg-tk-connect.ok { border-style: solid; border-color: var(--success-border, #bbf7d0); background: var(--success-bg, #f0fdf4); color: var(--success-ink, #166534); font-weight: 700; }
 .hg-tk-connect > span:first-child { flex: 1; min-width: 180px; }
 .hg-sc-ok { display: flex; gap: 7px; align-items: flex-start; }
 .hg-sc-chip { margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: rgba(127,127,127,.16); }
@@ -2172,48 +2176,48 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-sc-lbl { font-size: 12px; font-weight: 600; margin-top: 4px; }
 .hg-sc-opt { font-weight: 400; opacity: .6; }
 .hg-sc-note { margin: 4px 0 2px; font-size: 11.5px; line-height: 1.5; opacity: .68; }
-.hg-sc-err { margin-top: 10px; font-size: 12.5px; color: #dc2626; }
-.hg-tk-acct { font-family: ui-monospace, monospace; font-size: 11.5px; font-weight: 600; color: #15803d; background: #dcfce7; padding: 2px 8px; border-radius: 999px; }
+.hg-sc-err { margin-top: 10px; font-size: 12.5px; color: var(--danger-ink, #dc2626); }
+.hg-tk-acct { font-family: ui-monospace, monospace; font-size: 11.5px; font-weight: 600; color: var(--success-ink, #15803d); background: var(--success-bg, #dcfce7); padding: 2px 8px; border-radius: 999px; }
 .hg-tk-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: none; border-radius: 999px; background: #635bff; color: #fff; font-size: 12.5px; font-weight: 800; cursor: pointer; white-space: nowrap; }
 .hg-tk-btn:disabled { opacity: .6; cursor: default; }
-.hg-pay-free { color: #16a34a; }
+.hg-pay-free { color: var(--success-ink, #16a34a); }
 @media (max-width: 640px) { .hg-tk-grid { grid-template-columns: 1fr; } }
 .hg-hint { font-size: 12px; color: var(--text-light, #94a3b8); margin-top: 5px; line-height: 1.45; }
-.hg-rec { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #0f766e; background: #ccfbf1; border-radius: 999px; padding: 2px 7px; margin-left: 6px; }
-.hg-feehint { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, white); border: 1px solid #99f6e4; border-radius: 10px; padding: 10px 12px; margin-top: 10px; line-height: 1.45; }
-.hg-feehint b { color: #0f172a; }
-.hg-auto { display: flex; align-items: center; gap: 14px; background: linear-gradient(135deg,#fff1f2,#ffe4e6); border: 1.5px solid #fecdd3; border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+.hg-rec { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--success-ink, #0f766e); background: var(--success-bg, #ccfbf1); border-radius: 999px; padding: 2px 7px; margin-left: 6px; }
+.hg-feehint { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; color: var(--brand-ink, var(--brand)); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); border: 1px solid var(--success-border, #99f6e4); border-radius: 10px; padding: 10px 12px; margin-top: 10px; line-height: 1.45; }
+.hg-feehint b { color: var(--text, #0f172a); }
+.hg-auto { display: flex; align-items: center; gap: 14px; background: linear-gradient(135deg,var(--danger-bg, #fff1f2),var(--danger-bg, #ffe4e6)); border: 1.5px solid #fecdd3; border-radius: 14px; padding: 16px; margin-bottom: 14px; }
 .hg-auto-l { flex: 1; min-width: 0; }
-.hg-auto-t { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 900; color: #be123c; }
-.hg-auto-d { font-size: 12.5px; color: #9f1239; margin-top: 4px; line-height: 1.45; }
+.hg-auto-t { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 900; color: var(--danger-ink, #be123c); }
+.hg-auto-d { font-size: 12.5px; color: var(--danger-ink, #9f1239); margin-top: 4px; line-height: 1.45; }
 .hg-auto-btn { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; background: #e11d48; color: #fff; font-weight: 800; font-size: 14px; padding: 12px 18px; border: none; border-radius: 12px; cursor: pointer; }
 .hg-auto-btn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Auto-schedule result plan (informs the host what was decided) */
-.hg-ap { background: #f0fdf4; border: 1.5px solid #bbf7d0; border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
-.hg-ap-h { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 900; color: #15803d; margin-bottom: 8px; }
-.hg-ap-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; color: #166534; padding: 3px 0; }
+.hg-ap { background: var(--success-bg, #f0fdf4); border: 1.5px solid var(--success-border, #bbf7d0); border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
+.hg-ap-h { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 900; color: var(--success-ink, #15803d); margin-bottom: 8px; }
+.hg-ap-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--success-ink, #166534); padding: 3px 0; }
 .hg-ap-row span { font-weight: 700; flex-shrink: 0; }
 .hg-ap-row b { font-weight: 600; text-align: right; }
-.hg-ap-note { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 9px; padding: 8px 10px; margin-top: 8px; line-height: 1.45; }
+.hg-ap-note { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 9px; padding: 8px 10px; margin-top: 8px; line-height: 1.45; }
 
 /* Auto-schedule preferences modal */
 .hg-am-backdrop { position: fixed; inset: 0; z-index: 1200; background: rgba(15,23,42,.55); display: flex; align-items: center; justify-content: center; padding: 14px; }
 .hg-am { width: 100%; max-width: 440px; max-height: 92vh; overflow-y: auto; background: var(--surface, #ffffff); border-radius: 18px; padding: 18px; box-shadow: 0 24px 64px rgba(15,23,42,.35); }
 .hg-am-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.hg-am-head > span { display: inline-flex; align-items: center; gap: 8px; font-size: 15.5px; font-weight: 900; color: #0f172a; }
+.hg-am-head > span { display: inline-flex; align-items: center; gap: 8px; font-size: 15.5px; font-weight: 900; color: var(--text, #0f172a); }
 .hg-am-x { background: none; border: none; color: var(--text-muted, #64748b); cursor: pointer; padding: 4px; border-radius: 8px; display: inline-flex; }
-.hg-am-x:hover { background: #f1f5f9; color: #0f172a; }
+.hg-am-x:hover { background: var(--bg, #f1f5f9); color: var(--text, #0f172a); }
 .hg-am-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 12px; }
 .hg-am-opt { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 3px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 14px; background: var(--surface, #ffffff); padding: 16px 10px 12px; cursor: pointer; transition: all .12s; }
 .hg-am-opt:hover { border-color: #e11d48; }
-.hg-am-opt.on { border-color: #e11d48; background: #fff1f2; box-shadow: 0 0 0 3px rgba(225,29,72,.12); }
-.hg-am-opt-ic { width: 44px; height: 44px; border-radius: 12px; background: #f1f5f9; color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }
+.hg-am-opt.on { border-color: #e11d48; background: var(--danger-bg, #fff1f2); box-shadow: 0 0 0 3px rgba(225,29,72,.12); }
+.hg-am-opt-ic { width: 44px; height: 44px; border-radius: 12px; background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }
 .hg-am-opt.on .hg-am-opt-ic { background: #e11d48; color: #fff; }
-.hg-am-opt-t { font-size: 13.5px; font-weight: 800; color: #0f172a; }
-.hg-am-opt.on .hg-am-opt-t { color: #be123c; }
+.hg-am-opt-t { font-size: 13.5px; font-weight: 800; color: var(--text, #0f172a); }
+.hg-am-opt.on .hg-am-opt-t { color: var(--danger-ink, #be123c); }
 .hg-am-opt-d { font-size: 11.5px; color: var(--text-light, #94a3b8); }
-.hg-am-opt.on .hg-am-opt-d { color: #9f1239; }
+.hg-am-opt.on .hg-am-opt-d { color: var(--danger-ink, #9f1239); }
 /* tiny pacing illustration: blocks = games, gaps = days apart */
 .hg-am-viz { display: flex; align-items: center; gap: 3px; margin-top: 8px; }
 .hg-am-viz i { display: block; width: 12px; height: 8px; border-radius: 2.5px; background: #cbd5e1; }
@@ -2223,10 +2227,10 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-am-opt.on .hg-am-viz i.c { background: #fb7185; }
 .hg-am-opt.on .hg-am-viz i.gap { background: #fecdd3; }
 .hg-am-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.hg-am-rl { font-size: 12.5px; font-weight: 800; color: #475569; width: 74px; flex-shrink: 0; }
+.hg-am-rl { font-size: 12.5px; font-weight: 800; color: var(--text-secondary, #475569); width: 74px; flex-shrink: 0; }
 .hg-am-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.hg-am-chip { display: inline-flex; align-items: center; gap: 5px; padding: 8px 12px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; background: var(--surface, #ffffff); font-size: 12.5px; font-weight: 700; color: #334155; cursor: pointer; }
-.hg-am-chip.on { border-color: #e11d48; background: #fff1f2; color: #be123c; }
+.hg-am-chip { display: inline-flex; align-items: center; gap: 5px; padding: 8px 12px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; background: var(--surface, #ffffff); font-size: 12.5px; font-weight: 700; color: var(--text-secondary, #334155); cursor: pointer; }
+.hg-am-chip.on { border-color: #e11d48; background: var(--danger-bg, #fff1f2); color: var(--danger-ink, #be123c); }
 .hg-am-go { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: #e11d48; color: #fff; font-weight: 800; font-size: 14.5px; padding: 13px; border: none; border-radius: 12px; cursor: pointer; }
 .hg-am-go:disabled { opacity: .5; cursor: not-allowed; }
 .hg-am-foot { font-size: 12px; color: var(--text-light, #94a3b8); text-align: center; margin-top: 8px; }
@@ -2239,30 +2243,30 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-slot:hover:not(:disabled) { border-color: var(--brand-accent); }
 .hg-slot.on { border-color: var(--brand); background: var(--brand); }
 .hg-slot.on .hg-slot-t { color: #fff; }
-.hg-slot.taken { background: #f8fafc; cursor: not-allowed; opacity: .65; }
-.hg-slot-t { font-size: 13.5px; font-weight: 800; color: #0f172a; }
-.hg-slot-p { font-size: 11px; font-weight: 700; color: var(--brand); }
+.hg-slot.taken { background: var(--canvas, #f8fafc); cursor: not-allowed; opacity: .65; }
+.hg-slot-t { font-size: 13.5px; font-weight: 800; color: var(--text, #0f172a); }
+.hg-slot-p { font-size: 11px; font-weight: 700; color: var(--brand-ink, var(--brand)); }
 .hg-slot.on .hg-slot-p { color: #fff; }
 .hg-slot-x { font-size: 10px; font-weight: 700; color: #cbd5e1; }
 .hg-slots-msg { display: flex; align-items: center; gap: 8px; color: var(--text-muted, #64748b); font-size: 14px; padding: 8px 0; }
 .hg-spin { animation: hgspin 1s linear infinite; } @keyframes hgspin { to { transform: rotate(360deg); } }
 
 /* event photo drop-zone */
-.hg-drop { border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 14px; background: #f8fafc; transition: border-color .12s, background .12s; }
-.hg-drop.on { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, white); }
+.hg-drop { border: 1.5px dashed var(--border-strong, #cbd5e1); border-radius: 12px; padding: 14px; background: var(--canvas, #f8fafc); transition: border-color .12s, background .12s; }
+.hg-drop.on { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
 .hg-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .hg-img { position: relative; width: 86px; height: 86px; border-radius: 10px; background-size: cover; background-position: center; border: 1px solid var(--border, #e2e8f0); }
 .hg-img-cover { position: absolute; left: 4px; bottom: 4px; font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: #fff; background: rgba(15,23,42,.78); padding: 2px 6px; border-radius: 5px; }
 .hg-img-x { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; border: none; background: rgba(15,23,42,.78); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .hg-img-x:hover { background: #ef4444; }
-.hg-drop-btn { display: inline-flex; align-items: center; gap: 7px; background: var(--surface, #ffffff); color: var(--brand); font-weight: 700; font-size: 13.5px; padding: 9px 14px; border: 1.5px solid #99f6e4; border-radius: 10px; cursor: pointer; }
-.hg-drop-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--brand) 8%, white); }
+.hg-drop-btn { display: inline-flex; align-items: center; gap: 7px; background: var(--surface, #ffffff); color: var(--brand-ink, var(--brand)); font-weight: 700; font-size: 13.5px; padding: 9px 14px; border: 1.5px solid var(--success-border, #99f6e4); border-radius: 10px; cursor: pointer; }
+.hg-drop-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
 .hg-drop-btn:disabled { opacity: .6; cursor: default; }
 .hg-file { display: none; }
 .hg-drop-hint { font-size: 11.5px; color: var(--text-light, #94a3b8); margin-top: 8px; }
-.hg-img-err { font-size: 12.5px; color: #dc2626; margin-top: 6px; }
-.hg-rangebox { display: flex; align-items: center; gap: 8px; margin-top: 12px; background: color-mix(in srgb, var(--brand) 8%, white); border: 1px solid #99f6e4; border-radius: 12px; padding: 12px 14px; font-size: 13.5px; color: var(--brand); }
-.hg-rangebox b { color: #0f172a; }
+.hg-img-err { font-size: 12.5px; color: var(--danger-ink, #dc2626); margin-top: 6px; }
+.hg-rangebox { display: flex; align-items: center; gap: 8px; margin-top: 12px; background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); border: 1px solid var(--success-border, #99f6e4); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; color: var(--brand-ink, var(--brand)); }
+.hg-rangebox b { color: var(--text, #0f172a); }
 
 /* Court browse cards (game step 2) */
 .hg-courts { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
@@ -2272,170 +2276,170 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-court-img { position: relative; height: 120px; background: var(--brand-accent) center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.85); }
 .hg-court-check { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: #fff; display: flex; align-items: center; justify-content: center; }
 .hg-court-body { padding: 11px 13px 13px; }
-.hg-court-name { font-size: 15px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hg-court-name { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hg-court-venue { display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--text-muted, #64748b); margin-top: 3px; }
-.hg-court-price { font-size: 13px; font-weight: 800; color: #0f172a; margin-top: 7px; }
+.hg-court-price { font-size: 13px; font-weight: 800; color: var(--text, #0f172a); margin-top: 7px; }
 .hg-court-price span { font-size: 11.5px; font-weight: 600; color: var(--text-light, #94a3b8); }
-.hg-court-sel { display: flex; align-items: center; gap: 7px; font-size: 14.5px; font-weight: 800; color: var(--brand); margin-bottom: 12px; }
+.hg-court-sel { display: flex; align-items: center; gap: 7px; font-size: 14.5px; font-weight: 800; color: var(--brand-ink, var(--brand)); margin-bottom: 12px; }
 .hg-court-sel span { color: var(--text-muted, #64748b); font-weight: 600; font-size: 13px; }
-.hg-court-open { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 800; color: var(--brand); margin-top: 9px; }
-.hg-court.on .hg-court-open { color: var(--brand); }
+.hg-court-open { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 800; color: var(--brand-ink, var(--brand)); margin-top: 9px; }
+.hg-court.on .hg-court-open { color: var(--brand-ink, var(--brand)); }
 
 /* Court detail modal */
 .hg-modal { position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,.55); display: flex; align-items: center; justify-content: center; padding: 18px; }
 .hg-modal-card { position: relative; width: 460px; max-width: 100%; max-height: 90vh; overflow-y: auto; background: var(--surface, #ffffff); border-radius: 18px; }
-.hg-modal-x { position: absolute; top: 12px; right: 12px; z-index: 2; width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(255,255,255,.9); color: #0f172a; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.hg-modal-x { position: absolute; top: 12px; right: 12px; z-index: 2; width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(255,255,255,.9); color: var(--text, #0f172a); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .hg-modal-hero { height: 180px; background: var(--brand-accent) center/cover no-repeat; border-radius: 18px 18px 0 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.85); }
 .hg-modal-body { padding: 18px 20px 6px; }
-.hg-modal-name { font-size: 21px; font-weight: 900; color: #0f172a; margin: 0; }
+.hg-modal-name { font-size: 21px; font-weight: 900; color: var(--text, #0f172a); margin: 0; }
 .hg-modal-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 10px 0; }
-.hg-modal-tag { font-size: 12.5px; font-weight: 700; color: var(--brand); background: color-mix(in srgb, var(--brand) 18%, white); padding: 3px 11px; border-radius: 999px; text-transform: capitalize; }
+.hg-modal-tag { font-size: 12.5px; font-weight: 700; color: var(--brand-ink, var(--brand)); background: color-mix(in srgb, var(--brand) 18%, var(--surface, white)); padding: 3px 11px; border-radius: 999px; text-transform: capitalize; }
 .hg-modal-fact { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-muted, #64748b); font-weight: 600; }
-.hg-modal-desc { font-size: 14px; color: #334155; line-height: 1.55; margin: 12px 0; }
-.hg-modal-where { display: flex; align-items: flex-start; gap: 9px; color: var(--brand); margin: 12px 0; }
-.hg-modal-where b { display: block; font-size: 14.5px; color: #0f172a; }
+.hg-modal-desc { font-size: 14px; color: var(--text-secondary, #334155); line-height: 1.55; margin: 12px 0; }
+.hg-modal-where { display: flex; align-items: flex-start; gap: 9px; color: var(--brand-ink, var(--brand)); margin: 12px 0; }
+.hg-modal-where b { display: block; font-size: 14.5px; color: var(--text, #0f172a); }
 .hg-modal-where span { font-size: 13px; color: var(--text-muted, #64748b); }
-.hg-modal-price { font-size: 17px; font-weight: 900; color: #0f172a; margin: 12px 0 2px; }
+.hg-modal-price { font-size: 17px; font-weight: 900; color: var(--text, #0f172a); margin: 12px 0 2px; }
 .hg-modal-price span { font-size: 12.5px; font-weight: 600; color: var(--text-light, #94a3b8); }
 .hg-modal-foot { display: flex; align-items: center; gap: 10px; padding: 14px 20px 18px; position: sticky; bottom: 0; background: var(--surface, #ffffff); }
 .hg-modal-foot .hg-next { margin-left: auto; }
 
 /* tournament teams + preview */
 .hg-teams { display: flex; gap: 10px; flex-wrap: wrap; }
-.hg-team { width: 64px; height: 56px; border: 2px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); border-radius: 14px; font-size: 20px; font-weight: 900; color: #334155; cursor: pointer; }
-.hg-team.on { border-color: #e11d48; background: #fff1f2; color: #be123c; }
+.hg-team { width: 64px; height: 56px; border: 2px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); border-radius: 14px; font-size: 20px; font-weight: 900; color: var(--text-secondary, #334155); cursor: pointer; }
+.hg-team.on { border-color: #e11d48; background: var(--danger-bg, #fff1f2); color: var(--danger-ink, #be123c); }
 .hg-len { width: auto; min-width: 58px; padding: 0 14px; height: 52px; font-size: 18px; display: inline-flex; align-items: baseline; justify-content: center; gap: 3px; }
 .hg-len-u { font-size: 11px; font-weight: 700; color: var(--text-light, #94a3b8); }
 .hg-len.on .hg-len-u { color: #e11d48; }
-.hg-preview { margin-top: 16px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 14px; padding: 14px 16px; }
-.hg-preview-h { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 900; color: #be123c; }
+.hg-preview { margin-top: 16px; background: var(--danger-bg, #fff1f2); border: 1px solid #fecdd3; border-radius: 14px; padding: 14px 16px; }
+.hg-preview-h { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 900; color: var(--danger-ink, #be123c); }
 .hg-preview-rounds { margin: 10px 0 4px; }
-.hg-preview-r { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; color: #9f1239; padding: 4px 0; border-top: 1px dashed #fecdd3; }
+.hg-preview-r { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; color: var(--danger-ink, #9f1239); padding: 4px 0; border-top: 1px dashed #fecdd3; }
 .hg-preview-r:first-child { border-top: none; }
-.hg-preview-r b { color: #0f172a; }
+.hg-preview-r b { color: var(--text, #0f172a); }
 
 /* tournament rounds */
 .hg-round-h { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.hg-round-name { font-size: 16px; font-weight: 900; color: #0f172a; }
-.hg-round-games { font-size: 12px; font-weight: 800; color: #be123c; background: #ffe4e6; padding: 3px 9px; border-radius: 999px; }
-.hg-round-ok { color: #16a34a; margin-left: auto; }
+.hg-round-name { font-size: 16px; font-weight: 900; color: var(--text, #0f172a); }
+.hg-round-games { font-size: 12px; font-weight: 800; color: var(--danger-ink, #be123c); background: var(--danger-bg, #ffe4e6); padding: 3px 9px; border-radius: 999px; }
+.hg-round-ok { color: var(--success-ink, #16a34a); margin-left: auto; }
 .hg-game { border-top: 1px dashed var(--border, #e2e8f0); padding-top: 14px; margin-top: 14px; }
 .hg-game:first-of-type { border-top: none; padding-top: 6px; margin-top: 6px; }
 .hg-game-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
-.hg-game-n { font-size: 14px; font-weight: 800; color: #334155; }
-.hg-game-when { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 700; color: #16a34a; background: #f0fdf4; padding: 3px 9px; border-radius: 999px; }
-.hg-roundwarn { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: #be123c; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 10px; padding: 10px; margin-top: 8px; }
-.hg-matches { margin-top: 12px; border: 1px solid #eef2f6; border-radius: 12px; overflow: hidden; }
-.hg-match { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; color: #334155; padding: 9px 14px; }
-.hg-match + .hg-match { border-top: 1px solid #f1f5f9; }
-.hg-match b { color: #0f172a; }
+.hg-game-n { font-size: 14px; font-weight: 800; color: var(--text-secondary, #334155); }
+.hg-game-when { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 700; color: var(--success-ink, #16a34a); background: var(--success-bg, #f0fdf4); padding: 3px 9px; border-radius: 999px; }
+.hg-roundwarn { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--danger-ink, #be123c); background: var(--danger-bg, #fff1f2); border: 1px solid #fecdd3; border-radius: 10px; padding: 10px; margin-top: 8px; }
+.hg-matches { margin-top: 12px; border: 1px solid var(--border, #eef2f6); border-radius: 12px; overflow: hidden; }
+.hg-match { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; color: var(--text-secondary, #334155); padding: 9px 14px; }
+.hg-match + .hg-match { border-top: 1px solid var(--border, #f1f5f9); }
+.hg-match b { color: var(--text, #0f172a); }
 
 /* tournament bracket chart (setup) */
 .hg-wide { max-width: 1000px; }
-.hg-chart-back { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: var(--brand); font-weight: 800; font-size: 14px; cursor: pointer; padding: 0; margin-bottom: 12px; }
+.hg-chart-back { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: var(--brand-ink, var(--brand)); font-weight: 800; font-size: 14px; cursor: pointer; padding: 0; margin-bottom: 12px; }
 .hg-chart-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
-.hg-chart-prog { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: #be123c; background: #ffe4e6; border: 1px solid #fecdd3; padding: 7px 13px; border-radius: 999px; }
-.hg-chart-prog.done { color: #15803d; background: #f0fdf4; border-color: #bbf7d0; }
+.hg-chart-prog { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: var(--danger-ink, #be123c); background: var(--danger-bg, #ffe4e6); border: 1px solid #fecdd3; padding: 7px 13px; border-radius: 999px; }
+.hg-chart-prog.done { color: var(--success-ink, #15803d); background: var(--success-bg, #f0fdf4); border-color: var(--success-border, #bbf7d0); }
 .hg-chart-hint { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--text-muted, #64748b); }
 .hg-bracket { display: flex; gap: 18px; overflow-x: auto; padding: 4px 2px 14px; align-items: stretch; }
 .hg-bcol { flex: 0 0 200px; min-width: 200px; display: flex; flex-direction: column; }
 .hg-bcol-h { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #fecdd3; }
 .hg-bcol-h .hg-round-name { font-size: 14.5px; }
-.hg-bcol-h .hg-round-ok { color: #16a34a; margin-left: auto; }
+.hg-bcol-h .hg-round-ok { color: var(--success-ink, #16a34a); margin-left: auto; }
 .hg-bcol-games { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 12px; }
 .hg-mcard { position: relative; text-align: left; background: var(--surface, #ffffff); border: 2px solid var(--border, #e2e8f0); border-radius: 14px; padding: 12px 13px; cursor: pointer; transition: .12s; }
 .hg-mcard:hover { border-color: var(--brand-accent); transform: translateY(-1px); box-shadow: 0 8px 20px rgba(15,23,42,.09); }
-.hg-mcard.done { border-color: #86efac; background: #f0fdf4; }
+.hg-mcard.done { border-color: var(--success-border, #86efac); background: var(--success-bg, #f0fdf4); }
 .hg-mcard.done:hover { border-color: #22c55e; }
 .hg-mcard-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.hg-mcard-n { font-size: 14px; font-weight: 900; color: #0f172a; }
+.hg-mcard-n { font-size: 14px; font-weight: 900; color: var(--text, #0f172a); }
 .hg-mcard-badge { width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%; background: #16a34a; color: #fff; display: flex; align-items: center; justify-content: center; }
-.hg-mcard-badge.todo { background: #ffe4e6; color: #e11d48; }
-.hg-mcard-line { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hg-mcard-line.venue { color: #0f172a; font-weight: 700; }
+.hg-mcard-badge.todo { background: var(--danger-bg, #ffe4e6); color: #e11d48; }
+.hg-mcard-line { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary, #475569); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hg-mcard-line.venue { color: var(--text, #0f172a); font-weight: 700; }
 .hg-mcard-line :deep(svg) { flex-shrink: 0; color: var(--text-light, #94a3b8); }
-.hg-mcard-edit { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; color: var(--brand); margin-top: 9px; }
+.hg-mcard-edit { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; color: var(--brand-ink, var(--brand)); margin-top: 9px; }
 .hg-mcard-empty { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: #e11d48; margin-top: 10px; }
 /* Slot-clash warning reads as a hard blocker (heavier than the round-order hint). */
-.hg-clashwarn { border-color: #fda4af; background: #fff1f2; font-weight: 700; }
+.hg-clashwarn { border-color: var(--danger-border, #fda4af); background: var(--danger-bg, #fff1f2); font-weight: 700; }
 /* Mobile round-by-round bracket: hidden on desktop (columns stay untouched ≥761px). */
 .hg-mb { display: none; }
 @media (max-width: 1020px) { .hg-wide { max-width: 100%; } }
 
 /* review */
-.hg-review { margin-top: 16px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px 16px; background: #f8fafc; }
+.hg-review { margin-top: 16px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px 16px; background: var(--canvas, #f8fafc); }
 .hg-review-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-light, #94a3b8); margin-bottom: 6px; }
-.hg-review-row { display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #475569; padding: 4px 0; }
-.hg-review-row b { color: #0f172a; }
+.hg-review-row { display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: var(--text-secondary, #475569); padding: 4px 0; }
+.hg-review-row b { color: var(--text, #0f172a); }
 .hg-review-dur { color: var(--text-light, #94a3b8); font-weight: 600; font-size: 12px; }
-.hg-review-prize span:first-child { display: inline-flex; align-items: center; gap: 5px; color: #b45309; font-weight: 700; }
-.hg-review-prize b { color: #b45309; }
+.hg-review-prize span:first-child { display: inline-flex; align-items: center; gap: 5px; color: var(--warning-ink, #b45309); font-weight: 700; }
+.hg-review-prize b { color: var(--warning-ink, #b45309); }
 
 /* prize pot toggle + per-place rows */
 .hg-prize-toggle { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; padding: 13px 16px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 14px; background: var(--surface, #ffffff); }
-.hg-prize-tt { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 800; color: #0f172a; }
+.hg-prize-tt { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .hg-prize-td { font-size: 12.5px; color: var(--text-light, #94a3b8); margin-top: 3px; }
 .hg-switch { flex-shrink: 0; width: 48px; height: 28px; border-radius: 999px; border: none; background: #cbd5e1; cursor: pointer; padding: 0; position: relative; transition: background .15s; }
 .hg-switch.on { background: #16a34a; }
 .hg-switch-k { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: var(--surface, #ffffff); transition: transform .15s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 .hg-switch.on .hg-switch-k { transform: translateX(20px); }
-.hg-prize-box { margin-top: 10px; border: 1.5px solid #fde68a; background: #fffbeb; border-radius: 14px; padding: 14px 16px; }
+.hg-prize-box { margin-top: 10px; border: 1.5px solid var(--warning-border, #fde68a); background: var(--warning-bg, #fffbeb); border-radius: 14px; padding: 14px 16px; }
 .hg-prize-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.hg-prize-badge { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #fde68a; font-size: 13px; font-weight: 900; color: #92400e; }
-.hg-prize-place { flex-shrink: 0; width: 70px; font-size: 13.5px; font-weight: 700; color: #92400e; }
-.hg-prize-amt { flex: 1; display: flex; align-items: center; gap: 6px; border: 1.5px solid #fcd34d; border-radius: 10px; padding: 0 12px; background: var(--surface, #ffffff); }
+.hg-prize-badge { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--warning-bg, #fde68a); font-size: 13px; font-weight: 900; color: var(--warning-ink, #92400e); }
+.hg-prize-place { flex-shrink: 0; width: 70px; font-size: 13.5px; font-weight: 700; color: var(--warning-ink, #92400e); }
+.hg-prize-amt { flex: 1; display: flex; align-items: center; gap: 6px; border: 1.5px solid var(--warning-border, #fcd34d); border-radius: 10px; padding: 0 12px; background: var(--surface, #ffffff); }
 .hg-prize-amt:focus-within { border-color: #f59e0b; }
 .hg-prize-cur { font-size: 13px; font-weight: 700; color: var(--text-light, #94a3b8); }
-.hg-prize-amt input { flex: 1; min-width: 0; border: none; outline: none; padding: 11px 0; font-size: 15px; background: none; color: #0f172a; }
-.hg-prize-x { flex-shrink: 0; width: 30px; height: 30px; border-radius: 8px; border: none; background: #fef3c7; color: #b45309; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.hg-prize-x:hover { background: #fde68a; }
+.hg-prize-amt input { flex: 1; min-width: 0; border: none; outline: none; padding: 11px 0; font-size: 15px; background: none; color: var(--text, #0f172a); }
+.hg-prize-x { flex-shrink: 0; width: 30px; height: 30px; border-radius: 8px; border: none; background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #b45309); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.hg-prize-x:hover { background: var(--warning-bg, #fde68a); }
 .hg-prize-x.ghost { background: none; cursor: default; }
-.hg-prize-add { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1.5px dashed #fcd34d; color: #b45309; font-weight: 800; font-size: 13.5px; padding: 9px 14px; border-radius: 10px; cursor: pointer; }
-.hg-prize-add:hover { background: #fef3c7; }
-.hg-prize-total { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 12px; border-top: 1px dashed #fcd34d; font-size: 14px; font-weight: 700; color: #92400e; }
-.hg-prize-total b { font-size: 19px; font-weight: 900; color: #b45309; }
-.hg-pay { margin-top: 14px; border: 1.5px solid #99f6e4; border-radius: 12px; padding: 14px 16px; background: color-mix(in srgb, var(--brand) 8%, white); }
-.hg-pay-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--brand); margin-bottom: 8px; }
-.hg-pay-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: #334155; padding: 5px 0; }
+.hg-prize-add { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1.5px dashed var(--warning-border, #fcd34d); color: var(--warning-ink, #b45309); font-weight: 800; font-size: 13.5px; padding: 9px 14px; border-radius: 10px; cursor: pointer; }
+.hg-prize-add:hover { background: var(--warning-bg, #fef3c7); }
+.hg-prize-total { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--warning-border, #fcd34d); font-size: 14px; font-weight: 700; color: var(--warning-ink, #92400e); }
+.hg-prize-total b { font-size: 19px; font-weight: 900; color: var(--warning-ink, #b45309); }
+.hg-pay { margin-top: 14px; border: 1.5px solid var(--success-border, #99f6e4); border-radius: 12px; padding: 14px 16px; background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
+.hg-pay-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--brand-ink, var(--brand)); margin-bottom: 8px; }
+.hg-pay-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: var(--text-secondary, #334155); padding: 5px 0; }
 /* The amount never breaks across lines — "USD" above "5.00" read as two numbers. */
-.hg-pay-row b { color: #0f172a; font-weight: 800; white-space: nowrap; }
+.hg-pay-row b { color: var(--text, #0f172a); font-weight: 800; white-space: nowrap; }
 .hg-paypick { margin-bottom: 14px; }
 .hg-paypick-opt { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; margin-top: 8px; cursor: pointer; }
 .hg-paypick-opt.on { border-color: var(--brand, #0f766e); background: color-mix(in srgb, var(--brand, #0f766e) 6%, transparent); }
 .hg-paypick-txt { display: flex; flex-direction: column; gap: 2px; }
 .hg-paypick-lbl { font-weight: 600; font-size: 13px; }
 .hg-paypick-sub { font-size: 12px; opacity: .7; }
-.hg-pay-nr { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: #b91c1c; background: #fee2e2; padding: 2px 7px; border-radius: 999px; margin-left: 6px; }
-.hg-pay-total { border-top: 1px solid #99f6e4; margin-top: 4px; padding-top: 9px; font-size: 15px; }
+.hg-pay-nr { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--danger-ink, #b91c1c); background: var(--danger-bg, #fee2e2); padding: 2px 7px; border-radius: 999px; margin-left: 6px; }
+.hg-pay-total { border-top: 1px solid var(--success-border, #99f6e4); margin-top: 4px; padding-top: 9px; font-size: 15px; }
 .hg-pay-total b { font-size: 19px; font-weight: 900; }
 .hg-pay-arr { color: var(--text-muted, #64748b); font-size: 13px; }
 .hg-pay-arr > span:first-child { display: inline-flex; align-items: center; gap: 5px; }
-.hg-pay-sub { font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-light, #94a3b8); margin: 10px 0 2px; padding-top: 9px; border-top: 1px dashed #99f6e4; }
+.hg-pay-sub { font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--text-light, #94a3b8); margin: 10px 0 2px; padding-top: 9px; border-top: 1px dashed var(--success-border, #99f6e4); }
 .hg-pay-g { color: var(--text-light, #94a3b8); font-weight: 600; }
 .hg-pay-arrtotal { font-size: 12px; color: var(--text-light, #94a3b8); text-align: right; margin-top: 3px; }
-.hg-pay-warn { position: relative; font-size: 12.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 12px 10px 31px; margin-top: 10px; line-height: 1.45; }
+.hg-pay-warn { position: relative; font-size: 12.5px; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 10px; padding: 10px 12px 10px 31px; margin-top: 10px; line-height: 1.45; }
 .hg-pay-warn > svg { position: absolute; left: 11px; top: 11px; }
-.hg-pay-warn b { color: #0f172a; }
-.hg-pay-warn-stripe { color: #4338ca; background: #eef2ff; border-color: #c7d2fe; }
+.hg-pay-warn b { color: var(--text, #0f172a); }
+.hg-pay-warn-stripe { color: var(--violet-ink, #4338ca); background: var(--violet-bg, #eef2ff); border-color: var(--violet-border, #c7d2fe); }
 .hg-pay-warn-stripe b { color: #312e81; }
 /* Host loyalty redemption toggle (Bookboll marketplace) */
-.hg-loy { display: flex; align-items: flex-start; gap: 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 10px 12px; margin-top: 10px; cursor: pointer; }
+.hg-loy { display: flex; align-items: flex-start; gap: 10px; background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 12px; padding: 10px 12px; margin-top: 10px; cursor: pointer; }
 .hg-loy-cb { margin-top: 2px; width: 17px; height: 17px; accent-color: var(--brand); flex-shrink: 0; }
 .hg-loy-txt { display: flex; flex-direction: column; gap: 2px; }
-.hg-loy-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 800; color: #92400e; }
-.hg-loy-sub { font-size: 12px; color: #b45309; font-weight: 600; }
-.hg-pay-charged { border-top: 1px dashed #99f6e4; margin-top: 4px; padding-top: 8px; font-weight: 800; }
-.hg-pay-charged b { color: #16a34a; }
+.hg-loy-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 800; color: var(--warning-ink, #92400e); }
+.hg-loy-sub { font-size: 12px; color: var(--warning-ink, #b45309); font-weight: 600; }
+.hg-pay-charged { border-top: 1px dashed var(--success-border, #99f6e4); margin-top: 4px; padding-top: 8px; font-weight: 800; }
+.hg-pay-charged b { color: var(--success-ink, #16a34a); }
 
-.hg-err { font-size: 14px; color: #dc2626; background: #fef2f2; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
-.hg-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; position: sticky; bottom: 0; padding: 14px 0 10px; background: linear-gradient(to top, #f8fafc 72%, rgba(248,250,252,0)); z-index: 5; }
-.hg-back { display: inline-flex; align-items: center; gap: 6px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); color: #334155; font-weight: 700; padding: 13px 18px; border-radius: 12px; cursor: pointer; }
+.hg-err { font-size: 14px; color: var(--danger-ink, #dc2626); background: var(--danger-bg, #fef2f2); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+.hg-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; position: sticky; bottom: 0; padding: 14px 0 10px; background: linear-gradient(to top, var(--canvas, #f8fafc) 72%, rgba(248,250,252,0)); z-index: 5; }
+.hg-back { display: inline-flex; align-items: center; gap: 6px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); color: var(--text-secondary, #334155); font-weight: 700; padding: 13px 18px; border-radius: 12px; cursor: pointer; }
 .hg-next { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; background: var(--brand); color: #fff; font-weight: 800; font-size: 15px; padding: 14px 24px; border: none; border-radius: 12px; cursor: pointer; }
 .hg-submit { margin-left: auto; background: #059669; color: #fff; font-weight: 800; font-size: 15.5px; padding: 14px 24px; border: none; border-radius: 12px; cursor: pointer; }
 .hg-submit:hover:not(:disabled) { background: #047857; }
 .hg-submit:disabled { opacity: .6; }
-.hg-signin { text-align: center; padding: 50px 20px; color: var(--brand); }
-.hg-signin h2 { font-size: 22px; color: #0f172a; margin: 14px 0 6px; }
+.hg-signin { text-align: center; padding: 50px 20px; color: var(--brand-ink, var(--brand)); }
+.hg-signin h2 { font-size: 22px; color: var(--text, #0f172a); margin: 14px 0 6px; }
 .hg-signin p { font-size: 14.5px; color: var(--text-muted, #64748b); margin: 0 0 20px; }
 .hg-signin-btn { display: inline-block; background: var(--brand); color: #fff; font-weight: 800; font-size: 15px; padding: 13px 24px; border-radius: 999px; text-decoration: none; border: none; cursor: pointer; }
 
@@ -2444,10 +2448,10 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-wv-back { position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,.5); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .hg-wv { position: relative; background: var(--surface, #ffffff); border-radius: 18px; padding: 22px; max-width: 480px; width: 100%; box-shadow: 0 24px 60px rgba(0,0,0,.3); max-height: 90vh; overflow-y: auto; }
 .hg-wv :deep(.wv) { margin: 0; }
-.hg-wv-x { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; border-radius: 8px; border: none; background: #f1f5f9; color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.hg-wv-x:hover { background: var(--border, #e2e8f0); color: #0f172a; }
+.hg-wv-x { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; border-radius: 8px; border: none; background: var(--bg, #f1f5f9); color: var(--text-muted, #64748b); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.hg-wv-x:hover { background: var(--border, #e2e8f0); color: var(--text, #0f172a); }
 .hg-wv-actions { display: flex; gap: 10px; margin-top: 16px; }
-.hg-wv-cancel { flex-shrink: 0; background: #f1f5f9; color: #334155; border: none; border-radius: 12px; padding: 13px 18px; font-size: 14.5px; font-weight: 800; cursor: pointer; }
+.hg-wv-cancel { flex-shrink: 0; background: var(--bg, #f1f5f9); color: var(--text-secondary, #334155); border: none; border-radius: 12px; padding: 13px 18px; font-size: 14.5px; font-weight: 800; cursor: pointer; }
 .hg-wv-cancel:hover { background: var(--border, #e2e8f0); }
 .hg-wv-go { flex: 1; background: var(--brand); color: #fff; border: none; border-radius: 12px; padding: 13px 18px; font-size: 14.5px; font-weight: 800; cursor: pointer; }
 .hg-wv-go:disabled { opacity: .5; cursor: not-allowed; }
@@ -2455,33 +2459,33 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-done-back { position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,.5); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .hg-done { background: var(--surface, #ffffff); border-radius: 18px; padding: 26px 24px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 24px 60px rgba(0,0,0,.3); }
 .hg-done-ico { width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg,#10b981,#059669); color: #fff; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
-.hg-done-t { font-size: 21px; font-weight: 900; color: #0f172a; margin: 0 0 8px; }
+.hg-done-t { font-size: 21px; font-weight: 900; color: var(--text, #0f172a); margin: 0 0 8px; }
 .hg-done-t::first-letter { text-transform: uppercase; }
-.hg-done-d { font-size: 14px; color: #475569; line-height: 1.55; margin: 0 0 18px; }
-.hg-done-link { display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 8px 8px 8px 12px; margin-bottom: 14px; }
+.hg-done-d { font-size: 14px; color: var(--text-secondary, #475569); line-height: 1.55; margin: 0 0 18px; }
+.hg-done-link { display: flex; align-items: center; gap: 8px; background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 8px 8px 8px 12px; margin-bottom: 14px; }
 .hg-done-url { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-muted, #64748b); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
-.hg-done-copy { display: inline-flex; align-items: center; gap: 5px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 9px; padding: 7px 11px; font-size: 13px; font-weight: 700; color: var(--brand); cursor: pointer; flex-shrink: 0; }
-.hg-done-copy:hover { background: color-mix(in srgb, var(--brand) 8%, white); border-color: #99f6e4; }
+.hg-done-copy { display: inline-flex; align-items: center; gap: 5px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 9px; padding: 7px 11px; font-size: 13px; font-weight: 700; color: var(--brand-ink, var(--brand)); cursor: pointer; flex-shrink: 0; }
+.hg-done-copy:hover { background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); border-color: var(--success-border, #99f6e4); }
 .hg-done-actions { display: flex; gap: 10px; }
-.hg-done-share { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: var(--surface, #ffffff); border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 12px; font-size: 14.5px; font-weight: 800; color: #334155; cursor: pointer; }
-.hg-done-share:hover { border-color: var(--brand-accent); color: var(--brand); }
+.hg-done-share { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: var(--surface, #ffffff); border: 1.5px solid var(--border-strong, #cbd5e1); border-radius: 12px; padding: 12px; font-size: 14.5px; font-weight: 800; color: var(--text-secondary, #334155); cursor: pointer; }
+.hg-done-share:hover { border-color: var(--brand-accent); color: var(--brand-ink, var(--brand)); }
 .hg-done-view { flex: 1; background: linear-gradient(135deg,#10b981,#059669); color: #fff; border: none; border-radius: 12px; padding: 12px; font-size: 14.5px; font-weight: 800; cursor: pointer; }
 .hg-done-view:hover { opacity: .93; }
 
 /* create-event venue filter bar + onboard */
 .hg-vbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 .hg-vsearch { display: flex; align-items: center; gap: 8px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 8px 13px; color: var(--text-light, #94a3b8); flex: 1; min-width: 170px; max-width: 320px; }
-.hg-vsearch input { flex: 1; min-width: 0; border: none; outline: none; font-size: 14px; color: #0f172a; background: transparent; }
+.hg-vsearch input { flex: 1; min-width: 0; border: none; outline: none; font-size: 14px; color: var(--text, #0f172a); background: transparent; }
 .hg-vchips { display: flex; flex-wrap: wrap; gap: 6px; }
-.hg-vchips button { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; font-weight: 700; font-size: 13px; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+.hg-vchips button { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); font-weight: 700; font-size: 13px; padding: 6px 12px; border-radius: 999px; cursor: pointer; }
 .hg-vchips button:hover { border-color: var(--brand-accent); }
 .hg-vchips button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
-.hg-onboard { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; background: #f8fafc; border: 1.5px dashed #cbd5e1; border-radius: 12px; padding: 12px 16px; font-size: 14px; color: #475569; cursor: pointer; }
-.hg-onboard b { color: var(--brand); }
-.hg-onboard:hover { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, white); }
+.hg-onboard { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; background: var(--canvas, #f8fafc); border: 1.5px dashed var(--border-strong, #cbd5e1); border-radius: 12px; padding: 12px 16px; font-size: 14px; color: var(--text-secondary, #475569); cursor: pointer; }
+.hg-onboard b { color: var(--brand-ink, var(--brand)); }
+.hg-onboard:hover { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
 .hg-onboard-form { text-align: left; }
 .hg-onboard-foot { display: flex; gap: 10px; margin-top: 16px; }
-.hg-onboard-cancel { flex: 1; background: #f1f5f9; color: #334155; font-weight: 800; font-size: 14px; padding: 11px; border: none; border-radius: 12px; cursor: pointer; }
+.hg-onboard-cancel { flex: 1; background: var(--bg, #f1f5f9); color: var(--text-secondary, #334155); font-weight: 800; font-size: 14px; padding: 11px; border: none; border-radius: 12px; cursor: pointer; }
 .hg-onboard-send { flex: 1; background: linear-gradient(135deg,#10b981,#059669); color: #fff; font-weight: 800; font-size: 14px; padding: 11px; border: none; border-radius: 12px; cursor: pointer; }
 .hg-onboard-send:disabled { opacity: .6; cursor: default; }
 
@@ -2543,7 +2547,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
   .hg-review-row b { text-align: right; overflow-wrap: anywhere; margin-left: auto; }
   .hg-pay { padding: 12px; margin-top: 12px; }
   .hg-pay-row { padding: 3px 0; }
-  .hg-pay-warn { padding: 9px 11px; margin-top: 8px; }
+  .hg-pay-warn { padding: 9px 11px 9px 31px; margin-top: 8px; }
   /* Optional sign-up questions read as clearly secondary (less top emphasis). */
   .hg-signup { margin-top: 12px; padding-top: 12px; }
 
@@ -2567,10 +2571,10 @@ function goToPublished() { const p = publishedPath.value; published.value = null
     font: inherit; font-weight: 800; font-size: 12.5px; padding: 8px 13px; border-radius: 999px; cursor: pointer;
   }
   .hg-mb-tab.on { background: #e11d48; border-color: #e11d48; color: #fff; }
-  .hg-mb-tab-c { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; font-size: 11px; font-weight: 800; background: #fee2e2; color: #be123c; }
+  .hg-mb-tab-c { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; font-size: 11px; font-weight: 800; background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #be123c); }
   .hg-mb-tab.on .hg-mb-tab-c { background: rgba(255,255,255,.25); color: #fff; }
-  .hg-mb-tab.done:not(.on) { border-color: #86efac; color: #15803d; }
-  .hg-mb-tab.done:not(.on) .hg-mb-tab-c { background: #dcfce7; color: #15803d; }
+  .hg-mb-tab.done:not(.on) { border-color: var(--success-border, #86efac); color: var(--success-ink, #15803d); }
+  .hg-mb-tab.done:not(.on) .hg-mb-tab-c { background: var(--success-bg, #dcfce7); color: var(--success-ink, #15803d); }
   .hg-mb-area { touch-action: pan-y; }
   .hg-mb-col { display: flex; flex-direction: column; gap: 12px; }
   /* Subtle slide/fade as the active round changes; direction follows the tap/swipe. */
@@ -2586,7 +2590,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
   .hg-mcard-empty {
     font-size: 13px; padding: 8px 10px; margin-top: 10px;
     justify-content: center; border-radius: 10px;
-    background: #fff1f2; border: 1px dashed #fecdd3; min-height: 40px;
+    background: var(--danger-bg, #fff1f2); border: 1px dashed #fecdd3; min-height: 40px;
   }
 
   /* [9] Prize rows: let the place label shrink and the amount take the width;
@@ -2601,7 +2605,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
     flex-shrink: 0;
   }
   .hg-wv-cancel { background: none; color: var(--text-muted, #64748b); padding: 12px 14px; }
-  .hg-wv-cancel:hover { background: #f1f5f9; }
+  .hg-wv-cancel:hover { background: var(--bg, #f1f5f9); }
 
   /* [10] Waiver + published modals become bottom sheets (app convention). */
   .hg-wv-back, .hg-done-back { align-items: flex-end; padding: 0; }
@@ -2638,13 +2642,13 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
   /* [P2-4] Flatten card-inside-card: tinted fills alone carry the grouping.
      (Amber .hg-prize-box keeps its border — it sits on white.) */
-  .hg-prize-toggle { border: none; border-radius: 0; padding: 10px 0; border-top: 1px solid #eef2f6; }
+  .hg-prize-toggle { border: none; border-radius: 0; padding: 10px 0; border-top: 1px solid var(--border, #eef2f6); }
   .hg-review { border-color: transparent; }
   .hg-pay { border-width: 1px; }
 
   /* [P2-5] Type chooser: clamp descriptions + "How it works" sentences to two
      lines. .hg-rules (conduct/safety copy) intentionally untouched. */
-  .hg-choice-d, .hg-how-step span {
+  .hg-choice-d, .hg-how-step > div > span {
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
   }
 
@@ -2673,8 +2677,29 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-postas { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); border-radius: 14px; padding: 13px 15px; margin: 14px 0 18px; display: flex; flex-direction: column; gap: 9px; }
 .hg-postas-l { font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-light, #94a3b8); }
 .hg-postas-chips { display: flex; gap: 8px; flex-wrap: wrap; }
-.hg-pa { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; font-weight: 700; font-size: 13px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+.hg-pa { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); font-weight: 700; font-size: 13px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
 .hg-pa.on { border-color: var(--brand, #0d9488); background: color-mix(in srgb, var(--brand, #0d9488), transparent 90%); color: var(--brand, #0d9488); }
 .hg-postas-hint { font-size: 12px; color: var(--text-muted, #64748b); }
 .hg-wl { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px dashed var(--border, #e2e8f0); border-radius: 12px; padding: 11px 13px; }
+
+/* A guided journey, with optional details out of the main decision path. */
+.hg { max-width: 860px; padding-bottom: 24px; }.hg.hg-choosing,.hg.hg-wide,.hg.hg-reviewing { max-width: 1160px; }.hg > h1 { font-size: clamp(28px,3.5vw,40px); line-height: 1.2; letter-spacing: -.03em; max-width: 24ch; margin-top: 24px; }.hg-sub { max-width: 64ch; line-height: 1.7; font-size: 15px; margin-bottom: 30px; }
+.hg-choose { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 22px; margin-top: 24px; }.hg-choice { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; padding: 28px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); text-align: start; }.hg-choice:hover { border-color: var(--brand-ink); transform: none; }.hg-choice-ico { width: 54px; height: 54px; background: var(--brand-tint,var(--bg)); color: var(--brand-ink); border-radius: 14px; margin-bottom: 22px; }.hg-choice-ico.event { background: var(--warning-bg); color: var(--warning-ink); }.hg-choice-t { font-size: 24px; margin-bottom: 10px; }.hg-choice-d { font-size: 14px; line-height: 1.7; display: block; -webkit-line-clamp: unset; color: var(--text-secondary); }.hg-choice-go { display: flex; align-items: center; justify-content: space-between; margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--brand-ink); font-size: 14px; font-weight: 700; }
+.hg-how { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--border); }.hg-how-h { text-align: start; font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--text); }.hg-how-steps { gap: 26px; }.hg-how-step b { font-size: 14px; }.hg-how-step > div > span { font-size: 13px; line-height: 1.7; display: block; -webkit-line-clamp: unset; }.hg-rules { margin-top: 26px; font-size: 12px; }
+.hg-steps { margin: 18px 0 28px; gap: 10px; padding: 12px 0 20px; border-bottom: 1px solid var(--border); }.hg-step { border: 0; background: none; font: inherit; text-align: start; padding: 4px 0; color: var(--text-muted); cursor: pointer; }.hg-step:disabled { cursor: default; opacity: 1; }.hg-step.on { color: var(--brand-ink); }.hg-step-t { font-size: 13px; }.hg-stepcount { display: block; color: var(--text-muted); font-size: 12px; margin: 12px 0 8px; }.hg-steptitle { scroll-margin-top: 160px; font-size: 29px; letter-spacing: -.025em; }.hg-card { padding: 28px; border: 1px solid var(--border); border-radius: 14px; box-shadow: none; }.hg-l { font-size: 14px; font-weight: 650; margin-top: 22px; }.hg-l:first-child { margin-top: 0; }.hg-in { padding: 12px 14px; min-height: 46px; font-size: 16px; border-radius: 9px; background: var(--bg); color: var(--text); }.hg-row { gap: 20px; }.hg-note { line-height: 1.7; font-size: 13px; }
+.hg-disclosure { border-block-start: 1px solid var(--border); margin-top: 24px; padding-top: 18px; }.hg-disclosure summary { cursor: pointer; font-size: 15px; font-weight: 650; color: var(--text); padding: 6px 0; }.hg-disclosure summary > span { font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: 8px; }.hg-disclosure[open] summary { margin-bottom: 18px; }.hg-final { display: block; }.hg-final.review .hg-final-side { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: start; gap: 24px; }.hg-review-edit { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--brand-ink); font-size: 12px; cursor: pointer; padding: 6px; margin-inline-start: auto; }.hg-review-h { display: flex; justify-content: space-between; align-items: center; gap: 10px; }.hg-review-contact { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; padding: 14px 0; border-bottom: 1px solid var(--border); }.hg-review-contact span { color: var(--text-muted); }.hg-review-title { font-size: 22px; margin: 16px 0 8px; overflow-wrap: anywhere; }.hg-review-sport { font-size: 13px; color: var(--brand-ink); margin-bottom: 16px; }.hg-final.review .hg-final-side > .hg-pay { margin-top: 0; }
+.hg-actions { position: sticky; bottom: 12px; z-index: 20; border: 1px solid var(--border); background: var(--surface); border-radius: 12px; padding: 14px; margin-top: 20px; box-shadow: 0 6px 22px #0000000d; }.hg-back,.hg-next,.hg-submit { min-height: 46px; border-radius: 9px; }.hg-next,.hg-submit { background: var(--brand); }.hg :is(button,a,input,textarea,select,summary):focus-visible { outline: 2px solid var(--brand-ink); outline-offset: 3px; }
+@media(max-width:760px) { .hg > h1 { font-size: 29px; }.hg-choose { grid-template-columns: 1fr; gap: 14px; }.hg-choice { display: block; padding: 22px; }.hg-choice-ico { width: 44px; height: 44px; margin-bottom: 16px; }.hg-choice-t { font-size: 22px; }.hg-choice-d { display: block; font-size: 14px; -webkit-line-clamp: unset; }.hg-choice-go { margin-top: 18px; padding-top: 14px; }.hg-how-steps { grid-template-columns: 1fr; gap: 18px; }.hg-how-step > div > span { display: block; -webkit-line-clamp: unset; }.hg-card { padding: 20px 16px; }.hg-steptitle { font-size: 25px; scroll-margin-top: 90px; }.hg-step-t { display: none; }.hg-step.on .hg-step-t { display: inline; font-size: 12px; }.hg-steps { gap: 8px; }.hg-step-bar { min-width: 8px; }.hg-final.review .hg-final-side { grid-template-columns: 1fr; }.hg-actions { bottom: 12px; padding: 10px; }.hg-actions button { font-size: 14px; }.hg-row { gap: 14px; }.hg-reviewing .hg-card { border: 0; padding: 0; background: none; }.hg-sub { display: block; } }
+@media(prefers-reduced-motion:reduce) { .hg * { transition: none !important; animation: none !important; } }
+</style>
+
+<style scoped>
+.hg-media { border-top:1px solid var(--border); margin-top:24px; padding-top:24px; }
+.hg-media h2 { margin:0; font-size:18px; font-weight:700; color:var(--text); }
+.hg-media-help { margin:8px 0 20px; color:var(--text-muted); line-height:1.6; font-size:14px; }
+.hg-required { font-size:11px; font-weight:500; color:var(--text-muted); margin-inline-start:5px; }
+.hg-field-error { margin:8px 0 0; color:var(--danger-ink, #b91c1c); font-size:13px; line-height:1.5; }
+.hg-in[aria-invalid="true"] { border-color:var(--danger-ink, #b91c1c); background:color-mix(in srgb, var(--danger-ink, #b91c1c) 5%, var(--bg)); }.hg-in[aria-invalid="true"]:focus { outline-color:var(--danger-ink, #b91c1c); box-shadow:0 0 0 3px color-mix(in srgb, var(--danger-ink, #b91c1c) 18%, transparent); }
+.hg-drop-btn { min-height:44px; }
+@media(max-width:600px) { .hg-media .hg-twocol { grid-template-columns:minmax(0,1fr); } }
 </style>

@@ -118,10 +118,10 @@ const filtered = computed(() => {
 /* One clean field (same as Facilities.vue): search input with the filter icon INSIDE it */
 .vb-search-wrap { position: relative; flex: 1; min-width: 200px; max-width: 480px; }
 .vb-csearch { display: flex; align-items: center; gap: 8px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 6px 6px 6px 13px; color: var(--text-light, #94a3b8); width: 100%; }
-.vb-csearch input { flex: 1; min-width: 0; border: none; outline: none; font-size: 14px; color: #0f172a; background: transparent; }
+.vb-csearch input { flex: 1; min-width: 0; border: none; outline: none; font-size: 14px; color: var(--text, #0f172a); background: transparent; }
 .vb-ficon { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; border: none; background: none; color: var(--text-muted, #64748b); cursor: pointer; padding: 7px 8px; border-radius: 8px; }
-.vb-ficon:hover { color: var(--brand); background: #f1f5f9; }
-.vb-ficon.on { color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, white); }
+.vb-ficon:hover { color: var(--brand-ink, var(--brand)); background: var(--bg, #f1f5f9); }
+.vb-ficon.on { color: var(--brand-ink, var(--brand)); background: color-mix(in srgb, var(--brand) 10%, var(--surface, white)); }
 .vb-filter-n { background: var(--brand); color: #fff; font-size: 10.5px; font-weight: 800; min-width: 16px; height: 16px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
 /* Floating filter panel (anchored under the field, dashboard-style shadowed card)
    with PILL selections; closes on outside tap via the document listener. */
@@ -129,17 +129,17 @@ const filtered = computed(() => {
 .vb-frow { display: flex; align-items: flex-start; gap: 12px; }
 .vb-flabel { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-light, #94a3b8); width: 70px; flex-shrink: 0; padding-top: 7px; }
 .vb-chips { display: flex; flex-wrap: wrap; gap: 7px; flex: 1; min-width: 0; }
-.vb-chips button { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; font-weight: 700; font-size: 13px; padding: 6px 13px; border-radius: 999px; cursor: pointer; }
+.vb-chips button { border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); font-weight: 700; font-size: 13px; padding: 6px 13px; border-radius: 999px; cursor: pointer; }
 .vb-chips button:hover { border-color: var(--brand-accent); }
 .vb-chips button.on { background: var(--brand); border-color: var(--brand); color: #fff; }
-.vb-panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 1px solid #eef2f6; }
-.vb-clear { background: none; border: none; color: #dc2626; font-weight: 700; font-size: 13px; cursor: pointer; padding: 2px; }
+.vb-panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border, #eef2f6); }
+.vb-clear { background: none; border: none; color: var(--danger-ink, #dc2626); font-weight: 700; font-size: 13px; cursor: pointer; padding: 2px; }
 .vb-clear:disabled { color: #cbd5e1; cursor: default; }
 .vb-clear:not(:disabled):hover { text-decoration: underline; }
 .vb-done { background: var(--brand); color: #fff; border: none; border-radius: 999px; font-weight: 800; font-size: 13px; padding: 8px 18px; cursor: pointer; }
 .vb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
 .vb-grid :deep(.fc) { width: auto; }
-.vb-msg { color: var(--text-light, #94a3b8); background: #f8fafc; border-radius: 12px; padding: 22px; text-align: center; font-size: 14px; }
+.vb-msg { color: var(--text-light, #94a3b8); background: var(--canvas, #f8fafc); border-radius: 12px; padding: 22px; text-align: center; font-size: 14px; }
 
 /* ── Mobile (≤760px): same behavior as Facilities.vue — the panel becomes a floating
    sheet above the bottom nav; 16px input stops iOS zoom; ≥44px tap targets. ── */

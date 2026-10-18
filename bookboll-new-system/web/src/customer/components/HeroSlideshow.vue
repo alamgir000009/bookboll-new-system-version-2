@@ -1,4 +1,5 @@
 <script setup>
+import { brandButtonText } from '../../lib/brandColors.js'
 /**
  * HeroSlideshow.vue — the customizable home hero. Renders a rotating set of banners
  * (already filtered for the current audience). Each banner: image OR colour bg, heading
@@ -6,6 +7,7 @@
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { bannerLink, bannerButtonText, hasButton, applyTokens, bannerButtons, bannerBgStyle } from '../../lib/heroBanners.js'
+import { businessHomeUrl } from '../../lib/crossApp.js'
 import { sanitizeHtml } from '../../lib/blog.js'
 import { selectedCountry, customer, isCustomer } from '../../lib/customerSession.js'
 import { activeBrand, platformBrand } from '../../lib/brand.js'
@@ -45,7 +47,7 @@ const subHtml = computed(() => cur.value?.subheading ? sanitizeHtml(applyTokens(
 let timer = null
 function start() {
   stop()
-  if (props.banners.length > 1) timer = setInterval(() => { idx.value = (idx.value + 1) % props.banners.length }, 6000)
+  if (props.banners.length > 1 && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) timer = setInterval(() => { idx.value = (idx.value + 1) % props.banners.length }, 6000)
 }
 function stop() { if (timer) { clearInterval(timer); timer = null } }
 function go(i) { idx.value = (i + props.banners.length) % props.banners.length; start() }   // reset timer on manual nav
@@ -58,12 +60,12 @@ watch(() => props.banners.length, () => { idx.value = 0; start() })
 const slideStyle = computed(() => bannerBgStyle(cur.value || {}))
 const btnStyle = computed(() => {
   const c = cur.value?.button_color
-  return c ? { background: c, color: '#fff' } : {}
+  return c ? { background: c, color: brandButtonText(c) } : {}
 })
 </script>
 
 <template>
-  <div v-if="cur" class="hs" @mouseenter="stop" @mouseleave="start">
+  <div v-if="cur" class="hs" @mouseenter="stop" @mouseleave="start" @focusin="stop" @focusout="start">
     <!-- System loyalty slide (signed-in apex customers) -->
     <div v-if="cur.kind === 'loyalty' && loyalty" class="hs-loy" :style="{ '--tbg': loyalty.tier.bg }">
       <div class="hs-loy-badge" :style="{ color: loyalty.tier.color }"><component :is="tierIcon(loyalty.tier.name)" :size="30" /></div>
@@ -93,10 +95,10 @@ const btnStyle = computed(() => {
           </div>
         </div>
         <div v-if="bannerButtons(cur).length" class="hs-btns">
-          <router-link v-for="(btn, bi) in bannerButtons(cur)" :key="btn.key" :to="btn.to"
+          <component :is="btn.key === 'business' || /^https?:\/\//i.test(btn.to) ? 'a' : 'router-link'" v-for="(btn, bi) in bannerButtons(cur)" :key="btn.key" :to="btn.to" :href="btn.key === 'business' ? businessHomeUrl('/') : btn.to"
             class="hs-btn" :class="{ ghost: bi > 0 }" :style="bi === 0 ? btnStyle : undefined">
             {{ btn.text }}
-          </router-link>
+          </component>
         </div>
       </div>
     </div>

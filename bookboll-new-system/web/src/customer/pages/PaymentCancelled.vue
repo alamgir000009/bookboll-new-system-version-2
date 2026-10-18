@@ -81,7 +81,7 @@ async function release() {
 .pc-x {
   width: 60px; height: 60px; margin: 0 auto 14px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: #fee2e2; color: #dc2626;
+  background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626);
 }
 .pc-head h1 { font-size: 23px; font-weight: 800; margin: 0 0 6px; }
 .pc-head p { margin: 0; opacity: .75; font-size: 14px; }

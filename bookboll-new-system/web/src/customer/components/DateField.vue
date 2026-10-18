@@ -27,7 +27,7 @@ function reposition() {
   const pop = popRef.value
   if (!trig || !pop) return
   const r = trig.getBoundingClientRect()
-  const vw = window.innerWidth, vh = window.innerHeight, margin = 8
+  const vw = document.documentElement.clientWidth, vh = window.innerHeight, margin = 8
   const popW = pop.offsetWidth || 380
   const popH = pop.offsetHeight || 400
   const spaceBelow = vh - r.bottom - margin
@@ -87,9 +87,9 @@ onUnmounted(() => {
 
 <style scoped>
 .df { position: relative; display: inline-block; max-width: 100%; }
-.df-trigger { display: inline-flex; align-items: center; gap: 9px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 12px; background: var(--surface, #ffffff); padding: 12px 16px; cursor: pointer; color: #0f172a; font-size: 15px; font-weight: 700; min-width: 250px; max-width: 100%; }
+.df-trigger { display: inline-flex; align-items: center; gap: 9px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 12px; background: var(--surface, #ffffff); padding: 12px 16px; cursor: pointer; color: var(--text, #0f172a); font-size: 15px; font-weight: 700; min-width: 250px; max-width: 100%; }
 .df-trigger:hover, .df-trigger.open { border-color: var(--brand-accent); }
-.df-cal { color: var(--brand); flex-shrink: 0; }
+.df-cal { color: var(--brand-ink, var(--brand)); flex-shrink: 0; }
 .df-label { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .df-chev { color: var(--text-light, #94a3b8); transition: transform .15s; flex-shrink: 0; }
 .df-chev.rot { transform: rotate(180deg); }
@@ -101,6 +101,6 @@ onUnmounted(() => {
    edge past the screen and cause body-level horizontal scroll. Cap the fixed popup at
    viewport width minus the 8px margins the JS already uses and scroll inside instead. */
 @media (max-width: 760px) {
-  .df-pop { max-width: calc(100vw - 16px); overflow-x: auto; }
+  .df-pop { width: min(380px, calc(100% - 16px)); max-width: calc(100% - 16px); overflow-x: auto; }
 }
 </style>

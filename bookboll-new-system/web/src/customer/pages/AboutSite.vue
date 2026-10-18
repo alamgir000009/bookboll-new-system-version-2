@@ -2,7 +2,7 @@
 /** AboutSite.vue — provider About page with an optional hero banner
  *  (title / subtitle / image set in My Website → About us). */
 import { computed } from 'vue'
-import { activeBrand } from '../../lib/brand.js'
+import { activeBrand, brandShows } from '../../lib/brand.js'
 import { useSeo } from '../../lib/seo.js'
 import { CalendarCheck } from 'lucide-vue-next'
 import VisitUs from '../components/VisitUs.vue'
@@ -30,9 +30,9 @@ const paras = computed(() => String(pg.value.text || '').split(/\n{2,}|\n/).map(
     <!-- Locations + opening hours (shared with home & contact) -->
     <div class="ab-visit"><VisitUs /></div>
 
-    <div class="ab-cta-band">
-      <div class="ab-cta-txt">Come play with us — book your first session today.</div>
-      <router-link to="/facilities" class="ab-cta"><CalendarCheck :size="16" /> Book Now</router-link>
+    <div v-if="brandShows('venues')" class="ab-cta-band">
+      <div class="ab-cta-txt">Find a listing and choose a time that works for you.</div>
+      <router-link to="/facilities" class="ab-cta"><CalendarCheck :size="16" /> Browse listings</router-link>
     </div>
   </div>
 </template>
@@ -45,11 +45,11 @@ const paras = computed(() => String(pg.value.text || '').split(/\n{2,}|\n/).map(
 .ab-hero-logo { display: inline-block; width: 72px; height: 72px; border-radius: 18px; background-size: cover; background-position: center; background-color: var(--surface, #ffffff); box-shadow: 0 6px 20px rgba(0,0,0,.18); margin-bottom: 16px; }
 .ab-hero-h1 { font-size: 38px; font-weight: 900; margin: 0 0 10px; color: #fff; line-height: 1.12; }
 .ab-hero-sub { font-size: 16px; opacity: .93; margin: 0 auto; max-width: 560px; line-height: 1.6; }
-.ab-body p { font-size: 15.5px; line-height: 1.85; color: #334155; margin: 0 0 18px; }
-.ab-body p:first-of-type { font-size: 17px; color: #1e293b; }
+.ab-body p { font-size: 15.5px; line-height: 1.85; color: var(--text-secondary, #334155); margin: 0 0 18px; }
+.ab-body p:first-of-type { font-size: 17px; color: var(--text, #1e293b); }
 .ab-visit { margin-top: 30px; }
-.ab-cta-band { display: flex; align-items: center; gap: 14px; background: color-mix(in srgb, var(--brand) 6%, white); border: 1px solid color-mix(in srgb, var(--brand) 18%, white); border-radius: 16px; padding: 18px 22px; margin-top: 26px; flex-wrap: wrap; }
-.ab-cta-txt { flex: 1; font-size: 15px; font-weight: 800; color: #0f172a; min-width: 0; }
+.ab-cta-band { display: flex; align-items: center; gap: 14px; background: color-mix(in srgb, var(--brand) 6%, var(--surface, white)); border: 1px solid color-mix(in srgb, var(--brand) 18%, white); border-radius: 16px; padding: 18px 22px; margin-top: 26px; flex-wrap: wrap; }
+.ab-cta-txt { flex: 1; font-size: 15px; font-weight: 800; color: var(--text, #0f172a); min-width: 0; }
 .ab-cta { display: inline-flex; align-items: center; gap: 8px; background: var(--brand); color: #fff; font-weight: 800; font-size: 14.5px; padding: 12px 24px; border-radius: 999px; text-decoration: none; }
 @media (max-width: 760px) {
   .ab-hero { padding: 54px 18px; margin-bottom: 24px; }

@@ -6,8 +6,12 @@ import { loadFacility } from '../../customer/data.js'
 import { useSeo, sportsActivityLocationLd } from '../../lib/seo.js'
 import { cityForId, slugifySport, facilityPath, slugifyCity } from '../../lib/cityPages.js'
 import { isWhiteLabel } from '../../lib/brand.js'
-import { ArrowLeft, MapPin, Building2, Users, ChevronRight, Navigation, Expand, Images } from 'lucide-vue-next'
+import { ArrowLeft, MapPin, Building2, ChevronRight, Navigation, Images, CalendarCheck } from 'lucide-vue-next'
 import Lightbox from '../components/Lightbox.vue'
+import FacilityCard from '../components/FacilityCard.vue'
+import ExpandableDescription from '../components/ExpandableDescription.vue'
+import BrowseBreadcrumb from '../components/BrowseBreadcrumb.vue'
+import { browseReturnPath } from '../../lib/browseCatalog.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,36 +22,24 @@ const cur = computed(() => data.value?.location?.currency_override || selectedCo
 
 // Venue photo gallery (first = cover). activePhoto drives the hero; thumbnails switch it.
 const activePhoto = ref(0)
-const gallery = computed(() => data.value?.photos?.length ? data.value.photos : (data.value?.photo ? [data.value.photo] : []))
+const gallery = computed(() => [...new Set([...(data.value?.photos || []), data.value?.photo, ...(data.value?.listings || []).flatMap(l => [l.photo, ...(l.photos || [])])].filter(Boolean))])
 const heroPhoto = computed(() => gallery.value[activePhoto.value] || gallery.value[0] || '')
 const lightbox = ref(false)   // full-screen photo viewer
 
-// ── Court card photos ────────────────────────────────────────────────────────
-// A listing carries a `photos` array (2-3 is common) but the card only ever showed
-// `photo`, the cover — the rest were in the payload and never seen. The strip below
-// is a native scroll-snap carousel: swipe works without JS, so this only has to
-// track which frame is showing for the dots.
-function cardPhotos(l) {
-  const many = Array.isArray(l?.photos) ? l.photos.filter(Boolean) : []
-  if (many.length) return many
-  return l?.photo ? [l.photo] : []
+const selectedType = ref('')
+const listingsHeading = ref(null)
+function showListings() {
+  listingsHeading.value?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  listingsHeading.value?.focus({ preventScroll: true })
 }
-const cardFrame = ref({})   // listing id → index currently snapped into view
-function onCardScroll(l, e) {
-  const el = e.currentTarget
-  const i = Math.round(el.scrollLeft / Math.max(1, el.clientWidth))
-  if (cardFrame.value[l.id] !== i) cardFrame.value = { ...cardFrame.value, [l.id]: i }
-}
-// Dots are a jump control, not just an indicator — but they live inside the card's
-// <router-link>, so the tap must be stopped from navigating to the listing.
-function goCardFrame(l, i, e) {
-  const track = e.currentTarget.closest('.ccard-media')?.querySelector('.ccard-track')
-  if (track) track.scrollTo({ left: i * track.clientWidth, behavior: 'smooth' })
-}
-
+const types = computed(() => [...new Set((data.value?.listings || []).map(l => l.sport_category).filter(Boolean))])
+const visibleListings = computed(() => (data.value?.listings || [])
+  .filter(l => !selectedType.value || l.sport_category === selectedType.value)
+  .map(l => ({ ...l, photo: l.photo || l.photos?.[0], sport: l.sport_category, price: l.startPrice, slotMins: l.slot_duration || 60, pinText: data.value.location.name, locationId: data.value.location.id, currency: cur.value })))
 async function load() {
   loading.value = true
   activePhoto.value = 0
+  selectedType.value = ''
   data.value = await loadFacility(route.params.id)
   const loc = data.value?.location
   const cityName = loc?.city_name || loc?.city || ''
@@ -80,7 +72,7 @@ useSeo(() => {
   const canonicalPath = facilityPath(route.params.id, loc.name)
   return {
     title: `${loc.name}${city ? ' — ' + city : ''}`,
-    description: `Book courts and pitches at ${loc.name}${city ? ' in ' + city : ''}${sports ? ' (' + sports + ')' : ''}. Reserve by the hour on Bookboll.`,
+    description: `Browse listings at ${loc.name}${city ? ' in ' + city : ''}${sports ? ' (' + sports + ')' : ''} and choose a time to book.`,
     image: data.value?.photo,
     path: canonicalPath,
     type: 'place',
@@ -97,221 +89,118 @@ function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '
 </script>
 
 <template>
-  <div>
-    <router-link to="/facilities" class="cback"><ArrowLeft :size="16" /> All venues</router-link>
-    <div v-if="loading" class="cmsg">Loading…</div>
-    <div v-else-if="!data" class="cmsg">Venue not found.</div>
+  <div class="venue-detail">
+    <BrowseBreadcrumb :current="data?.location?.name || ''" />
+    <div v-if="loading" class="venue-message" role="status">Loading venue…</div>
+    <div v-else-if="!data" class="venue-message">Venue not found. <router-link to="/facilities">Browse all venues</router-link></div>
     <template v-else>
-      <div class="fd-hero" :class="{ 'has-photo': heroPhoto }" :style="heroPhoto ? { backgroundImage: `url(${heroPhoto})` } : {}"
-        :role="heroPhoto ? 'button' : undefined" :aria-label="heroPhoto ? 'View photos full screen' : undefined"
-        @click="heroPhoto && (lightbox = true)">
-        <div v-if="!heroPhoto" class="fd-hero-fallback"><Building2 :size="48" /></div>
-        <span v-else class="fd-hero-expand"><Expand :size="15" /></span>
+      <header class="venue-header">
+        <div><span class="venue-label"><Building2 :size="15" /> Venue</span><h1>{{ data.location.name }}</h1><p v-if="data.location.address"><MapPin :size="16" />{{ data.location.address }}</p></div>
+        <div class="venue-header-actions"><button v-if="data.listings.length" class="venue-book" @click="showListings">View listings <ChevronRight :size="16" /></button><button v-if="data.mapsUrl" class="venue-directions" @click="openMaps"><Navigation :size="16" /> Get directions</button></div>
+      </header>
+      <div v-if="gallery.length" class="venue-gallery" :class="{ 'venue-gallery-multi': gallery.length > 1 }">
+        <button class="venue-cover" @click="lightbox = true" :aria-label="`View photos of ${data.location.name}`"><img :src="heroPhoto" :alt="data.location.name" /><span><Images :size="16" /> View {{ gallery.length }} {{ gallery.length === 1 ? 'photo' : 'photos' }}</span></button>
+        <div v-if="gallery.length > 1" class="venue-preview"><button v-for="(photo, i) in gallery.slice(1, 3)" :key="photo" :aria-label="`View venue photo ${i + 2}`" @click="activePhoto = i + 1; lightbox = true"><img :src="photo" alt="" loading="lazy" /></button></div>
       </div>
-      <div v-if="gallery.length > 1" class="fd-thumbs">
-        <button v-for="(p, i) in gallery" :key="i" type="button" class="fd-thumb"
-          :class="{ on: i === activePhoto }" :style="{ backgroundImage: `url(${p})` }"
-          @click="activePhoto = i" :aria-label="`Photo ${i + 1}`"></button>
-      </div>
-      <h1 class="fd-name">{{ data.location.name }}</h1>
-      <button v-if="data.location.address" type="button" class="fd-addr fd-addr-link" @click="openMaps" :title="data.mapsUrl ? 'Open in Google Maps' : ''">
-        <MapPin :size="16" /><span>{{ data.location.address }}</span><Navigation v-if="data.mapsUrl" :size="14" class="fd-addr-go" />
-      </button>
-      <!-- Phones hide the hero and the thumbnail strip (see the ≤760px block): the
-           venue photo pushed the courts — the only thing anyone came here to tap —
-           below the fold. The photos are still one tap away from here. -->
-      <button v-if="gallery.length" type="button" class="fd-photos-m" @click="lightbox = true">
-        <Images :size="14" />{{ gallery.length }} photo{{ gallery.length === 1 ? '' : 's' }} of this venue
-      </button>
-
-      <h2 class="fd-h2">Courts & pitches</h2>
-      <div v-if="!data.listings.length" class="cempty"><Building2 :size="34" /><span>No bookable courts listed yet.</span></div>
-      <div v-else class="fd-courts">
-        <router-link v-for="l in data.listings" :key="l.id" :to="`/listings/${l.id}`" class="ccard">
-          <div class="ccard-media">
-            <div v-if="cardPhotos(l).length" class="ccard-track" @scroll.passive="onCardScroll(l, $event)">
-              <div v-for="(src, i) in cardPhotos(l)" :key="i" class="ccard-img" :style="{ backgroundImage: `url(${src})` }"></div>
-            </div>
-            <div v-else class="ccard-img">
-              <div class="ccard-img-fallback"><Building2 :size="28" /></div>
-            </div>
-            <!-- One photo needs no controls; the count and dots only earn their space
-                 once there is something to move between. -->
-            <template v-if="cardPhotos(l).length > 1">
-              <span class="ccard-count">{{ (cardFrame[l.id] || 0) + 1 }}/{{ cardPhotos(l).length }}</span>
-              <div class="ccard-dots">
-                <button v-for="(src, i) in cardPhotos(l)" :key="i" type="button" class="ccard-dot"
-                        :class="{ on: (cardFrame[l.id] || 0) === i }" :aria-label="`Photo ${i + 1}`"
-                        @click.prevent.stop="goCardFrame(l, i, $event)"></button>
-              </div>
-            </template>
-          </div>
-          <div class="ccard-body">
-            <div class="ccard-name">{{ l.name }}</div>
-            <div class="ccard-meta">
-              <span v-if="l.sport_category" class="ccard-tag">{{ l.sport_category }}</span>
-              <span class="ccard-cap"><Users :size="12" /> up to {{ l.capacity || 1 }}</span>
-            </div>
-            <div class="ccard-foot">
-              <span class="ccard-price">
-                <template v-if="l.startPrice"><span class="ccard-from">from</span> {{ cur }} {{ Number(l.startPrice).toLocaleString() }}<span class="ccard-per"> / {{ l.slot_duration || 60 }} mins</span></template>
-                <span v-else class="ccard-na">See prices</span>
-              </span>
-              <ChevronRight :size="16" class="ccard-arrow" />
-            </div>
-          </div>
-        </router-link>
-      </div>
-
-      <div v-if="data.listings.length" class="fd-book">
-        <div class="fd-book-txt">
-          <strong>Ready to play?</strong>
-          <span>Open any court above to see live availability and book your slot online.</span>
-        </div>
-      </div>
-
-      <!-- Discover more in this city (internal links to the local landing pages) -->
-      <div v-if="cityInfo" class="fd-more">
-        <h2 class="fd-h2">More in {{ cityInfo.name }}</h2>
-        <div class="fd-more-links">
-          <router-link v-for="s in venueSports" :key="s.slug" :to="`/venues/${cityInfo.slug}/${s.slug}`" class="fd-more-link">
-            {{ s.name }} venues in {{ cityInfo.name }} <ChevronRight :size="14" />
-          </router-link>
-          <router-link :to="`/venues/${cityInfo.slug}`" class="fd-more-link fd-more-all">
-            All venues in {{ cityInfo.name }} <ChevronRight :size="14" />
-          </router-link>
-        </div>
-      </div>
+      <div class="venue-overview"><div class="venue-facts"><span><Building2 :size="18" /><strong>{{ data.listings.length }}</strong> {{ data.listings.length === 1 ? 'bookable listing' : 'bookable listings' }}</span><span v-if="types.length"><CalendarCheck :size="18" /><strong>{{ types.length }}</strong> {{ types.length === 1 ? 'activity' : 'activities' }}</span></div><section v-if="data.location.description" class="venue-about"><h2>About the venue</h2><ExpandableDescription :text="data.location.description" id="venue-description" /></section></div>
+      <section class="venue-listings" aria-label="Listings at this venue">
+        <div class="venue-section-heading"><div><h2 ref="listingsHeading" tabindex="-1">Choose a listing <span>{{ data.listings.length }}</span></h2><p>Compare listings, then pick a time that works for you.</p></div></div>
+        <div v-if="types.length > 1" class="venue-types" aria-label="Filter venue listings"><button :aria-pressed="!selectedType" :class="{ active: !selectedType }" @click="selectedType = ''">All listings</button><button v-for="type in types" :key="type" :aria-pressed="selectedType === type" :class="{ active: selectedType === type }" @click="selectedType = type">{{ type }}</button></div>
+        <div v-if="visibleListings.length" class="venue-grid"><FacilityCard v-for="listing in visibleListings" :key="listing.id" :facility="listing" :return-to="browseReturnPath(route.query.from)" /></div>
+        <p v-else class="venue-message">No listings are available to book here yet.</p>
+      </section>
+      <div v-if="cityInfo && !isWhiteLabel" class="venue-more"><h2>Keep exploring</h2><router-link :to="browseReturnPath(route.query.from)"><ArrowLeft :size="16" /> Back to results</router-link><router-link :to="`/venues/${cityInfo.slug}`">All listings in {{ cityInfo.name }} <ChevronRight :size="16" /></router-link><router-link v-for="sport in venueSports" :key="sport.slug" :to="`/venues/${cityInfo.slug}/${sport.slug}`">{{ sport.name }} in {{ cityInfo.name }} <ChevronRight :size="16" /></router-link></div>
       <Lightbox v-if="lightbox" :images="gallery" :start="activePhoto" :alt="data.location.name" @close="lightbox = false" />
     </template>
   </div>
 </template>
 
 <style scoped>
-.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; }
-.cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
-.cempty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px; color: var(--text-light, #94a3b8); }
-.fd-hero { height: 240px; border-radius: 20px; background-size: cover; background-position: center; background-color: var(--brand-accent); position: relative; }
-.fd-hero.has-photo { cursor: zoom-in; }
-.fd-hero-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.85); }
-.fd-hero-expand { position: absolute; bottom: 10px; inset-inline-end: 10px; width: 32px; height: 32px; border-radius: 10px; background: rgba(8,12,20,.55); color: #fff; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.fd-thumbs { display: flex; gap: 8px; margin-top: 10px; overflow-x: auto; padding-bottom: 2px; }
-.fd-thumb { flex: 0 0 auto; width: 78px; height: 58px; border-radius: 10px; background-size: cover; background-position: center; border: 2px solid transparent; cursor: pointer; padding: 0; opacity: .75; transition: border-color .15s, opacity .15s; }
-.fd-thumb:hover { opacity: 1; }
-.fd-thumb.on { border-color: var(--brand); opacity: 1; }
-.fd-name { font-size: 28px; font-weight: 900; color: #0f172a; margin: 18px 0 8px; }
-.fd-addr { display: flex; align-items: center; gap: 8px; color: var(--text-muted, #64748b); font-size: 14.5px; margin-bottom: 4px; }
-.fd-addr-link { border: none; background: none; padding: 0; font: inherit; cursor: pointer; text-align: left; }
-.fd-addr-link:hover { color: var(--brand); }
-.fd-addr-go { color: var(--brand); }
-.fd-h2 { font-size: 19px; font-weight: 800; color: #0f172a; margin: 26px 0 14px; }
-/* Phone-only entry point to the lightbox. Styled here, switched on in the two
-   phone bands below (portrait ≤760px, and landscape-on-a-phone); desktop keeps the
-   hero + thumbnail strip and never needs it. */
-.fd-photos-m {
-  display: none; align-items: center; gap: 6px;
-  margin-top: 9px; padding: 0; min-height: 44px;
-  border: none; background: none; cursor: pointer;
-  font: inherit; font-size: 13.5px; font-weight: 700; color: var(--brand);
+.venue-detail { min-width: 0; }
+.venue-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 24px; }
+.venue-label { display: flex; align-items: center; gap: 6px; color: var(--brand-ink, var(--brand)); font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.venue-header h1 { font-size: clamp(25px, 3vw, 34px); font-weight: 700; letter-spacing: -.6px; margin-bottom: 10px; }
+.venue-header p { display: flex; align-items: flex-start; gap: 6px; font-size: 14px; color: var(--text-muted); max-width: 650px; }
+.venue-header p svg { flex-shrink: 0; margin-top: 2px; }
+.venue-directions { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); font-weight: 600; white-space: nowrap; }
+.venue-gallery { margin-bottom: 30px; }
+.venue-cover { display: block; position: relative; width: 100%; height: 280px; overflow: hidden; border-radius: 18px; background: var(--border); }
+.venue-cover > img { width: 100%; height: 100%; object-fit: cover; }
+.venue-cover > span { position: absolute; inset-inline-end: 14px; bottom: 14px; display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: var(--text); background: var(--surface); border-radius: 10px; font-size: 13px; font-weight: 600; }
+.venue-thumbnails { display: flex; gap: 10px; overflow-x: auto; padding: 5px 3px; margin-top: 8px; }
+.venue-thumbnails button { width: 74px; height: 54px; border-radius: 9px; overflow: hidden; flex-shrink: 0; }
+.venue-thumbnails img { width: 100%; height: 100%; object-fit: cover; }
+.venue-thumbnails button.active { outline: 2px solid var(--brand); outline-offset: 2px; }
+.venue-section-heading { margin-bottom: 20px; }
+.venue-section-heading h2 { font-size: 23px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.venue-section-heading h2 span { font-size: 13px; background: var(--border); border-radius: 8px; padding: 4px 8px; }
+.venue-section-heading p { color: var(--text-muted); font-size: 14px; margin-top: 6px; }
+.venue-types { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 18px; padding-block: 3px; }
+.venue-types button { min-height: 44px; padding: 10px 18px; border: 1px solid var(--border); border-radius: 11px; white-space: nowrap; font-weight: 600; background: var(--surface); }
+.venue-types button.active { background: var(--brand); border-color: var(--brand); color: white; }
+.venue-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; }
+.venue-grid :deep(.fc) { width: 100%; }
+.venue-more { border-top: 1px solid var(--border); margin-top: 36px; padding-top: 22px; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.venue-more h2 { width: 100%; font-size: 20px; margin-bottom: 6px; }
+.venue-more a { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--brand-ink, var(--brand)); min-height: 44px; }
+.venue-message { text-align: center; padding: 44px 16px; color: var(--text-muted); }
+.venue-detail button:focus-visible, .venue-detail a:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+@media(max-width:1024px) { .venue-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media(max-width:760px) {
+  .venue-header { flex-direction: column; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
+  .venue-header h1 { font-size: 25px; }
+  .venue-cover { height: 190px; border-radius: 14px; }
+  .venue-thumbnails { display: none; }
+  .venue-gallery { margin-bottom: 24px; }
+  .venue-section-heading h2 { font-size: 20px; }
+  .venue-grid { grid-template-columns: 1fr; gap: 12px; }
+  .venue-grid :deep(.fc) { display: grid; grid-template-columns: clamp(132px, 36%, 220px) minmax(0,1fr); }
+  .venue-grid :deep(.fc-img) { height: 100%; min-height: 145px; max-height: none; aspect-ratio: auto; }
+  .venue-grid :deep(.fc-body) { padding: 12px; }
+  .venue-grid :deep(.fc-price) { flex-wrap: wrap; }
+  .venue-grid :deep(.fc-title) { font-size: 14px; }
 }
 
-.fd-courts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
-/* A phone turned sideways is still a phone. Its width jumps to 844-932px, clearing
-   the 760px breakpoint below, and auto-fill then packs 2-3 courts per row on a
-   screen only ~390px tall. Keep the single-column list whenever the viewport is
-   short and landscape — real tablets are ~768px tall and keep the grid. */
-@media (max-height: 540px) and (orientation: landscape) {
-  .fd-courts { grid-template-columns: 1fr; gap: 12px; }
-  /* Sideways, the viewport is ~390px TALL — the 240px hero would eat nearly two
-     thirds of it. Same call as the portrait block: drop the venue imagery, keep
-     the photos one tap away. */
-  .fd-hero, .fd-thumbs { display: none; }
-  .fd-photos-m { display: inline-flex; min-height: 40px; }
+.venue-header { align-items: flex-start; margin-bottom: 26px; }
+.venue-header > div:first-child { max-width: 820px; }
+.venue-header h1 { line-height: 1.2; font-size: clamp(25px,3vw,36px); letter-spacing: -.8px; }
+.venue-label { color: var(--text-muted); font-size: 12px; margin-bottom: 10px; }
+.venue-header-actions { display: flex; align-items: center; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.venue-book { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 13px 20px; min-height: 46px; border-radius: 10px; background: var(--brand); color: white; font-size: 14px; font-weight: 650; width: 100%; }
+.venue-directions { font-size: 13px; border: 0; background: transparent; color: var(--brand-ink, var(--brand)); }
+.venue-gallery { display: grid; gap: 10px; margin-bottom: 0; border-radius: 18px; overflow: hidden; }
+.venue-gallery-multi { grid-template-columns: minmax(0,2fr) minmax(0,1fr); }
+.venue-cover { height: 350px; border-radius: 0; }
+.venue-cover > span { background: #101827db; color: white; border: 1px solid #ffffff40; }
+.venue-preview { display: flex; flex-direction: column; gap: 10px; min-width: 0; max-height: 350px; }
+.venue-preview button { flex: 1; min-height: 0; background: var(--bg); }
+.venue-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.venue-overview { margin-bottom: 32px; }
+.venue-facts { display: flex; flex-wrap: wrap; gap: 18px 32px; padding: 22px 0; border-bottom: 1px solid var(--border); }
+.venue-facts > span { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 14px; }
+.venue-facts svg { color: var(--brand-ink, var(--brand)); margin-inline-end: 2px; }
+.venue-facts strong { color: var(--text); font-weight: 650; }
+.venue-about { max-width: 760px; padding-top: 24px; }
+.venue-about h2 { font-size: 20px; font-weight: 650; margin-bottom: 12px; }
+.venue-section-heading h2 { font-size: 25px; letter-spacing: -.5px; scroll-margin-top: calc(var(--customer-sticky-offset, 90px) + 14px); }
+.venue-section-heading h2:focus { outline: none; }
+.venue-types { scrollbar-width: none; gap: 10px; margin-bottom: 24px; }
+.venue-types button { font-size: 13px; padding: 10px 16px; }
+.venue-types button.active { background: color-mix(in srgb, var(--brand) 10%, var(--surface)); border-color: var(--brand); color: var(--brand-ink, var(--brand)); }
+.venue-grid { gap: 22px; }
+@media(max-width:760px) {
+  .venue-header { gap: 18px; margin-bottom: 18px; }
+  .venue-header h1 { font-size: 25px; letter-spacing: -.5px; }
+  .venue-header-actions { flex-direction: row; flex-wrap: wrap; width: 100%; gap: 12px; }
+  .venue-book { width: auto; padding: 12px 16px; font-size: 13px; }
+  .venue-directions { padding: 12px 0; font-size: 12px; }
+  .venue-gallery { display: none; }
+  .venue-facts { font-size: 12px; gap: 18px; padding: 18px 0; }
+  .venue-facts > span { font-size: 12px; }
+  .venue-overview { margin-bottom: 26px; }
+  .venue-section-heading h2 { font-size: 22px; }
+  .venue-section-heading p { font-size: 13px; line-height: 1.6; }
+  .venue-grid { gap: 14px; }
 }
-.ccard { display: block; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; overflow: hidden; text-decoration: none; transition: transform .12s, box-shadow .12s; }
-.ccard:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(15,23,42,.12); }
-/* width:100% is explicit so the cover always spans the fluid card (1-col on phones). */
-/* Photo strip. The frames are a scroll-snap row, so the swipe is the browser's —
-   no drag handling to fight the card's own <router-link>. */
-.ccard-media { position: relative; width: 100%; height: 130px; background: var(--border, #e2e8f0); overflow: hidden; }
-.ccard-track { display: flex; width: 100%; height: 100%; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.ccard-track::-webkit-scrollbar { display: none; }
-.ccard-img { flex: 0 0 100%; width: 100%; height: 100%; scroll-snap-align: start; background-size: cover; background-position: center; background-color: var(--border, #e2e8f0); position: relative; }
-.ccard-img-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-light, #94a3b8); }
-/* Count + dots sit over the photo, so they read on light and dark shots alike. */
-.ccard-count { position: absolute; top: 8px; right: 8px; z-index: 2; font-size: 11px; font-weight: 800; color: #fff; background: rgba(15, 23, 42, .62); padding: 2px 8px; border-radius: 999px; }
-.ccard-dots { position: absolute; left: 0; right: 0; bottom: 7px; z-index: 2; display: flex; justify-content: center; gap: 5px; }
-.ccard-dot { width: 6px; height: 6px; padding: 0; border: none; border-radius: 50%; background: rgba(255, 255, 255, .55); cursor: pointer; transition: width .15s, background .15s; }
-.ccard-dot.on { width: 16px; border-radius: 999px; background: #fff; }
-.ccard-body { padding: 12px 14px 13px; }
-.ccard-name { font-size: 15.5px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ccard-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.ccard-tag { font-size: 11.5px; font-weight: 700; color: var(--brand); background: color-mix(in srgb, var(--brand) 18%, white); padding: 3px 9px; border-radius: 999px; text-transform: capitalize; }
-.ccard-cap { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-light, #94a3b8); }
-.ccard-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border, #e2e8f0); }
-.ccard-price { font-size: 14.5px; font-weight: 800; color: #0f172a; white-space: nowrap; }
-.ccard-from { font-size: 11px; font-weight: 600; color: var(--text-light, #94a3b8); }
-.ccard-per { font-size: 11px; font-weight: 600; color: var(--text-light, #94a3b8); }
-.ccard-na { font-size: 13px; font-weight: 700; color: var(--brand); }
-.ccard-arrow { color: var(--text-muted, #64748b); flex-shrink: 0; }
-.ccard:hover .ccard-arrow { color: var(--brand); }
 
-.fd-book { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: color-mix(in srgb, var(--brand) 8%, white); border: 1.5px solid #99f6e4; border-radius: 16px; padding: 18px 20px; margin-top: 24px; flex-wrap: wrap; }
-.fd-book-txt { display: flex; flex-direction: column; gap: 3px; }
-.fd-book-txt strong { font-size: 16px; color: #0f172a; }
-.fd-book-txt span { font-size: 13.5px; color: #475569; }
-.fd-book-btn { display: inline-flex; align-items: center; gap: 8px; background: var(--brand); color: #fff; font-weight: 800; padding: 12px 20px; border-radius: 999px; text-decoration: none; font-size: 15px; }
-.fd-more { margin-top: 28px; }
-.fd-more-links { display: flex; flex-wrap: wrap; gap: 8px; }
-.fd-more-link { display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; font-weight: 700; color: #334155; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); border-radius: 999px; padding: 8px 14px; text-decoration: none; }
-.fd-more-link:hover { border-color: var(--brand-accent); color: var(--brand); }
-.fd-more-all { background: color-mix(in srgb, var(--brand) 8%, white); border-color: #99f6e4; color: var(--brand); }
-
-/* ── Mobile (phone) — lift the court list (the primary action) toward the fold ── */
-@media (max-width: 760px) {
-  /* Trim the pre-hero run-up */
-  .cback { margin-bottom: 10px; }
-
-  /* ── No venue imagery on a phone ──────────────────────────────────────────
-     The hero plus the thumbnail strip ran to roughly 270px before the venue name
-     even started — on a 390x844 screen that is most of the first viewport spent on
-     a picture of a building, and the courts (the only thing on this page anyone can
-     act on) opened below the fold. Both are hidden here; the photos stay reachable
-     through the "N photos" button, which opens the same lightbox the hero did. */
-  .fd-hero, .fd-thumbs { display: none; }
-
-  /* The venue header is now the top of the page, so it carries the spacing the
-     hero used to provide — compact, but not cramped against the back link. */
-  .fd-name { font-size: 21px; line-height: 1.25; margin: 2px 0 7px; }
-
-  /* Long unbroken address tokens must wrap, not push the page sideways */
-  .fd-addr { align-items: flex-start; font-size: 14px; line-height: 1.45; }
-  .fd-addr span { min-width: 0; overflow-wrap: anywhere; }
-  .fd-addr svg { flex-shrink: 0; margin-top: 1px; }
-
-  /* Photos, demoted to one line (44px tall, so it is a real tap target) */
-  .fd-photos-m { display: inline-flex; }
-
-  /* Tighter heading run-up to the court grid */
-  .fd-h2 { font-size: 17px; margin: 14px 0 10px; }
-
-  /* Single-column court list, denser cards → more tappable courts per screen */
-  .fd-courts { grid-template-columns: 1fr; gap: 12px; }
-  /* 108px against a full-width card was about 3.6:1 — a letterbox strip rather
-     than a photo of a court. Ratio, not a fixed height, so it stays 16:9 on every
-     phone width. (Landscape is >760px, so it keeps the shorter fixed height above
-     and never grows taller than the screen.) */
-  .ccard-media { height: auto; aspect-ratio: 16 / 9; }
-  /* Bigger dots on a touch screen — 6px is under any reasonable tap target. */
-  .ccard-dot { width: 7px; height: 7px; }
-  .ccard-dot.on { width: 18px; }
-  .ccard-body { padding: 10px 12px 11px; }
-
-  /* Hide the non-actionable "Ready to play?" filler panel (no CTA, holds no action) */
-  .fd-book { display: none; }
-
-  /* Calmer SEO backlink cluster with ≥44px tap targets */
-  .fd-more-links { gap: 8px; }
-  .fd-more-link { padding: 13px 15px; font-size: 13px; min-height: 44px; }
-}
 </style>

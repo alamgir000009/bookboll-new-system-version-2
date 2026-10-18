@@ -1,3 +1,4 @@
+import { resolveStorefrontSort } from './storefrontSort.js'
 /**
  * brand.js — provider white-label resolution + theming.
  *
@@ -17,10 +18,12 @@
  * default equals today's hardcoded Bookboll look.
  */
 import { ref, computed } from 'vue'
+import { websiteSectionEnabled } from './websiteSections.js'
 import { apiFetch } from './api.js'
 import { appBaseUrl } from './appBase.js'
 import { setBrandScope, loadServedRegions } from '../customer/data.js'
 import { normalizeBanners } from './heroBanners.js'
+import { brandButtonText } from './brandColors.js'
 
 // The apex the white-label subdomains live under (display + canonical links).
 export const BRAND_APEX = 'bookboll.com'
@@ -188,23 +191,23 @@ async function fetchBrand({ slug = '', ownerId = '', allowDisabled = false } = {
   return res.data.brand
 }
 
+export function brandSectionEnabled(key) {
+  return websiteSectionEnabled(activeBrand.value?.pages, key)
+}
+
 /** Is a simple content page live on the active white-label site? */
 export function brandPageEnabled(key) {
   const pg = activeBrand.value?.pages
   if (!pg) return false
-  if (key === 'about') return !!pg.about.text.trim()
-  if (key === 'contact') return ['phone', 'whatsapp', 'email', 'address', 'maps_url', 'hours']
-    .some(k => String(pg.contact[k] || '').trim())
+  if (key === 'about') return !!String(pg.about?.text || '').trim()
+  if (key === 'contact') return ['phone', 'whatsapp', 'email', 'hours', ...(brandSectionEnabled('locations') ? ['address', 'maps_url'] : [])]
+    .some(k => String(pg.contact?.[k] || '').trim())
   return false
 }
 
-/** Configured fallback sort key for a storefront view ('space' | 'venue').
- *  White-label → that provider's choice; apex → the platform default. Used by the
- *  storefront when the visitor has NOT shared their location (else: nearest first). */
+/** Configured initial order. Customers can override each view independently. */
 export function storefrontSortKey(view) {
-  const b = activeBrand.value
-  if (b?.sort) return view === 'venue' ? b.sort.venue : b.sort.space
-  return view === 'venue' ? platformBrand.value.sortVenue : platformBrand.value.sortSpace
+  return resolveStorefrontSort(view, activeBrand.value ? (activeBrand.value.sort || {}) : null, { venue: platformBrand.value.sortVenue, space: platformBrand.value.sortSpace })
 }
 
 /** Is a storefront module visible? Always true on the plain platform site; on a
@@ -247,6 +250,7 @@ export function applyBrandTheme(primary, accent) {
   const root = document.documentElement
   root.style.setProperty('--brand', primary || DEFAULT_PRIMARY)
   root.style.setProperty('--brand-accent', accent || DEFAULT_ACCENT)
+  root.style.setProperty('--brand-on', brandButtonText(primary || DEFAULT_PRIMARY))
   root.classList.add('cust-branded')
 }
 

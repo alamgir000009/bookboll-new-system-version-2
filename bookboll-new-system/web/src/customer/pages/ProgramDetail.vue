@@ -4,15 +4,15 @@ import { useRoute, useRouter } from 'vue-router'
 import { loadProgram, intervalLabel, enrollInProgram, MEMBER_COUNT_MIN } from '../../customer/data.js'
 import { checkoutState } from '../../customer/apiPrograms.js'
 import { offerModeFor, discountedPrice } from '../../lib/billingPlans.js'
-import { customer, isCustomer, selectedCountry, loadCustomerLoyalty, clearCustomerLoyaltyCache } from '../../lib/customerSession.js'
+import { customer, isCustomer, selectedCountry, clearCustomerLoyaltyCache } from '../../lib/customerSession.js'
 import { isWhiteLabel } from '../../lib/brand.js'
-import { loadLoyaltyConfig, maxRedeemable } from '../../lib/loyalty.js'
+import CheckoutRewards from '../components/CheckoutRewards.vue'
 import { ensureSignedIn } from '../../lib/authGate.js'
 import { asFields, hasForm, blankAnswers, validateAnswers } from '../../lib/customForms.js'
 import { validatePromo } from '../../lib/promocodes.js'
 import { hasUsedIntroOffer } from '../../lib/offerGuard.js'
 import { useSeo, productLd } from '../../lib/seo.js'
-import { fmt12 } from '../../lib/slots.js'
+import { fmt12, durationLabel } from '../../lib/slots.js'
 import CustomFormFields from '../components/CustomFormFields.vue'
 import { ArrowLeft, MapPin, Dumbbell, Check, Phone, Clock, CalendarDays, Gift, X, CreditCard, Loader2, Tag, Expand, Users, ShieldCheck } from 'lucide-vue-next'
 import Lightbox from '../components/Lightbox.vue'
@@ -189,29 +189,13 @@ const joiningNow = computed(() => hasTrial.value ? 0 : joiningFee.value)
 // Charged today = (discounted plan price − promo) + joining fee.
 const payNow = computed(() => Math.max(0, payPrice.value - promoDiscount.value + joiningNow.value))
 
-// ── Loyalty points (Bookboll marketplace only; redeemed from Bookboll's commission) ──
-// Redemption reduces ONLY Bookboll's platform fee on the charge made today — the
-// provider's earning is never touched. Not offered when a trial defers the charge.
-const commissionPct = computed(() => Number(p.value.commission_percentage) || 15)
-const membershipPlatformFee = computed(() => +(payNow.value * commissionPct.value / 100).toFixed(2))
-const loyaltyCfg = ref(null)
-const loyaltyBalance = ref(0)
-const useLoyalty = ref(false)
-const loyaltyCountryId = computed(() => selectedCountry.value?.id || p.value.country_id || null)
-const loyaltyMax = computed(() => loyaltyCfg.value
-  ? maxRedeemable({ points: loyaltyBalance.value, platformFee: membershipPlatformFee.value, orderTotal: payNow.value, cfg: loyaltyCfg.value })
-  : { points: 0, amount: 0 })
-const loyaltyEligible = computed(() => !isWhiteLabel.value && isCustomer.value && !hasTrial.value && payNow.value > 0 && loyaltyMax.value.amount > 0)
-const loyaltyAmount = computed(() => (loyaltyEligible.value && useLoyalty.value) ? loyaltyMax.value.amount : 0)
-const loyaltyPoints = computed(() => (loyaltyEligible.value && useLoyalty.value) ? loyaltyMax.value.points : 0)
+// Provider proceeds are protected by the server quote, never a default commission.
+const rewardSelection = ref(null)
+const rewardsControl = ref(null)
+const loyaltyCountryId = computed(() => p.value.country_id || data.value?.location?.country_id || null)
+const rewardsCheckout = computed(() => ({program_id:p.value.id,promocode:promo.value?.code?.code || null,discount:promoDiscount.value,surface:'marketplace'}))
+const loyaltyAmount = computed(() => rewardSelection.value?.amount || 0)
 const chargeNow = computed(() => Math.max(0, +(payNow.value - loyaltyAmount.value).toFixed(2)))
-async function loadLoy() {
-  useLoyalty.value = false; loyaltyCfg.value = null; loyaltyBalance.value = 0
-  if (isWhiteLabel.value || !isCustomer.value) return
-  const [cfg, bal] = await Promise.all([loadLoyaltyConfig(loyaltyCountryId.value), loadCustomerLoyalty()])
-  loyaltyCfg.value = cfg
-  loyaltyBalance.value = Number(bal?.points || 0)
-}
 async function applyPromo() {
   promoError.value = ''
   promoBusy.value = true
@@ -245,7 +229,7 @@ async function openCheckout() {
   done.value = false
   promo.value = null; promoInput.value = ''; promoError.value = ''
   contact.value = { full_name: customer.value?.full_name || '', email: customer.value?.email || '', phone: customer.value?.phone || '' }
-  loadLoy()
+  rewardSelection.value = null
   showCheckout.value = true
 }
 async function submitCheckout() {
@@ -262,6 +246,7 @@ async function submitCheckout() {
     checkoutErr.value = 'Please sign in to complete your sign-up.'
     return
   }
+  if (rewardSelection.value && !rewardsControl.value?.validate()) { checkoutErr.value = 'Review your refreshed points discount before confirming.'; return }
   submitting.value = true
   // Never quietly charge a different amount than shown: if the trial is already used
   // at this business, surface the new total and make them confirm again.
@@ -274,7 +259,7 @@ async function submitCheckout() {
       return
     }
   }
-  const res = await enrollInProgram(p.value, { customer: customer.value, answers: answers.value, discount: promoDiscount.value, loyaltyRedeem: loyaltyAmount.value })
+  const res = await enrollInProgram(p.value, { customer: customer.value, answers: answers.value, discount: promoDiscount.value, promocode: promo.value?.code?.code || null, rewards: rewardSelection.value })
   if (res.error) { submitting.value = false; checkoutErr.value = res.error; return }
 
   // Paid memberships finish on Stripe; free ones complete here.
@@ -348,7 +333,7 @@ async function resumeFromStripe() {
             </template>
             <template v-else>
               <div v-if="days" class="fact"><CalendarDays :size="16" /><span>{{ days }}</span></div>
-              <div v-if="p.session_time" class="fact"><Clock :size="16" /><span>{{ fmt12(p.session_time) }}<span v-if="p.session_duration_minutes"> · {{ p.session_duration_minutes }} min</span></span></div>
+              <div v-if="p.session_time" class="fact"><Clock :size="16" /><span>{{ fmt12(p.session_time) }}<span v-if="p.session_duration_minutes"> · {{ durationLabel(p.session_duration_minutes) }}</span></span></div>
             </template>
           </div>
 
@@ -452,15 +437,7 @@ async function resumeFromStripe() {
             <div v-if="promoError" class="co-promo-err">{{ promoError }}</div>
           </div>
 
-          <!-- Loyalty points (Bookboll marketplace only) — redeemed from Bookboll's
-               commission on this charge, never the provider's earning. -->
-          <label v-if="loyaltyEligible" class="co-loy">
-            <input type="checkbox" v-model="useLoyalty" class="co-loy-cb" />
-            <span class="co-loy-txt">
-              <span class="co-loy-lbl"><Gift :size="14" /> Use {{ loyaltyMax.points.toLocaleString() }} loyalty points</span>
-              <span class="co-loy-sub">− {{ cur }} {{ Number(loyaltyMax.amount).toLocaleString() }} off today · {{ loyaltyBalance.toLocaleString() }} available</span>
-            </span>
-          </label>
+          <CheckoutRewards v-if="!isWhiteLabel" ref="rewardsControl" v-model="rewardSelection" kind="membership" :country-id="loyaltyCountryId" :currency="cur" :checkout="rewardsCheckout" :total="payNow" :due-now="hasTrial ? 0 : payNow" :active="showCheckout && !done" />
 
           <!-- Charged-today line: shown whenever a promo, joining fee or loyalty changes it. -->
           <div v-if="(joiningNow > 0 || promoDiscount > 0 || loyaltyAmount > 0) && !hasTrial" class="co-total">Charged today: <strong>{{ cur }} {{ Number(chargeNow).toLocaleString() }}</strong><span v-if="loyaltyAmount > 0" class="co-total-loy"> · {{ cur }} {{ Number(loyaltyAmount).toLocaleString() }} paid with points</span></div>
@@ -490,7 +467,7 @@ async function resumeFromStripe() {
 </template>
 
 <style scoped>
-.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; }
+.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-ink, var(--brand)); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; }
 .cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
 .pd-hero { height: 220px; border-radius: 20px; background-size: cover; background-position: center; position: relative; }
 .pd-hero.has-photo { cursor: zoom-in; }
@@ -500,11 +477,11 @@ async function resumeFromStripe() {
 .pd-thumb { flex: 0 0 auto; width: 78px; height: 58px; border-radius: 10px; background-size: cover; background-position: center; border: 2px solid transparent; cursor: pointer; padding: 0; opacity: .75; transition: border-color .15s, opacity .15s; }
 .pd-thumb:hover { opacity: 1; }
 .pd-thumb.on { border-color: var(--brand); opacity: 1; }
-.pd-trial { position: absolute; top: 14px; left: 14px; font-size: 13px; font-weight: 800; color: #065f46; background: var(--surface, #ffffff); border-radius: 999px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 5px; }
+.pd-trial { position: absolute; top: 14px; left: 14px; font-size: 13px; font-weight: 800; color: var(--success-ink, #065f46); background: var(--surface, #ffffff); border-radius: 999px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 5px; }
 .pd-grid { display: grid; grid-template-columns: 1fr 300px; gap: 24px; margin-top: 20px; }
-.pd-main h1 { font-size: 28px; font-weight: 900; color: #0f172a; margin: 0; }
+.pd-main h1 { font-size: 28px; font-weight: 900; color: var(--text, #0f172a); margin: 0; }
 .pd-tags { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
-.pd-sport { display: inline-block; font-size: 13px; font-weight: 700; color: #6d28d9; background: #ede9fe; padding: 4px 12px; border-radius: 999px; }
+.pd-sport { display: inline-block; font-size: 13px; font-weight: 700; color: var(--violet-ink, #6d28d9); background: var(--violet-bg, #ede9fe); padding: 4px 12px; border-radius: 999px; }
 .pd-aud { display: inline-block; font-size: 13px; font-weight: 800; color: #fff; padding: 4px 12px; border-radius: 999px; background: #475569; }
 .pd-aud.aud-kids { background: #d97706; }
 .pd-aud.aud-adults { background: #2563eb; }
@@ -512,50 +489,50 @@ async function resumeFromStripe() {
 .pd-aud.aud-ladies { background: #db2777; }
 .pd-aud.aud-men { background: #0d9488; }
 .pd-loc { display: flex; align-items: center; gap: 8px; color: var(--text-muted, #64748b); font-size: 14.5px; }
-.pd-introused { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.5; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 9px 11px; margin-bottom: 10px; text-align: start; }
+.pd-introused { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.5; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 10px; padding: 9px 11px; margin-bottom: 10px; text-align: start; }
 .pd-introused svg { flex-shrink: 0; margin-top: 1px; }
-.co-introused { font-size: 12.5px; line-height: 1.5; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+.co-introused { font-size: 12.5px; line-height: 1.5; color: var(--warning-ink, #92400e); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
 .pd-hours { margin-top: 16px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; overflow: hidden; max-width: 360px; }
-.pd-hours-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: #0f172a; padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #eef2f6; }
-.pd-hours-title svg { color: var(--brand); }
-.pd-hours-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; font-size: 13.5px; border-top: 1px solid #f1f5f9; }
+.pd-hours-title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; color: var(--text, #0f172a); padding: 10px 14px; background: var(--canvas, #f8fafc); border-bottom: 1px solid var(--border, #eef2f6); }
+.pd-hours-title svg { color: var(--brand-ink, var(--brand)); }
+.pd-hours-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; font-size: 13.5px; border-top: 1px solid var(--border, #f1f5f9); }
 .pd-hours-row:first-of-type { border-top: none; }
-.pd-hours-day { font-weight: 700; color: #334155; }
-.pd-hours-val { color: #475569; }
+.pd-hours-day { font-weight: 700; color: var(--text-secondary, #334155); }
+.pd-hours-val { color: var(--text-secondary, #475569); }
 .pd-hours-row.closed .pd-hours-val { color: var(--text-light, #94a3b8); }
-.pd-desc { font-size: 15px; color: #334155; line-height: 1.6; margin: 16px 0; }
+.pd-desc { font-size: 15px; color: var(--text-secondary, #334155); line-height: 1.6; margin: 16px 0; }
 .pd-facts { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
-.fact { display: flex; align-items: center; gap: 7px; font-size: 14px; color: #0f172a; font-weight: 600; background: #f1f5f9; padding: 9px 14px; border-radius: 12px; }
+.fact { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--text, #0f172a); font-weight: 600; background: var(--bg, #f1f5f9); padding: 9px 14px; border-radius: 12px; }
 /* Gender policy fact — subtle tint: men blue-ish, women rose-ish, mixed neutral. */
-.fact-gp.gp-men { background: #eff6ff; color: #1d4ed8; }
+.fact-gp.gp-men { background: var(--info-bg, #eff6ff); color: var(--info-ink, #1d4ed8); }
 .fact-gp.gp-women { background: #fdf2f8; color: #be185d; }
 .pd-perks { list-style: none; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 9px; }
-.pd-perks li { display: flex; align-items: center; gap: 9px; font-size: 14.5px; color: #334155; }
-.pd-perks svg { color: #16a34a; }
+.pd-perks li { display: flex; align-items: center; gap: 9px; font-size: 14.5px; color: var(--text-secondary, #334155); }
+.pd-perks svg { color: var(--success-ink, #16a34a); }
 .pd-side { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 22px; height: fit-content; position: sticky; top: 20px; }
 .pd-plans { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .pd-plans-label { font-size: 12px; font-weight: 700; color: var(--text-muted, #64748b); text-transform: uppercase; letter-spacing: .04em; }
 .pd-plan { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 12px; background: var(--surface, #ffffff); cursor: pointer; transition: border-color .12s, background .12s; }
-.pd-plan:hover { border-color: #cbd5e1; }
+.pd-plan:hover { border-color: var(--border-strong, #cbd5e1); }
 .pd-plan.on { border-color: var(--brand, #7c3aed); background: #faf5ff; }
-.pd-plan-int { font-size: 13px; font-weight: 700; color: #0f172a; text-transform: capitalize; }
-.pd-plan-price { font-size: 16px; font-weight: 900; color: #0f172a; }
-.pd-plan-trial { font-size: 11.5px; font-weight: 700; color: #16a34a; }
-.pd-price { font-size: 28px; font-weight: 900; color: #0f172a; }
+.pd-plan-int { font-size: 13px; font-weight: 700; color: var(--text, #0f172a); text-transform: capitalize; }
+.pd-plan-price { font-size: 16px; font-weight: 900; color: var(--text, #0f172a); }
+.pd-plan-trial { font-size: 11.5px; font-weight: 700; color: var(--success-ink, #16a34a); }
+.pd-price { font-size: 28px; font-weight: 900; color: var(--text, #0f172a); }
 .pd-price span { font-size: 15px; font-weight: 600; color: var(--text-light, #94a3b8); }
 .pd-was { display: block; font-size: 15px; font-weight: 700; color: var(--text-light, #94a3b8); text-decoration: line-through; }
-.pd-billing-note { font-size: 13px; color: #16a34a; font-weight: 600; margin-top: 6px; }
+.pd-billing-note { font-size: 13px; color: var(--success-ink, #16a34a); font-weight: 600; margin-top: 6px; }
 /* One-time joining fee note in the sidebar (neutral, informative). */
-.pd-joinfee { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #475569; margin-top: 8px; }
+.pd-joinfee { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--text-secondary, #475569); margin-top: 8px; }
 .pd-joinfee svg { color: var(--text-muted, #64748b); flex-shrink: 0; }
 /* Social-proof line — "N active members" (subtle teal, matches the card pill). */
-.pd-members { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #0f766e; margin-top: 8px; }
+.pd-members { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--success-ink, #0f766e); margin-top: 8px; }
 .pd-members svg { flex-shrink: 0; }
 .pd-join-note { font-size: 13.5px; color: var(--text-muted, #64748b); margin: 12px 0 16px; line-height: 1.5; }
 .pd-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; box-sizing: border-box; background: var(--brand, #7c3aed); color: #fff; font-weight: 800; padding: 14px; border-radius: 12px; border: none; cursor: pointer; text-decoration: none; font-size: 15px; margin-top: 8px; }
 /* Full (at capacity) — clearly disabled, no brand fill. */
-.pd-btn-full { background: #f1f5f9; color: var(--text-light, #94a3b8); cursor: not-allowed; }
-.pd-member { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 8px; padding: 8px 10px; border-radius: 10px; background: #ecfdf5; color: #047857; font-size: 13px; font-weight: 700; }
+.pd-btn-full { background: var(--bg, #f1f5f9); color: var(--text-light, #94a3b8); cursor: not-allowed; }
+.pd-member { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 8px; padding: 8px 10px; border-radius: 10px; background: var(--success-bg, #ecfdf5); color: var(--success-ink, #047857); font-size: 13px; font-weight: 700; }
 .pd-btn-manage { background: var(--surface, #fff); color: var(--text, #0f172a); border: 1px solid var(--border, #e2e8f0); }
 /* mobile docked signup bar — desktop uses the sidebar CTA, so hidden by default */
 .pd-dock { display: none; }
@@ -581,7 +558,7 @@ async function resumeFromStripe() {
      hidden and .cust-main already reserves calc(92px + safe-area) bottom padding for
      this bar — same pattern as GameDetail's .gd-dock). */
   .pd-dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 90; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface, #ffffff); border-top: 1px solid var(--border, #e2e8f0); box-shadow: 0 -8px 24px rgba(15,23,42,.10); padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px)); border-radius: 0; /* full-bleed dock; stays under the z-index:200 checkout sheet */ }
-  .pd-dock-price { font-size: 18px; font-weight: 900; color: #0f172a; min-width: 0; }
+  .pd-dock-price { font-size: 18px; font-weight: 900; color: var(--text, #0f172a); min-width: 0; }
   .pd-dock-price span { font-size: 12.5px; font-weight: 600; color: var(--text-light, #94a3b8); }
   .pd-dock-btn { flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px; min-height: 44px; background: var(--brand, #7c3aed); color: #fff; font-weight: 800; font-size: 15px; padding: 13px 22px; border: none; border-radius: 12px; cursor: pointer; }
   .pd-dock-btn-full { background: var(--border, #e2e8f0); color: var(--text-light, #94a3b8); cursor: not-allowed; }
@@ -591,72 +568,72 @@ async function resumeFromStripe() {
 /* ── Membership checkout modal ── */
 .co-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,.55); display: flex; align-items: flex-start; justify-content: center; padding: 28px 16px; overflow-y: auto; }
 .co-modal { position: relative; width: 100%; max-width: 440px; background: var(--surface, #ffffff); border-radius: 18px; padding: 24px; box-shadow: 0 24px 60px rgba(0,0,0,.25); }
-.co-x { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border: none; background: #f1f5f9; border-radius: 9px; color: #475569; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-.co-title { font-size: 20px; font-weight: 900; color: #0f172a; margin: 0 30px 2px 0; }
+.co-x { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border: none; background: var(--bg, #f1f5f9); border-radius: 9px; color: var(--text-secondary, #475569); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.co-title { font-size: 20px; font-weight: 900; color: var(--text, #0f172a); margin: 0 30px 2px 0; }
 .co-prog { font-size: 14px; color: var(--text-muted, #64748b); margin-bottom: 14px; }
-.co-plan { background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
-.co-plan-price { font-size: 22px; font-weight: 900; color: #0f172a; }
+.co-plan { background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
+.co-plan-price { font-size: 22px; font-weight: 900; color: var(--text, #0f172a); }
 .co-plan-price span { font-size: 14px; font-weight: 600; color: var(--text-light, #94a3b8); }
 .co-was { display: inline; font-size: 14px; font-weight: 700; color: var(--text-light, #94a3b8); text-decoration: line-through; margin-right: 8px; }
-.co-plan-note { font-size: 12.5px; color: #16a34a; font-weight: 600; margin-top: 3px; }
-.co-firstclass { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #334155; margin-top: 7px; }
-.co-firstclass strong { color: #0f172a; }
-.pd-firstclass { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #334155; margin-top: 8px; }
-.pd-firstclass svg { color: var(--brand); }
-.co-done-facts { display: flex; flex-direction: column; gap: 7px; margin: 4px 0 16px; text-align: left; background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; }
-.co-done-fact { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #334155; flex-wrap: wrap; }
-.co-done-fact strong { color: #0f172a; }
-.co-done-fact a { color: var(--brand); font-weight: 700; }
+.co-plan-note { font-size: 12.5px; color: var(--success-ink, #16a34a); font-weight: 600; margin-top: 3px; }
+.co-firstclass { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary, #334155); margin-top: 7px; }
+.co-firstclass strong { color: var(--text, #0f172a); }
+.pd-firstclass { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-secondary, #334155); margin-top: 8px; }
+.pd-firstclass svg { color: var(--brand-ink, var(--brand)); }
+.co-done-facts { display: flex; flex-direction: column; gap: 7px; margin: 4px 0 16px; text-align: left; background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; }
+.co-done-fact { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary, #334155); flex-wrap: wrap; }
+.co-done-fact strong { color: var(--text, #0f172a); }
+.co-done-fact a { color: var(--brand-ink, var(--brand)); font-weight: 700; }
 /* Joining-fee line inside the checkout plan card. */
-.co-joinfee { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: #334155; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border, #e2e8f0); }
+.co-joinfee { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--text-secondary, #334155); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border, #e2e8f0); }
 .co-joinfee span { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
 .co-joinfee span svg { color: var(--text-muted, #64748b); }
-.co-joinfee strong { font-weight: 900; color: #0f172a; }
+.co-joinfee strong { font-weight: 900; color: var(--text, #0f172a); }
 .co-joinfee-note { font-size: 11.5px; color: var(--text-light, #94a3b8); margin-top: 4px; }
 /* Standalone "Charged today" total (joining fee, no promo shown). */
-.co-total { font-size: 13.5px; color: #0f172a; text-align: right; margin-bottom: 10px; }
-.co-total-loy { color: #b45309; font-weight: 700; }
+.co-total { font-size: 13.5px; color: var(--text, #0f172a); text-align: right; margin-bottom: 10px; }
+.co-total-loy { color: var(--warning-ink, #b45309); font-weight: 700; }
 /* Loyalty checkbox in the membership checkout */
-.co-loy { display: flex; align-items: flex-start; gap: 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 11px 13px; margin-bottom: 12px; cursor: pointer; }
+.co-loy { display: flex; align-items: flex-start; gap: 10px; background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 12px; padding: 11px 13px; margin-bottom: 12px; cursor: pointer; }
 .co-loy-cb { margin-top: 2px; width: 17px; height: 17px; accent-color: var(--brand); flex-shrink: 0; }
 .co-loy-txt { display: flex; flex-direction: column; gap: 2px; }
-.co-loy-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 800; color: #92400e; }
-.co-loy-sub { font-size: 12px; color: #b45309; font-weight: 600; }
+.co-loy-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 800; color: var(--warning-ink, #92400e); }
+.co-loy-sub { font-size: 12px; color: var(--warning-ink, #b45309); font-weight: 600; }
 .co-total strong { font-weight: 900; }
-.co-who { font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; margin-bottom: 16px; }
-.co-who strong { color: #0f172a; }
+.co-who { font-size: 13px; color: var(--text-secondary, #475569); background: var(--canvas, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 10px 12px; margin-bottom: 16px; }
+.co-who strong { color: var(--text, #0f172a); }
 .co-section { margin-bottom: 16px; }
-.co-h { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 9px; }
-.co-in { width: 100%; box-sizing: border-box; height: 44px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 0 12px; font-size: 14px; color: #0f172a; margin-bottom: 8px; }
+.co-h { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--text, #0f172a); margin-bottom: 9px; }
+.co-in { width: 100%; box-sizing: border-box; height: 44px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 0 12px; font-size: 14px; color: var(--text, #0f172a); margin-bottom: 8px; }
 .co-in:focus { outline: none; border-color: var(--brand, #7c3aed); }
 .co-row { display: flex; gap: 8px; }
 .co-row .co-in { margin-bottom: 0; }
 .co-stripe {
   display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px;
-  background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px;
-  font-size: 12.5px; color: #166534; line-height: 1.5;
+  background: var(--success-bg, #f0fdf4); border: 1px solid var(--success-border, #bbf7d0); border-radius: 10px;
+  font-size: 12.5px; color: var(--success-ink, #166534); line-height: 1.5;
 }
 .co-stripe svg { flex-shrink: 0; margin-top: 1px; }
 .co-demo { font-size: 11.5px; color: var(--text-light, #94a3b8); margin-top: 6px; }
 .co-promo-form { display: flex; gap: 8px; }
 .co-promo-form .co-in { margin-bottom: 0; }
-.co-promo-btn { flex-shrink: 0; height: 44px; border: 1.5px solid var(--brand); background: var(--surface, #ffffff); color: var(--brand); font-weight: 800; font-size: 13px; padding: 0 16px; border-radius: 10px; cursor: pointer; }
+.co-promo-btn { flex-shrink: 0; height: 44px; border: 1.5px solid var(--brand); background: var(--surface, #ffffff); color: var(--brand-ink, var(--brand)); font-weight: 800; font-size: 13px; padding: 0 16px; border-radius: 10px; cursor: pointer; }
 .co-promo-btn:disabled { opacity: .5; cursor: default; }
-.co-promo-on { display: flex; align-items: center; justify-content: space-between; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; padding: 9px 12px; }
-.co-promo-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: #065f46; }
-.co-promo-x { background: none; border: none; color: #047857; font-size: 12.5px; font-weight: 700; cursor: pointer; text-decoration: underline; }
-.co-promo-total { font-size: 13px; color: #0f172a; margin-top: 8px; }
+.co-promo-on { display: flex; align-items: center; justify-content: space-between; background: var(--success-bg, #ecfdf5); border: 1px solid var(--success-border, #a7f3d0); border-radius: 10px; padding: 9px 12px; }
+.co-promo-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--success-ink, #065f46); }
+.co-promo-x { background: none; border: none; color: var(--success-ink, #047857); font-size: 12.5px; font-weight: 700; cursor: pointer; text-decoration: underline; }
+.co-promo-total { font-size: 13px; color: var(--text, #0f172a); margin-top: 8px; }
 .co-promo-total strong { font-weight: 900; }
-.co-promo-err { font-size: 12.5px; color: #dc2626; margin-top: 6px; }
-.co-err { font-size: 13px; color: #dc2626; font-weight: 600; margin-bottom: 10px; }
+.co-promo-err { font-size: 12.5px; color: var(--danger-ink, #dc2626); margin-top: 6px; }
+.co-err { font-size: 13px; color: var(--danger-ink, #dc2626); font-weight: 600; margin-bottom: 10px; }
 .co-pay { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: var(--brand, #7c3aed); color: #fff; font-weight: 800; padding: 14px; border-radius: 12px; border: none; cursor: pointer; font-size: 15px; }
 .co-pay:disabled { opacity: .6; cursor: not-allowed; }
 .co-spin { animation: cospin 1s linear infinite; }
 @keyframes cospin { to { transform: rotate(360deg); } }
 .co-fine { text-align: center; font-size: 12px; color: var(--text-light, #94a3b8); margin-top: 10px; }
 .co-done { text-align: center; padding: 12px 4px; }
-.co-done-ic { width: 60px; height: 60px; border-radius: 50%; background: #dcfce7; color: #16a34a; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
-.co-done-sub { font-size: 14px; color: #475569; line-height: 1.5; margin: 0 0 18px; }
+.co-done-ic { width: 60px; height: 60px; border-radius: 50%; background: var(--success-bg, #dcfce7); color: var(--success-ink, #16a34a); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
+.co-done-sub { font-size: 14px; color: var(--text-secondary, #475569); line-height: 1.5; margin: 0 0 18px; }
 
 /* Mobile checkout: bottom-sheet + 16px inputs + bigger close target.
    Placed after the base .co-* rules so source order wins the cascade. */

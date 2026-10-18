@@ -4,6 +4,7 @@
  * quoting / payment-plan math stay in booking.js.
  */
 import { apiFetch, getCustomerToken, setCustomerToken } from '../lib/api.js'
+import { redemptionFields } from '../lib/checkoutRewards.js'
 
 /** UI payment method → the API's payment_method enum. */
 export const PAY_MAP = {
@@ -196,28 +197,29 @@ function bookingPayload({ listing, location, selectionByDate, addons, players, c
     venue_id: location?.id || listing.venue_id || listing.location_id,
     listing_id: listing.id,
     slots,
-    payment_method: PAY_MAP[payment?.method] || 'cash_on_arrival',
+    payment_method: PAY_MAP[payment.method],
     add_ons: addonIds.length ? addonIds : undefined,
     phone: customer?.phone || undefined,
     promocode: payment?.promocode || null,
-    // Which storefront this came from. The server needs it to know what a deposit
-    // means: Bookboll's platform fee on the marketplace, the provider's own
-    // site_deposit_percentage on their white-label site. ListingDetail.vue has
-    // always passed `surface` in, but createCustomerBookingsMulti dropped it on the
-    // floor — so an own-site booking quoted the provider's deposit and Stripe
-    // charged the marketplace one.
+    // The server must verify the storefront and resolve commission from the
+    // merchant's plan at booking time. Never accept a client-supplied fee rate.
     surface: surface === 'site' ? 'site' : 'marketplace',
+    ...(surface === 'marketplace' ? redemptionFields(payment?.rewards) : {}),
   }
 }
 
 export async function createCustomerBookingsMulti({
   listing, location, selectionByDate, addons = [], players = 1, customer,
-  payment = { method: 'cash' }, surface = 'marketplace',
+  payment = null, surface = 'marketplace',
 }) {
+  if (!Object.hasOwn(PAY_MAP, payment?.method)) return { error: 'Please choose a payment method to continue.' }
+  if (surface === 'site' && payment.method === 'cash') return { error: 'Please choose full payment online or deposit + on arrival.' }
   const auth = await ensureLaravelCustomer(customer)
   if (auth.error) return { error: auth.error }
 
-  const payload = bookingPayload({ listing, location, selectionByDate, addons, players, customer, payment, surface })
+  let payload
+  try { payload = bookingPayload({ listing, location, selectionByDate, addons, players, customer, payment, surface }) }
+  catch (error) { return { error: error.message } }
   if (payload.error) return payload
 
   const method = payload.payment_method

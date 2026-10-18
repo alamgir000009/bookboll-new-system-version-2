@@ -4,6 +4,7 @@
  */
 import { apiFetch } from '../lib/api.js'
 import { ref } from 'vue'
+import { normalizedPermissions, permissionsConfirmed } from '../lib/communityAccess.js'
 
 export const communitiesEnabled = ref(null)
 
@@ -78,12 +79,15 @@ export async function createCommunity(ownerId, fields) {
       avatar_image: fields.avatar_image || '',
       images: fields.images || [],
       is_private: !!fields.is_private,
+      settings: normalizedPermissions(fields.settings),
     },
   })
   if (!res.success || !res.data?.community) {
     return { error: formatErr(res, 'Could not create the community.') }
   }
-  return { community: res.data.community }
+  const persisted = await loadCommunity(res.data.community.id)
+  const community = persisted || res.data.community
+  return { community, settingsWarning: permissionsConfirmed(persisted, normalizedPermissions(fields.settings)) ? '' : 'Your community was created, but its posting and chat permissions could not be confirmed. Review its settings before inviting members.' }
 }
 
 export async function updateCommunity(id, patch) {
@@ -93,7 +97,26 @@ export async function updateCommunity(id, patch) {
     body: patch,
   })
   if (!res.success) return { error: formatErr(res, 'Could not update.') }
-  return { ok: true, community: res.data?.community }
+  const persisted = await loadCommunity(id)
+  const community = persisted || res.data?.community
+  if (patch.settings && !permissionsConfirmed(persisted, normalizedPermissions(patch.settings))) return { error: 'We could not confirm all posting and chat permissions. Review the saved settings before inviting members or try again later.', community }
+  return { ok: true, community }
+}
+
+// A narrow settings patch: moderators must never gain general community editing.
+// The server must merge these keys and authorize this action independently.
+export async function updateCommunityChatPermission(id, permission) {
+  if (!id || !['members', 'moderators', 'admins'].includes(permission)) return { error: 'Choose who can send messages.' }
+  const res = await apiFetch(`/customer/communities/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: { settings: { chat_permission: permission, chat_locked: permission === 'admins' } },
+  })
+  if (!res.success) return { error: formatErr(res, 'Could not update chat permissions.') }
+  const community = await loadCommunity(id)
+  if (community?.settings?.chat_permission !== permission) {
+    return { error: 'The new chat permission could not be confirmed. Try again or ask a community admin.', community }
+  }
+  return { ok: true, community }
 }
 
 export async function joinCommunity(community, customerId) {
@@ -128,7 +151,7 @@ export async function removeMember(memberId) {
 }
 
 export async function setMemberRole(memberId, role) {
-  if (!['admin', 'member'].includes(role)) return { error: 'Invalid role' }
+  if (!['admin', 'moderator', 'member'].includes(role)) return { error: 'Invalid role' }
   const res = await apiFetch(`/customer/community-members/${encodeURIComponent(memberId)}/role`, {
     method: 'PATCH',
     body: { role },
@@ -191,6 +214,15 @@ export async function sendGroupMessage(key, senderId, body) {
   })
   if (!res.success) return { error: formatErr(res, 'Could not send.') }
   return { message: res.data?.message }
+}
+
+// Pending Laravel contract: see readmeAlamgir.md. Only remove the UI message
+// after the server confirms deletion; never treat 404/403 as success.
+export async function deleteGroupMessage(key, id) {
+  if (!key || !id) return { error: 'Missing message.' }
+  const res = await apiFetch('/customer/messages/group/' + encodeURIComponent(id), { method: 'DELETE', body: { key } })
+  if (!res.success) return { error: formatErr(res, 'This message could not be removed. Please try again later.') }
+  return { ok: true }
 }
 
 export async function markCommunityChatRead(communityId, customerId) {

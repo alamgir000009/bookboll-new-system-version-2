@@ -98,13 +98,13 @@ function applySegment(all, segment) {
 }
 
 export async function loadPlaceVenues(slug, segment = null) {
-  const empty = { place: null, mode: null, segment: null, category: null, typeName: null, venues: [], sports: [], categories: [], cities: [] }
+  const empty = { place: null, mode: null, segment: null, category: null, typeName: null, venues: [], allListings: [], sports: [], categories: [], cities: [] }
 
   const city = await resolveCity(slug)
   if (city) {
     const all = await loadFacilities(city.id, { name: city.name, iso: city.countryIso })
     const place = { type: 'city', id: city.id, name: city.name, slug: city.slug, currencyCode: city.currencyCode, countryName: city.countryName, countrySlug: city.countryName ? slugify(city.countryName) : '' }
-    return { place, segment, sports: summarizeTypes(all), categories: summarizeCategories(all), cities: [], ...applySegment(all, segment) }
+    return { place, segment, allListings: all, sports: summarizeTypes(all), categories: summarizeCategories(all), cities: [], ...applySegment(all, segment) }
   }
 
   const country = await resolveCountry(slug)
@@ -115,7 +115,7 @@ export async function loadPlaceVenues(slug, segment = null) {
     const all = perCity.flatMap(x => x.list)
     const cities = perCity.filter(x => x.list.length).map(x => ({ name: x.c.name, slug: slugifyCity(x.c.name), count: x.list.length })).sort((a, b) => b.count - a.count)
     const place = { type: 'country', id: country.id, name: country.name, slug: country.slug, currencyCode: country.currencyCode }
-    return { place, segment, sports: summarizeTypes(all), categories: summarizeCategories(all), cities, ...applySegment(all, segment) }
+    return { place, segment, allListings: all, sports: summarizeTypes(all), categories: summarizeCategories(all), cities, ...applySegment(all, segment) }
   }
 
   return empty

@@ -3,15 +3,19 @@ import { ref, onMounted, watch, computed } from 'vue'
 import { customer, isCustomer, selectedCountry } from '../../lib/customerSession.js'
 import { getCustomerToken } from '../../lib/api.js'
 import { loadCustomerBookings, cancelCustomerBooking } from '../../customer/apiBooking.js'
-import { CalendarCheck, Calendar, Clock, MapPin, Building2, X } from 'lucide-vue-next'
+import { CalendarCheck, Search, Clock, MapPin, CheckCircle2, XCircle, CircleDashed, X } from 'lucide-vue-next'
 import { useSeo } from '../../lib/seo.js'
 import { fmt12 } from '../../lib/slots.js'
+import PersonalPage from '../components/PersonalPage.vue'
+import { bookingBucket, selectPersonalBookings } from '../../lib/personalBookings.js'
 useSeo({ title: 'My bookings', noindex: true, path: '/my-bookings' })
 
 const bookings = ref([])
 const loading = ref(true)
 const loadError = ref('')
 const cancelling = ref('')
+const view = ref('upcoming')
+const search = ref('')
 const cur = computed(() => selectedCountry.value?.currency_code || 'AED')
 const signedIn = computed(() => isCustomer.value && !!getCustomerToken())
 
@@ -38,6 +42,7 @@ async function load() {
   const res = await loadCustomerBookings()
   bookings.value = res.bookings || []
   loadError.value = res.error || ''
+  view.value = bookings.value.some(b => bookingBucket(b, today) === 'upcoming') ? 'upcoming' : bookings.value.some(b => bookingBucket(b, today) === 'past') ? 'past' : 'cancelled'
   loading.value = false
 }
 onMounted(load)
@@ -47,112 +52,43 @@ watch([() => customer.value?.id, signedIn], load)
 
 function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '' }
 function fmtTime(t) { return fmt12(t) }
-const today = new Date().toISOString().slice(0, 10)
-const upcoming = computed(() => bookings.value.filter(b => b.booking_date >= today && b.booking_status !== 'cancelled'))
-const past = computed(() => bookings.value.filter(b => b.booking_date < today || b.booking_status === 'cancelled'))
-
-const payLabel = { paid: 'Paid', pending: 'Pay at venue', partial: 'Deposit paid · rest at venue', skipped: '—' }
+const now = new Date()
+const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
+const groups = computed(() => ['upcoming','past','cancelled'].map(key => ({ key, label: {upcoming:'Upcoming',past:'Past',cancelled:'Cancelled'}[key], count: bookings.value.filter(b => bookingBucket(b,today) === key).length })))
+const shown = computed(() => selectPersonalBookings(bookings.value, view.value, search.value, today))
+function datePart(d, part) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', part === 'month' ? {month:'short'} : {day:'numeric'}) : '—' }
+const payLabel = { paid: 'Paid', pending: 'Payment pending', partial: 'Deposit paid · balance at venue', skipped: 'Payment skipped' }
+const statusLabel = { confirmed: 'Confirmed', pending: 'Pending confirmation', completed: 'Completed', cancelled: 'Cancelled', canceled: 'Cancelled' }
+function statusIcon(b) { return ['cancelled','canceled'].includes(b.booking_status) ? XCircle : b.booking_status === 'pending' ? CircleDashed : CheckCircle2 }
 </script>
 
 <template>
-  <div class="mb">
-    <div v-if="!signedIn" class="cmsg">Please <router-link to="/account">sign in</router-link> to see your bookings.</div>
-    <div v-else-if="loading" class="cmsg">Loading…</div>
-    <div v-else-if="loadError" class="cmsg">{{ loadError }}</div>
+  <PersonalPage title="My bookings" description="Your upcoming visits, booking details and past reservations.">
+    <template #actions><router-link to="/facilities" class="personal-button primary">Find a venue</router-link></template>
+    <div v-if="!signedIn" class="personal-empty"><CalendarCheck :size="32" /><h2>Your bookings belong here</h2><p>Sign in to view and manage your reservations.</p><router-link to="/account" class="personal-button primary">Sign in</router-link></div>
+    <div v-else-if="loading" class="personal-empty" role="status">Loading your bookings…</div>
+    <div v-else-if="loadError" class="personal-empty" role="alert"><h2>Couldn't load bookings</h2><p>{{ loadError }}</p><button class="personal-button" @click="load">Try again</button></div>
     <template v-else>
-      <h1 class="mb-h1"><CalendarCheck :size="24" /> My Bookings</h1>
-
-      <div v-if="!bookings.length" class="mb-empty">
-        <CalendarCheck :size="40" />
-        <span>No bookings yet.</span>
-        <router-link to="/facilities" class="mb-cta">Find a venue</router-link>
+      <div class="personal-tools">
+        <div class="personal-tabs" aria-label="Booking period"><button v-for="group in groups" :key="group.key" :aria-pressed="view === group.key" @click="view = group.key">{{ group.label }}<span>{{ group.count }}</span></button></div>
+        <label class="personal-search"><Search :size="18" /><input v-model="search" aria-label="Search your bookings" placeholder="Search venue, listing or reference" /></label>
       </div>
-
-      <template v-else>
-        <h2 v-if="upcoming.length" class="mb-h2">Upcoming</h2>
-        <div class="mb-list">
-          <div v-for="b in upcoming" :key="b.id" class="mb-row">
-            <div class="mb-icon"><Building2 :size="20" /></div>
-            <div class="mb-info">
-              <div class="mb-title">{{ b.listingName }}</div>
-              <div class="mb-meta"><MapPin :size="12" /> {{ b.locationName }}</div>
-              <div class="mb-meta"><Calendar :size="12" /> {{ fmtDate(b.booking_date) }} · <Clock :size="12" /> {{ fmtTime(b.start_time) }}–{{ fmtTime(b.end_time) }}</div>
-            </div>
-            <div class="mb-right">
-              <div class="mb-total">{{ cur }} {{ Number(b.total).toLocaleString() }}</div>
-              <span class="mb-pay" :class="'pay-' + b.payment_status">{{ payLabel[b.payment_status] || b.payment_status }}</span>
-              <span v-if="b.payment_status === 'partial'" class="mb-nr">deposit non-refundable</span>
-              <button v-if="canCancel(b)" class="mb-cancel" :disabled="cancelling === b.id" @click="cancelBooking(b)">
-                <X :size="12" />{{ cancelling === b.id ? 'Cancelling…' : 'Cancel' }}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <h2 v-if="past.length" class="mb-h2">Past</h2>
-        <div class="mb-list">
-          <div v-for="b in past" :key="b.id" class="mb-row past">
-            <div class="mb-icon"><Building2 :size="20" /></div>
-            <div class="mb-info">
-              <div class="mb-title">{{ b.listingName }}</div>
-              <div class="mb-meta"><Calendar :size="12" /> {{ fmtDate(b.booking_date) }} · {{ fmtTime(b.start_time) }}</div>
-            </div>
-            <div class="mb-right"><div class="mb-total">{{ cur }} {{ Number(b.total).toLocaleString() }}</div></div>
-          </div>
-        </div>
-      </template>
+      <div v-if="!shown.length" class="personal-empty"><CalendarCheck :size="36" /><h2>{{ search ? 'No matching bookings' : !bookings.length ? 'Plan your next visit' : `No ${view} bookings` }}</h2><p>{{ search ? 'Try a different name or booking reference.' : 'Choose a venue and a time that works for you. Your reservations will appear here.' }}</p><button v-if="search" class="personal-button" @click="search = ''">Clear search</button><router-link v-else to="/facilities" class="personal-button primary">Explore venues</router-link></div>
+      <div v-else class="booking-list" aria-live="polite">
+        <article v-for="b in shown" :key="b.id" class="booking-row">
+          <div class="booking-date" aria-hidden="true"><span>{{ datePart(b.booking_date, 'month') }}</span><strong>{{ datePart(b.booking_date, 'day') }}</strong></div>
+          <div class="booking-info"><div class="booking-heading"><h2>{{ b.listingName }}</h2><span class="booking-status" :class="b.booking_status"><component :is="statusIcon(b)" :size="14" />{{ statusLabel[b.booking_status] || b.booking_status }}</span></div><p v-if="b.locationName"><MapPin :size="14" /><span>{{ b.locationName }}</span></p><p><Clock :size="14" /><span>{{ fmtDate(b.booking_date) }}{{ b.booking_date ? `, ${b.booking_date.slice(0,4)}` : '' }} · {{ fmtTime(b.start_time) }}<template v-if="b.end_time">–{{ fmtTime(b.end_time) }}</template></span></p><small>Reference <span data-no-translate>{{ b.bookingRef }}</span></small></div>
+          <div class="booking-payment"><strong>{{ b.currency || cur }} {{ Number(b.total).toLocaleString() }}</strong><span :class="'payment-' + b.payment_status">{{ payLabel[b.payment_status] || b.payment_status }}</span><small v-if="b.payment_status === 'partial'">Deposit is non-refundable</small><button v-if="view === 'upcoming' && canCancel(b)" :disabled="cancelling === b.id" @click="cancelBooking(b)"><X :size="14" />{{ cancelling === b.id ? 'Cancelling…' : 'Cancel booking' }}</button></div>
+        </article>
+      </div>
     </template>
-  </div>
+  </PersonalPage>
 </template>
-
 <style scoped>
-.mb { max-width: 640px; }
-.cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
-.cmsg a { color: var(--brand); font-weight: 700; }
-.mb-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
-.mb-head .mb-h1 { margin-bottom: 0; }
-.mb-pass { font-size: 13.5px; font-weight: 800; color: var(--brand); text-decoration: none; white-space: nowrap; }
-.mb-h1 { font-size: 26px; font-weight: 900; color: #0f172a; margin: 0 0 18px; display: flex; align-items: center; gap: 10px; }
-.mb-h1 svg { color: var(--brand); flex-shrink: 0; }
-.mb-h2 { font-size: 16px; font-weight: 800; color: #0f172a; margin: 22px 0 12px; }
-.mb-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 56px; color: var(--text-light, #94a3b8); }
-.mb-cta { background: var(--brand); color: #fff; font-weight: 800; padding: 11px 20px; border-radius: 999px; text-decoration: none; font-size: 14px; }
-.mb-list { display: flex; flex-direction: column; gap: 10px; }
-.mb-row { display: flex; align-items: center; gap: 14px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 14px 16px; }
-.mb-row.past { opacity: .72; }
-.mb-icon { width: 44px; height: 44px; border-radius: 12px; background: color-mix(in srgb, var(--brand) 8%, white); color: var(--brand); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.mb-info { flex: 1; min-width: 0; }
-.mb-title { font-size: 15.5px; font-weight: 800; color: #0f172a; }
-.mb-meta { display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--text-muted, #64748b); margin-top: 3px; }
-.mb-right { text-align: right; flex-shrink: 0; }
-.mb-total { font-size: 15px; font-weight: 800; color: #0f172a; }
-.mb-pay { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 800; padding: 3px 9px; border-radius: 999px; }
-.pay-pending { background: #fef3c7; color: #92400e; }
-.pay-paid { background: #dcfce7; color: #166534; }
-.pay-partial { background: #dbeafe; color: #1d4ed8; }
-/* Deposit bookings: the paid deposit is never refunded — say so right on the card. */
-.mb-nr { display: inline-block; margin-top: 3px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; color: #b45309; background: #fef3c7; border-radius: 5px; padding: 1px 6px; }
-.pay-skipped { background: #f1f5f9; color: var(--text-muted, #64748b); }
-.mb-cancel { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 12px; font-weight: 700; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 999px; padding: 5px 11px; cursor: pointer; }
-.mb-cancel:hover:not(:disabled) { background: #fee2e2; }
-.mb-cancel:disabled { opacity: .6; cursor: default; }
-
-@media (max-width: 760px) {
-  /* Tighten the page header so the first booking / CTA sits higher */
-  .mb-h1 { font-size: 20px; margin-bottom: 12px; gap: 8px; }
-  .mb-h1 svg { width: 20px; height: 20px; }
-  .mb-h2 { margin: 14px 0 8px; font-size: 16px; }
-
-  /* Denser rows: reclaim horizontal width from the decorative icon */
-  .mb-row { gap: 10px; padding: 12px 13px; }
-  .mb-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.25; }
-  .mb-icon { width: 34px; height: 34px; border-radius: 10px; }
-  .mb-meta { flex-wrap: wrap; row-gap: 2px; }
-  .mb-total { font-size: 14px; }
-
-  /* Raise the only primary action + give it a >=44px tap height */
-  .mb-empty { padding: 40px 20px; gap: 12px; }
-  .mb-cta { padding: 14px 24px; font-size: 15px; }
-  .cmsg { padding: 40px 20px; }
-}
+.booking-list { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface); }
+.booking-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 180px; gap: 22px; padding: 24px; align-items: start; }
+.booking-row + .booking-row { border-top: 1px solid var(--border); }.booking-date { text-align: center; border-radius: 10px; background: var(--canvas); padding: 10px 4px; color: var(--brand-ink, var(--brand)); }.booking-date span { display: block; font-size: 12px; font-weight: 600; }.booking-date strong { font-size: 27px; line-height: 1.2; }
+.booking-heading { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }.booking-heading h2 { margin: 0; font-size: 16px; line-height: 1.45; font-weight: 700; }.booking-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }.booking-status.confirmed, .booking-status.completed { color: var(--success-ink, #16835a); }.booking-status.pending { color: var(--warning-ink, #986004); }.booking-status.cancelled, .booking-status.canceled { color: var(--danger-ink, #b91c1c); }
+.booking-info p { display: flex; gap: 6px; align-items: flex-start; color: var(--text-muted); font-size: 13px; margin: 8px 0; }.booking-info p svg { flex: 0 0 14px; margin-top: 2px; }.booking-info p span { min-width: 0; }.booking-info small { font-size: 12px; color: var(--text-muted); }.booking-info small span { font-weight: 600; }.booking-payment { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; text-align: right; }.booking-payment strong { font-size: 18px; }.booking-payment > span, .booking-payment small { font-size: 12px; color: var(--text-muted); }.booking-payment .payment-paid { color: var(--success-ink, #16835a); }.booking-payment button { min-height: 44px; display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--danger-ink, #b91c1c); padding: 8px 0; cursor: pointer; font-size: 13px; }
+@media(max-width:760px) { .booking-row { grid-template-columns: 48px minmax(0, 1fr); gap: 12px; padding: 18px 14px; }.booking-date strong { font-size: 23px; }.booking-payment { grid-column: 2; align-items: flex-start; text-align: left; }.booking-heading { gap: 6px; }.booking-heading h2 { font-size: 15px; } }
 </style>

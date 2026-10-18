@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { selectedCountry, customer, isCustomer } from '../../lib/customerSession.js'
 import { ensureSignedIn } from '../../lib/authGate.js'
@@ -11,21 +11,29 @@ import { loadListing } from '../../customer/data.js'
 import { quoteBooking, isPerPerson, extensionsEnabled, extensionSlotPrice, extensionMaxSlots, addonAmount, paymentPlan, paymentSplit, depositTag, effectivePaymentOptions } from '../../customer/booking.js'
 import { loadDayAvailability, buildDaySlots, dayScheduleInfo, createCustomerBookingsMulti, holdSlots, holdMinutes, releaseHolds, holdToken, loadMonthAvailability, cheapestAvailableForDay, PAY_MAP } from '../../customer/apiBooking.js'
 import { validatePromo } from '../../lib/promocodes.js'
-import { loadLoyaltyConfig } from '../../lib/loyalty.js'
-import { loadCustomerLoyalty, clearCustomerLoyaltyCache } from '../../lib/customerSession.js'
+import CheckoutRewards from '../components/CheckoutRewards.vue'
+import { clearCustomerLoyaltyCache } from '../../lib/customerSession.js'
 import { isWhiteLabel } from '../../lib/brand.js'
 import { getPrefillPhone, saveCustomerPhone } from '../../customer/customerPhones.js'
 import { phoneProblem, dialForIso } from '../../customer/phone.js'
-import { fmt12, dayPeriod, toMinutes, endMinutes } from '../../lib/slots.js'
+import { fmt12, dayPeriod, toMinutes, endMinutes, durationLabel } from '../../lib/slots.js'
 import DateField from '../components/DateField.vue'
 import PhoneInput from '../components/PhoneInput.vue'
-import { ArrowLeft, ArrowRight, MapPin, Users, Clock, Building2, Check, Plus, Minus, Navigation, CalendarCheck, Calendar, ShieldCheck, User, Mail, Phone, Loader, Sparkles, X, Trophy, MousePointerClick, Tag, Info, Expand, Sun, Moon } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, MapPin, Clock, Building2, Check, Plus, Minus, Navigation, CalendarCheck, Calendar, ShieldCheck, User, Mail, Phone, Loader, Sparkles, X, Trophy, MousePointerClick, Tag, Info, Expand, Sun, Moon } from 'lucide-vue-next'
 import Lightbox from '../components/Lightbox.vue'
+import BrowseBreadcrumb from '../components/BrowseBreadcrumb.vue'
+import ExpandableDescription from '../components/ExpandableDescription.vue'
+import MoreVenueListings from '../components/MoreVenueListings.vue'
+import AppDownloadCard from '../../components/AppDownloadCard.vue'
+import { appPromptContext } from '../../lib/mobileApps.js'
+import { isEmbedded } from '../../lib/embed.js'
+import { browseReturnPath } from '../../lib/browseCatalog.js'
 
 const route = useRoute()
 const router = useRouter()
 const data = ref(null)
 const loading = ref(true)
+let listingLoad = 0
 
 // Listing photo gallery (first = cover). activePhoto drives the hero; thumbnails switch it.
 const activePhoto = ref(0)
@@ -38,14 +46,16 @@ const lightbox = ref(false)   // full-screen photo viewer
 // court + date + slots and returns to the wizard's Contact step.
 const selectMode = computed(() => ['game', 'tournament', 'event'].includes(route.query.host))
 
-// Two-phase MOBILE flow: the page opens as a calm details screen (photos, tags,
-// description, venue, "from" price) with one Book now button; tapping it swaps to a
-// clean slot picker with the descriptive chrome hidden. Desktop is unaffected — the
-// ld-intro/ld-booking classes only do anything inside the phone media block.
-// Phone-only two-phase flow: the details screen shows a docked "Book now" bar that
-// flips the page into the picker. On desktop the picker is always visible alongside,
-// so tapping a slot IS the action — no separate CTA button needed.
+// Reveal availability when a customer starts booking on any screen size.
+// Desktop replaces the booking/directions cards in place; mobile focuses the picker.
 const bookingOpen = ref(false)
+const bookingHeading = ref(null)
+async function openBooking() {
+  bookingOpen.value = true
+  await nextTick()
+  if (window.matchMedia('(max-width: 760px)').matches) bookingHeading.value?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  bookingHeading.value?.focus({ preventScroll: true })
+}
 const selectKind = computed(() => route.query.host === 'tournament' ? 'match' : route.query.host === 'event' ? 'event' : 'game')
 // Host select mode (game / hangout / tournament match) reuses the NORMAL multi-slot
 // picker — the event/match length is whatever slots the host books (no fixed block).
@@ -85,6 +95,7 @@ const addonQty = ref({})
 const saving = ref(false)
 const err = ref('')
 const success = ref(null)
+const bookingAppContext = computed(() => success.value ? appPromptContext({ audience: 'customer', signedIn: isCustomer.value, completed: true, whiteLabel: isWhiteLabel.value, embedded: isEmbedded() }) : null)
 const guest = ref({ name: '', email: '', phone: '' })
 const phone = ref('')   // checkout phone (per-country; prefilled + saved). Used for guest & signed-in.
 // The venue rings this number, so checkout requires a COMPLETE one — the API only
@@ -299,6 +310,7 @@ const promoDiscount = computed(() => Math.min(Number(promo.value?.discount || 0)
 const payableTotal = computed(() => Math.max(0, fullQuote.value.total - promoDiscount.value))
 async function applyPromo() {
   promoError.value = ''
+  if (!requirePaymentMethod()) return
   promoBusy.value = true
   // Preview only — the server re-validates and applies the discount at booking time.
   const res = await validatePromo(promoInput.value, {
@@ -319,13 +331,41 @@ function removePromo() { promo.value = null; promoInput.value = ''; promoError.v
 // Bookboll marketplace uses the standard options.
 const surface = computed(() => (isWhiteLabel.value ? 'site' : 'marketplace'))
 const providerHasPayout = computed(() => !!data.value?.providerHasPayout)
-const payMethod = ref('deposit')
+const payMethod = ref('')
+const paymentAttempted = ref(false)
+const paymentMethods = ref(null)
 const plan = computed(() => paymentPlan(loc.value, effectivePaymentOptions(data.value?.paymentOptions, { surface: surface.value, providerHasPayout: providerHasPayout.value })))
+const paymentSelected = computed(() => plan.value.methods.includes(payMethod.value))
+const bookingUnavailable = computed(() => !!data.value && !selectMode.value && !plan.value.methods.length)
+const unavailableMessage = 'Online booking is currently unavailable for this listing. Please contact the venue.'
+const paymentError = computed(() => bookingUnavailable.value ? unavailableMessage : paymentAttempted.value && !paymentSelected.value ? 'Please choose a payment method to continue.' : '')
 // A fixed deposit is charged once per booking, and the server books one slot per booking.
 const bookingCount = computed(() => fullQuote.value.totalSlots || 1)
-const paySplit = computed(() => paymentSplit(payMethod.value, payableTotal.value, plan.value.depositPct, plan.value.depositAmount, bookingCount.value))
+const paySplit = computed(() => paymentSelected.value ? paymentSplit(payMethod.value, payableTotal.value, plan.value.depositPct, plan.value.depositAmount, bookingCount.value) : null)
 const depositLabel = computed(() => depositTag(plan.value.depositPct, plan.value.depositAmount, bookingCount.value))
-watch(plan, (p) => { if (!p.methods.includes(payMethod.value)) payMethod.value = p.methods[0] }, { immediate: true })
+function solePaymentMethod() { return data.value && plan.value.methods.length === 1 ? plan.value.methods[0] : '' }
+watch(plan, (p, previous) => {
+  if (p.methods.length === 1) payMethod.value = solePaymentMethod()
+  else if (previous?.methods.length === 1 || !p.methods.includes(payMethod.value)) payMethod.value = ''
+})
+// Only a sole available method is automatic. Multiple options require a fresh choice.
+watch(step, (value, previous) => {
+  if (value === 2 && previous !== 2) { payMethod.value = solePaymentMethod(); paymentAttempted.value = false }
+})
+watch(payMethod, () => {
+  paymentAttempted.value = false
+  // Payment-specific promos must be checked again for the newly chosen method.
+  if (promo.value) { promo.value = null; promoError.value = 'Payment method changed. Apply your promo code again.' }
+})
+function requirePaymentMethod() {
+  if (paymentSelected.value) return true
+  paymentAttempted.value = true
+  nextTick(() => {
+    paymentMethods.value?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+    paymentMethods.value?.querySelector('input')?.focus({ preventScroll: true })
+  })
+  return false
+}
 const PAY_LABEL = { deposit: 'Deposit + on arrival', cash: 'Pay on arrival', online: 'Pay online' }
 const PAY_NOTE = { deposit: 'Deposit secures your booking; pay the balance at the venue.', cash: 'No prepayment — pay when you arrive.', online: 'Pay securely online.' }
 const PAY_DESC = {
@@ -334,25 +374,20 @@ const PAY_DESC = {
   cash: 'Pay nothing now — pay the full amount in person when you arrive.',
 }
 
-// ── Loyalty points (Bookboll marketplace only) ───────────────────────────────
-// Points are EARNED server-side: Laravel credits listings.loyalty_points on booking
-// confirmation. Spending them at checkout is not offered here — the API has no
-// redeem parameter, so a client-side discount would be shown but never charged.
-// Config + balance are still loaded for display and for the future redeem flow.
-const loyaltyCfg = ref(null)
-const loyaltyBalance = ref(0)         // customer's points balance for this country
-// What's actually charged online today.
-const chargeNow = computed(() => paySplit.value.online)
+// Only a server-confirmed quote reduces the online amount; arrival payment stays intact.
+const rewardSelection = ref(null)
+const rewardsControl = ref(null)
+const rewardsCountryId = computed(() => loc.value?.country_id || l.value?.country_id || null)
+const rewardsCheckout = computed(() => ({listing_id:l.value?.id,venue_id:loc.value?.id,selection_by_date:selectedByDate.value,addons:selectedAddons.value.map(a=>({id:a.id,qty:a.qty})),players:players.value,payment_method:PAY_MAP[payMethod.value],promocode:promo.value?.code?.code || null,surface:surface.value}))
+const rewardAmount = computed(() => rewardSelection.value?.amount || 0)
+const chargeNow = computed(() => Math.max(0,(paySplit.value?.online ?? 0) - rewardAmount.value))
 
-// "4 slots · 4 hrs" style detail for the order summary.
-const hoursLabel = computed(() => {
-  const h = (fullQuote.value.totalSlots * (Number(l.value.slot_duration) || 60)) / 60
-  if (!h) return ''
-  return `${Number.isInteger(h) ? h : h.toFixed(1)} hr${h === 1 ? '' : 's'}`
-})
+const hoursLabel = computed(() => durationLabel(fullQuote.value.totalSlots * (Number(l.value.slot_duration) || 60)))
 // Confirm button states the amount actually charged today.
 const confirmLabel = computed(() => {
   if (saving.value) return 'Booking…'
+  if (bookingUnavailable.value) return 'Booking unavailable'
+  if (!paymentSelected.value) return 'Continue'
   if (paySplit.value.method === 'cash') return 'Confirm booking'
   return `Pay ${cur.value} ${Number(chargeNow.value).toLocaleString()} & confirm`
 })
@@ -369,6 +404,8 @@ let lastMonthView = new Date()
 function priceForDate(ds) { const v = monthPrices.value[ds]; return v === undefined ? null : v }
 async function ensureMonthPrices(viewDate, force = false) {
   if (!data.value || selectMode.value) return
+  const generation = listingLoad
+  const listing = l.value
   lastMonthView = viewDate
   const y = viewDate.getFullYear(), m = viewDate.getMonth()
   const key = `${y}-${m}`
@@ -377,16 +414,20 @@ async function ensureMonthPrices(viewDate, force = false) {
   const z = n => String(n).padStart(2, '0')
   const days = new Date(y, m + 1, 0).getDate()
   const from = `${y}-${z(m + 1)}-01`, to = `${y}-${z(m + 1)}-${z(days)}`
-  const month = await loadMonthAvailability(l.value, from, to)
+  const month = await loadMonthAvailability(listing, from, to)
+  if (generation !== listingLoad) return
   const next = { ...monthPrices.value }
-  for (let d = 1; d <= days; d++) { const ds = `${y}-${z(m + 1)}-${z(d)}`; next[ds] = cheapestAvailableForDay(l.value, ds, month, holdToken()) }
+  for (let d = 1; d <= days; d++) { const ds = `${y}-${z(m + 1)}-${z(d)}`; next[ds] = cheapestAvailableForDay(listing, ds, month, holdToken()) }
   monthPrices.value = next
 }
 function onCalMonth(viewDate) { ensureMonthPrices(viewDate) }
 
 async function load() {
+  const generation = ++listingLoad
   loading.value = true
-  data.value = await loadListing(route.params.id)
+  const detail = await loadListing(route.params.id)
+  if (generation !== listingLoad) return
+  data.value = detail
   activePhoto.value = 0
   loading.value = false
   if (isCustomer.value) guest.value = { name: customer.value.full_name || '', email: customer.value.email || '', phone: '' }
@@ -415,6 +456,7 @@ async function load() {
     ? prefillTarget() : null
   if (preT) date.value = preT.d
   await loadDay()                                      // the single availability fetch for the resolved day
+  if (generation !== listingLoad) return
   suppressDateWatch = false
   if (preT) {
     const slot = (slots.value || []).find(s => String(s.start_time).slice(0, 5) === preT.t && s.available)
@@ -459,11 +501,17 @@ function excludeSiblingDraftSlots(built) {
 }
 async function loadDay() {
   if (!data.value) return
+  const generation = listingLoad
+  const listing = l.value
+  const day = date.value
   loadingSlots.value = true
-  const avail = await loadDayAvailability(l.value, date.value)
+  const avail = await loadDayAvailability(listing, day)
+  if (generation !== listingLoad || day !== date.value) return
+  // Only AFTER the stale check: a slow reply for another listing or day must not
+  // relabel the price of the one actually on screen.
   if (avail?.currency) serverCurrency.value = avail.currency
-  daySched.value = dayScheduleInfo(l.value, date.value, avail)
-  slots.value = excludeSiblingDraftSlots(buildDaySlots(l.value, date.value, avail, holdToken()))
+  daySched.value = dayScheduleInfo(listing, day, avail)
+  slots.value = excludeSiblingDraftSlots(buildDaySlots(listing, day, avail, holdToken()))
   loadingSlots.value = false
 }
 onMounted(load)
@@ -471,6 +519,11 @@ onMounted(load)
 // the previous listing's selection + local hold UI before load() restores any session for the new one.
 watch(() => route.params.id, () => {
   selectedByDate.value = {}; step.value = 1
+  bookingOpen.value = false; lightbox.value = false; success.value = null
+  payMethod.value = ''; paymentAttempted.value = false
+  addonQty.value = {}; players.value = 1; err.value = ''; removePromo()
+  slots.value = []; daySched.value = null
+  monthPrices.value = {}; loadedMonths.clear()
   stopHoldTimer(); holdActive.value = false; holdExpiresAt.value = 0; holdExpiredMsg.value = false
   load()
 })
@@ -503,6 +556,7 @@ useSeo(() => {
 
 async function goCheckout() {
   err.value = ''
+  if (bookingUnavailable.value) { err.value = unavailableMessage; return }
   holdExpiredMsg.value = false
   if (!fullQuote.value.dates.length) { err.value = 'Please pick at least one time slot.'; return }
   if (selectMode.value) { step.value = 2; return }   // host-game flow doesn't book here
@@ -518,20 +572,7 @@ async function goCheckout() {
   saving.value = false
   if (!res.ok) { err.value = 'One of your times was just taken — please pick another slot.'; loadDay(); return }
   step.value = 2
-  loadLoyalty()
   if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
-}
-// Loyalty points are a Bookboll-marketplace perk only — skip on provider white-label sites.
-async function loadLoyalty() {
-  loyaltyCfg.value = null; loyaltyBalance.value = 0
-  if (isWhiteLabel.value || !isCustomer.value) return
-  const countryId = selectedCountry.value?.id || null
-  const [cfg, bal] = await Promise.all([
-    loadLoyaltyConfig(countryId),
-    loadCustomerLoyalty(),
-  ])
-  loyaltyCfg.value = cfg
-  loyaltyBalance.value = Number(bal?.points || 0)
 }
 // Going back to selection keeps the slots held (countdown continues) so the customer
 // doesn't lose them — they're only released on expiry, an empty selection, or leaving.
@@ -543,6 +584,7 @@ const periodIcon = (t) => (dayPeriod(t) === 'day' ? Sun : Moon)
 
 async function toggleSlot(s) {
   if (!s.available) return
+  if (bookingUnavailable.value) { err.value = unavailableMessage; return }
   err.value = ''; holdExpiredMsg.value = false
   const arr = selected.value
   const i = arr.findIndex(x => x.start_time === s.start_time)
@@ -560,6 +602,7 @@ async function toggleSlot(s) {
   }
 }
 async function addExtension(o) {
+  if (bookingUnavailable.value) { err.value = unavailableMessage; return }
   setDay(date.value, [...selected.value, { start_time: o.slot.start_time, end_time: o.slot.end_time, price: o.slot.price }])
   const res = await syncHolds()
   if (!res.ok) { setDay(date.value, selected.value.filter(x => x.start_time !== o.slot.start_time)); err.value = 'That time was just taken — please choose another.'; loadDay() }
@@ -580,7 +623,10 @@ function stepAddon(a, d) {
 function openMaps() { if (data.value?.mapsUrl) window.open(data.value.mapsUrl, '_blank', 'noopener') }
 
 async function confirm() {
+  if (saving.value) return
   err.value = ''
+  if (!requirePaymentMethod()) return
+  if (rewardSelection.value && !rewardsControl.value?.validate()) { err.value = 'Review your refreshed points discount before confirming.'; return }
   if (!fullQuote.value.dates.length) { err.value = 'Please pick at least one time slot.'; return }
   if (phoneErr.value) {
     phoneTouched.value = true
@@ -604,11 +650,11 @@ async function confirm() {
   cust = { ...cust, phone: phone.value.trim() }   // book with the entered number (validated above)
   const appliedPromo = promo.value   // capture before the form resets
   const discount = promoDiscount.value
-  const snap = { perDay: fullQuote.value.perDay, gross: fullQuote.value.total, discount, total: payableTotal.value, method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount, bookingCount: bookingCount.value }
+  const snap = { perDay: fullQuote.value.perDay, gross: fullQuote.value.total, discount, total: payableTotal.value - rewardAmount.value, loyaltyDiscount: rewardAmount.value, paidOnline: chargeNow.value, arrival: paySplit.value.arrival, method: payMethod.value }
   // The promo CODE (not the client-side discount) goes to the server — Laravel
   // re-validates it and applies the discount itself, so the charged amount always
   // matches what it computed, and usage_count is incremented there.
-  const res = await createCustomerBookingsMulti({ listing: l.value, location: loc.value, selectionByDate: selectedByDate.value, addons: selectedAddons.value, players: players.value, customer: cust, payment: { method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount, promocode: appliedPromo?.code?.code || null }, surface: surface.value, providerHasPayout: providerHasPayout.value })
+  const res = await createCustomerBookingsMulti({ listing: l.value, location: loc.value, selectionByDate: selectedByDate.value, addons: selectedAddons.value, players: players.value, customer: cust, payment: { method: payMethod.value, depositPct: plan.value.depositPct, depositAmount: plan.value.depositAmount, promocode: appliedPromo?.code?.code || null, rewards: rewardSelection.value }, surface: surface.value, providerHasPayout: providerHasPayout.value })
   saving.value = false
   if (res.error) { err.value = res.error; loadDay(); return }   // e.g. "just taken" → refresh grid
   if (res.redirect) return
@@ -627,32 +673,25 @@ function bookAnother() { success.value = null; addonQty.value = {}; players.valu
 // Leaving the page no longer releases the hold — the resumable checkout session (bookingSession.js)
 // keeps it alive across navigation/refresh and owns its release (resume card Close, expiry, or
 // successful booking). We only tear down this page's local timer + realtime subscription here.
-onBeforeUnmount(() => { stopHoldTimer(); teardownRealtime() })
+onBeforeUnmount(() => { listingLoad++; stopHoldTimer(); teardownRealtime() })
 onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
 </script>
 
 <template>
   <div>
     <button v-if="selectMode" type="button" class="cback cback-btn" @click="cancelSelect"><ArrowLeft :size="16" /> Back to venues</button>
-    <router-link v-else :to="loc ? facilityPath(loc.id, loc.name) : '/facilities'" class="cback"><ArrowLeft :size="16" /> {{ loc ? loc.name : 'All venues' }}</router-link>
+    <BrowseBreadcrumb v-else :venue="loc" :current="l?.name || ''" />
     <div v-if="loading" class="cmsg">Loading…</div>
-    <div v-else-if="!data" class="cmsg">Venue not found.</div>
+    <div v-else-if="!data" class="cmsg">Listing not found. <router-link to="/facilities">Browse all listings</router-link></div>
 
     <div v-else class="ld" :class="{ 'ld-checkout': step === 2 && !selectMode,
       'ld-intro': step === 1 && !selectMode && !bookingOpen,
       'ld-booking': step === 1 && (selectMode || bookingOpen) }">
-      <div class="ld-hero" :class="{ 'has-photo': heroPhoto }" :style="heroPhoto ? { backgroundImage: `url(${heroPhoto})` } : {}"
-        :role="heroPhoto ? 'button' : undefined" :aria-label="heroPhoto ? 'View photos full screen' : undefined"
-        @click="heroPhoto && (lightbox = true)">
-        <div v-if="!heroPhoto" class="ld-hero-fallback"><Building2 :size="52" /></div>
-        <span v-if="heroPhoto" class="ld-hero-expand"><Expand :size="15" /></span>
-      </div>
-      <!-- Thumbnail strip (only when there are multiple photos) -->
-      <div v-if="gallery.length > 1" class="ld-thumbs">
-        <button v-for="(p, i) in gallery" :key="i" type="button" class="ld-thumb"
-          :class="{ on: i === activePhoto }" :style="{ backgroundImage: `url(${p})` }"
-          @click="activePhoto = i" :aria-label="`Photo ${i + 1}`"></button>
-      </div>
+      <header v-if="!success && (step === 1 || selectMode)" class="listing-heading">
+        <span v-if="l.sport_category" class="ld-tag">{{ l.sport_category }}</span>
+        <h1>{{ l.name }}</h1>
+        <router-link v-if="loc" class="listing-venue-link" :to="{ path: facilityPath(loc.id, loc.name), query: { from: browseReturnPath(route.query.from) } }"><MapPin :size="16" /><span>{{ loc.name }}</span><ArrowRight :size="15" /></router-link>
+      </header>
 
       <!-- SUCCESS — full width, replaces the flow -->
       <div v-if="success" class="ld-done">
@@ -664,7 +703,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             <div v-for="(b, i) in day.blocks" :key="i" class="ld-success-line"><Clock :size="14" /> {{ fmtTime(b.start) }} – {{ fmtTime(b.end) }}</div>
           </template>
           <div class="ld-success-total">
-            <template v-if="success.method === 'deposit'">Deposit <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount, success.bookingCount).online).toLocaleString() }}</strong> paid <span class="ld-plan-nr">non-refundable</span> · <strong>{{ success.currency }} {{ Number(paymentSplit('deposit', success.total, success.depositPct, success.depositAmount, success.bookingCount).arrival).toLocaleString() }}</strong> at the venue</template>
+            <template v-if="success.method === 'deposit'">Paid online <strong>{{ success.currency }} {{ Number(success.paidOnline).toLocaleString() }}</strong><span v-if="success.loyaltyDiscount"> + {{ success.currency }} {{ Number(success.loyaltyDiscount).toLocaleString() }} in rewards</span> <span class="ld-plan-nr">non-refundable deposit</span> · <strong>{{ success.currency }} {{ Number(success.arrival).toLocaleString() }}</strong> at the venue</template>
             <template v-else-if="success.method === 'online'">Paid online <strong>{{ success.currency }} {{ Number(success.total).toLocaleString() }}</strong></template>
             <template v-else>Pay <strong>{{ success.currency }} {{ Number(success.total).toLocaleString() }}</strong> at the venue</template>
           </div>
@@ -674,6 +713,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             <button type="button" class="ld-map-btn" @click="bookAnother">Book more</button>
           </div>
         </div>
+        <AppDownloadCard :account-id="customer?.id" audience="customer" :context="bookingAppContext" />
       </div>
 
       <template v-else>
@@ -684,7 +724,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
         </div>
 
         <!-- Step indicator (normal booking only) -->
-        <div v-if="!selectMode" class="ld-steps">
+        <div v-if="!selectMode && step === 2" class="ld-steps">
           <button type="button" class="ld-step" :class="{ on: step === 1, done: step > 1 }" @click="backToSelection()">
             <span class="ld-step-n"><Check v-if="step > 1" :size="14" /><template v-else>1</template></span>
             <span class="ld-step-t">Choose date &amp; time</span>
@@ -708,36 +748,48 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
         <div v-if="selectMode || step === 1" class="ld-grid"
           :class="{ 'ld-grid-hasbar': (!selectMode && fullQuote.dates.length) || (selectMode && selected.length) }">
           <div class="ld-main">
-            <h1>{{ l.name }}</h1>
+            <div class="listing-gallery">
+      <div class="ld-hero" :class="{ 'has-photo': heroPhoto }" :style="heroPhoto ? { backgroundImage: `url(${heroPhoto})` } : {}"
+        :role="heroPhoto ? 'button' : undefined" :aria-label="heroPhoto ? 'View photos full screen' : undefined"
+        :tabindex="heroPhoto ? 0 : undefined" @keydown.enter="heroPhoto && (lightbox = true)" @keydown.space.prevent="heroPhoto && (lightbox = true)"
+        @click="heroPhoto && (lightbox = true)">
+        <div v-if="!heroPhoto" class="ld-hero-fallback"><Building2 :size="52" /></div>
+        <span v-if="heroPhoto" class="ld-hero-expand"><Expand :size="15" /> View photos</span>
+      </div>
+      <!-- Thumbnail strip (only when there are multiple photos) -->
+      <div v-if="gallery.length > 1" class="ld-thumbs">
+        <button v-for="(p, i) in gallery" :key="i" type="button" class="ld-thumb"
+          :class="{ on: i === activePhoto }" :style="{ backgroundImage: `url(${p})` }"
+          @click="activePhoto = i" :aria-label="`Photo ${i + 1}`"></button>
+      </div>
 
-            <!-- Phones only: where this is, right under the name. The sidebar venue
-                 card carries the same thing on desktop, but on a phone the sidebar
-                 sits below the whole picker — too far down to answer "where is it?" -->
-            <button v-if="loc" type="button" class="ld-locpill" @click="openMaps" :title="data.mapsUrl ? 'Open in Google Maps' : ''">
-              <MapPin :size="17" class="ld-locpill-pin" />
-              <span class="ld-locpill-txt">{{ loc.name }}</span>
-              <Navigation v-if="data.mapsUrl" :size="15" class="ld-locpill-go" />
-            </button>
-
-            <div class="ld-tags">
-              <span v-if="l.sport_category" class="ld-tag">{{ l.sport_category }}</span>
-              <span class="ld-fact"><Users :size="15" /> up to {{ l.capacity || 1 }} players</span>
-              <span class="ld-fact"><Clock :size="15" /> {{ slotMins }} min slots</span>
             </div>
-            <p v-if="l.description" class="ld-desc">{{ l.description }}</p>
+            <div class="listing-facts">
+              <button v-if="(bookingOpen || selectMode) && data.mapsUrl" type="button" class="booking-directions" @click="openMaps"><Navigation :size="15" /> Get directions</button>
+              <span><Clock :size="19" /><strong>{{ durationLabel(slotMins) }}</strong> per slot</span>
+            </div>
+            <section v-if="l.description" class="listing-about"><h2>About this listing</h2><ExpandableDescription :text="l.description" id="listing-description" /></section>
 
-            <!-- Phones only: the second Book now. The docked bar at the bottom of the
-                 screen is the other one; this puts the same action at the end of the
-                 details, where someone finishes reading and is ready to act. Sits
-                 BEFORE .ld-h2 so the intro rule that hides the picker leaves it alone. -->
-            <button v-if="!selectMode && !bookingOpen" type="button" class="ld-book-btn ld-topbook" @click="bookingOpen = true">
-              View available slots <ArrowRight :size="17" />
-            </button>
+            <section v-if="!selectMode && !bookingOpen" class="listing-book-card" aria-label="Book this listing">
+              <div class="listing-book-copy"><h2>Ready to book?</h2><p>Choose a date and time to check availability.</p></div>
+              <div class="listing-book-action">
+                <div class="listing-book-price"><span>From</span> <strong>{{ cur }} {{ Number(data.startPrice || 0).toLocaleString() }}</strong><small>per {{ durationLabel(slotMins) }}</small></div>
+                <button type="button" class="ld-book-btn" @click="openBooking">Book Now <ArrowRight :size="17" /></button>
+              </div>
+            </section>
+            <section v-if="loc && !bookingOpen && !selectMode" class="booking-venue" aria-label="Venue and directions">
+              <h3>Your venue</h3>
+              <router-link :to="{ path: facilityPath(loc.id, loc.name), query: { from: browseReturnPath(route.query.from) } }" class="booking-venue-name">{{ loc.name }} <ArrowRight :size="15" /></router-link>
+              <p v-if="loc.address">{{ loc.address }}</p>
+              <button v-if="data.mapsUrl" type="button" class="booking-directions" @click="openMaps"><Navigation :size="15" /> Get directions</button>
+            </section>
 
             <button v-if="!selectMode && bookingOpen" type="button" class="ld-backdetails" @click="bookingOpen = false">
-              <ArrowLeft :size="14" /> Venue details
+              <ArrowLeft :size="14" /> Listing details
             </button>
-            <h2 class="ld-h2">Choose a date &amp; time</h2>
+            <section v-if="selectMode || bookingOpen" class="listing-availability" aria-label="Choose a date and time">
+            <h2 ref="bookingHeading" tabindex="-1" class="ld-h2">Choose a date &amp; time</h2>
+            <p class="listing-availability-help">Pick a date, then select one or more available times.</p>
             <DateField v-model="date" :price-for="priceForDate" :currency="cur" @month="onCalMonth" />
 
             <div class="ld-time-label">
@@ -757,12 +809,12 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             <div v-if="!loadingSlots && !daySched?.closed && visibleSlots.length" class="ld-slots">
               <button v-for="s in visibleSlots" :key="s.start_time" class="ld-slot"
                 :class="[{ on: selectedSet.has(s.start_time), taken: !s.available }, s.available ? tierClass(s) : '']"
-                :disabled="!s.available" @click="toggleSlot(s)">
-                <span class="ld-slot-time"><component :is="periodIcon(s.start_time)" :size="12" class="ld-slot-sun" :class="`p-${dayPeriod(s.start_time)}`" />{{ fmtTime(s.start_time) }}</span>
-                <span class="ld-slot-endt">– {{ fmtTime(s.end_time) }}</span>
+                :disabled="!s.available" :aria-pressed="selectedSet.has(s.start_time)" @click="toggleSlot(s)">
+                <span class="ld-slot-heading"><span class="ld-slot-time"><component :is="periodIcon(s.start_time)" :size="14" class="ld-slot-sun" :class="`p-${dayPeriod(s.start_time)}`" />{{ fmtTime(s.start_time) }}</span><span class="ld-slot-choice" aria-hidden="true"><Check v-if="selectedSet.has(s.start_time)" :size="13" /></span></span>
+                <span class="ld-slot-endt">to {{ fmtTime(s.end_time) }}</span>
                 <template v-if="s.available">
                   <span class="ld-slot-price" :class="{ disc: !selectMode && isDisc(s) }">{{ cur }} {{ Number(selectMode ? s.price : priceFor(s)).toLocaleString() }}<s v-if="!selectMode && isDisc(s)" class="ld-slot-was">{{ Number(s.price).toLocaleString() }}</s></span>
-                  <span v-if="(!selectMode && isDisc(s)) || s.capacity > 1" class="ld-slot-left">{{ !selectMode && isDisc(s) ? '↓ extension' : s.spacesLeft + ' left' }}</span>
+                  <span class="ld-slot-meta"><span v-if="!selectMode && isDisc(s)" class="ld-slot-discount">↓ Extension</span><span v-if="s.capacity > 1" class="ld-slot-left">{{ s.spacesLeft }} left</span></span>
                 </template>
                 <span v-else class="ld-slot-x">{{ s.siblingTaken ? 'In this event' : (s.past ? 'Passed' : (s.capacity > 1 ? 'Full' : 'Booked')) }}</span>
               </button>
@@ -807,26 +859,18 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             </template>
             </template>
 
+            </section>
+
             <!-- Mobile intro: one calm CTA — details above, slot picker on tap -->
             <div v-if="!selectMode && !bookingOpen" class="ld-booknow">
-              <div class="ld-bn-price"><span>from</span> {{ cur }} {{ Number(data.startPrice || 0).toLocaleString() }} <em>/ {{ slotMins }} mins</em></div>
-              <button type="button" class="ld-book-btn ld-bn-btn" @click="bookingOpen = true">Book now <ArrowRight :size="17" /></button>
+              <div class="ld-bn-price"><span>from</span> {{ cur }} {{ Number(data.startPrice || 0).toLocaleString() }} <em>/ {{ durationLabel(slotMins) }}</em></div>
+              <button type="button" class="ld-book-btn ld-bn-btn" @click="openBooking">Book Now <ArrowRight :size="17" /></button>
             </div>
           </div>
 
           <!-- sidebar: host select (pick & use) OR normal running cart + continue -->
-          <aside class="ld-side">
-            <!-- Venue card (moved above the booking / game action) -->
-            <div v-if="loc" class="ld-sum-h">Where</div>
-            <button v-if="loc" type="button" class="ld-venue ld-side-venue" @click="openMaps" :title="data.mapsUrl ? 'Open in Google Maps' : ''">
-              <div class="ld-venue-pin"><MapPin :size="18" /></div>
-              <div class="ld-venue-info">
-                <div class="ld-venue-name">{{ loc.name }}</div>
-                <div v-if="loc.address" class="ld-venue-addr">{{ loc.address }}</div>
-              </div>
-              <Navigation v-if="data.mapsUrl" :size="16" class="ld-venue-go" />
-            </button>
-
+          <aside v-if="selectMode || !bookingOpen || fullQuote.dates.length" class="ld-side">
+            <h2 class="booking-card-title">{{ selectMode ? 'Your event booking' : 'Book this listing' }}</h2>
             <template v-if="selectMode">
               <template v-if="selected.length">
                 <div class="ld-sum-h">Your {{ selectKind }} time</div>
@@ -847,7 +891,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             <template v-else>
             <div v-if="!fullQuote.dates.length" class="ld-side-price">
               <span class="ld-sp-from">from</span> {{ cur }} {{ Number(data.startPrice || 0).toLocaleString() }}
-              <span class="ld-sp-per">/ {{ slotMins }} mins</span>
+              <span class="ld-sp-per">/ {{ durationLabel(slotMins) }}</span>
             </div>
 
             <div v-if="fullQuote.dates.length" class="ld-side-sel">
@@ -859,9 +903,9 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
                 </div>
               </div>
             </div>
-            <div v-else class="ld-side-hint"><MousePointerClick :size="15" /> Tap one or more times to book (across multiple days too)</div>
+            <template v-else><p class="booking-card-help">Choose your date and time to see the total price.</p><button type="button" class="ld-book-btn booking-jump" @click="openBooking">Check availability <ArrowRight :size="17" /></button></template>
 
-            <div v-if="err" class="ld-err">{{ err }}</div>
+            <div v-if="bookingUnavailable || err" class="ld-err">{{ bookingUnavailable ? unavailableMessage : err }}</div>
             <div v-if="fullQuote.dates.length" class="ld-side-action">
             <div class="ld-breakdown">
               <div v-if="holdActive" class="ld-bar-timer" :class="{ urgent: holdRemaining <= 180 }"><Clock :size="13" /> {{ holdMMSS }} held</div>
@@ -871,23 +915,22 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
               <div class="ld-bk-row ld-bk-total"><span>Total</span><strong>{{ cur }} {{ Number(fullQuote.total).toLocaleString() }}</strong></div>
             </div>
 
-            <button type="button" class="ld-book-btn" @click="goCheckout">Continue to checkout <ArrowRight :size="17" /></button>
+            <button type="button" class="ld-book-btn" :disabled="bookingUnavailable" @click="goCheckout">Continue to checkout <ArrowRight :size="17" /></button>
             </div>
             </template>
           </aside>
         </div>
 
         <!-- ===== STEP 2 — checkout ===== -->
-        <div v-else class="ld-grid">
+        <div v-else class="ld-grid checkout-grid">
           <div class="ld-main">
-            <button type="button" class="cback ld-back2" @click="backToSelection()"><ArrowLeft :size="16" /> Edit selection</button>
-
             <div class="ld-co-head">
-              <h1>{{ l.name }}</h1>
-              <div v-if="loc" class="ld-co-venue"><MapPin :size="14" /> {{ loc.name }}</div>
+              <img v-if="heroPhoto" :src="heroPhoto" :alt="l.name" class="checkout-photo" />
+              <div><h1>{{ l.name }}</h1><div v-if="loc" class="ld-co-venue"><MapPin :size="14" /> {{ loc.name }}</div></div>
             </div>
 
-            <h2 class="ld-h2">Order summary</h2>
+            <section class="checkout-section" aria-labelledby="checkout-summary-title">
+            <div class="checkout-section-head"><h2 id="checkout-summary-title" class="ld-h2">Your booking</h2><button type="button" class="checkout-edit" @click="backToSelection()">Edit date &amp; time</button></div>
             <div class="ld-cart">
               <div v-for="day in fullQuote.perDay" :key="day.date" class="ld-cart-day">
                 <div class="ld-cart-dayhead"><Calendar :size="15" /> {{ fmtDate(day.date) }}</div>
@@ -895,7 +938,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
                   <span class="ld-cart-l"><Clock :size="14" /> {{ fmtTime(b.start) }}–{{ fmtTime(b.end) }}<span v-if="b.slots.length > 1" class="ld-sel-ext"> · {{ b.slots.length }} slots</span></span>
                   <span class="ld-cart-r">
                     <span class="ld-cart-p">{{ cur }} {{ Number(b.total).toLocaleString() }}</span>
-                    <button type="button" class="ld-cart-x" @click="removeBlock(day.date, b)" title="Remove this time"><X :size="15" /></button>
+                    <button type="button" class="ld-cart-x" @click="removeBlock(day.date, b)" :aria-label="`Remove ${fmtDate(day.date)}, ${fmtTime(b.start)} to ${fmtTime(b.end)}`" title="Remove this time"><X :size="15" /></button>
                   </span>
                 </div>
               </div>
@@ -903,12 +946,15 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
                 <span class="ld-cart-l"><Plus :size="13" /> {{ a.qty }} × {{ a.name }}</span>
                 <span class="ld-cart-r">
                   <span class="ld-cart-p">{{ cur }} {{ Number(a.amount).toLocaleString() }}</span>
-                  <button type="button" class="ld-cart-x" @click="removeAddon(a)" title="Remove add-on"><X :size="14" /></button>
+                  <button type="button" class="ld-cart-x" @click="removeAddon(a)" :aria-label="`Remove ${a.name}`" title="Remove add-on"><X :size="14" /></button>
                 </span>
               </div>
             </div>
 
-            <h2 class="ld-h2">Your details</h2>
+            </section>
+            <section class="checkout-section" aria-labelledby="checkout-details-title">
+            <div class="checkout-section-head"><h2 id="checkout-details-title" class="ld-h2">Contact details</h2></div>
+            <div class="checkout-contact">
             <div v-if="isCustomer" class="ld-who">
               <div class="ld-who-ava">{{ (customer.full_name || customer.email || '?').slice(0,1).toUpperCase() }}</div>
               <div class="ld-who-info">
@@ -916,28 +962,36 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
                 <div class="ld-who-mail">{{ customer.email }}</div>
               </div>
             </div>
-            <PhoneInput v-model="phone" :default-iso="selectedCountry?.iso_code" placeholder="Phone number"
+            <div class="checkout-phone"><label for="checkout-phone-number">Mobile number</label>
+            <PhoneInput input-id="checkout-phone-number" :described-by="showPhoneErr ? 'checkout-phone-error' : 'checkout-phone-hint'" v-model="phone" :default-iso="selectedCountry?.iso_code" placeholder="Phone number"
                         class="ld-phone" :invalid="showPhoneErr" @blur="phoneTouched = true" />
-            <div v-if="showPhoneErr" class="ld-phone-err">{{ phoneErr }}</div>
+            <p v-if="showPhoneErr" id="checkout-phone-error" class="ld-phone-err" role="alert">{{ phoneErr }}</p>
+            <p v-else id="checkout-phone-hint" class="checkout-help">So the venue can reach you about your booking.</p>
+            </div></div></section>
 
-            <h2 class="ld-h2">Payment method</h2>
-            <div class="ld-pay">
+            <section class="checkout-section checkout-payment" aria-labelledby="payment-method-title">
+            <div class="checkout-section-head"><h2 id="payment-method-title" class="ld-h2">How would you like to pay?</h2></div>
+            <fieldset ref="paymentMethods" class="ld-pay" :class="{ 'ld-pay-invalid': paymentError }" aria-labelledby="payment-method-title" :aria-describedby="paymentError ? 'payment-method-error' : plan.methods.length > 1 ? 'payment-method-help' : undefined" :aria-invalid="!!paymentError">
+              <p v-if="plan.methods.length > 1" id="payment-method-help" class="ld-pay-help">Select an option to review what’s due now and on arrival.</p>
               <div v-if="plan.methods.length > 1" class="ld-pay-methods wrap">
-                <button v-for="m in plan.methods" :key="m" type="button" class="ld-pay-opt" :class="{ on: payMethod === m }" @click="payMethod = m">{{ PAY_LABEL[m] }}</button>
+                <label v-for="m in plan.methods" :key="m" class="ld-pay-opt" :class="{ on: payMethod === m }"><input v-model="payMethod" type="radio" name="listing-payment-method" :value="m" :disabled="saving" required /><span class="checkout-pay-copy"><strong>{{ PAY_LABEL[m] }}</strong><span>{{ PAY_NOTE[m] }}</span></span></label>
               </div>
-              <div class="ld-pay-desc"><ShieldCheck :size="16" /> <span>{{ PAY_DESC[payMethod] }}</span></div>
-            </div>
+              <p v-if="paymentError" id="payment-method-error" class="ld-payment-error" role="alert">{{ paymentError }}</p>
+              <div v-if="paymentSelected" class="ld-pay-desc"><ShieldCheck :size="16" /> <span>{{ PAY_DESC[payMethod] }}</span></div>
+            </fieldset>
+            </section>
           </div>
 
           <!-- sidebar: order total + payment plan + confirm -->
-          <aside class="ld-side">
-            <div class="ld-sum-h">Order total</div>
+          <aside v-if="selectMode || !bookingOpen || fullQuote.dates.length" class="ld-side checkout-total">
+            <h2 class="checkout-total-title">Booking total</h2>
             <div class="ld-breakdown">
               <div class="ld-bk-row"><span>{{ fullQuote.totalSlots }} slot{{ fullQuote.totalSlots > 1 ? 's' : '' }}<span v-if="hoursLabel"> · {{ hoursLabel }}</span><span v-if="fullQuote.dates.length > 1"> · {{ fullQuote.dates.length }} days</span></span><span>{{ cur }} {{ Number(fullQuote.slotsTotal).toLocaleString() }}</span></div>
               <div v-if="fullQuote.savings > 0" class="ld-bk-row ld-bk-save"><span>Extension savings</span><span>− {{ cur }} {{ Number(fullQuote.savings).toLocaleString() }}</span></div>
               <div v-if="fullQuote.addonsTotal > 0" class="ld-bk-row"><span>Add-ons</span><span>{{ cur }} {{ Number(fullQuote.addonsTotal).toLocaleString() }}</span></div>
               <div v-if="promoDiscount > 0" class="ld-bk-row ld-bk-save"><span>Promo {{ promo.code.code }}</span><span>− {{ cur }} {{ Number(promoDiscount).toLocaleString() }}</span></div>
-              <div class="ld-bk-row ld-bk-total"><span>Total</span><strong>{{ cur }} {{ Number(payableTotal).toLocaleString() }}</strong></div>
+              <div v-if="rewardAmount" class="ld-bk-row ld-bk-save"><span>Rewards points</span><span>− {{ cur }} {{ rewardAmount.toLocaleString() }}</span></div>
+              <div class="ld-bk-row ld-bk-total"><span>Total</span><strong>{{ cur }} {{ Number(payableTotal - rewardAmount).toLocaleString() }}</strong></div>
             </div>
 
             <!-- Promo code -->
@@ -947,18 +1001,17 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
                 <button type="button" class="ld-promo-x" @click="removePromo">Remove</button>
               </div>
               <div v-else class="ld-promo-form">
-                <input v-model="promoInput" type="text" class="ld-promo-input" placeholder="Promo code"
+                <input aria-label="Promo code" v-model="promoInput" type="text" class="ld-promo-input" placeholder="Promo code"
                   @keyup.enter="applyPromo" :disabled="promoBusy" />
                 <button type="button" class="ld-promo-btn" :disabled="promoBusy || !promoInput.trim()" @click="applyPromo">{{ promoBusy ? '…' : 'Apply' }}</button>
               </div>
               <div v-if="promoError" class="ld-promo-err">{{ promoError }}</div>
             </div>
 
-            <!-- Spending loyalty points at checkout is disabled until the API supports
-                 it — showing a discount the server won't apply would undercharge. -->
+            <CheckoutRewards v-if="!isWhiteLabel" ref="rewardsControl" v-model="rewardSelection" kind="listing" :country-id="rewardsCountryId" :currency="cur" :checkout="rewardsCheckout" :total="payableTotal" :due-now="paySplit?.online || 0" />
 
             <div class="ld-sum-h">Payment plan</div>
-            <div class="ld-plan">
+            <div v-if="paySplit" class="ld-plan">
               <template v-if="paySplit.method === 'deposit'">
                 <div class="ld-plan-row now">
                   <div class="ld-plan-info">
@@ -995,12 +1048,14 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
               </template>
             </div>
 
+            <p v-else-if="!bookingUnavailable" class="ld-pay-prompt">Choose a payment method to see what you’ll pay now and at the venue.</p>
             <div v-if="err" class="ld-err">{{ err }}</div>
-            <button type="button" class="ld-book-btn" :disabled="saving" @click="confirm">{{ confirmLabel }}</button>
-            <div class="ld-pay-note"><ShieldCheck :size="14" /> Secure payment by Stripe. Cards are never seen by Bookboll.</div>
+            <button type="button" class="ld-book-btn" :disabled="saving || bookingUnavailable" @click="confirm">{{ confirmLabel }}</button>
+            <div v-if="paymentSelected && payMethod !== 'cash'" class="ld-pay-note"><ShieldCheck :size="14" /> Secure payment by Stripe. Cards are never seen by Bookboll.</div>
             <button type="button" class="ld-map-btn" @click="step = 1"><ArrowLeft :size="16" /> Back to selection</button>
           </aside>
         </div>
+        <MoreVenueListings v-if="step === 1 && !selectMode && loc?.id" :venue="loc" :listing-id="l.id || route.params.id" :currency="cur" :return-to="browseReturnPath(route.query.from)" />
       </template>
     </div>
     <Lightbox v-if="lightbox" :images="gallery" :start="activePhoto" :alt="l?.name || 'Listing'" @close="lightbox = false" />
@@ -1008,7 +1063,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
 </template>
 
 <style scoped>
-.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; max-width: 100%; }
+.cback { display: inline-flex; align-items: center; gap: 6px; color: var(--brand-ink, var(--brand)); text-decoration: none; font-weight: 700; font-size: 14px; margin-bottom: 16px; max-width: 100%; }
 .cback-btn { background: none; border: none; cursor: pointer; padding: 0; }
 .cmsg { text-align: center; padding: 50px; color: var(--text-light, #94a3b8); }
 .ld-hero { height: 260px; border-radius: 20px; background-size: cover; background-position: center; background-color: var(--brand-accent); position: relative; }
@@ -1020,124 +1075,124 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
 .ld-thumb:hover { opacity: 1; }
 .ld-thumb.on { border-color: var(--brand-primary, var(--primary)); opacity: 1; }
 .ld-grid { display: grid; grid-template-columns: 1fr 320px; gap: 24px; margin-top: 20px; }
-.ld-main h1 { font-size: 28px; font-weight: 900; color: #0f172a; margin: 0; }
+.ld-main h1 { font-size: 28px; font-weight: 900; color: var(--text, #0f172a); margin: 0; }
 
 /* Select mode (host picking this court for a game) */
-.ld-selbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 16px; background: linear-gradient(135deg,#fffbeb,#fef3c7); border: 1.5px solid #fcd34d; border-radius: 14px; padding: 12px 16px; position: sticky; top: 12px; z-index: 5; }
-.ld-selbar-msg { display: flex; align-items: center; gap: 8px; font-size: 14.5px; font-weight: 800; color: #92400e; }
+.ld-selbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 16px; background: linear-gradient(135deg,var(--warning-bg, #fffbeb),var(--warning-bg, #fef3c7)); border: 1.5px solid var(--warning-border, #fcd34d); border-radius: 14px; padding: 12px 16px; position: sticky; top: 12px; z-index: 5; }
+.ld-selbar-msg { display: flex; align-items: center; gap: 8px; font-size: 14.5px; font-weight: 800; color: var(--warning-ink, #92400e); }
 .ld-selbar-actions { display: flex; align-items: center; gap: 8px; }
-.ld-selbar-cancel { display: inline-flex; align-items: center; gap: 5px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); color: #334155; font-weight: 700; font-size: 13.5px; padding: 9px 14px; border-radius: 999px; cursor: pointer; }
+.ld-selbar-cancel { display: inline-flex; align-items: center; gap: 5px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); color: var(--text-secondary, #334155); font-weight: 700; font-size: 13.5px; padding: 9px 14px; border-radius: 999px; cursor: pointer; }
 .ld-selbar-go { display: inline-flex; align-items: center; gap: 6px; background: #b45309; color: #fff; font-weight: 800; font-size: 13.5px; padding: 9px 16px; border-radius: 999px; border: none; cursor: pointer; }
 .ld-select-main { margin-top: 18px; max-width: 640px; }
 .ld-select-cta { margin-top: 18px; max-width: 360px; }
 .ld-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
-.ld-tag { font-size: 13px; font-weight: 700; color: var(--brand); background: color-mix(in srgb, var(--brand) 18%, white); padding: 4px 12px; border-radius: 999px; text-transform: capitalize; }
+.ld-tag { font-size: 13px; font-weight: 700; color: var(--brand-ink, var(--brand)); background: color-mix(in srgb, var(--brand) 18%, var(--surface, white)); padding: 4px 12px; border-radius: 999px; text-transform: capitalize; }
 .ld-fact { display: flex; align-items: center; gap: 5px; font-size: 13.5px; color: var(--text-muted, #64748b); font-weight: 600; }
-.ld-desc { font-size: 15px; color: #334155; line-height: 1.6; margin: 16px 0; }
-.ld-h2 { font-size: 18px; font-weight: 800; color: #0f172a; margin: 24px 0 12px; }
+.ld-desc { font-size: 15px; color: var(--text-secondary, #334155); line-height: 1.6; margin: 16px 0; }
+.ld-h2 { font-size: 18px; font-weight: 800; color: var(--text, #0f172a); margin: 24px 0 12px; }
 .ld-h2-sub { font-size: 14px; font-weight: 600; color: var(--text-light, #94a3b8); }
-.ld-time-label { font-size: 14px; font-weight: 800; color: #334155; margin: 18px 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ld-ext-hint { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: #b45309; background: #fef3c7; padding: 3px 9px; border-radius: 999px; }
-.ld-select-hint { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #475569; background: #f1f5f9; border-radius: 9px; padding: 8px 11px; margin: 0 0 10px; }
-.ld-select-hint svg { color: var(--brand); flex-shrink: 0; }
+.ld-time-label { font-size: 14px; font-weight: 800; color: var(--text-secondary, #334155); margin: 18px 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ld-ext-hint { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: var(--warning-ink, #b45309); background: var(--warning-bg, #fef3c7); padding: 3px 9px; border-radius: 999px; }
+.ld-select-hint { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary, #475569); background: var(--bg, #f1f5f9); border-radius: 9px; padding: 8px 11px; margin: 0 0 10px; }
+.ld-select-hint svg { color: var(--brand-ink, var(--brand)); flex-shrink: 0; }
 .ld-slots-msg { display: flex; align-items: center; gap: 8px; color: var(--text-muted, #64748b); font-size: 14px; padding: 8px 0; }
-.ld-closed-msg { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 10px 14px; font-weight: 600; }
-.ld-special-note { display: flex; align-items: center; gap: 6px; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
+.ld-closed-msg { color: var(--danger-ink, #b91c1c); background: var(--danger-bg, #fef2f2); border: 1px solid var(--danger-border, #fecaca); border-radius: 10px; padding: 10px 14px; font-weight: 600; }
+.ld-special-note { display: flex; align-items: center; gap: 6px; color: var(--violet-ink, #4338ca); background: var(--violet-bg, #eef2ff); border: 1px solid var(--violet-border, #c7d2fe); border-radius: 8px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
 .ld-spin { animation: ldspin 1s linear infinite; } @keyframes ldspin { to { transform: rotate(360deg); } }
 .ld-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
 .ld-slots.ld-blocks { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .ld-hblock .ld-slot-time { font-size: 12.5px; }
-.ld-hblock .ld-slot-price { color: var(--brand); font-weight: 800; }
+.ld-hblock .ld-slot-price { color: var(--brand-ink, var(--brand)); font-weight: 800; }
 .ld-slot { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; background: var(--surface, #ffffff); cursor: pointer; }
 .ld-slot:hover:not(:disabled) { border-color: var(--brand-accent); }
 .ld-slot.on { border-color: var(--brand); background: var(--brand); }
 .ld-slot.on .ld-slot-time, .ld-slot.on .ld-slot-price, .ld-slot.on .ld-slot-left, .ld-slot.on .ld-slot-endt { color: #fff; }
-.ld-slot.taken { background: #f8fafc; cursor: not-allowed; opacity: .7; }
-.ld-slot-time { font-size: 14px; font-weight: 800; color: #0f172a; }
+.ld-slot.taken { background: var(--canvas, #f8fafc); cursor: not-allowed; opacity: .7; }
+.ld-slot-time { font-size: 14px; font-weight: 800; color: var(--text, #0f172a); }
 .ld-slot-endt { font-size: 10.5px; font-weight: 600; color: var(--text-light, #94a3b8); margin-top: -3px; }
-.ld-slot-price { font-size: 11.5px; font-weight: 600; color: var(--brand); }
+.ld-slot-price { font-size: 11.5px; font-weight: 600; color: var(--brand-ink, var(--brand)); }
 .ld-slot-price.disc { font-weight: 800; }
 .ld-slot-was { font-size: 10px; font-weight: 600; color: var(--text-muted, #64748b); margin-left: 4px; text-decoration: line-through; text-decoration-color: #94a3b8; }
 .ld-slot.on .ld-slot-was { color: rgba(255,255,255,.8); text-decoration-color: rgba(255,255,255,.8); }
 
 /* price heat-map (price text only): green cheapest → amber mid → orange priciest */
-.ld-slot.tier-low:not(.on) .ld-slot-price { color: #16a34a; }
-.ld-slot.tier-mid:not(.on) .ld-slot-price { color: #ca8a04; }
-.ld-slot.tier-high:not(.on) .ld-slot-price { color: #ea580c; }
-.ld-slot-left { font-size: 10.5px; font-weight: 700; color: #b45309; }
+.ld-slot.tier-low:not(.on) .ld-slot-price { color: var(--success-ink, #16a34a); }
+.ld-slot.tier-mid:not(.on) .ld-slot-price { color: var(--warning-ink, #ca8a04); }
+.ld-slot.tier-high:not(.on) .ld-slot-price { color: var(--warning-ink, #ea580c); }
+.ld-slot-left { font-size: 10.5px; font-weight: 700; color: var(--warning-ink, #b45309); }
 .ld-slot.on .ld-slot-left { color: #fde68a; }
 .ld-slot-x { font-size: 11px; font-weight: 700; color: #cbd5e1; }
-.ld-offer { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; margin-top: 12px; padding: 12px 14px; border: none; border-radius: 14px; cursor: pointer; background: linear-gradient(135deg, #fffbeb, #fef3c7); box-shadow: inset 0 0 0 1.5px #fcd34d; transition: transform .1s; }
-.ld-offer:hover { transform: translateY(-1px); background: linear-gradient(135deg, #fef3c7, #fde68a); }
+.ld-offer { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; margin-top: 12px; padding: 12px 14px; border: none; border-radius: 14px; cursor: pointer; background: linear-gradient(135deg, var(--warning-bg, #fffbeb), var(--warning-bg, #fef3c7)); box-shadow: inset 0 0 0 1.5px #fcd34d; transition: transform .1s; }
+.ld-offer:hover { transform: translateY(-1px); background: linear-gradient(135deg, var(--warning-bg, #fef3c7), var(--warning-bg, #fde68a)); }
 .ld-offer-ico { width: 38px; height: 38px; border-radius: 10px; background: #f59e0b; color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .ld-offer-txt { flex: 1; min-width: 0; }
-.ld-offer-title { font-size: 14.5px; font-weight: 800; color: #92400e; }
-.ld-offer-sub { font-size: 13px; color: #78350f; margin-top: 1px; }
-.ld-offer-sub b { color: #0f172a; }
-.ld-offer-sub s { color: #b45309; opacity: .75; margin-left: 4px; }
+.ld-offer-title { font-size: 14.5px; font-weight: 800; color: var(--warning-ink, #92400e); }
+.ld-offer-sub { font-size: 13px; color: var(--warning-ink, #78350f); margin-top: 1px; }
+.ld-offer-sub b { color: var(--text, #0f172a); }
+.ld-offer-sub s { color: var(--warning-ink, #b45309); opacity: .75; margin-left: 4px; }
 .ld-offer-add { display: inline-flex; align-items: center; gap: 5px; background: #b45309; color: #fff; font-weight: 800; font-size: 13.5px; padding: 8px 14px; border-radius: 999px; flex-shrink: 0; }
 .ld-stepper { display: inline-flex; align-items: center; gap: 14px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 6px 12px; }
-.ld-stepper button { width: 28px; height: 28px; border-radius: 8px; background: #f1f5f9; color: #0f172a; display: flex; align-items: center; justify-content: center; }
+.ld-stepper button { width: 28px; height: 28px; border-radius: 8px; background: var(--bg, #f1f5f9); color: var(--text, #0f172a); display: flex; align-items: center; justify-content: center; }
 .ld-stepper button:disabled { opacity: .4; }
-.ld-stepper span { font-size: 15px; font-weight: 700; color: #0f172a; }
+.ld-stepper span { font-size: 15px; font-weight: 700; color: var(--text, #0f172a); }
 .ld-step-note { font-size: 12px; font-weight: 500; color: var(--text-light, #94a3b8); }
 .ld-stepper.sm { padding: 4px 8px; gap: 10px; }
 .ld-stepper.sm button { width: 24px; height: 24px; }
 .ld-addons { display: flex; flex-direction: column; gap: 8px; }
 .ld-addon { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 10px 14px; }
-.ld-addon-name { font-size: 14px; font-weight: 700; color: #0f172a; }
+.ld-addon-name { font-size: 14px; font-weight: 700; color: var(--text, #0f172a); }
 .ld-addon-price { font-size: 12.5px; color: var(--text-muted, #64748b); }
-.ld-addon-unit { font-weight: 700; color: var(--brand); }
+.ld-addon-unit { font-weight: 700; color: var(--brand-ink, var(--brand)); }
 .ld-venue { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 14px 16px; background: var(--surface, #ffffff); cursor: pointer; }
-.ld-venue:hover { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, white); }
+.ld-venue:hover { border-color: var(--brand-accent); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); }
 .ld-side-venue { margin-bottom: 16px; }
-.ld-venue-pin { width: 38px; height: 38px; border-radius: 10px; background: color-mix(in srgb, var(--brand) 18%, white); color: var(--brand); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ld-venue-pin { width: 38px; height: 38px; border-radius: 10px; background: color-mix(in srgb, var(--brand) 18%, var(--surface, white)); color: var(--brand-ink, var(--brand)); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .ld-venue-info { flex: 1; min-width: 0; }
-.ld-venue-name { font-size: 15px; font-weight: 800; color: #0f172a; }
+.ld-venue-name { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .ld-venue-addr { font-size: 13px; color: var(--text-muted, #64748b); }
-.ld-venue-go { color: var(--brand); flex-shrink: 0; }
-.ld-side { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 22px; height: fit-content; position: sticky; top: 20px; }
-.ld-side-price { font-size: 24px; font-weight: 900; color: #0f172a; }
+.ld-venue-go { color: var(--brand-ink, var(--brand)); flex-shrink: 0; }
+.ld-side { background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 22px; height: fit-content; position: sticky; top: var(--customer-sticky-offset, 20px); }
+.ld-side-price { font-size: 24px; font-weight: 900; color: var(--text, #0f172a); }
 .ld-sp-from { font-size: 13px; font-weight: 600; color: var(--text-light, #94a3b8); }
 .ld-sp-per { font-size: 13px; font-weight: 600; color: var(--text-light, #94a3b8); }
-.ld-side-sel { background: color-mix(in srgb, var(--brand) 8%, white); border: 1px solid #99f6e4; border-radius: 12px; padding: 12px 14px; margin: 16px 0; }
+.ld-side-sel { background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); border: 1px solid var(--success-border, #99f6e4); border-radius: 12px; padding: 12px 14px; margin: 16px 0; }
 .ld-sel-day + .ld-sel-day { margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--brand) 18%, white); }
-.ld-sel-row { display: flex; align-items: center; gap: 7px; font-size: 14px; color: #0f172a; font-weight: 700; margin-bottom: 6px; }
+.ld-sel-row { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--text, #0f172a); font-weight: 700; margin-bottom: 6px; }
 .ld-sel-clear { margin-left: auto; color: var(--text-light, #94a3b8); display: flex; }
-.ld-sel-clear:hover { color: #dc2626; }
-.ld-sel-block { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: #334155; margin-top: 5px; }
+.ld-sel-clear:hover { color: var(--danger-ink, #dc2626); }
+.ld-sel-block { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--text-secondary, #334155); margin-top: 5px; }
 .ld-sel-block > span:first-child { display: flex; align-items: center; gap: 5px; }
-.ld-sel-ext { color: #b45309; font-weight: 700; }
+.ld-sel-ext { color: var(--warning-ink, #b45309); font-weight: 700; }
 .ld-sel-bprice { font-weight: 700; }
-.ld-side-hint { font-size: 13.5px; color: var(--text-muted, #64748b); background: #f8fafc; border-radius: 12px; padding: 14px; text-align: center; margin: 16px 0; display: flex; align-items: center; justify-content: center; gap: 7px; }
+.ld-side-hint { font-size: 13.5px; color: var(--text-muted, #64748b); background: var(--canvas, #f8fafc); border-radius: 12px; padding: 14px; text-align: center; margin: 16px 0; display: flex; align-items: center; justify-content: center; gap: 7px; }
 .ld-side-fields { display: flex; flex-direction: column; gap: 9px; margin-bottom: 10px; }
 .ld-phone { margin-bottom: 14px; }
-.ld-phone-err { margin: -10px 0 14px; font-size: 13px; font-weight: 600; color: #dc2626; }
+.ld-phone-err { margin: -10px 0 14px; font-size: 13px; font-weight: 600; color: var(--danger-ink, #dc2626); }
 .ld-field { display: flex; align-items: center; gap: 9px; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 0 12px; color: var(--text-light, #94a3b8); }
-.ld-field input { flex: 1; border: none; outline: none; padding: 11px 0; font-size: 14.5px; color: #0f172a; background: transparent; }
+.ld-field input { flex: 1; border: none; outline: none; padding: 11px 0; font-size: 14.5px; color: var(--text, #0f172a); background: transparent; }
 .ld-breakdown { margin: 6px 0 14px; }
 /* Hold countdown that rides inside the mobile fixed action bar — desktop uses the
    floating <CheckoutResumeCard>, so it's hidden here until the phone breakpoint. */
 .ld-bar-timer { display: none; }
-.ld-bk-row { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; color: #475569; padding: 4px 0; }
-.ld-bk-save { color: #16a34a; font-weight: 700; }
-.ld-bk-total { border-top: 1px solid #eef2f6; margin-top: 4px; padding-top: 8px; font-size: 15px; color: #0f172a; }
+.ld-bk-row { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; color: var(--text-secondary, #475569); padding: 4px 0; }
+.ld-bk-save { color: var(--success-ink, #16a34a); font-weight: 700; }
+.ld-bk-total { border-top: 1px solid var(--border, #eef2f6); margin-top: 4px; padding-top: 8px; font-size: 15px; color: var(--text, #0f172a); }
 .ld-bk-total strong { font-size: 20px; font-weight: 900; }
-.ld-err { font-size: 13px; color: #dc2626; margin-bottom: 10px; }
+.ld-err { font-size: 13px; color: var(--danger-ink, #dc2626); margin-bottom: 10px; }
 .ld-promo { margin: 0 0 16px; }
 .ld-promo-form { display: flex; gap: 8px; }
 .ld-promo-input { flex: 1; min-width: 0; border: 1.5px solid var(--border, #e2e8f0); border-radius: 10px; padding: 9px 12px; font-size: 13.5px; text-transform: uppercase; }
 .ld-promo-input:focus { outline: none; border-color: var(--brand); }
-.ld-promo-btn { border: 1.5px solid var(--brand); background: var(--surface, #ffffff); color: var(--brand); font-weight: 800; font-size: 13px; padding: 0 16px; border-radius: 10px; cursor: pointer; }
+.ld-promo-btn { border: 1.5px solid var(--brand); background: var(--surface, #ffffff); color: var(--brand-ink, var(--brand)); font-weight: 800; font-size: 13px; padding: 0 16px; border-radius: 10px; cursor: pointer; }
 .ld-promo-btn:disabled { opacity: .5; cursor: default; }
-.ld-promo-on { display: flex; align-items: center; justify-content: space-between; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; padding: 8px 12px; }
-.ld-promo-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: #065f46; }
-.ld-promo-x { background: none; border: none; color: #047857; font-size: 12.5px; font-weight: 700; cursor: pointer; text-decoration: underline; }
-.ld-promo-err { font-size: 12.5px; color: #dc2626; margin-top: 6px; }
-.ld-hold { display: flex; align-items: center; gap: 9px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 13.5px; font-weight: 600; padding: 10px 14px; border-radius: 12px; margin-bottom: 14px; }
+.ld-promo-on { display: flex; align-items: center; justify-content: space-between; background: var(--success-bg, #ecfdf5); border: 1px solid var(--success-border, #a7f3d0); border-radius: 10px; padding: 8px 12px; }
+.ld-promo-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--success-ink, #065f46); }
+.ld-promo-x { background: none; border: none; color: var(--success-ink, #047857); font-size: 12.5px; font-weight: 700; cursor: pointer; text-decoration: underline; }
+.ld-promo-err { font-size: 12.5px; color: var(--danger-ink, #dc2626); margin-top: 6px; }
+.ld-hold { display: flex; align-items: center; gap: 9px; background: var(--success-bg, #ecfdf5); border: 1px solid var(--success-border, #a7f3d0); color: var(--success-ink, #065f46); font-size: 13.5px; font-weight: 600; padding: 10px 14px; border-radius: 12px; margin-bottom: 14px; }
 .ld-hold strong { font-variant-numeric: tabular-nums; font-weight: 800; }
-.ld-hold.urgent { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
-.ld-hold-expired { display: flex; align-items: center; gap: 9px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 13.5px; font-weight: 600; padding: 10px 14px; border-radius: 12px; margin-bottom: 14px; }
+.ld-hold.urgent { background: var(--danger-bg, #fef2f2); border-color: var(--danger-border, #fecaca); color: var(--danger-ink, #b91c1c); }
+.ld-hold-expired { display: flex; align-items: center; gap: 9px; background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); color: var(--warning-ink, #92400e); font-size: 13.5px; font-weight: 600; padding: 10px 14px; border-radius: 12px; margin-bottom: 14px; }
 .ld-book-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: var(--brand); color: #fff; font-weight: 800; padding: 14px; border: none; border-radius: 12px; text-decoration: none; font-size: 15.5px; cursor: pointer; }
 .ld-h2 { scroll-margin-top: 84px; }   /* clears any fixed header when scrolled to */
 /* Two-phase mobile controls — inert on desktop (shown/styled only in the phone block). */
@@ -1146,32 +1201,39 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
    venue in the sidebar and keeps its CTA there, so neither belongs above 720px. */
 .ld-locpill, .ld-topbook { display: none; }
 .ld-backdetails { display: none; }
-.ld-book-btn:hover:not(:disabled) { background: #0e6b63; }
+.ld-book-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--brand) 86%, #0f172a); }
 .ld-book-btn:disabled { opacity: .5; cursor: not-allowed; }
 .ld-pay { margin: 4px 0 12px; }
 .ld-pay-methods { display: flex; gap: 6px; margin-bottom: 10px; }
-.ld-pay-opt { flex: 1; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: #475569; font-weight: 700; font-size: 12px; padding: 8px 6px; border-radius: 9px; cursor: pointer; line-height: 1.2; }
-.ld-pay-opt.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, white); color: var(--brand); }
-.ld-pay-split { background: #f8fafc; border: 1px solid #eef2f6; border-radius: 12px; padding: 10px 12px; }
-.ld-pay-row { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; color: #0f172a; }
+.ld-pay-opt { flex: 1; border: 1.5px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); color: var(--text-secondary, #475569); font-weight: 700; font-size: 12px; padding: 8px 6px; border-radius: 9px; cursor: pointer; line-height: 1.2; }
+.ld-pay-opt.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); color: var(--brand-ink, var(--brand)); }
+.ld-pay { border: 0; padding: 0; margin: 0; min-width: 0; scroll-margin-block: var(--customer-sticky-offset, 90px); }
+.ld-pay-help, .ld-pay-prompt { color: var(--text-muted); font-size: 13px; line-height: 1.6; margin: 0 0 14px; }
+.ld-pay-opt { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; }
+.ld-pay-opt input { flex: 0 0 17px; width: 17px; height: 17px; margin: 0; accent-color: var(--brand); cursor: pointer; }
+.ld-pay-opt:focus-within { outline: 2px solid var(--brand-ink, var(--brand)); outline-offset: 3px; }
+.ld-pay-invalid .ld-pay-opt { border-color: var(--danger-ink, #dc2626); }
+.ld-payment-error { color: var(--danger-ink, #dc2626); font-size: 13px; font-weight: 600; line-height: 1.5; margin: 0 0 14px; }
+.ld-pay-split { background: var(--canvas, #f8fafc); border: 1px solid var(--border, #eef2f6); border-radius: 12px; padding: 10px 12px; }
+.ld-pay-row { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; color: var(--text, #0f172a); }
 .ld-pay-row strong { font-size: 16px; font-weight: 900; }
 .ld-pay-row.sub { font-size: 12.5px; color: var(--text-muted, #64748b); margin-top: 4px; }
-.ld-pay-note { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12.5px; color: var(--brand); margin-top: 10px; text-align: center; }
-.ld-map-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 10px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); color: #334155; font-weight: 700; padding: 12px; border-radius: 12px; cursor: pointer; font-size: 14px; }
-.ld-map-btn:hover { border-color: var(--brand-accent); color: var(--brand); }
+.ld-pay-note { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12.5px; color: var(--brand-ink, var(--brand)); margin-top: 10px; text-align: center; }
+.ld-map-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 10px; background: var(--surface, #ffffff); border: 1.5px solid var(--border, #e2e8f0); color: var(--text-secondary, #334155); font-weight: 700; padding: 12px; border-radius: 12px; cursor: pointer; font-size: 14px; }
+.ld-map-btn:hover { border-color: var(--brand-accent); color: var(--brand-ink, var(--brand)); }
 .ld-success { text-align: center; }
-.ld-success-ico { width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 50%; background: #dcfce7; color: #16a34a; display: flex; align-items: center; justify-content: center; }
-.ld-success h3 { font-size: 20px; font-weight: 900; color: #0f172a; margin: 0 0 12px; }
-.ld-success-day { font-size: 12.5px; font-weight: 800; color: var(--brand); margin-top: 8px; }
-.ld-success-line { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 14px; color: #334155; font-weight: 600; margin-bottom: 4px; }
-.ld-success-total { font-size: 14.5px; color: #0f172a; margin: 12px 0 6px; }
+.ld-success-ico { width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 50%; background: var(--success-bg, #dcfce7); color: var(--success-ink, #16a34a); display: flex; align-items: center; justify-content: center; }
+.ld-success h3 { font-size: 20px; font-weight: 900; color: var(--text, #0f172a); margin: 0 0 12px; }
+.ld-success-day { font-size: 12.5px; font-weight: 800; color: var(--brand-ink, var(--brand)); margin-top: 8px; }
+.ld-success-line { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 14px; color: var(--text-secondary, #334155); font-weight: 600; margin-bottom: 4px; }
+.ld-success-total { font-size: 14.5px; color: var(--text, #0f172a); margin: 12px 0 6px; }
 .ld-sim-note { font-size: 11.5px; color: var(--text-light, #94a3b8); margin: 0 0 14px; font-style: italic; }
 .ld-success .ld-book-btn { margin-bottom: 10px; }
 
 /* ===== 2-step flow ===== */
 .ld-steps { display: flex; align-items: center; gap: 10px; margin: 20px 0 4px; }
 .ld-step { display: inline-flex; align-items: center; gap: 9px; background: none; border: none; padding: 0; cursor: default; font-size: 14.5px; font-weight: 800; color: var(--text-light, #94a3b8); }
-.ld-step.on { color: #0f172a; }
+.ld-step.on { color: var(--text, #0f172a); }
 button.ld-step { cursor: pointer; }
 button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
 .ld-step-n { width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--border, #e2e8f0); color: var(--text-muted, #64748b); font-size: 13px; font-weight: 900; }
@@ -1181,39 +1243,39 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
 .ld-step-bar.done { background: #16a34a; }
 .ld-back2 { background: none; border: none; cursor: pointer; padding: 0; margin: 4px 0 4px; }
 .ld-co-head { margin-bottom: 6px; }
-.ld-co-head h1 { font-size: 24px; font-weight: 900; color: #0f172a; margin: 0; }
+.ld-co-head h1 { font-size: 24px; font-weight: 900; color: var(--text, #0f172a); margin: 0; }
 .ld-co-venue { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--text-muted, #64748b); margin-top: 4px; }
 .ld-cart { border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 6px 16px; }
 .ld-cart-day { padding: 12px 0; }
-.ld-cart-day + .ld-cart-day { border-top: 1px solid #eef2f6; }
-.ld-cart-dayhead { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 800; color: var(--brand); margin-bottom: 8px; }
-.ld-cart-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: #334155; padding: 4px 0; }
+.ld-cart-day + .ld-cart-day { border-top: 1px solid var(--border, #eef2f6); }
+.ld-cart-dayhead { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 800; color: var(--brand-ink, var(--brand)); margin-bottom: 8px; }
+.ld-cart-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: var(--text-secondary, #334155); padding: 4px 0; }
 .ld-cart-l { display: flex; align-items: center; gap: 7px; font-weight: 600; }
-.ld-cart-p { font-weight: 800; color: #0f172a; white-space: nowrap; }
+.ld-cart-p { font-weight: 800; color: var(--text, #0f172a); white-space: nowrap; }
 .ld-cart-r { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.ld-cart-x { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: #f1f5f9; color: var(--text-light, #94a3b8); border: none; cursor: pointer; flex-shrink: 0; }
-.ld-cart-x:hover { background: #fee2e2; color: #dc2626; }
-.ld-cart-addon { border-top: 1px dashed #eef2f6; padding-top: 8px; margin-top: 2px; color: #475569; }
+.ld-cart-x { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--bg, #f1f5f9); color: var(--text-light, #94a3b8); border: none; cursor: pointer; flex-shrink: 0; }
+.ld-cart-x:hover { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #dc2626); }
+.ld-cart-addon { border-top: 1px dashed var(--border, #eef2f6); padding-top: 8px; margin-top: 2px; color: var(--text-secondary, #475569); }
 .ld-who { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 14px 16px; }
-.ld-who-ava { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; background: color-mix(in srgb, var(--brand) 18%, white); color: var(--brand); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 16px; }
-.ld-who-name { font-size: 15px; font-weight: 800; color: #0f172a; }
+.ld-who-ava { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; background: color-mix(in srgb, var(--brand) 18%, var(--surface, white)); color: var(--brand-ink, var(--brand)); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 16px; }
+.ld-who-name { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .ld-who-mail { font-size: 13px; color: var(--text-muted, #64748b); }
 .ld-pay-methods.wrap { flex-wrap: wrap; }
 .ld-pay-methods.wrap .ld-pay-opt { flex: 1 1 120px; }
 .ld-sum-h { font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--text-light, #94a3b8); margin: 0 0 6px; }
 .ld-side .ld-breakdown { margin: 0 0 16px; }
-.ld-pay-desc { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; color: #334155; background: #f8fafc; border: 1px solid #eef2f6; border-radius: 12px; padding: 12px 14px; line-height: 1.5; }
-.ld-pay-desc svg { color: var(--brand); flex-shrink: 0; margin-top: 1px; }
+.ld-pay-desc { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; color: var(--text-secondary, #334155); background: var(--canvas, #f8fafc); border: 1px solid var(--border, #eef2f6); border-radius: 12px; padding: 12px 14px; line-height: 1.5; }
+.ld-pay-desc svg { color: var(--brand-ink, var(--brand)); flex-shrink: 0; margin-top: 1px; }
 .ld-plan { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-.ld-plan-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid #eef2f6; }
-.ld-plan-row.now { background: color-mix(in srgb, var(--brand) 8%, white); border-color: #99f6e4; }
+.ld-plan-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid var(--border, #eef2f6); }
+.ld-plan-row.now { background: color-mix(in srgb, var(--brand) 8%, var(--surface, white)); border-color: var(--success-border, #99f6e4); }
 .ld-plan-info { min-width: 0; }
-.ld-plan-lbl { font-size: 13.5px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.ld-plan-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--brand); background: color-mix(in srgb, var(--brand) 18%, white); padding: 2px 7px; border-radius: 999px; }
+.ld-plan-lbl { font-size: 13.5px; font-weight: 800; color: var(--text, #0f172a); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ld-plan-tag { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; color: var(--brand-ink, var(--brand)); background: color-mix(in srgb, var(--brand) 18%, var(--surface, white)); padding: 2px 7px; border-radius: 999px; }
 .ld-plan-sub { font-size: 12px; color: var(--text-muted, #64748b); margin-top: 3px; line-height: 1.4; }
-.ld-plan-nr { display: inline-block; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; color: #b45309; background: #fef3c7; border-radius: 5px; padding: 1px 6px; vertical-align: middle; }
-.ld-plan-amt { font-size: 18px; font-weight: 900; color: #0f172a; white-space: nowrap; }
-.ld-plan-amt2 { font-size: 14.5px; font-weight: 800; color: #475569; white-space: nowrap; }
+.ld-plan-nr { display: inline-block; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; color: var(--warning-ink, #b45309); background: var(--warning-bg, #fef3c7); border-radius: 5px; padding: 1px 6px; vertical-align: middle; }
+.ld-plan-amt { font-size: 18px; font-weight: 900; color: var(--text, #0f172a); white-space: nowrap; }
+.ld-plan-amt2 { font-size: 14.5px; font-weight: 800; color: var(--text-secondary, #475569); white-space: nowrap; }
 .ld-done { max-width: 460px; margin: 24px auto; background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 18px; padding: 32px 28px; }
 .ld-done-actions { margin-top: 6px; }
 
@@ -1293,10 +1355,10 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
      redundant floating compact card, which we hide on phones) */
   .ld-side-action .ld-bar-timer {
     display: inline-flex; align-items: center; gap: 4px;
-    font-size: 11px; font-weight: 800; color: var(--brand); margin: 0 0 1px;
+    font-size: 11px; font-weight: 800; color: var(--brand-ink, var(--brand)); margin: 0 0 1px;
     font-variant-numeric: tabular-nums;
   }
-  .ld-side-action .ld-bar-timer.urgent { color: #dc2626; }
+  .ld-side-action .ld-bar-timer.urgent { color: var(--danger-ink, #dc2626); }
   .ld-side-action .ld-bk-total {
     display: flex; flex-direction: column; align-items: flex-start; gap: 0;
     border: none; margin: 0; padding: 0; line-height: 1.15;
@@ -1320,8 +1382,7 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
   .ld-intro .ld-side .ld-side-hint { display: none; }        /* "tap one or more times" makes no sense yet */
   .ld-intro .ld-steps { display: none; }                     /* flow tabs belong to the picker, not the details screen */
   .ld-intro .ld-side .ld-side-price { display: none; }       /* the fixed Book-now bar already shows the from-price */
-  .ld-intro .ld-grid { padding-bottom: 96px; }               /* clearance for the Book now bar */
-  .ld-intro .ld-desc { -webkit-line-clamp: unset; display: block; }  /* intro IS the details screen — show the full description */
+  .ld-intro .ld-grid { padding-bottom: 0; }                 /* the page shell clears the fixed booking bar */
 
   /* Where it is, directly under the name */
   .ld-locpill {
@@ -1329,9 +1390,9 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
     margin: 10px 0 2px; padding: 11px 13px; border: 1px solid var(--border, #e2e8f0);
     border-radius: 12px; background: var(--surface, #ffffff); cursor: pointer;
   }
-  .ld-locpill-pin, .ld-locpill-go { color: var(--brand); flex-shrink: 0; }
+  .ld-locpill-pin, .ld-locpill-go { color: var(--brand-ink, var(--brand)); flex-shrink: 0; }
   .ld-locpill-txt {
-    flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 700; color: var(--brand);
+    flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 700; color: var(--brand-ink, var(--brand));
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;   /* long venue names truncate rather than wrapping the pill */
   }
   /* The second Book now, at the end of the details */
@@ -1344,7 +1405,7 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
     padding: 10px 14px calc(10px + env(safe-area-inset-bottom)) 16px;
     box-shadow: 0 -8px 24px -12px rgba(15, 23, 42, .25);
   }
-  .ld-bn-price { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; line-height: 1.15; font-size: 18px; font-weight: 900; color: #0f172a; }
+  .ld-bn-price { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; line-height: 1.15; font-size: 18px; font-weight: 900; color: var(--text, #0f172a); }
   .ld-bn-price span { font-size: 11px; font-weight: 600; color: var(--text-muted, #64748b); }
   .ld-bn-price em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--text-muted, #64748b); }
   .ld-bn-btn { flex: 0 0 auto; width: auto; padding: 12px 20px; white-space: nowrap; }
@@ -1358,7 +1419,7 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
   .ld-backdetails {
     display: inline-flex; align-items: center; gap: 5px;
     background: none; border: none; padding: 2px 0; margin: 2px 0 0; cursor: pointer;
-    font-size: 13px; font-weight: 700; color: var(--brand);
+    font-size: 13px; font-weight: 700; color: var(--brand-ink, var(--brand));
   }
 
   /* ── 360px pass: nothing under 11px — end-times, strike-through prices and
@@ -1395,4 +1456,155 @@ button.ld-step.done:hover .ld-step-t { text-decoration: underline; }
 .ld-slot-sun.p-night { color: #6366f1; }
 .ld-slot.taken .ld-slot-sun { color: #cbd5e1; }
 .ld-slot.on .ld-slot-sun { color: #fff; }
+/* Listing identity and imagery share the catalog's quieter visual hierarchy. */
+.ld-main h1 { font-weight: 700; letter-spacing: -.5px; line-height: 1.25; color: var(--text); }
+.ld-hero { width: 100%; height: 300px; border-radius: 18px; }
+.ld-main { min-width: 0; }
+.ld-selbar { top: var(--customer-sticky-offset, 12px); }
+.ld-thumb { width: 74px; height: 54px; }
+.ld-tags { gap: 10px; }
+.ld-desc { color: var(--text-muted); max-width: 70ch; line-height: 1.75; }
+.ld-venue-link-label { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.ld-hero:focus-visible, .ld-thumb:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
+@media(max-width:760px) {
+  .ld-intro .ld-hero { height: 195px; border-radius: 14px; }
+  .ld-intro .ld-main h1 { font-size: 25px; margin-bottom: 12px; }
+  .ld-intro .ld-locpill-txt { white-space: normal; font-size: 14px; }
+  .ld-intro .ld-locpill { padding: 12px; margin-top: 12px; }
+  .ld-intro .ld-tags { padding-block: 8px; gap: 10px 16px; }
+  .ld-intro .ld-desc { font-size: 14px; line-height: 1.7; }
+}
+
+/* Details lead with identity; photography and booking summary share one row. */
+.listing-heading { margin: 4px 0 24px; }
+.listing-heading > .ld-tag { display: inline-flex; margin-bottom: 12px; background: color-mix(in srgb, var(--brand) 10%, var(--surface)); color: var(--brand-ink, var(--brand)); font-weight: 600; }
+.listing-heading h1 { font-size: clamp(26px, 3vw, 36px); font-weight: 700; letter-spacing: -.8px; line-height: 1.2; margin: 0 0 14px; max-width: 960px; }
+.listing-venue-link { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-muted); line-height: 1.5; }
+.listing-venue-link svg { flex-shrink: 0; color: var(--brand-ink, var(--brand)); }
+.listing-venue-link:hover { color: var(--brand-ink, var(--brand)); }
+.ld-grid { grid-template-columns: minmax(0, 1fr) 340px; gap: 32px; margin-top: 0; }
+.listing-gallery { min-width: 0; }
+.listing-gallery .ld-hero { height: auto; aspect-ratio: 16 / 9; max-height: 420px; border-radius: 16px; }
+.ld-hero-expand { width: auto; height: auto; padding: 9px 12px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 7px; background: #101827d9; color: white; }
+.ld-thumb { border-color: var(--border); opacity: 1; }
+.ld-thumb.on { border-color: var(--brand); }
+.listing-facts { display: flex; flex-wrap: wrap; gap: 18px 30px; padding: 22px 0; border-bottom: 1px solid var(--border); }
+.listing-facts > span { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--text-muted); }
+.listing-facts strong { color: var(--text); font-weight: 650; }
+.listing-facts svg { color: var(--brand-ink, var(--brand)); margin-inline-end: 2px; }
+.listing-about { padding-top: 24px; }
+.listing-about h2 { font-size: 20px; font-weight: 650; margin: 0 0 12px; }
+.listing-book-card { display: flex; flex-direction: column; gap: 20px; margin-top: 24px; padding: 24px; border: 1px solid color-mix(in srgb, var(--brand) 32%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--brand) 5%, var(--surface)); }
+.listing-book-copy h2 { font-size: 20px; font-weight: 650; margin: 0 0 7px; }
+.listing-book-copy p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+.listing-book-action { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.listing-book-price { font-size: 12px; color: var(--text-muted); }
+.listing-book-price strong { font-size: 22px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.listing-book-price small { display: block; font-size: 12px; margin-top: 4px; }
+.listing-book-action .ld-book-btn { width: auto; flex-shrink: 0; margin: 0; padding-inline: 22px; }
+.listing-availability { margin-top: 28px; padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.listing-availability > .ld-h2 { margin: 0 0 8px; font-size: 21px; font-weight: 650; scroll-margin-top: calc(var(--customer-sticky-offset, 90px) + 12px); }
+.listing-availability > .ld-h2:focus { outline: none; }
+.listing-availability-help { color: var(--text-muted); font-size: 13px; line-height: 1.6; margin-bottom: 20px; }
+.listing-availability .ld-time-label { font-weight: 600; font-size: 13px; }
+.listing-availability .ld-slots { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 12px; }
+.listing-availability .ld-slot { align-items: stretch; text-align: start; padding: 14px; gap: 0; min-height: 132px; border: 1.5px solid var(--border-strong); background: color-mix(in srgb, var(--text) 5%, var(--surface)); border-radius: 12px; box-shadow: 0 2px 3px #08152605; color: var(--text); }
+.ld-slot-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ld-slot-choice { width: 20px; height: 20px; display: grid; place-items: center; border: 1.5px solid var(--text-muted); background: var(--surface); border-radius: 5px; flex-shrink: 0; }
+.listing-availability .ld-slot-time { font-size: 15px; font-weight: 700; white-space: nowrap; gap: 6px; }
+.listing-availability .ld-slot-endt { font-size: 12px; font-weight: 500; margin: 4px 0 12px 20px; color: var(--text-muted); }
+.listing-availability .ld-slot-price { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; border-top: 1px solid var(--border); padding-top: 10px; font-size: 15px; font-weight: 700; }
+.listing-availability .ld-slot-was { font-size: 11px; margin: 0; }
+.ld-slot-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 16px; margin-top: 6px; }
+.listing-availability .ld-slot-left { font-size: 11px; font-weight: 600; }
+.ld-slot-discount { color: var(--success-ink, #16835a); font-size: 11px; font-weight: 600; }
+.listing-availability .ld-slot:hover:not(:disabled) { border-color: var(--brand-ink, var(--brand)); box-shadow: 0 0 0 1px var(--brand-ink, var(--brand)); }
+.listing-availability .ld-slot:focus-visible { outline: 3px solid var(--brand-ink, var(--brand)); outline-offset: 3px; }
+.listing-availability .ld-slot.on { background: var(--brand); border-color: var(--brand); box-shadow: 0 3px 10px #1a6afd26; }
+.listing-availability .ld-slot.on :is(.ld-slot-time,.ld-slot-endt,.ld-slot-price,.ld-slot-left,.ld-slot-discount) { color: #fff; }
+.listing-availability .ld-slot.on .ld-slot-price { border-color: #ffffff40; }
+.listing-availability .ld-slot.on .ld-slot-choice { background: #fff; border-color: #fff; color: var(--brand); }
+.listing-availability .ld-slot.taken { opacity: 1; color: var(--text-muted); box-shadow: none; border-style: dashed; }
+.listing-availability .ld-slot.taken .ld-slot-choice { visibility: hidden; }
+.listing-availability .ld-slot-x { font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 10px; }
+@media(max-width:480px) { .listing-availability .ld-slots { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }.listing-availability .ld-slot { padding: 12px 10px; }.listing-availability .ld-slot-time { font-size: 14px; }.ld-slot-heading { gap: 4px; } }
+.ld-side { padding: 24px; border-radius: 16px; box-shadow: var(--shadow-sm); }
+.booking-card-title { font-size: 19px; font-weight: 650; margin: 0 0 22px; }
+.ld-side-price { font-size: 29px; font-weight: 700; letter-spacing: -.6px; line-height: 1.2; }
+.ld-sp-from { display: block; font-size: 12px; margin-bottom: 7px; letter-spacing: 0; }
+.ld-sp-per { display: block; font-size: 13px; margin-top: 8px; font-weight: 400; letter-spacing: 0; }
+.booking-card-help { font-size: 13px; line-height: 1.6; color: var(--text-muted); margin: 18px 0; }
+.ld-book-btn { font-weight: 650; font-size: 14px; border-radius: 10px; min-height: 46px; }
+.booking-venue { border: 1px solid var(--border); padding: 22px 24px; margin-top: 16px; border-radius: 14px; background: var(--surface); }
+.booking-venue h3 { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 9px; }
+.booking-venue-name { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.booking-venue-name svg { flex-shrink: 0; color: var(--brand-ink, var(--brand)); }
+.booking-venue p { font-size: 12px; line-height: 1.6; color: var(--text-muted); margin-top: 6px; }
+.booking-directions { display: flex; align-items: center; gap: 7px; min-height: 44px; margin-top: 6px; font-size: 13px; color: var(--brand-ink, var(--brand)); }
+.ld a:focus-visible, .ld button:focus-visible { outline: 2px solid var(--brand-ink, var(--brand)); outline-offset: 3px; }
+@media(max-width:1000px) and (min-width:761px) {
+  .ld-grid { grid-template-columns: minmax(0,1fr) 300px; gap: 22px; }
+  .ld-side { padding: 20px; }
+}
+@media(max-width:760px) {
+  .listing-heading { margin-bottom: 18px; }
+  .listing-heading > .ld-tag { font-size: 12px; padding: 4px 10px; margin-bottom: 10px; }
+  .listing-heading h1 { font-size: 25px; letter-spacing: -.5px; margin-bottom: 12px; }
+  .listing-venue-link { font-size: 12px; }
+  .ld-grid { grid-template-columns: minmax(0,1fr); gap: 22px; }
+  .listing-gallery .ld-hero { height: auto; aspect-ratio: 4 / 3; max-height: 300px; }
+  .listing-facts { gap: 18px; padding: 18px 0; }
+  .listing-facts > span { font-size: 12px; gap: 5px; }
+  .listing-facts svg { width: 17px; height: 17px; }
+  .listing-about { padding-top: 20px; }
+  .listing-about h2 { font-size: 19px; }
+  .listing-book-card { padding: 20px; gap: 18px; margin-top: 20px; }
+  .listing-book-copy h2 { font-size: 19px; }
+  .listing-book-price strong { font-size: 20px; }
+  .listing-book-action { gap: 10px; }
+  .listing-book-action .ld-book-btn { padding-inline: 16px; }
+  .listing-availability { padding: 18px 14px; margin-top: 12px; border-radius: 13px; }
+  .listing-availability > .ld-h2 { font-size: 19px; }
+  .listing-availability-help { font-size: 12px; margin-bottom: 16px; }
+  .ld-intro .listing-availability { display: none; }
+  .ld-booking .listing-gallery, .ld-booking .listing-facts, .ld-booking .listing-about,
+  .ld-booking .listing-heading > .ld-tag, .ld-booking .listing-venue-link { display: none; }
+  .ld-booking .listing-heading h1 { font-size: 20px; }
+  .ld-intro .booking-card-title, .ld-intro .booking-card-help, .ld-intro .booking-jump { display: none; }
+  .ld-intro .ld-side { display: none; }
+  .ld-intro .booking-venue { padding: 20px; border-radius: 13px; }
+  .ld-booking .listing-book-card { display: none; }
+  .ld-booking :deep(.listing-related) { display: none; }
+  .ld-booking .booking-card-title, .ld-booking .booking-card-help, .ld-booking .booking-jump, .ld-booking .booking-venue { display: none; }
+  .ld-side { position: static; }
+  .ld-booknow { border-top: 1px solid var(--border); box-shadow: 0 -3px 15px #0000000a; }
+  .ld-booknow .ld-book-btn { font-size: 13px; padding-inline: 14px; }
+}
+
+
+/* Checkout reads as one itinerary and a clear choice of payment terms. */
+.checkout-grid { align-items:start; margin-top:24px; gap:32px; }
+.checkout-grid .ld-co-head { display:flex; align-items:center; gap:18px; margin:0 0 28px; }
+.checkout-photo { width:88px; height:76px; object-fit:cover; border-radius:10px; flex-shrink:0; }
+.checkout-grid .ld-co-head h1 { font-size:26px; letter-spacing:-.025em; line-height:1.25; font-weight:750; }
+.checkout-grid .ld-co-venue { margin-top:9px; line-height:1.5; font-size:13px; font-weight:500; align-items:flex-start; }.checkout-grid .ld-co-venue svg { flex-shrink:0; margin-top:3px; }
+.checkout-section { padding:24px 0; border-top:1px solid var(--border); }
+.checkout-section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.checkout-section-head .ld-h2 { margin:0; font-size:18px; font-weight:700; line-height:1.4; }
+.checkout-edit { background:none; border:0; color:var(--brand-ink); min-height:40px; padding:6px 0 6px 8px; font:inherit; font-size:13px; font-weight:600; cursor:pointer; text-decoration:underline; text-underline-offset:3px; flex-shrink:0; }
+.checkout-grid .ld-cart { padding:4px 18px; border-radius:12px; background:var(--surface); }
+.checkout-grid .ld-cart-day { padding:16px 0; }.checkout-grid .ld-cart-dayhead { font-size:14px; font-weight:650; margin-bottom:8px; }.checkout-grid .ld-cart-row { padding:4px 0; min-height:40px; gap:16px; }.checkout-grid .ld-cart-l { flex-wrap:wrap; line-height:1.5; }.checkout-grid .ld-cart-p { font-variant-numeric:tabular-nums; font-size:15px; font-weight:700; }
+.checkout-grid .ld-cart-x { width:36px; height:36px; color:var(--text-muted); background:none; }.checkout-grid .ld-cart-x:hover { color:var(--danger-ink); background:var(--danger-bg); }
+.checkout-contact { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:24px; align-items:start; }
+.checkout-grid .ld-who { padding:10px 0; border:0; border-radius:0; min-width:0; }.checkout-grid .ld-who-info { min-width:0; }.checkout-grid .ld-who-mail { overflow-wrap:anywhere; margin-top:5px; }.checkout-grid .ld-who-name { font-weight:650; }
+.checkout-phone label { display:block; margin-bottom:8px; font-size:13px; font-weight:650; color:var(--text-secondary); }.checkout-grid .ld-phone { margin-bottom:0; }.checkout-grid .ld-phone-err { margin:8px 0 0; }.checkout-help { font-size:12px; line-height:1.5; color:var(--text-muted); margin:8px 0 0; }
+.checkout-grid .ld-pay-help { margin:0 0 14px; font-size:13px; color:var(--text-muted); }
+.checkout-grid .ld-pay-methods.wrap { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.checkout-grid .ld-pay-methods.wrap .ld-pay-opt { padding:18px 16px; justify-content:flex-start; align-items:flex-start; gap:12px; text-align:start; border-radius:12px; min-width:0; }
+.checkout-grid .ld-pay-opt input { margin-top:2px; width:19px; height:19px; flex-basis:19px; }.checkout-pay-copy { display:flex; flex-direction:column; gap:9px; }.checkout-pay-copy strong { font-size:15px; font-weight:700; color:var(--text); }.checkout-pay-copy > span { font-size:13px; font-weight:400; line-height:1.5; color:var(--text-muted); }
+.checkout-grid .ld-pay-opt.on { border-color:var(--brand); box-shadow:0 0 0 1px var(--brand); background:color-mix(in srgb,var(--brand) 7%,var(--surface)); }.checkout-grid .ld-pay-desc { margin:14px 0 0; border:0; padding:12px 0 0; background:none; border-radius:0; font-size:13px; }
+.checkout-grid .checkout-total { margin-top:0; padding:24px; border-top:3px solid var(--brand); }.checkout-total-title { font-size:20px; font-weight:700; letter-spacing:-.02em; margin:0 0 22px; color:var(--text); }.checkout-total .ld-sum-h { text-transform:none; font-size:14px; letter-spacing:0; color:var(--text); margin:24px 0 12px; }.checkout-total .ld-bk-total { padding-top:16px; margin-top:16px; }.checkout-total .ld-promo { margin-top:20px; }.checkout-total .ld-promo-input { text-transform:none; }.checkout-total .ld-plan-amt { font-size:17px; }.checkout-total .ld-plan-row { flex-wrap:wrap; }.checkout-total .ld-book-btn { margin-top:18px; }
+@media(max-width:1060px) { .checkout-contact { grid-template-columns:minmax(0,1fr); gap:12px; }.checkout-grid { gap:24px; } }
+@media(max-width:760px) { .ld-checkout .checkout-grid { gap:8px; margin-top:20px; }.ld-checkout .checkout-grid .ld-co-head { display:flex; align-items:flex-start; gap:12px; margin-bottom:22px; }.checkout-grid .ld-co-head h1 { font-size:21px; }.checkout-photo { width:64px; height:64px; }.checkout-grid .ld-co-venue { font-size:12px; margin-top:6px; }.checkout-section { padding:20px 0; }.checkout-section-head { gap:8px; }.checkout-section-head .ld-h2 { font-size:17px; }.checkout-edit { font-size:12px; }.checkout-grid .ld-cart { padding:2px 12px; }.checkout-grid .ld-cart-row { gap:8px; }.checkout-grid .ld-cart-l { font-size:13px; gap:5px; }.checkout-grid .ld-cart-p { font-size:14px; }.checkout-grid .ld-cart-r { gap:2px; }.checkout-grid .ld-cart-x { width:32px; }.checkout-grid .ld-pay-methods.wrap { grid-template-columns:minmax(0,1fr); }.checkout-grid .ld-pay-methods.wrap .ld-pay-opt { padding:16px; }.checkout-grid .checkout-total { padding:20px; }.checkout-grid .checkout-total .ld-map-btn { display:flex; } }
+
 </style>

@@ -62,7 +62,7 @@ const distance = computed(() => {
    A definite width means aspect-ratio only ever derives the HEIGHT. */
 .pc-img { width: 100%; height: 150px; background-size: cover; background-position: center; position: relative; }
 .pc-img-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.85); }
-.pc-trial { position: absolute; top: 10px; left: 10px; font-size: 11px; font-weight: 800; color: #065f46; background: var(--surface, #ffffff); border-radius: 999px; padding: 4px 10px; }
+.pc-trial { position: absolute; top: 10px; left: 10px; font-size: 11px; font-weight: 800; color: var(--success-ink, #065f46); background: var(--surface, #ffffff); border-radius: 999px; padding: 4px 10px; }
 .pc-chips { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
 .pc-aud { font-size: 10.5px; font-weight: 800; color: #fff; border-radius: 999px; padding: 4px 9px; background: rgba(15,23,42,.72); backdrop-filter: blur(4px); }
 .pc-aud.aud-kids { background: rgba(217,119,6,.92); }
@@ -77,17 +77,17 @@ const distance = computed(() => {
 .pc-dist { position: absolute; right: 10px; bottom: 10px; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; color: #fff; background: rgba(15,23,42,.72); backdrop-filter: blur(4px); border-radius: 999px; padding: 4px 9px; }
 .pc-dist svg { flex-shrink: 0; }
 .pc-body { padding: 13px 14px 15px; }
-.pc-name { font-size: 14.5px; font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-name { font-size: 14.5px; font-weight: 800; color: var(--text, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
-.pc-price { font-size: 15px; font-weight: 800; color: #0f172a; }
+.pc-price { font-size: 15px; font-weight: 800; color: var(--text, #0f172a); }
 .pc-per { font-size: 12px; font-weight: 600; color: var(--text-light, #94a3b8); }
 .pc-sport { font-size: 12px; color: var(--text-light, #94a3b8); }
 /* Social-proof pill — subtle, sits where the sport tag would (right of the price). */
-.pc-members { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; color: #0f766e; background: #f0fdfa; border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
+.pc-members { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; color: var(--success-ink, #0f766e); background: var(--success-bg, #f0fdfa); border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
 .pc-members svg { flex-shrink: 0; }
 .pc-foot-r { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .pc-arrow { color: var(--text-muted, #64748b); flex-shrink: 0; }
-.pc:hover .pc-arrow { color: var(--brand); }
+.pc:hover .pc-arrow { color: var(--brand-ink, var(--brand)); }
 
 /* Phone: the browse grids (CustomerPrograms .cgrid / CityPrograms .cv-grid) are
    1-col full-width tiles — mirror FacilityCard's mobile treatment so membership

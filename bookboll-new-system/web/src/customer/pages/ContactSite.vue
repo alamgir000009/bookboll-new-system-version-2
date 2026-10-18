@@ -2,7 +2,7 @@
 /** ContactSite.vue — provider Contact page: hero banner (optional, from
  *  My Website), tap-to-act method cards, and location/hours cards. */
 import { computed } from 'vue'
-import { activeBrand } from '../../lib/brand.js'
+import { activeBrand, brandSectionEnabled } from '../../lib/brand.js'
 import { useSeo } from '../../lib/seo.js'
 import { Phone, Mail, MapPin, Clock, MessageCircle, Navigation } from 'lucide-vue-next'
 import VisitUs from '../components/VisitUs.vue'
@@ -40,8 +40,8 @@ const waLink = computed(() => `https://wa.me/${String(c.value.whatsapp || '').re
     </div>
 
     <!-- Find us / hours -->
-    <div class="ct-info">
-      <div v-if="c.address || c.maps_url" class="ct-card">
+    <div v-if="c.hours || (brandSectionEnabled('locations') && (c.address || c.maps_url))" class="ct-info">
+      <div v-if="brandSectionEnabled('locations') && (c.address || c.maps_url)" class="ct-card">
         <span class="ct-card-ico"><MapPin :size="18" /></span>
         <div class="ct-card-body">
           <b>Find Us</b>
@@ -70,19 +70,19 @@ const waLink = computed(() => `https://wa.me/${String(c.value.whatsapp || '').re
 .ct-hero-h1 { font-size: 36px; font-weight: 900; margin: 0 0 10px; color: #fff; line-height: 1.12; }
 .ct-hero-sub { font-size: 15.5px; opacity: .93; margin: 0 auto; max-width: 540px; line-height: 1.6; }
 .ct-methods { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-.ct-m { display: flex; flex-direction: column; align-items: center; gap: 4px; background: var(--surface, #ffffff); border: 1px solid #e8edf3; border-radius: 16px; padding: 22px 14px 18px; text-decoration: none; text-align: center; transition: transform .12s, border-color .12s; }
+.ct-m { display: flex; flex-direction: column; align-items: center; gap: 4px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e8edf3); border-radius: 16px; padding: 22px 14px 18px; text-decoration: none; text-align: center; transition: transform .12s, border-color .12s; }
 .ct-m:hover { transform: translateY(-2px); border-color: var(--brand-accent); }
-.ct-m-ico { width: 46px; height: 46px; border-radius: 14px; background: color-mix(in srgb, var(--brand) 10%, white); color: var(--brand); display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
-.ct-m.wa .ct-m-ico { background: #dcfce7; color: #16a34a; }
-.ct-m b { font-size: 15px; color: #0f172a; }
+.ct-m-ico { width: 46px; height: 46px; border-radius: 14px; background: color-mix(in srgb, var(--brand) 10%, var(--surface, white)); color: var(--brand-ink, var(--brand)); display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
+.ct-m.wa .ct-m-ico { background: var(--success-bg, #dcfce7); color: var(--success-ink, #16a34a); }
+.ct-m b { font-size: 15px; color: var(--text, #0f172a); }
 .ct-m small { font-size: 12.5px; color: var(--text-muted, #64748b); overflow-wrap: anywhere; }
 .ct-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
-.ct-card { display: flex; gap: 13px; background: var(--surface, #ffffff); border: 1px solid #e8edf3; border-radius: 16px; padding: 18px; }
-.ct-card-ico { width: 40px; height: 40px; border-radius: 12px; background: color-mix(in srgb, var(--brand) 10%, white); color: var(--brand); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ct-card { display: flex; gap: 13px; background: var(--surface, #ffffff); border: 1px solid var(--border, #e8edf3); border-radius: 16px; padding: 18px; }
+.ct-card-ico { width: 40px; height: 40px; border-radius: 12px; background: color-mix(in srgb, var(--brand) 10%, var(--surface, white)); color: var(--brand-ink, var(--brand)); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .ct-card-body { min-width: 0; }
-.ct-card-body b { font-size: 14.5px; color: #0f172a; }
-.ct-card-body p { font-size: 13.5px; color: #475569; line-height: 1.55; margin: 4px 0 0; }
-.ct-dir { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; font-weight: 800; color: var(--brand); text-decoration: none; }
+.ct-card-body b { font-size: 14.5px; color: var(--text, #0f172a); }
+.ct-card-body p { font-size: 13.5px; color: var(--text-secondary, #475569); line-height: 1.55; margin: 4px 0 0; }
+.ct-dir { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; font-weight: 800; color: var(--brand-ink, var(--brand)); text-decoration: none; }
 @media (max-width: 760px) {
   .ct-hero { padding: 50px 18px; }
   .ct-hero-h1 { font-size: 25px; }

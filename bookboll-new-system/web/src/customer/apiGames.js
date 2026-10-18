@@ -1,3 +1,4 @@
+import { redemptionFields } from '../lib/checkoutRewards.js'
 /**
  * Laravel-backed hosting APIs for apps/web.
  *
@@ -170,8 +171,9 @@ function gamePayload(game) {
     host_name: game.host_name || '',
     host_phone: game.host_phone || '',
     host_whatsapp: game.host_whatsapp || game.host_phone || '',
-    loyalty_redeem: Number(game.loyalty_redeem) || 0,
+    ...redemptionFields(game.rewards),
     ticket_mode: game.ticket_mode || 'arrival',
+    payment_method: game.payment_method || null,
   }
 }
 
@@ -184,6 +186,7 @@ export async function quoteGame(game) {
 
 /** Publish a game or a hangout. */
 export async function createGame(game) {
+  try { redemptionFields(game.rewards) } catch (error) { return { error: error.message } }
   if (!game.game_date) return { error: 'Please pick a date.' }
   if (!game.start_time || !game.end_time) return { error: 'Please set a start and end time.' }
 
@@ -389,6 +392,7 @@ export async function loadCountryIso(id) {
 
 /** Publish a knockout bracket. Every game reserves its own court. */
 export async function createTournament(t) {
+  try { redemptionFields(t.rewards) } catch (error) { return { error: error.message } }
   const matches = Array.isArray(t.matches) ? t.matches : []
   if (!matches.length) return { error: 'Please schedule every game.' }
 
@@ -421,8 +425,9 @@ export async function createTournament(t) {
       host_name: t.host_name || '',
       host_phone: t.host_phone || '',
       host_whatsapp: t.host_whatsapp || t.host_phone || '',
-      loyalty_redeem: Number(t.loyalty_redeem) || 0,
+      ...redemptionFields(t.rewards),
       ticket_mode: t.ticket_mode || 'arrival',
+      payment_method: t.payment_method || null,
       matches: matches.map((m) => ({
         round: Number(m.round) || 0,
         index: Number(m.index) || 0,

@@ -1,294 +1,190 @@
 <script setup>
-/**
- * BusinessHome.vue — the WHITE-LABEL home page, laid out like a professional
- * small-business website (hero → services with CTAs → about teaser → contact
- * strip → closing CTA), NOT like the marketplace browse rows.
- *
- * Hero strategy: the DEFAULT hero is always built from the site settings
- * (logo, hero background image, business name, tagline — all edited in
- * My Website → Logo & name), it is NOT part of the banners module. Custom
- * banners (My Website → Home banners) are EXTRA slides shown after it in
- * the slideshow; with none, the default hero renders as a plain section.
- */
 import { ref, computed, onMounted, watch } from 'vue'
 import { selectedCity, selectedCountry, isCustomer } from '../../lib/customerSession.js'
 import { loadFacilities, loadPrograms } from '../../customer/data.js'
-import { activeBrand, brandShows, brandPageEnabled } from '../../lib/brand.js'
+import { activeBrand, brandShows, brandPageEnabled, brandSectionEnabled } from '../../lib/brand.js'
 import { visibleBanners, normalizeBanners } from '../../lib/heroBanners.js'
+import { catalogCategories, sampleListingPhotos } from '../../lib/browseCatalog.js'
 import { loadPublishedPosts, fmtPostDate } from '../../lib/blog.js'
 import { useSeo } from '../../lib/seo.js'
 import HeroSlideshow from '../components/HeroSlideshow.vue'
-import FacilityCard from '../components/FacilityCard.vue'
+import ServiceRow from '../components/ServiceRow.vue'
+import VenueCategoryCard from '../components/VenueCategoryCard.vue'
 import VisitUs from '../components/VisitUs.vue'
 import ProgramCard from '../components/ProgramCard.vue'
-import { CalendarCheck, Dumbbell, ArrowRight, Phone, Mail, MapPin, Clock, MessageCircle, Newspaper, Sparkles, Navigation } from 'lucide-vue-next'
-import { fmt12 } from '../../lib/slots.js'
+import { CalendarCheck, Dumbbell, ArrowRight, Phone, Mail, MessageCircle, Newspaper } from 'lucide-vue-next'
 
 useSeo(() => ({ title: activeBrand.value?.name, noindex: true, path: '/' }))
-
 const brand = computed(() => activeBrand.value || {})
 const facilities = ref([])
 const programs = ref([])
 const blogPosts = ref([])
 const loading = ref(true)
-
+let request = 0
 async function load() {
+  const current = ++request
   loading.value = true
   const cityId = selectedCity.value?.id
-  const [f, p] = await Promise.all([loadFacilities(cityId), loadPrograms(cityId)])
-  facilities.value = f; programs.value = p
+  const [f, p] = await Promise.all([
+    brandShows('venues') && brandSectionEnabled('listings') ? loadFacilities(cityId) : [],
+    brandShows('programs') && brandSectionEnabled('programs') ? loadPrograms(cityId) : [],
+  ])
+  if (current !== request) return
+  facilities.value = f
+  programs.value = p
   loading.value = false
 }
 onMounted(async () => {
   load()
-  blogPosts.value = await loadPublishedPosts({ limit: 3 })
+  if (brandShows('blog') && brandSectionEnabled('blog')) blogPosts.value = await loadPublishedPosts({ limit: 3 })
 })
 watch(() => selectedCity.value?.id, load)
-
-// The default hero's background image (My Website → Logo & name). Empty → brand gradient.
+const venueCategories = computed(() => [
+  { key: 'all', label: 'All listings', count: facilities.value.length, photos: sampleListingPhotos(facilities.value), to: '/facilities' },
+  ...catalogCategories(facilities.value).map(c => ({
+    ...c, count: c.listings.length, photos: sampleListingPhotos(c.listings),
+    to: { path: '/facilities', query: { category: c.category, ...(c.type ? { type: c.type } : {}) } },
+  })),
+])
 const heroImage = computed(() => String(brand.value.pages?.home?.hero_image || ''))
 const heroBgStyle = computed(() => heroImage.value
-  ? { backgroundImage: `linear-gradient(rgba(9,14,28,.48), rgba(9,14,28,.58)), url(${heroImage.value})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+  ? { backgroundImage: `linear-gradient(90deg, rgba(9,14,28,.8), rgba(9,14,28,.3)), url(${heroImage.value})` }
   : {})
-
-// The default hero as a slideshow slide — same content as the plain section below.
 const defaultSlide = computed(() => normalizeBanners([{
-  id: 'default-hero',
-  heading: brand.value.name || '',
-  subheading: brand.value.tagline || `Book your next session at ${brand.value.name} — courts, classes and more.`,
-  image: heroImage.value,
-  layout: 'center', show_logo: true,
-  actions: [
-    ...(brandShows('venues') ? ['book_venue'] : []),
-    ...(brandShows('programs') ? ['get_membership'] : []),
-  ],
-  button_text: brandShows('venues') ? 'Book Now' : '',
+  id: 'default-hero', heading: brand.value.name || '',
+  subheading: brand.value.tagline || `Explore what's available and book with ${brand.value.name}.`,
+  image: heroImage.value, layout: 'left', show_logo: true,
+  actions: [...(brandShows('venues') ? ['book_venue'] : []), ...(brandShows('programs') ? ['get_membership'] : [])],
+  button_text: brandShows('venues') ? 'Browse listings' : '',
 }])[0])
-
-// Hero: the default slide always leads; custom banners are EXTRA slides after it.
-// (Banners saved by the old "editable default copy" seeding are filtered out —
-// they'd duplicate the default slide exactly.)
+// Preserve provider banners, including audience and city targeting.
 const slides = computed(() => {
   const customs = visibleBanners(brand.value.banners || [], {
     signedIn: isCustomer.value, countryId: selectedCountry.value?.id, cityId: selectedCity.value?.id,
   }).filter(b => !(b.heading === (brand.value.name || '') && /^Book your next session at /.test(b.subheading || '')))
   return customs.length ? [defaultSlide.value, ...customs] : []
 })
-
-// About teaser — first ~220 chars of the About page text.
 const aboutTeaser = computed(() => {
-  const t = String(brand.value.pages?.about?.text || '').trim()
-  if (!t) return ''
-  return t.length > 220 ? t.slice(0, 220).replace(/\s+\S*$/, '') + '…' : t
+  const text = String(brand.value.pages?.about?.text || '').trim()
+  return text.length > 220 ? text.slice(0, 220).replace(/\s+\S*$/, '') + '…' : text
 })
 const contact = computed(() => brand.value.pages?.contact || {})
 const hasContact = computed(() => brandPageEnabled('contact'))
 const waLink = computed(() => `https://wa.me/${String(contact.value.whatsapp || '').replace(/[^\d]/g, '')}`)
-
-
-function initials(n) { return (n || '?').trim().split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase() }
 </script>
 
 <template>
   <div class="bz">
-    <!-- ── HERO: full-bleed, edge to edge. The provider's custom banner
-         slideshow when any exist, else the default brand hero. -->
-    <div v-if="slides.length" class="bz-bleed bz-heroWrap">
-      <HeroSlideshow :banners="slides" :city="selectedCity?.name" />
-    </div>
-    <section v-else class="bz-hero bz-bleed" :style="heroBgStyle">
+    <h1 v-if="!brandSectionEnabled('hero')" class="bz-page-title">{{ brand.name }}</h1>
+    <HeroSlideshow v-if="brandSectionEnabled('hero') && slides.length" class="bz-banners" :banners="slides" :city="selectedCity?.name" />
+    <section v-else-if="brandSectionEnabled('hero')" class="bz-hero" :style="heroBgStyle">
       <div class="bz-hero-inner">
-        <span v-if="brand.logo" class="bz-hero-logo" :style="{ backgroundImage: `url(${brand.logo})` }"></span>
-        <span v-else class="bz-hero-mark">{{ initials(brand.name) }}</span>
-        <h1 class="bz-hero-h1">{{ brand.name }}</h1>
-        <p class="bz-hero-sub">{{ brand.tagline || `Book your next session at ${brand.name} — courts, classes and more.` }}</p>
-        <div class="bz-hero-ctas">
-          <router-link v-if="brandShows('venues') && facilities.length" to="/facilities" class="bz-btn light"><CalendarCheck :size="16" /> Book Now</router-link>
-          <router-link v-if="brandShows('programs') && programs.length" to="/programs" class="bz-btn ghost"><Dumbbell :size="16" /> Join a Program</router-link>
+        <h1>{{ brand.name }}</h1>
+        <p>{{ brand.tagline || `Explore what's available and book with ${brand.name}.` }}</p>
+        <div class="bz-hero-actions">
+          <router-link v-if="brandShows('venues')" to="/facilities" class="bz-btn light"><CalendarCheck :size="18" /> Browse listings</router-link>
+          <router-link v-if="brandShows('programs')" to="/programs" class="bz-btn ghost"><Dumbbell :size="18" /> Memberships</router-link>
         </div>
       </div>
     </section>
-
-    <div v-if="loading" class="bz-loading">Loading…</div>
+    <div v-if="loading" class="bz-loading" role="status">Loading listings and memberships…</div>
     <template v-else>
-      <!-- ── About teaser — right below the hero, with its own CTAs ── -->
-      <section v-if="aboutTeaser" class="bz-about">
-        <div class="bz-about-txt">
-          <h2 class="bz-h2">About {{ brand.name }}</h2>
-          <p>{{ aboutTeaser }}</p>
-          <div class="bz-about-ctas">
-            <router-link v-if="brandShows('venues') && facilities.length" to="/facilities" class="bz-btn primary sm"><CalendarCheck :size="15" /> Book Now</router-link>
-            <router-link to="/about" class="bz-btn ghost2 sm">Read More <ArrowRight :size="14" /></router-link>
-          </div>
-        </div>
-        <span v-if="brand.logo" class="bz-about-logo" :style="{ backgroundImage: `url(${brand.logo})` }"></span>
+      <ServiceRow v-if="brandShows('venues') && brandSectionEnabled('listings')" title="Explore our listings" subtitle="Choose a category, find your listing, then pick a time." show-subtitle view-all="/facilities">
+        <VenueCategoryCard v-for="category in venueCategories" :key="category.key" :category="category" />
+      </ServiceRow>
+      <ServiceRow v-if="brandShows('programs') && brandSectionEnabled('programs')" title="Memberships & programs" subtitle="Find a membership that fits your routine." show-subtitle view-all="/programs">
+        <ProgramCard v-for="program in programs.slice(0, 6)" :key="program.id" :program="{ ...program, cityName: selectedCity?.name }" />
+        <div v-if="!programs.length" class="bz-empty"><Dumbbell :size="26" /><div><h3>Memberships are coming soon</h3><p>Passes, classes and programs will appear here as they become available.</p><router-link v-if="hasContact" to="/contact">Ask about memberships <ArrowRight :size="15" /></router-link></div></div>
+      </ServiceRow>
+      <section v-if="aboutTeaser && brandSectionEnabled('about')" class="bz-about">
+        <div><h2 class="bz-h2">About {{ brand.name }}</h2><p>{{ aboutTeaser }}</p><router-link to="/about" class="bz-text-link">Read more <ArrowRight :size="16" /></router-link></div>
+        <img v-if="brand.logo" :src="brand.logo" :alt="brand.name" loading="lazy" />
       </section>
-
-      <!-- ── Blog teaser ── -->
-      <section v-if="blogPosts.length" class="bz-sec">
-        <div class="bz-sec-head">
-          <div><h2 class="bz-h2">News &amp; Updates</h2></div>
-          <router-link to="/blog" class="bz-more head">All posts <ArrowRight :size="14" /></router-link>
-        </div>
-        <div class="bz-blog">
-          <router-link v-for="p in blogPosts" :key="p.id" :to="`/post/${p.slug}`" class="bz-post">
-            <div class="bz-post-cover" :style="p.cover_image ? { backgroundImage: `url(${p.cover_image})` } : {}">
-              <Newspaper v-if="!p.cover_image" :size="22" />
-            </div>
-            <div class="bz-post-body">
-              <div class="bz-post-title">{{ p.title }}</div>
-              <div class="bz-post-meta">{{ fmtPostDate(p.published_at) }}</div>
-              <span class="bz-post-read">Read More <ArrowRight :size="13" /></span>
-            </div>
+      <section v-if="brandShows('blog') && brandSectionEnabled('blog')" class="bz-news">
+        <div class="bz-section-head"><div><h2 class="bz-h2">News & updates</h2><p>The latest from {{ brand.name }}.</p></div><router-link to="/blog" class="bz-text-link">View all <ArrowRight :size="16" /></router-link></div>
+        <div v-if="blogPosts.length" class="bz-blog">
+          <router-link v-for="post in blogPosts" :key="post.id" :to="`/post/${post.slug}`" class="bz-post">
+            <div class="bz-post-cover"><img v-if="post.cover_image" :src="post.cover_image" alt="" loading="lazy" /><Newspaper v-else :size="28" /></div>
+            <div class="bz-post-body"><span>{{ fmtPostDate(post.published_at) }}</span><h3>{{ post.title }}</h3><span class="bz-text-link">Read more <ArrowRight :size="15" /></span></div>
           </router-link>
         </div>
+        <div v-else class="bz-empty"><Newspaper :size="26" /><div><h3>More from us soon</h3><p>Check back for news, announcements and updates.</p></div></div>
       </section>
-
-      <!-- ── Venues / booking ── -->
-      <section v-if="brandShows('venues') && facilities.length" class="bz-sec">
-        <div class="bz-sec-head">
-          <div>
-            <h2 class="bz-h2">Book a Court or Space</h2>
-            <p class="bz-sec-sub">Live availability — reserve your slot in under a minute.</p>
-          </div>
-          <router-link to="/facilities" class="bz-btn primary sm"><CalendarCheck :size="15" /> Book Now</router-link>
-        </div>
-        <div class="bz-grid">
-          <FacilityCard v-for="f in facilities.slice(0, 6)" :key="f.id" :facility="{ ...f, currency: selectedCountry?.currency_code || 'AED' }" />
-        </div>
-        <router-link v-if="facilities.length > 6" to="/facilities" class="bz-more">See all {{ facilities.length }} spaces <ArrowRight :size="14" /></router-link>
-      </section>
-
-      <!-- ── Memberships ── -->
-      <section v-if="brandShows('programs') && programs.length" class="bz-sec alt">
-        <div class="bz-sec-head">
-          <div>
-            <h2 class="bz-h2">Memberships &amp; Programs</h2>
-            <p class="bz-sec-sub">Train with us every week — gym, classes and academies.</p>
-          </div>
-          <router-link to="/programs" class="bz-btn primary sm"><Dumbbell :size="15" /> Join</router-link>
-        </div>
-        <div class="bz-grid">
-          <ProgramCard v-for="p in programs.slice(0, 6)" :key="p.id" :program="{ ...p, cityName: selectedCity?.name }" />
-        </div>
-      </section>
-
-      <!-- ── Visit Us (shared component — also on /contact) ── -->
       <VisitUs />
-
-      <!-- ── Contact Us: how to reach the business ── -->
-      <section v-if="hasContact" class="bz-contact">
-        <h2 class="bz-h2 center">Contact Us</h2>
-        <div class="bz-ct-row">
-          <a v-if="contact.phone" :href="`tel:${contact.phone}`" class="bz-ct"><Phone :size="17" /><span data-no-translate>{{ contact.phone }}</span></a>
-          <a v-if="contact.whatsapp" :href="waLink" target="_blank" rel="noopener" class="bz-ct wa"><MessageCircle :size="17" /><span>WhatsApp us</span></a>
-          <a v-if="contact.email" :href="`mailto:${contact.email}`" class="bz-ct"><Mail :size="17" /><span data-no-translate>{{ contact.email }}</span></a>
+      <section v-if="hasContact && brandSectionEnabled('contact')" class="bz-contact">
+        <div><h2 class="bz-h2">How can we help?</h2><p>Get in touch with {{ brand.name }}.</p><router-link to="/contact" class="bz-text-link">Contact details <ArrowRight :size="16" /></router-link></div>
+        <div class="bz-contact-actions">
+          <a v-if="contact.whatsapp" :href="waLink" target="_blank" rel="noopener" class="bz-contact-link wa"><MessageCircle :size="20" /> WhatsApp us</a>
+          <a v-if="contact.phone" :href="`tel:${contact.phone}`" class="bz-contact-link"><Phone :size="18" /><span data-no-translate>{{ contact.phone }}</span></a>
+          <a v-if="contact.email" :href="`mailto:${contact.email}`" class="bz-contact-link"><Mail :size="18" /><span data-no-translate>{{ contact.email }}</span></a>
         </div>
-        <router-link to="/contact" class="bz-btn ghost2 sm">Contact Us <ArrowRight :size="14" /></router-link>
-      </section>
-
-      <!-- ── Closing CTA band ── -->
-      <section v-if="brandShows('venues') && facilities.length" class="bz-band">
-        <Sparkles :size="20" />
-        <div class="bz-band-txt">Ready to play? Slots fill up fast.</div>
-        <router-link to="/facilities" class="bz-btn light">Book Now</router-link>
       </section>
     </template>
   </div>
 </template>
 
 <style scoped>
-.bz { display: flex; flex-direction: column; gap: 40px; padding-bottom: 10px; }
-.bz-loading { text-align: center; color: var(--text-light, #94a3b8); padding: 40px 0; }
-
-/* Buttons */
-.bz-btn { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14.5px; padding: 12px 24px; border-radius: 999px; text-decoration: none; transition: transform .12s, filter .12s; }
-.bz-btn:hover { transform: translateY(-1px); }
-.bz-btn.sm { padding: 10px 18px; font-size: 13.5px; }
-.bz-btn.primary { background: var(--brand); color: #fff; }
-.bz-btn.light { background: var(--surface, #ffffff); color: var(--brand); }
-.bz-btn.ghost { background: rgba(255,255,255,.14); color: #fff; border: 1.5px solid rgba(255,255,255,.55); }
-.bz-btn.ghost2 { background: var(--surface, #ffffff); color: var(--brand); border: 1.5px solid color-mix(in srgb, var(--brand) 35%, white); }
-
-/* Full-bleed: stretch to the viewport edges from inside the centered column,
-   and swallow the main container's top padding so the hero touches the header. */
-.bz-bleed { margin-inline: calc(50% - 50vw); margin-top: -18px; }
-/* The banner slideshow was designed as the marketplace's compact card
-   (min-height 168px). As THIS page's hero it gets real hero proportions —
-   scoped here so the marketplace card is untouched. */
-.bz-heroWrap :deep(.hs) { border-radius: 0; margin-bottom: 0; }
-.bz-heroWrap :deep(.hs-slide) { min-height: 420px; padding: 56px 84px; }
-.bz-heroWrap :deep(.hs-h1) { font-size: 40px; line-height: 1.1; }
-.bz-heroWrap :deep(.hs-sub) { font-size: 16.5px; margin-top: 12px; }
-
-/* Default hero */
-.bz-hero { background: linear-gradient(130deg, var(--brand) 0%, var(--brand-accent) 100%); padding: 72px 24px; text-align: center; color: #fff; }
-.bz-hero-logo { display: inline-block; width: 72px; height: 72px; border-radius: 18px; background-size: cover; background-position: center; background-color: var(--surface, #ffffff); box-shadow: 0 6px 22px rgba(0,0,0,.18); margin-bottom: 16px; }
-.bz-hero-mark { display: inline-flex; align-items: center; justify-content: center; width: 72px; height: 72px; border-radius: 18px; background: rgba(255,255,255,.16); font-size: 26px; font-weight: 900; margin-bottom: 16px; }
-.bz-hero-h1 { font-size: 40px; font-weight: 900; margin: 0 0 8px; line-height: 1.12; color: #fff; }
-.bz-hero-sub { font-size: 16px; opacity: .93; margin: 0 auto 22px; max-width: 560px; line-height: 1.55; }
-.bz-hero-ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
-
-/* Sections */
-.bz-sec.alt { background: color-mix(in srgb, var(--brand) 4%, white); border-radius: 20px; padding: 24px 22px; }
-.bz-sec-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
-.bz-h2 { font-size: 23px; font-weight: 900; color: #0f172a; margin: 0; }
-.bz-h2.center { text-align: center; }
-.bz-sec-sub { font-size: 13.5px; color: var(--text-muted, #64748b); margin: 4px 0 0; }
-.bz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
-.bz-grid > * { width: 100% !important; }
-.bz-more { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; font-size: 14px; font-weight: 800; color: var(--brand); text-decoration: none; }
-.bz-more.head { margin-top: 0; }
-
-/* About teaser */
-.bz-about { display: flex; align-items: center; gap: 26px; background: var(--surface, #ffffff); border: 1px solid #e8edf3; border-radius: 20px; padding: 26px 28px; }
-.bz-about-txt { flex: 1; min-width: 0; }
-.bz-about-txt p { font-size: 14.5px; line-height: 1.7; color: #475569; margin: 10px 0 16px; }
-.bz-about-ctas { display: flex; gap: 10px; flex-wrap: wrap; }
-.bz-about-logo { width: 120px; height: 120px; border-radius: 24px; background-size: cover; background-position: center; flex-shrink: 0; box-shadow: 0 8px 26px rgba(15,23,42,.1); }
-
-/* Blog teaser */
-.bz-blog { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
-.bz-post { display: flex; flex-direction: row; align-items: stretch; background: var(--surface, #ffffff); border: 1px solid #e8edf3; border-radius: 16px; overflow: hidden; text-decoration: none; transition: transform .12s, box-shadow .12s; }
-.bz-post:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(15,23,42,.09); }
-.bz-post-cover { width: 132px; min-height: 108px; flex-shrink: 0; background: color-mix(in srgb, var(--brand) 12%, white); background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; color: var(--brand); }
-.bz-post-body { padding: 13px 15px; flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
-.bz-post-title { font-size: 14.5px; font-weight: 800; color: #0f172a; line-height: 1.35; }
-.bz-post-meta { font-size: 12px; color: var(--text-light, #94a3b8); margin: 5px 0 9px; }
-.bz-post-read { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 800; color: var(--brand); }
-
-/* Contact strip */
-.bz-contact { text-align: center; background: var(--surface, #ffffff); border: 1px solid #e8edf3; border-radius: 20px; padding: 26px 22px; }
-.bz-ct-row { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin: 16px 0 18px; }
-.bz-ct { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700; color: #334155; background: #f8fafc; border: 1px solid #e8edf3; border-radius: 999px; padding: 10px 16px; text-decoration: none; }
-.bz-ct.wa { background: #dcfce7; border-color: #bbf7d0; color: #15803d; }
-.bz-ct svg { color: var(--brand); flex-shrink: 0; }
-.bz-ct.wa svg { color: #16a34a; }
-
-/* Closing band */
-.bz-band { display: flex; align-items: center; gap: 14px; background: linear-gradient(130deg, var(--brand), var(--brand-accent)); border-radius: 20px; padding: 22px 26px; color: #fff; flex-wrap: wrap; }
-.bz-band-txt { flex: 1; font-size: 17px; font-weight: 800; min-width: 0; }
-
-@media (max-width: 760px) {
-  .bz { gap: 30px; }
-  .bz-heroWrap :deep(.hs-slide) { min-height: 300px; padding: 34px 22px 46px; }
-  .bz-heroWrap :deep(.hs-h1) { font-size: 26px; }
-  .bz-heroWrap :deep(.hs-sub) { font-size: 14px; }
-  /* Phone: marketplace-style horizontal slide rows — cards at their natural
-     width with the next one peeking — instead of a mile-long 1-col stack. */
-  .bz-grid { display: flex; overflow-x: auto; gap: 12px; padding: 2px 2px 8px;
-    scroll-snap-type: x mandatory; scrollbar-width: none; }
-  .bz-grid::-webkit-scrollbar { display: none; }
-  .bz-grid > * { width: auto !important; max-width: 78vw; flex: 0 0 auto; scroll-snap-align: start; }
-  .bz-hero { padding: 46px 18px; }
-  .bz-hero-h1 { font-size: 27px; }
-  .bz-hero-sub { font-size: 14px; }
-  .bz-h2 { font-size: 19px; }
-  .bz-about { flex-direction: column-reverse; text-align: center; padding: 22px 18px; }
-  .bz-about-logo { width: 88px; height: 88px; }
-  .bz-band { flex-direction: column; text-align: center; }
-  .bz-btn { width: 100%; justify-content: center; }
-  .bz-btn.sm { width: auto; }
-  .bz-hero-ctas .bz-btn { width: auto; }
+.bz { display: flex; flex-direction: column; gap: 40px; padding-bottom: 12px; }
+.bz .sr { margin-bottom: 0; }
+.bz-page-title { margin: 0; font-size: clamp(24px, 3vw, 34px); line-height: 1.2; color: var(--text); }
+.bz-hero { display: flex; align-items: center; min-height: 270px; padding: 40px; border-radius: 20px; background: color-mix(in srgb, var(--brand) 28%, #101927); color: #fff; background-size: cover; background-position: center; }
+.bz-hero-inner { max-width: 600px; }
+.bz-hero h1 { color: #fff; font-size: clamp(28px, 3.5vw, 42px); font-weight: 700; line-height: 1.12; letter-spacing: -.8px; margin: 0 0 14px; overflow-wrap: anywhere; }
+.bz-hero p { color: #fff; font-size: 16px; line-height: 1.7; max-width: 520px; margin: 0 0 24px; }
+.bz-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.bz-btn { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 12px 18px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 650; }
+.bz-btn.light { background: #fff; color: #172132; }
+.bz-btn.ghost { border: 1px solid #ffffff80; color: #fff; background: #0002; }
+.bz-banners { margin: 0; border-radius: 20px; }
+.bz-banners :deep(.hs-slide) { min-height: 270px; padding: 36px 40px 48px; }
+.bz-banners :deep(.hs-h1) { font-size: clamp(28px, 3.5vw, 42px); line-height: 1.15; }
+.bz-banners :deep(.hs-sub) { font-size: 16px; }
+.bz-loading { color: var(--text-muted); padding-block: 24px; }
+.bz-h2 { font-size: 23px; font-weight: 700; letter-spacing: -.4px; margin: 0; color: var(--text); }
+.bz-section-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.bz-section-head p, .bz-contact p { color: var(--text-muted); margin: 6px 0 0; font-size: 14px; line-height: 1.6; }
+.bz-text-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--brand-ink, var(--brand)); font-weight: 650; font-size: 14px; }
+.bz-empty { width: 100%; display: flex; align-items: flex-start; gap: 16px; padding: 22px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.bz-empty > svg { color: var(--brand-ink, var(--brand)); flex-shrink: 0; margin-top: 3px; }
+.bz-empty h3 { font-size: 16px; margin: 0 0 6px; }
+.bz-empty p { color: var(--text-muted); font-size: 14px; line-height: 1.6; }
+.bz-empty a { display: inline-flex; gap: 6px; align-items: center; color: var(--brand-ink, var(--brand)); min-height: 44px; margin-top: 4px; font-size: 14px; font-weight: 600; }
+.bz-about { display: flex; align-items: center; justify-content: space-between; gap: 40px; padding-block: 30px; border-block: 1px solid var(--border); }
+.bz-about > div { max-width: 720px; }
+.bz-about p { color: var(--text-secondary); font-size: 15px; line-height: 1.8; margin: 12px 0 4px; }
+.bz-about > img { width: 96px; height: 96px; object-fit: contain; border-radius: 16px; flex-shrink: 0; }
+.bz-blog { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.bz-post { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface); }
+.bz-post-cover { aspect-ratio: 16/9; display: grid; place-items: center; background: var(--bg); color: var(--brand-ink, var(--brand)); }
+.bz-post-cover img { width: 100%; height: 100%; object-fit: cover; }
+.bz-post-body { padding: 16px; }
+.bz-post-body > span:first-child { font-size: 12px; color: var(--text-muted); }
+.bz-post h3 { font-size: 17px; line-height: 1.5; margin: 6px 0; }
+.bz-contact { display: flex; align-items: center; justify-content: space-between; gap: 28px; border-top: 1px solid var(--border); padding-top: 32px; }
+.bz-contact-actions { display: flex; gap: 10px; flex-wrap: wrap; max-width: 60%; }
+.bz-contact-link { display: inline-flex; align-items: center; gap: 9px; min-height: 46px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 14px; }
+.bz-contact-link span { overflow-wrap: anywhere; min-width: 0; }
+.bz-contact-link svg { flex-shrink: 0; }
+.bz-contact-link.wa { color: var(--success-ink, #15803d); background: var(--success-bg, #dcfce7); border-color: var(--success-border, #bbf7d0); }
+.bz a { text-decoration: none; }
+.bz a:focus-visible { outline: 2px solid var(--brand-ink, var(--brand)); outline-offset: 3px; }
+@media (max-width: 767px) {
+  .bz { gap: 28px; }
+  .bz-hero { min-height: 230px; padding: 26px 22px; border-radius: 16px; }
+  .bz-hero p { font-size: 14px; margin-bottom: 20px; }
+  .bz-hero h1 { font-size: 29px; }
+  .bz-banners :deep(.hs-slide) { min-height: 230px; padding: 26px 22px 44px; }
+  .bz-banners :deep(.hs-sub) { font-size: 14px; }
+  .bz-h2 { font-size: 21px; }
+  .bz-about { padding-block: 22px; gap: 16px; }
+  .bz-about > img { display: none; }
+  .bz-blog { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 14px; }
+  .bz-post { flex: 0 0 82%; scroll-snap-align: start; }
+  .bz-section-head { align-items: flex-start; gap: 12px; }
+  .bz-section-head > a { flex-shrink: 0; }
+  .bz-contact { align-items: flex-start; flex-direction: column; gap: 14px; padding-top: 24px; }
+  .bz-contact-actions { width: 100%; max-width: none; }
+  .bz-contact-link { flex: 1 1 auto; justify-content: center; }
+  .bz-empty { padding: 18px; gap: 12px; }
 }
 </style>

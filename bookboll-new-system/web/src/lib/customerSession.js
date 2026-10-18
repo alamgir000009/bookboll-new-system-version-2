@@ -6,6 +6,7 @@
  *    row is upserted so games/communities/loyalty still key off that UUID.
  *  • Loyalty tier helpers shared by the home badge + Rewards page.
  */
+import { scopedRewards } from './countryRewards.js'
 import { ref, computed } from 'vue'
 import { apiFetch, getCustomerToken, setCustomerToken, clearCustomerToken } from './api.js'
 
@@ -439,10 +440,10 @@ export function mapLaravelTiers(raw) {
       name: t.name || slug,
       threshold,
       min_points: threshold,
-      color: style.color,
-      bg: style.bg,
+      color: t.color || style.color,
+      bg: t.bg_color || t.bg || style.bg,
     }
-  })
+  }).sort((a,b) => a.threshold - b.threshold)
 }
 
 function tierForLifetime(lifetime, tiers) {
@@ -465,28 +466,32 @@ function loyaltyFromPayload(data) {
     ? Math.min(100, Math.round(((lifetime - tier.threshold) / (next.threshold - tier.threshold)) * 100))
     : 100
   const ledger = Array.isArray(data?.ledger) ? data.ledger : []
-  return { points: balance, lifetime, tier, next, progress, tiers, ledger }
+  return { points: balance, lifetime, tier, next, progress, tiers, ledger, countryId: data.country_id, ranksConfigured: Array.isArray(data.tiers) && data.tiers.length > 0 }
 }
 
-let _loyaltyCache = null
+const _loyaltyCache = new Map()
 
-export async function loadCustomerRewards() {
-  if (!getCustomerToken()) return { error: 'Please sign in to see your rewards.' }
-  const res = await apiFetch('/customer/loyalty')
+export async function loadCustomerRewards(countryId = selectedCountry.value?.id) {
+  const token = getCustomerToken()
+  if (!token) return { error: 'Please sign in to see your rewards.' }
+  if (!countryId) return { countryUnavailable: true }
+  const accountId = customer.value?.id
+  const res = await apiFetch('/customer/loyalty', { query: { country_id: countryId } })
+  if (token !== getCustomerToken() || accountId !== customer.value?.id) return { error: 'Your account changed. Please reload rewards.' }
   if (!res.success) return { error: formatApiError(res, 'Could not load your rewards.') }
-  const payload = loyaltyFromPayload(res.data)
-  _loyaltyCache = payload
+  const data = scopedRewards(res.data, countryId)
+  if (!data) return { countryUnavailable: true }
+  const payload = loyaltyFromPayload(data)
+  _loyaltyCache.set(`${accountId}:${countryId}`, payload)
   return { ok: true, ...payload }
 }
 
-export async function loadCustomerLoyalty() {
-  if (!customer.value?.id || !getCustomerToken()) return null
-  if (_loyaltyCache) return _loyaltyCache
-  const res = await loadCustomerRewards()
-  if (res.error) return null
-  return _loyaltyCache
+export async function loadCustomerLoyalty(countryId = selectedCountry.value?.id) {
+  if (!customer.value?.id || !getCustomerToken() || !countryId) return null
+  const key = `${customer.value.id}:${countryId}`
+  if (_loyaltyCache.has(key)) return _loyaltyCache.get(key)
+  const res = await loadCustomerRewards(countryId)
+  return res.ok ? res : null
 }
 
-export function clearCustomerLoyaltyCache() {
-  _loyaltyCache = null
-}
+export function clearCustomerLoyaltyCache() { _loyaltyCache.clear() }

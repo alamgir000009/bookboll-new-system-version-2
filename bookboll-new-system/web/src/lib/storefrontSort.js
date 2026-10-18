@@ -1,55 +1,43 @@
-/**
- * storefrontSort.js — how the customer storefront orders venues & spaces.
- *
- * Rule (same for both views, "by space" and "by venue"):
- *   • If the visitor has shared their location → NEAREST FIRST (distance ascending).
- *     Items without coordinates sink below the located ones, ordered by the configured key.
- *   • If location is unavailable → fall back to the configured sort key chosen in the
- *     dashboard Listings page (super-admin platform-level on the Bookboll marketplace,
- *     or the provider's own choice on their white-label site).
- *
- * The configured key per view is resolved by brand.js `storefrontSortKey('space'|'venue')`.
- * Card items carry: { name, price, lat, lng, sortOrder, createdAt }.
- */
+/** Customer defaults are independent for listings and venues.
+ * Location changes the order only when a customer selects Closest first. */
 import { haversineKm } from './distance.js'
-
 export const SORT_OPTIONS = [
   { key: 'recommended', label: 'Recommended' },
-  { key: 'newest',      label: 'Newest first' },
-  { key: 'price_asc',   label: 'Price: low to high' },
-  { key: 'price_desc',  label: 'Price: high to low' },
-  { key: 'name',        label: 'Name (A–Z)' },
+  { key: 'newest', label: 'Newest first' },
+  { key: 'price_asc', label: 'Price: low to high' },
+  { key: 'price_desc', label: 'Price: high to low' },
+  { key: 'name', label: 'Name (A–Z)' },
 ]
-const SORT_KEYS = SORT_OPTIONS.map(o => o.key)
-
-export function normalizeSortKey(k) { return SORT_KEYS.includes(k) ? k : 'recommended' }
-export function sortLabel(k) { return (SORT_OPTIONS.find(o => o.key === k) || SORT_OPTIONS[0]).label }
-
-// Order by a configured key (no proximity).
-function byKey(items, key) {
-  const a = [...items]
-  switch (normalizeSortKey(key)) {
-    case 'newest':     a.sort((x, y) => new Date(y.createdAt || 0) - new Date(x.createdAt || 0)); break
-    case 'price_asc':  a.sort((x, y) => (x.price ?? Infinity) - (y.price ?? Infinity)); break
-    case 'price_desc': a.sort((x, y) => (y.price ?? -1) - (x.price ?? -1)); break
-    case 'name':       a.sort((x, y) => (x.name || '').localeCompare(y.name || '', undefined, { sensitivity: 'base' })); break
-    default:           a.sort((x, y) => Number(x.sortOrder ?? 9999) - Number(y.sortOrder ?? 9999)) // recommended (manual order)
-  }
-  return a
+export const CUSTOMER_SORT_OPTIONS = [...SORT_OPTIONS, { key: 'nearest', label: 'Closest first' }]
+export function normalizeSortKey(key) { return SORT_OPTIONS.some(o => o.key === key) ? key : 'recommended' }
+export function sortLabel(key) { return (CUSTOMER_SORT_OPTIONS.find(o => o.key === key) || SORT_OPTIONS[0]).label }
+export function resolveStorefrontSort(view, providerSort, platformSort) {
+  // Businesses without a configured value use Recommended, never platform defaults.
+  return normalizeSortKey((providerSort ?? platformSort)?.[view === 'venue' ? 'venue' : 'space'])
 }
-
-/**
- * Final storefront ordering.
- * @param items  card rows ({ name, price, lat, lng, sortOrder, createdAt })
- * @param opts   { key: configured fallback sort, coords: { lat, lng } | null }
- */
+const number = value => value !== '' && value != null && Number.isFinite(Number(value)) ? Number(value) : null
+export function hasCoordinates(coords) {
+  const lat = number(coords?.lat), lng = number(coords?.lng)
+  return lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+}
+const rank = item => number(item.sortOrder) ?? Infinity
+const date = item => Number.isFinite(Date.parse(item.createdAt)) ? Date.parse(item.createdAt) : 0
+function compare(a, b, key) {
+  if (key === 'name') return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' })
+  if (key === 'newest') return date(b) - date(a)
+  if (key === 'price_asc' || key === 'price_desc') {
+    const x = number(a.price), y = number(b.price)
+    if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1
+    return key === 'price_asc' ? x - y : y - x
+  }
+  return rank(a) - rank(b)
+}
 export function applyStorefrontSort(items, { key = 'recommended', coords = null } = {}) {
-  if (!coords || coords.lat == null || coords.lng == null) return byKey(items, key)
-  const tagged = items.map(it => ({
-    it,
-    d: (it.lat != null && it.lng != null) ? haversineKm(coords.lat, coords.lng, it.lat, it.lng) : Infinity,
-  }))
-  const located = tagged.filter(t => t.d !== Infinity).sort((a, b) => a.d - b.d).map(t => t.it)
-  const unlocated = byKey(tagged.filter(t => t.d === Infinity).map(t => t.it), key)
-  return [...located, ...unlocated]
+  const recommended = (a, b) => compare(a, b, 'recommended') || 0
+  if (key === 'nearest' && hasCoordinates(coords)) {
+    const distance = item => hasCoordinates(item) ? haversineKm(Number(coords.lat), Number(coords.lng), Number(item.lat), Number(item.lng)) : Infinity
+    return items.map(item => ({ item, distance: distance(item) }))
+      .sort((a, b) => (a.distance - b.distance) || recommended(a.item, b.item)).map(x => x.item)
+  }
+  return [...items].sort((a, b) => compare(a, b, normalizeSortKey(key)) || recommended(a, b))
 }

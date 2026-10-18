@@ -3,6 +3,7 @@
  * Preserves shapes expected by CustomerPrograms, ProgramDetail, MyMemberships.
  */
 import { apiFetch } from '../lib/api.js'
+import { redemptionFields } from '../lib/checkoutRewards.js'
 import { selectedCountry } from '../lib/customerSession.js'
 
 function formatErr(res, fallback) {
@@ -58,14 +59,17 @@ export async function apiLoadProgram(id, brandOwner = null) {
   }
 }
 
-export async function apiEnrollInProgram(program, { answers = {}, discount = 0, loyaltyRedeem = 0 } = {}) {
+export async function apiEnrollInProgram(program, { answers = {}, discount = 0, promocode = null, rewards = null } = {}) {
   if (!program?.id) return { error: 'Program not found.' }
+  let rewardFields
+  try { rewardFields = redemptionFields(rewards) } catch (error) { return { error: error.message } }
   const res = await apiFetch(`/customer/programs/${encodeURIComponent(program.id)}/enroll`, {
     method: 'POST',
     body: {
       answers: answers || {},
       discount: Number(discount) || 0,
-      loyalty_redeem: Number(loyaltyRedeem) || 0,
+      promocode,
+      ...rewardFields,
     },
   })
   if (!res.success) return { error: formatErr(res, 'Could not complete sign-up.') }
