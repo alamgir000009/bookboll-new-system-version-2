@@ -19,6 +19,25 @@ class User extends Authenticatable
 {
     use Billable, CausesActivity, GeneratesUuid, HasApiTokens, HasCapabilities, HasFactory, HasRoles, HasUnsubscribeToken, LogsModelActivity, Notifiable, TracksCreator;
 
+    protected static function booted(): void
+    {
+        // Delete this account's uploaded files along with the account.
+        //
+        // The uploads table cascades on the foreign key, but a database-level
+        // cascade does not fire Eloquent events — the rows would vanish and the
+        // images would stay on disk forever, with nothing left pointing at them
+        // to find them by. Deleting through the model first means each file is
+        // removed with its record. Chunked, because one account can have a lot.
+        static::deleting(function (User $user) {
+            Upload::where('user_id', $user->id)
+                ->chunkById(200, function ($uploads) {
+                    foreach ($uploads as $upload) {
+                        $upload->delete();
+                    }
+                });
+        });
+    }
+
     public const ACTIVE   = 'active';
     public const INACTIVE = 'inactive';
     public const BLOCKED  = 'blocked';

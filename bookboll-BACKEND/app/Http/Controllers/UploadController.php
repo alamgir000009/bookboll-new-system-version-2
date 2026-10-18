@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Upload;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -46,6 +47,23 @@ class UploadController extends Controller
         if (! $path) {
             return sendError('Could not store the image. Please try again.', [], 500);
         }
+
+        // Record who uploaded it. Without this the server can tell that a photo
+        // submitted later is on our disk, but not whose it is — so one account
+        // could illustrate its content with another's image, a deleted account
+        // would leave its files behind, and nothing could find the files that
+        // no longer belong to anything.
+        Upload::create([
+            'user_id'       => $request->user()->id,
+            'disk'          => 'public',
+            'path'          => $path,
+            'folder'        => $folder,
+            'mime'          => $file->getClientMimeType(),
+            'size_bytes'    => $file->getSize(),
+            // Only for support ("which file did I send?") — never used to build
+            // a path, so a hostile filename cannot escape the upload directory.
+            'original_name' => mb_substr((string) $file->getClientOriginalName(), 0, 255),
+        ]);
 
         return sendSuccess('Image uploaded', [
             'url'  => Storage::disk('public')->url($path),

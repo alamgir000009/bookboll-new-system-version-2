@@ -2,8 +2,10 @@
 
 namespace App\Rules;
 
+use App\Models\Upload;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -16,10 +18,11 @@ use Illuminate\Support\Facades\Storage;
  * moderate, cannot keep available and did not consent to serve — and confirms
  * the upload really succeeded rather than trusting a URL the browser typed.
  *
- * Note on ownership: uploads are not currently recorded against the user who
- * made them (UploadController stores the file and returns a URL, with no row),
- * so this verifies the file is ours and exists, not which account uploaded it.
- * Per-user ownership needs an uploads/media table; see readmeAlamgir.md.
+ * Ownership is checked too: these URLs are public, so without it one account
+ * could illustrate its event with a photo another account uploaded. A file
+ * stored before the `uploads` table existed has no owner on record and no way
+ * to recover one, so it is still accepted and its use logged — see
+ * config/uploads.php for turning that grace off once the logs go quiet.
  */
 class UploadedEventImage implements ValidationRule
 {
@@ -35,7 +38,66 @@ class UploadedEventImage implements ValidationRule
 
         if (! Storage::disk('public')->exists($path)) {
             $fail('That photo did not finish uploading. Please add it again.');
+
+            return;
         }
+
+        $upload = Upload::forPath($path);
+        $actorId = optional(auth()->user())->id;
+
+        switch (self::ownershipVerdict(
+            $upload ? (int) $upload->user_id : null,
+            $actorId === null ? null : (int) $actorId,
+            (bool) config('uploads.strict_ownership')
+        )) {
+            case self::OWNERSHIP_OK:
+                return;
+
+            case self::OWNERSHIP_UNTRACKED:
+                // Predates ownership tracking and accepted on sufferance.
+                // Logged so it is visible how much legacy content is still in
+                // play before strict mode is switched on.
+                Log::info('Event photo has no upload owner on record', [
+                    'path' => $path, 'user_id' => $actorId,
+                ]);
+
+                return;
+
+            default:
+                // Deliberately vague: confirming "that belongs to someone else"
+                // would tell a prober whose photo they had found.
+                $fail('Upload each photo through this form — that image is not available to use.');
+        }
+    }
+
+    public const OWNERSHIP_OK        = 'ok';
+    public const OWNERSHIP_UNTRACKED = 'untracked';
+    public const OWNERSHIP_REFUSED   = 'refused';
+
+    /**
+     * Whether the account submitting a photo may use it.
+     *
+     * Split out from the rule so the decision table is testable on its own —
+     * the interesting cases are the awkward ones (no owner recorded, nobody
+     * signed in), and they are easy to get subtly wrong.
+     *
+     * @param  int|null  $ownerId  recorded uploader, or null if the file predates tracking
+     * @param  int|null  $actorId  the account submitting it, or null if unauthenticated
+     * @param  bool      $strict   refuse files with no recorded owner
+     */
+    public static function ownershipVerdict(?int $ownerId, ?int $actorId, bool $strict): string
+    {
+        // Nobody signed in has no claim on anything, whatever the file's state.
+        // Every route using this rule is authenticated, so this is a backstop.
+        if ($actorId === null) {
+            return self::OWNERSHIP_REFUSED;
+        }
+
+        if ($ownerId === null) {
+            return $strict ? self::OWNERSHIP_REFUSED : self::OWNERSHIP_UNTRACKED;
+        }
+
+        return $ownerId === $actorId ? self::OWNERSHIP_OK : self::OWNERSHIP_REFUSED;
     }
 
     /**
