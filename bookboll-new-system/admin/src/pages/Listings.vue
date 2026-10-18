@@ -113,7 +113,7 @@ import { useCurrentUser } from '../lib/currentUser.js'
 import { logAudit } from '../lib/audit.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { downloadCSV } from '../lib/useExport.js'
-import { SLOT_DURATIONS, BUFFER_OPTIONS, previewSlots, durationLabel, toMinutes, toTimeStr, generateSlots, fmt12, fmtRange12 } from '../lib/slots.js'
+import { SLOT_DURATIONS, BUFFER_OPTIONS, previewSlots, durationLabel, toMinutes, toTimeStr, generateSlots, fmt12, fmtRange12, bookableSlots, daysLabel } from '../lib/slots.js'
 import { CAP } from '../lib/permissions.js'
 import { useConfirm } from '../lib/confirm.js'
 import { useToast } from '../lib/toast.js'
@@ -1412,11 +1412,18 @@ const mergedHoursList = computed(() => hours.value)
 // (slot length + buffer, one consistent daily window). Drives the always-on "Offered to
 // customers" preview. (Previously this unioned each weekday's open hours, which with a
 // non-hourly slot length interleaved misaligned, overlapping start times.)
-const autoStartTimes = computed(() => {
-  const dur = Number(form.value.slot_duration) || 0
-  if (!dur) return []
-  return generateSlots({ slot_duration: dur, buffer_time: Number(form.value.buffer_time) || 0 }).map(s => s.start_time)
-})
+/*
+ * The real bookable slots, from this listing's own weekly schedule.
+ *
+ * This used to call generateSlots() with its DEFAULT bounds — a hardcoded
+ * 06:00-23:00 — so the times offered here had nothing to do with when the venue
+ * is actually open. Listing 16 opens 07:00 on Fri/Sat and 15:00 otherwise, and
+ * was shown a 6:00 AM start no customer could book while its real 9 PM and
+ * 11 PM slots were missing entirely. bookableSlots() walks each day's periods
+ * the way the server does.
+ */
+const startTimeRows = computed(() => bookableSlots(hours.value, form.value.slot_duration))
+const autoStartTimes = computed(() => startTimeRows.value.map(r => r.start_time))
 // The slots offered to customers: the automatic grid (slot length + buffer + weekly
 // schedule) minus any the provider has tapped off. All on = every slot offered.
 const displayedStartTimes = computed(() => autoStartTimes.value.filter(isStartOffered))
@@ -2909,15 +2916,17 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 
             <!-- Bookable start times — always editable; tap a slot to include/exclude it. -->
             <div class="form-group" style="margin-top:4px">
-              <label class="form-label">Bookable start times<InfoTip text="Generated from your slot length, buffer & weekly schedule. Tap a time to turn it off if you don't want to offer it — leave them all on to offer every slot." /></label>
+              <label class="form-label">Bookable start times<InfoTip text="Every slot your weekly schedule actually produces, with the days it runs on. Tap one to stop offering it — leave them all on to offer every slot." /></label>
               <div class="ft-preview">
                 <div class="ft-preview-head"><Clock :size="13" /> Offered to customers<span class="ft-preview-count">{{ displayedStartTimes.length }}</span></div>
                 <div v-if="!autoStartTimes.length" class="fixed-times-empty">No bookable times yet — set open hours in the <button type="button" class="link-btn" @click.stop="goToSchedule">Weekly schedule</button> above.</div>
                 <template v-else>
                   <div class="cst-caption"><Info :size="13" /> Tap a time to turn it off or on — only highlighted times are offered to customers.</div>
                   <div class="cst-chips">
-                    <button v-for="t in autoStartTimes" :key="t" type="button" class="cst-chip" :class="{ on: isStartOffered(t) }" :aria-pressed="isStartOffered(t)" @click="toggleStartTime(t)">
-                      <Check v-if="isStartOffered(t)" :size="12" class="cst-chip-check" />{{ fmt12(t) }}
+                    <button v-for="r in startTimeRows" :key="r.start_time" type="button" class="cst-chip" :class="{ on: isStartOffered(r.start_time) }" :aria-pressed="isStartOffered(r.start_time)" @click="toggleStartTime(r.start_time)">
+                      <Check v-if="isStartOffered(r.start_time)" :size="12" class="cst-chip-check" />
+                      <span class="cst-chip-time">{{ fmtRange12(r.start_time, r.end_time) }}</span>
+                      <span class="cst-chip-days">{{ daysLabel(r.days) }}</span>
                     </button>
                   </div>
                 </template>
@@ -4136,6 +4145,13 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .cst-chip { display:inline-flex; align-items:center; gap:5px; font-family:'SF Mono',Monaco,monospace; font-size:12.5px; font-weight:700; padding:6px 12px; border-radius:999px; border:1.5px solid var(--border); background:var(--surface, #ffffff); color:var(--text-muted); cursor:pointer; transition:all .12s; }
 .cst-chip:hover { border-color:var(--primary); color:var(--primary-ink); }
 .cst-chip .cst-chip-check { flex-shrink:0; }
+/* The chip now carries the whole slot (3:00 PM – 5:00 PM) plus the days it runs
+   on, so it stacks: the time reads first, the days sit under it, quieter. */
+.cst-chip { flex-direction:column; align-items:flex-start; gap:1px; padding:7px 13px; border-radius:12px; text-align:left; }
+.cst-chip .cst-chip-time { display:block; }
+.cst-chip .cst-chip-days { font-family:var(--font-sans, system-ui); font-size:10.5px; font-weight:600; letter-spacing:.02em; opacity:.72; }
+.cst-chip .cst-chip-check { position:absolute; top:6px; right:9px; }
+.cst-chip { position:relative; padding-right:26px; }
 .cst-chip.on { background:var(--primary); border-color:var(--primary); color:#fff; }
 .cst-chip.on:hover { background:var(--primary-dark, #0d9488); border-color:var(--primary-dark, #0d9488); color:#fff; }
 /* Export choice buttons */
