@@ -31,7 +31,15 @@ class MarketplaceGeoService
             });
         }
 
-        $countries = $query->get()->map(fn (Country $c) => $this->mapCountry($c))->values();
+        $rows = $query->get();
+        // How many cities each country actually has, so the location picker can
+        // say "no cities are listed for this country yet" instead of leaving a
+        // failed request and a genuinely empty country looking identical. One
+        // grouped query, not one per row.
+        $cityCounts = $this->cityCountsFor($rows->pluck('id')->all());
+        $countries = $rows
+            ->map(fn (Country $c) => $this->mapCountry($c, (int) ($cityCounts[$c->id] ?? 0)))
+            ->values();
 
         if ($slug !== '') {
             $match = $countries->first(fn ($c) => $this->slugify($c['name']) === $slug);
@@ -55,6 +63,15 @@ class MarketplaceGeoService
         if ($slug !== '') {
             $city = $this->resolveCityBySlug($slug);
             if (! $city) {
+                return sendSuccess('City not found', ['city' => null, 'cities' => []]);
+            }
+
+            // A slug is resolved globally, so on its own it would happily answer
+            // `country_id=<Qatar>&slug=lahore` with Lahore. When the caller has
+            // told us the country too, the two have to agree — a city is not a
+            // match for a country it is not in.
+            if ($countryId !== null && $countryId !== ''
+                && (int) ($city['country_id'] ?? 0) !== (int) $countryId) {
                 return sendSuccess('City not found', ['city' => null, 'cities' => []]);
             }
 
@@ -422,7 +439,14 @@ class MarketplaceGeoService
         return $query;
     }
 
-    protected function mapCountry(Country $c): array
+    /**
+     * @param  int|null  $cityCount  Cities available in this country, or null when
+     *                               it was not looked up. Null means UNKNOWN and
+     *                               must not be read as zero: a country with no
+     *                               seeded cities is a data gap to fix, which is
+     *                               a different thing from not having asked.
+     */
+    protected function mapCountry(Country $c, ?int $cityCount = null): array
     {
         $currency = $c->relationLoaded('currency') ? $c->currency : null;
 
@@ -431,7 +455,35 @@ class MarketplaceGeoService
             'name'          => $c->name,
             'iso_code'      => $c->iso2,
             'currency_code' => $currency?->code ?: '',
+            'cities_count'  => $cityCount,
+            'has_cities'    => $cityCount === null ? null : $cityCount > 0,
         ];
+    }
+
+    /**
+     * Active city counts keyed by country id, for the countries asked about.
+     *
+     * Builds its own query rather than reusing activeCitiesQuery(): that one
+     * orders by name, and an ORDER BY on a non-grouped column is rejected
+     * outright by MySQL in ONLY_FULL_GROUP_BY.
+     *
+     * @param  array<int, int|string>  $countryIds
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    protected function cityCountsFor(array $countryIds)
+    {
+        if (! $countryIds) {
+            return collect();
+        }
+
+        $query = City::query()->whereIn('country_id', $countryIds);
+        if (Schema::hasColumn('cities', 'status')) {
+            $query->where('status', 1);
+        }
+
+        return $query->selectRaw('country_id, COUNT(*) as cnt')
+            ->groupBy('country_id')
+            ->pluck('cnt', 'country_id');
     }
 
     protected function mapCityDetail(City $city): array

@@ -84,7 +84,8 @@ class CustomerCommunityService
             })->values();
         }
 
-        $mapped = $this->decorateCounts($rows)->map(fn (Community $c) => $this->mapCommunity($c))->values()->all();
+        $mapped = $this->sortByPopularity($this->decorateCounts($rows))
+            ->map(fn (Community $c) => $this->mapCommunity($c))->values()->all();
 
         return sendSuccess('Communities fetched', ['communities' => $mapped]);
     }
@@ -917,6 +918,27 @@ class CustomerCommunityService
 
             return $c;
         });
+    }
+
+    /**
+     * Most popular first, by accepted members — the order the marketplace home
+     * and the directory present. Name then id break ties so the sequence is
+     * total and stable: two communities with the same following must not swap
+     * places between reloads. Ordered here as well as in the client so the
+     * ranking does not depend on which surface is asking, and so it still holds
+     * if this list is ever paginated — a client cannot rank rows the server
+     * never sent.
+     *
+     * @param  \Illuminate\Support\Collection  $communities  decorateCounts() applied
+     * @return \Illuminate\Support\Collection
+     */
+    protected function sortByPopularity($communities)
+    {
+        return $communities->sortBy(fn (Community $c) => [
+            -(int) ($c->memberCount ?? 0),
+            mb_strtolower((string) ($c->name ?? '')),
+            (int) $c->id,
+        ])->values();
     }
 
     protected function mapCommunity(Community $c): array

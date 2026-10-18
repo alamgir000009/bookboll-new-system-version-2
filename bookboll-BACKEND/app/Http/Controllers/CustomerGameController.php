@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Services\CustomerGameService;
+use App\Rules\NotBlank;
+use App\Rules\UploadedEventImage;
 use Illuminate\Http\Request;
 
 class CustomerGameController extends Controller
@@ -27,7 +29,14 @@ class CustomerGameController extends Controller
     /** Publish a game or a hangout. */
     public function store(Request $request)
     {
-        return $this->games->create(auth()->user(), $request->validate($this->rules()));
+        // Games and hangouts must show at least one photo. Validated before
+        // anything is reserved, priced or charged, so a rejected event has not
+        // taken a court or the host's money. Tournaments are exempt: their form
+        // has no photo step, so storeTournament() drops these rules.
+        return $this->games->create(auth()->user(), $request->validate($this->rules() + [
+            'images'   => 'required|array|min:1',
+            'images.*' => ['required', 'string', 'max:2048', new UploadedEventImage],
+        ]));
     }
 
     /** Events posted to a community. */
@@ -139,7 +148,11 @@ class CustomerGameController extends Controller
     {
         $data = $request->validate([
             'title'            => 'sometimes|string|max:200',
-            'description'      => 'sometimes|nullable|string|max:5000',
+            // Editable, but not erasable — and only checked when sent, so an
+            // older event is never forced to acquire content to stay visible.
+            'description'      => ['sometimes', 'string', 'max:5000', new NotBlank],
+            'images'           => 'sometimes|array|min:1',
+            'images.*'         => ['required', 'string', 'max:2048', new UploadedEventImage],
             'skill_level'      => 'sometimes|string|max:32',
             'price_per_person' => 'sometimes|numeric|min:0',
             'max_players'      => 'sometimes|integer|min:0|max:1000',
@@ -270,7 +283,9 @@ class CustomerGameController extends Controller
             'price_per_person'        => 'nullable|numeric|min:0',
             'max_players'             => 'nullable|integer|min:0|max:1000',
             'skill_level'             => 'nullable|string|max:32',
-            'description'             => 'nullable|string|max:5000',
+            // Guests decide from the description, so it is required for every
+            // hosted event, and whitespace is not a description.
+            'description'             => ['required', 'string', 'max:5000', new NotBlank],
             'prize_pot'               => 'nullable|numeric|min:0',
             'prize_note'              => 'nullable|string|max:500',
             'custom_location_name'    => 'nullable|string|max:200',
