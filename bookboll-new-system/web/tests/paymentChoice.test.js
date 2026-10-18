@@ -201,7 +201,12 @@ test('own-site checkout ignores legacy cash and keeps the server deposit quote w
     assert.deepEqual(state.plan.value.methods,['deposit'])
     assert.equal(state.payMethod.value,'deposit')
     assert.equal(state.plan.value.depositPct,11.1)
-    assert.equal(state.paySplit.value.online,13) // Current API rounding; see readmeAlamgir.
+    // 11.1% of 125.05 is 13.88. This asserted 13 while the split still used
+    // Math.floor; readmeAlamgir required the server to move to minor-unit
+    // rounding and the storefront to follow in the same release, so the number
+    // beside the Pay button is the number Stripe takes. The own-site deposit is
+    // now Bookboll's commission, so the floored version under-quoted the fee.
+    assert.equal(state.paySplit.value.online,13.88)
     await state.confirm()
     assert.equal(calls[0].surface,'site')
     assert.equal(calls[0].payment.method,'deposit')

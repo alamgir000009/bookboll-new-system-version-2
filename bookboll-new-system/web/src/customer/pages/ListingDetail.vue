@@ -341,7 +341,8 @@ const unavailableMessage = 'Online booking is currently unavailable for this lis
 const paymentError = computed(() => bookingUnavailable.value ? unavailableMessage : paymentAttempted.value && !paymentSelected.value ? 'Please choose a payment method to continue.' : '')
 // A fixed deposit is charged once per booking, and the server books one slot per booking.
 const bookingCount = computed(() => fullQuote.value.totalSlots || 1)
-const paySplit = computed(() => paymentSelected.value ? paymentSplit(payMethod.value, payableTotal.value, plan.value.depositPct, plan.value.depositAmount, bookingCount.value) : null)
+// cur is the VENUE's currency, so the deposit rounds to the same minor unit the server bills in.
+const paySplit = computed(() => paymentSelected.value ? paymentSplit(payMethod.value, payableTotal.value, plan.value.depositPct, plan.value.depositAmount, bookingCount.value, cur.value) : null)
 const depositLabel = computed(() => depositTag(plan.value.depositPct, plan.value.depositAmount, bookingCount.value))
 function solePaymentMethod() { return data.value && plan.value.methods.length === 1 ? plan.value.methods[0] : '' }
 watch(plan, (p, previous) => {

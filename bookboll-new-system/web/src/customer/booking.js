@@ -1,3 +1,4 @@
+import { toMinor, toMajor, percentOf } from '../lib/money.js'
 /**
  * booking.js — customer-side facility booking, reusing the SAME engine as the
  * admin dashboard: slot generation/conflicts from lib/slots.js, the pricing-cell →
@@ -122,14 +123,22 @@ export function paymentPlan(location, paymentOptions) {
 //  - a FIXED amount is charged PER BOOKING, and the server makes one booking per
 //    slot (`booking_count` = count of slots), so it scales with `bookingCount`;
 //  - a PERCENTAGE is taken off the whole total once, and floor()ed, not rounded.
-export function paymentSplit(method, total, depositPct = 0, depositAmount = 0, bookingCount = 1) {
+export function paymentSplit(method, total, depositPct = 0, depositAmount = 0, bookingCount = 1, currency = '') {
   total = Number(total) || 0
   if (method === 'online') return { method: 'online', online: total, arrival: 0, deposit: 0, total }
   if (method === 'cash')   return { method: 'cash', online: 0, arrival: total, deposit: 0, total }
   const amt = Number(depositAmount) || 0
   const pct = Number(depositPct) || 0
   const n = Math.max(1, Number(bookingCount) || 1)
-  let deposit = amt > 0 ? amt * n : Math.floor(total * pct / 100)
+  /* Rounded in minor units, the same way the server does it.
+     This used to be Math.floor(total * pct / 100), which quoted 33 on a 33.50
+     deposit and 7 on a 7.50 fee — and the own-site deposit is now Bookboll's
+     commission, so that gap was a real under-quote of what Stripe takes. The
+     server moved off flooring in the same release; this keeps the number beside
+     the Pay button identical to the one charged. */
+  let deposit = amt > 0
+    ? amt * n
+    : toMajor(percentOf(toMinor(total, currency), pct), currency)
   deposit = Math.max(0, Math.min(deposit, total))
   return { method: 'deposit', online: deposit, arrival: total - deposit, deposit, total }
 }
