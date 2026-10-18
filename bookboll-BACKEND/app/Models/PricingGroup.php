@@ -39,6 +39,24 @@ class PricingGroup extends Model
         return $end_time ? date('H:i', strtotime($end_time)) : null;
     }
 
+    /*
+     * The column is a TIME, so it reads back as "19:00:00" while the accessor
+     * above hands out "19:00" — and that is the shape every caller fills back
+     * in. Without normalising on the way IN, "19:00" never equals "19:00:00",
+     * so both columns looked dirty on every single save: a pointless UPDATE per
+     * group, `updated_at` bumped, and an activity-log entry for a change nobody
+     * made. Normalise here so an unchanged save writes nothing at all.
+     */
+    public function setStartTimeAttribute($value): void
+    {
+        $this->attributes['start_time'] = $value ? date('H:i:s', strtotime($value)) : null;
+    }
+
+    public function setEndTimeAttribute($value): void
+    {
+        $this->attributes['end_time'] = $value ? date('H:i:s', strtotime($value)) : null;
+    }
+
     public function listing()
     {
         return $this->belongsTo(Listing::class);
