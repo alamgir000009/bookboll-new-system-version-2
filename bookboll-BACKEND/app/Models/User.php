@@ -222,6 +222,23 @@ class User extends Authenticatable
         return $this->hasMany(LoyaltyPoint::class);
     }
 
+    /**
+     * Business memberships this account holds. The business a user belongs to is
+     * read from here rather than from `users.owner_user_id`, so it keeps working
+     * for a business whose owner account has gone.
+     */
+    public function businessMemberships()
+    {
+        return $this->hasMany(BusinessMembership::class);
+    }
+
+    /** The single active membership, if any — a user belongs to one business. */
+    public function activeBusinessMembership()
+    {
+        return $this->hasOne(BusinessMembership::class)
+            ->where('status', BusinessMembership::STATUS_ACTIVE);
+    }
+
     public function customerLoyalty()
     {
         return $this->hasMany(CustomerLoyalty::class, CustomerLoyalty::ownerColumn());

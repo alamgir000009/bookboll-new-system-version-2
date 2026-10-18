@@ -27,6 +27,44 @@ use Nnjeim\World\Models\City;
  */
 class AccessScope
 {
+    /**
+     * The business this user belongs to, by `businesses.id`.
+     *
+     * Reads the membership table first, because that is the only answer that
+     * works for a business whose owner account has gone or was never created.
+     * Falls back to the owner-keyed lookup so every account that resolved to a
+     * business before this table existed still resolves to the same one — this
+     * is the bridge, not a replacement. `owner_user_id` is still read in 382
+     * places and is retired per-area, with its own tests.
+     *
+     * Returns null for platform-side users, who are not scoped to a business.
+     */
+    public static function businessId(?User $user): ?int
+    {
+        if (! $user) {
+            return null;
+        }
+
+        $membership = \App\Models\BusinessMembership::query()
+            ->where('user_id', $user->id)
+            ->where('status', \App\Models\BusinessMembership::STATUS_ACTIVE)
+            ->value('business_id');
+
+        if ($membership) {
+            return (int) $membership;
+        }
+
+        // Pre-membership accounts: resolve the owner, then their business.
+        $ownerId = self::ownerUserId($user);
+        if (! $ownerId) {
+            return null;
+        }
+
+        $businessId = DB::table('businesses')->where('owner_id', $ownerId)->value('id');
+
+        return $businessId ? (int) $businessId : null;
+    }
+
     /** The provider business this user belongs to, or null for platform-side users. */
     public static function ownerUserId(?User $user): ?int
     {

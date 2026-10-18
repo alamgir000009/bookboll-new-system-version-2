@@ -96,6 +96,35 @@ class Business extends Model
     }
 
     /** Every Premium subscription this business has ever had, newest first. */
+    /**
+     * Everyone who belongs to this business. Membership is keyed by the business
+     * id, so these survive an owner change and exist even when `owner_id` is
+     * null — an unclaimed business can still have staff.
+     */
+    public function memberships(): HasMany
+    {
+        return $this->hasMany(BusinessMembership::class);
+    }
+
+    public function activeMemberships(): HasMany
+    {
+        return $this->memberships()->where('status', BusinessMembership::STATUS_ACTIVE);
+    }
+
+    /** The owner membership, which is the authoritative owner going forward. */
+    public function ownerMembership(): HasOne
+    {
+        return $this->hasOne(BusinessMembership::class)
+            ->where('role', BusinessMembership::ROLE_OWNER)
+            ->where('status', BusinessMembership::STATUS_ACTIVE);
+    }
+
+    /** A business nobody has claimed yet — valid, and not Bookboll's own. */
+    public function isOwnerless(): bool
+    {
+        return $this->owner_id === null;
+    }
+
     public function subscriptions(): HasMany
     {
         return $this->hasMany(BusinessSubscription::class)->latest('id');
