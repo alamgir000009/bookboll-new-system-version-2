@@ -24,3 +24,15 @@ Schedule::command('games:discard-unpaid --apply')->everyMinute()->withoutOverlap
 Schedule::command('wallet:release-holds --apply')->dailyAt('02:00');
 
 Schedule::command('backup:run --only-db')->daily()->at('01:30');
+
+// Stripe's hosted invoice/receipt link for payments it collected. Membership
+// invoices store theirs straight from the webhook; one-off charges are resolved
+// here instead of during checkout, so a booking can never fail because a Stripe
+// lookup did. Hourly means a new charge has its receipt within the hour, and
+// the first run fills in history.
+Schedule::command('payments:backfill-stripe-urls')->hourly()->withoutOverlapping();
+
+// Upload records whose file is already gone. Deletes no files, so it is safe to
+// run unattended. The unreferenced-file sweep is deliberately NOT scheduled:
+// it needs --delete-unreferenced and a human who has read its --dry-run first.
+Schedule::command('uploads:prune')->dailyAt('03:10');
