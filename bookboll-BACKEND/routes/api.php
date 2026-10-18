@@ -406,6 +406,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
             // capability probe the dashboard checks before offering that form.
             Route::get('businesses/capabilities', [BusinessController::class, 'capabilities'])->name('businesses.capabilities');
             Route::post('businesses', [BusinessController::class, 'adminStore'])->name('businesses.store');
+            // Moving an account into a business is reviewed, not a single click:
+            // the move strips the account's platform access, so an admin sees
+            // exactly what goes before anything happens.
+            Route::get('businesses/{id}/assignment-options', [BusinessController::class, 'assignmentOptions'])->name('businesses.assignment-options');
+            Route::post('businesses/{id}/assignment-preview', [BusinessController::class, 'assignmentPreview'])->name('businesses.assignment-preview');
+            Route::post('businesses/{id}/assignments', [BusinessController::class, 'assignmentStore'])->name('businesses.assignments');
         });
 
         // A user editing their OWN profile needs no team rights.

@@ -11,6 +11,7 @@ class BusinessController extends Controller
         protected BusinessService $businessService,
         protected \App\Services\EmailVerificationService $emailVerification,
         protected \App\Services\BusinessIdentityService $identity,
+        protected \App\Services\BusinessAssignmentService $assignments,
     ) {}
 
     /** What business administration this deployment actually supports. */
@@ -23,6 +24,23 @@ class BusinessController extends Controller
     public function adminStore(Request $request)
     {
         return $this->identity->store($request);
+    }
+
+    /* Moving an account into a business: options, reviewed preview, commit. */
+
+    public function assignmentOptions(Request $request, $id)
+    {
+        return $this->assignments->options($request, (int) $id);
+    }
+
+    public function assignmentPreview(Request $request, $id)
+    {
+        return $this->assignments->preview($request, (int) $id);
+    }
+
+    public function assignmentStore(Request $request, $id)
+    {
+        return $this->assignments->assign($request, (int) $id);
     }
 
     public function register(Request $request)

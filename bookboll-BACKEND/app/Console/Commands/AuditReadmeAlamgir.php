@@ -178,7 +178,26 @@ class AuditReadmeAlamgir extends Command
             'GET /admin/plan'
         );
 
-        // 7. Annual-only Premium, no trial (readmeAlamgir §6)
+        // 7. Business assignments (readmeAlamgir §1.5)
+        $this->check(
+            'Schema: business_assignment_previews (reviewed moves)',
+            Schema::hasTable('business_assignment_previews'),
+            'migration 2026_10_19_000006'
+        );
+        foreach ([
+            ['GET', 'admin/businesses/{id}/assignment-options'],
+            ['POST', 'admin/businesses/{id}/assignment-preview'],
+            ['POST', 'admin/businesses/{id}/assignments'],
+        ] as [$verb, $uri]) {
+            $this->check("Route: {$verb} {$uri}", $this->hasRoute($verb, $uri), 'readmeAlamgir §1.5');
+        }
+        $this->check(
+            'Assignments: owner seat is never offered',
+            ! in_array('owner', \App\Models\BusinessMembership::ASSIGNABLE_ROLES, true),
+            'an owner is attached by the transfer flow, not this one'
+        );
+
+        // 8. Annual-only Premium, no trial (readmeAlamgir §6)
         $this->check(
             'Premium: checkout accepts only the annual offer',
             str_contains(
@@ -219,8 +238,6 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Business assignments: assignment-options, assignment-preview, assignments'
-                .' (identity foundation + capabilities + ownerless create are DONE)',
             'Effective-dated venue_operating_agreements (+ history contract v2)',
             'POST /admin/venues/{id}/contracts (private contract storage)',
             'Venue transfer preview/commit and legacy reconciliation',
