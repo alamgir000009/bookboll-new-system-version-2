@@ -18,6 +18,7 @@ class LoyaltyPoint extends Model
         'user_id',
         'booking_id',
         'order_id',
+        'country_id',
     ];
 
     public function user()

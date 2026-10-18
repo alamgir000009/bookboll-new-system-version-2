@@ -330,15 +330,32 @@ class User extends Authenticatable
         return true;
     }
 
-    public function addLoyaltyPoints(int $points, $booking_id = null, $reason = 'added by system'): void
+    public function addLoyaltyPoints(int $points, $booking_id = null, $reason = 'added by system', ?int $countryId = null): void
     {
         $this->loyaltyPoints()->create([
             'points'     => $points,
             'reason'     => $reason,
             'type'       => 'credit',
             'booking_id' => $booking_id,
+            // Which country's programme this belongs to. Resolved from the
+            // booking's venue when not supplied, because earn and redeem rates
+            // are per country and an untagged point is spendable nowhere.
+            'country_id' => $countryId ?: $this->loyaltyCountryForBooking($booking_id),
         ]);
         $this->updateLoyaltyTier();
+    }
+
+    /** The venue's country for a booking, or this account's own as a fallback. */
+    protected function loyaltyCountryForBooking($bookingId): ?int
+    {
+        if ($bookingId) {
+            $venue = Booking::with('venue')->find($bookingId)?->venue;
+            if ($country = \App\Support\LoyaltyCountry::countryForVenue($venue)) {
+                return $country;
+            }
+        }
+
+        return $this->country_id ? (int) $this->country_id : null;
     }
 
     public function transactions()

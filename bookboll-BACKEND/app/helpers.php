@@ -1611,6 +1611,10 @@ if (! function_exists('processBookingCancellation')) {
                     'points'     => $loyaltyCredit->points,
                     'type'       => 'debit',
                     'booking_id' => $booking->id,
+                    // The reversal must land in the SAME country as the credit
+                    // it undoes, or one country keeps points it never earned
+                    // while another goes negative.
+                    'country_id' => $loyaltyCredit->country_id,
                     'reason'     => "Loyalty points reversed for cancelled booking #{$booking->booking_id}",
                 ]);
                 $user->updateLoyaltyTier();
