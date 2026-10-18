@@ -209,9 +209,17 @@ class ConvertPricingCellsToGroups extends Command
         return ((int) $h) * 60 + (int) $m;
     }
 
+    /**
+     * End-of-day is "00:00" by this model's convention. A slot length that does
+     * not divide the day can push the last run past midnight, and `% 1440`
+     * turned that into "01:00" — a window reading 23:00-01:00, which wraps and
+     * therefore matches no slot at all. Clamp instead of wrapping.
+     */
     protected function hm(int $mins): string
     {
-        $mins %= 24 * 60;
+        if ($mins >= 24 * 60) {
+            return '00:00';
+        }
 
         return sprintf('%02d:%02d', intdiv($mins, 60), $mins % 60);
     }
