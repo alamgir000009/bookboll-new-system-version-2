@@ -169,3 +169,90 @@ export function dayPeriod(hhmm) {
   const h = Math.floor(toMinutes(hhmm) / 60)
   return h >= 6 && h < 17 ? 'day' : 'night'
 }
+
+export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/**
+ * The slots a listing can actually be booked at, per day of the week.
+ *
+ * This is the ONE place the admin works out bookable times, because every other
+ * attempt at it drifted from the server. generateSlots() defaults to a hardcoded
+ * 06:00-23:00 window, so a listing that opens at 15:00 was offered a 6 AM start
+ * that no customer could ever book, and its real 21:00 and 23:00 slots were
+ * missing entirely. The pricing grid had its own copy of the same mistake.
+ *
+ * Mirrors ListingService::generateTimeSlots() exactly:
+ *  - walk each of the day's open periods
+ *  - step by the slot length (the server does NOT add buffer_time here, so
+ *    neither do we — a mismatch would put the admin and the customer on
+ *    different slot boundaries)
+ *  - keep a slot whose START is inside the period
+ *  - allow the last one to overrun only when the period closes at midnight,
+ *    which is how a legitimate 23:00-01:00 slot exists
+ *
+ * @param {Array} hours - [{ day_of_week, is_open, periods: [{open_time, close_time}] }]
+ * @param {number} slotDuration - minutes
+ * @returns {Array<{start_time: string, end_time: string, days: number[]}>}
+ */
+export function bookableSlots(hours, slotDuration) {
+  const step = normalizeDuration(slotDuration)
+  if (!step || !Array.isArray(hours)) return []
+
+  const byStart = new Map()
+
+  for (const day of hours) {
+    if (!day?.is_open) continue
+    const dow = Number(day.day_of_week)
+    const periods = day.periods?.length
+      ? day.periods
+      : (day.open_time ? [{ open_time: day.open_time, close_time: day.close_time }] : [])
+
+    for (const p of periods) {
+      if (!p?.open_time || !p?.close_time) continue
+      const open = toMinutes(p.open_time)
+      const close = endMinutes(p.close_time)
+      const closesAtMidnight = toMinutes(p.close_time) === 0
+
+      for (let m = open; m < close; m += step) {
+        if (!closesAtMidnight && m + step > close) break
+        const start = toTimeStr(m)
+        if (!byStart.has(start)) {
+          byStart.set(start, { start_time: start, end_time: toTimeStr(m + step), days: new Set() })
+        }
+        byStart.get(start).days.add(dow)
+      }
+    }
+  }
+
+  return [...byStart.values()]
+    .sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
+    .map(r => ({ ...r, days: [...r.days].sort((a, b) => a - b) }))
+}
+
+/** "Every day", "Fri, Sat", "Mon-Thu, Sun" — how a start time's days read. */
+export function daysLabel(days) {
+  if (!days?.length) return ''
+  if (days.length === 7) return 'Every day'
+
+  // Collapse runs in week order (Mon first, Sunday last) so "Mon, Tue, Wed, Thu"
+  // reads as "Mon-Thu" instead of four chips' worth of noise.
+  const order = [1, 2, 3, 4, 5, 6, 0]
+  const present = order.filter(d => days.includes(d))
+  const out = []
+  let run = []
+  const flush = () => {
+    if (!run.length) return
+    out.push(run.length >= 3
+      ? `${DAY_LABELS[run[0]]}-${DAY_LABELS[run[run.length - 1]]}`
+      : run.map(d => DAY_LABELS[d]).join(', '))
+    run = []
+  }
+  for (let i = 0; i < present.length; i++) {
+    const d = present[i]
+    if (!run.length || order.indexOf(d) === order.indexOf(run[run.length - 1]) + 1) run.push(d)
+    else { flush(); run = [d] }
+  }
+  flush()
+
+  return out.join(', ')
+}

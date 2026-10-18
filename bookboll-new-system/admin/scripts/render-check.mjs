@@ -31,3 +31,10 @@ for (const [label, pattern] of [['Groups tab', 'A'], ['Slot Grid tab', 'B']]) {
   console.log(`${label}: rendered OK — ${rows.length} rows: ${rows.join(', ')}`)
 }
 await vite.close()
+
+// The Timeslot Settings chips: full slot range + the days each one runs on.
+const { bookableSlots, daysLabel, fmtRange12 } = await vite.ssrLoadModule('/src/lib/slots.js')
+console.log('\nBookable start times (listing 16, 2-hour slots):')
+for (const r of bookableSlots(hours, 120)) {
+  console.log('  ' + fmtRange12(r.start_time, r.end_time).padEnd(22) + daysLabel(r.days))
+}
