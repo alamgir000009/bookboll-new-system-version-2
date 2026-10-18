@@ -101,7 +101,10 @@ class ProviderPlanService
                 'yearly_per_month' => PremiumPlan::YEARLY_PER_MONTH,
                 'yearly_total'     => PremiumPlan::PRICE_YEARLY,
                 'yearly_save_pct'  => PremiumPlan::YEARLY_SAVE_PCT,
-                'trial_days'       => PremiumPlan::TRIAL_DAYS,
+                // What a NEW purchase gets: no free period. PremiumPlan::TRIAL_DAYS
+                // is retained for reading subscriptions that still have one.
+                'trial_days'       => 0,
+                'monthly_available' => false,
                 'currency'         => strtoupper(PremiumPlan::CURRENCY),
             ],
             'features'              => PremiumPlan::FEATURES,
@@ -113,9 +116,16 @@ class ProviderPlanService
     public function checkout(Request $request)
     {
         $data = $request->validate([
-            'billing'     => 'required|string|in:monthly,yearly',
+            // Annual only. Premium is sold as one offer — US$588/year, paid when
+            // subscribing — so a monthly request is refused rather than quietly
+            // upgraded to yearly, which would charge twelve times what was asked
+            // for. The dashboard already sends 'yearly' even if an older caller
+            // passes monthly; this is the server half of that.
+            'billing'     => 'required|string|in:yearly',
             'promo_code'  => 'nullable|string|max:64',
             'return_path' => 'nullable|string|max:200',
+        ], [
+            'billing.in' => 'Premium is billed annually. Monthly subscriptions are no longer sold.',
         ]);
 
         [$business, $owner, $error] = $this->resolveBusiness($request);
@@ -240,7 +250,6 @@ class ProviderPlanService
     {
         $yearly = PremiumPlan::billingIsYearly($billing);
         $amount = PremiumPlan::billedAmount($billing);
-        $trial  = PremiumPlan::trialDays($billing);
 
         $metadata = [
             'source'        => PremiumPlan::SOURCE_PLAN,
@@ -260,8 +269,13 @@ class ProviderPlanService
             'cancel_url'                => $this->adminUrl($returnPath, ['plan_checkout' => 'cancelled']),
             'metadata'                  => $metadata,
             'subscription_data'         => [
-                'metadata'          => $metadata,
-                'trial_period_days' => $trial,
+                'metadata' => $metadata,
+                // No trial_period_days, deliberately. Premium is paid when
+                // subscribing, and a trial created by the SERVER cannot be
+                // switched off by the browser — so the only way to guarantee
+                // there is no free period is to never ask Stripe for one.
+                // Subscriptions that already carry a trial are left exactly as
+                // they are; this governs new checkouts only.
             ],
             'line_items' => [$this->premiumLineItem($amount, $yearly)],
         ];
@@ -358,8 +372,12 @@ class ProviderPlanService
             $sub ??= new BusinessSubscription([
                 'business_id' => $business->id,
                 'plan'        => 'premium',
-                'billing'     => $session->metadata['billing'] ?? 'monthly',
-                'amount'      => PremiumPlan::billedAmount($session->metadata['billing'] ?? 'monthly'),
+                // Yearly is the only offer sold, so an absent metadata value
+                // means yearly. Defaulting to monthly here would record a
+                // US$588 charge as a US$59 monthly plan and then renew it
+                // against the wrong amount.
+                'billing'     => $session->metadata['billing'] ?? 'yearly',
+                'amount'      => PremiumPlan::billedAmount($session->metadata['billing'] ?? 'yearly'),
                 'currency'    => strtoupper(PremiumPlan::CURRENCY),
             ]);
 
@@ -462,8 +480,10 @@ class ProviderPlanService
             ?: new BusinessSubscription([
                 'business_id' => $business->id,
                 'plan'        => 'premium',
-                'billing'     => $stripeSub->metadata['billing'] ?? 'monthly',
-                'amount'      => PremiumPlan::billedAmount($stripeSub->metadata['billing'] ?? 'monthly'),
+                // Same reasoning as the checkout path: yearly is the only
+                // offer, so an unlabelled subscription is a yearly one.
+                'billing'     => $stripeSub->metadata['billing'] ?? 'yearly',
+                'amount'      => PremiumPlan::billedAmount($stripeSub->metadata['billing'] ?? 'yearly'),
                 'currency'    => strtoupper(PremiumPlan::CURRENCY),
             ]);
 

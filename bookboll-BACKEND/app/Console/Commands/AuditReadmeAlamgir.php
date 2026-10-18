@@ -178,7 +178,34 @@ class AuditReadmeAlamgir extends Command
             'GET /admin/plan'
         );
 
-        // 7. Country/city availability
+        // 7. Annual-only Premium, no trial (readmeAlamgir §6)
+        $this->check(
+            'Premium: checkout accepts only the annual offer',
+            str_contains(
+                (string) file_get_contents(app_path('Services/ProviderPlanService.php')),
+                "'billing'     => 'required|string|in:yearly'"
+            ),
+            'POST /admin/plan/checkout'
+        );
+        $this->check(
+            'Premium: the server never asks Stripe for a trial',
+            ! str_contains(
+                preg_replace('#//.*$#m', '', (string) file_get_contents(app_path('Services/ProviderPlanService.php'))),
+                'trial_period_days'
+            ),
+            'a server-created trial cannot be switched off by the browser'
+        );
+
+        // 8. Commission snapshot on bookings
+        $this->check(
+            'Schema: bookings carry the commission snapshot',
+            Schema::hasColumn('bookings', 'commission_channel')
+                && Schema::hasColumn('bookings', 'commission_effective_pct')
+                && Schema::hasColumn('bookings', 'commission_fee_minor'),
+            'migration 2026_10_19_000005 — preserves historical fees'
+        );
+
+        // 9. Country/city availability
         $this->check(
             'Route: marketplace/countries',
             $this->hasRoute('GET', 'marketplace/countries'),
@@ -202,11 +229,9 @@ class AuditReadmeAlamgir extends Command
             'customer_types classification + advanced filters',
             'Category popularity aggregation + POST /marketplace/category-clicks',
             'Export scope/completeness guarantees',
-            'Own-site commission: the WALLET half — not crediting the online fee to'
-                .' the provider wallet on deposits, net-share-only on full online,'
-                .' and the cutover for existing cash-only listings (the policy,'
-                .' rating, rounding and method enforcement are DONE)',
-            'Annual-only Premium with no trial',
+            'Own-site commission: the owner review path for existing cash-only'
+                .' listings (policy, rating, rounding, method enforcement, the'
+                .' booking snapshot and the wallet ledger are DONE)',
             'GET /marketplace/users (people search)',
             'Community permissions persistence + moderator role hierarchy',
             'Provider settings profile/account + notification preferences',
