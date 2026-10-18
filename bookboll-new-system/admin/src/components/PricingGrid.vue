@@ -79,7 +79,19 @@ function colorForTier(price, tiers) {
   if (idx === 1) return '#ea580c'
   return '#eab308'
 }
-function groupColor(g) { return colorForTier(g.price, priceTiers.value) }
+/*
+ * A group's colour is its own. This used to be derived from where the group's
+ * PRICE ranked against the others, so two groups looked different purely
+ * because one cost more — and a group silently changed colour when someone
+ * edited a different group's price. Use the colour stored on the row, and fall
+ * back to a stable one based on the group's position so it never shifts.
+ */
+const STABLE_COLORS = ['#0f766e', '#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899']
+function groupColor(g) {
+  if (g?.color) return g.color
+  const i = props.groups.findIndex(x => x.id === g?.id)
+  return STABLE_COLORS[(i < 0 ? 0 : i) % STABLE_COLORS.length]
+}
 const DAY_SHORT = { 0: 'SUN', 1: 'MON', 2: 'TUE', 3: 'WED', 4: 'THU', 5: 'FRI', 6: 'SAT' }
 
 function hoursFor(dayIndex) {
@@ -94,64 +106,92 @@ function dayPeriods(h) {
   if (h.open_time) return [{ open_time: h.open_time, close_time: h.close_time }]
   return []
 }
-function slotInOpen(dayIndex, slot) {
-  const h = hoursFor(dayIndex)
-  if (!h.is_open) return false
-  const m = minutesOf(slot)
-  const periods = dayPeriods(h)
-  if (!periods.length) return true
-  return periods.some(p => m >= minutesOf(p.open_time) && m < endMin(p.close_time))
-}
 
-const openWindow = computed(() => {
-  const fmt = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
-  const openDays = props.hours.filter(h => h.is_open)
-  if (!openDays.length) return { from: '08:00', to: '23:00' }
-  let minFrom = 24 * 60, maxTo = 0
-  for (const h of openDays) {
-    for (const p of dayPeriods(h)) {
-      minFrom = Math.min(minFrom, minutesOf(p.open_time))
-      maxTo   = Math.max(maxTo,   endMin(p.close_time))
+// How long one bookable slot is. Guarded, because a listing with no duration set
+// would otherwise make the row generator loop forever.
+const slotMins = computed(() => (Number(props.slotDuration) > 0 ? Number(props.slotDuration) : 60))
+
+/*
+ * The grid's rows must BE the bookable slots, not a guess at them.
+ *
+ * This used to take the earliest open time across the whole week and step from
+ * there in slot-sized jumps, one row list shared by every day. On a listing
+ * whose days open at different times that is simply a different grid from the
+ * real one: listing 16 opens 00:00-01:00 and 07:00-00:00, so the shared list
+ * started at midnight and produced 00:00, 02:00, 04:00 … while the actual
+ * bookable slots on Friday and Saturday are 07:00, 09:00, 11:00 … Every square
+ * the admin painted therefore landed on a time no customer could ever book, and
+ * a price set "at midnight" was never charged by anything.
+ *
+ * Mirror ListingService::generateTimeSlots() exactly: walk each of the day's
+ * open periods, step by the slot length, keep a slot whose START is inside the
+ * period, and allow the last one to overrun ONLY when the period closes at
+ * midnight (which is how a 23:00-01:00 slot legitimately exists).
+ */
+function slotsForDay(dayIndex) {
+  const h = hoursFor(dayIndex)
+  if (!h.is_open) return []
+
+  const step = slotMins.value
+  const out = []
+  for (const p of dayPeriods(h)) {
+    const open = minutesOf(p.open_time)
+    const close = endMin(p.close_time)
+    const closesAtMidnight = minutesOf(p.close_time) === 0
+    for (let m = open; m < close; m += step) {
+      if (! closesAtMidnight && m + step > close) break
+      out.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)
     }
   }
-  if (minFrom === 24 * 60) return { from: '08:00', to: '23:00' }
-  return { from: fmt(minFrom), to: fmt(maxTo) }
+
+  return out
+}
+
+/** Per day, the slot starts that genuinely exist — the grid's source of truth. */
+const daySlots = computed(() => {
+  const map = {}
+  for (const d of DAY_ORDER) map[d] = new Set(slotsForDay(d))
+
+  return map
 })
 
+/** Every row the grid needs: the union across days, in time order. */
 const slots = computed(() => {
-  const result = []
-  let m = minutesOf(openWindow.value.from)
-  const end = minutesOf(openWindow.value.to)
-  while (m < end) {
-    const h = Math.floor(m / 60), mm = m % 60
-    result.push(`${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`)
-    m += props.slotDuration
-  }
-  return result
+  const all = new Set()
+  for (const d of DAY_ORDER) for (const slot of slotsForDay(d)) all.add(slot)
+
+  return [...all].sort((a, b) => minutesOf(a) - minutesOf(b))
 })
 
-/* A group's TIME WINDOW prices slots on its own — that is what the Start/End/Days
-   fields above are for, and what the backend applies in matchingPricingGroupForSlot().
-   This grid used to shade painted cells only, so defining a group 10 PM-12 AM on Sat
-   left every square blank and the grid showed a different price from the one the
-   customer is actually charged. Mirror the backend's resolution here instead, in the
-   same order: a painted square wins, otherwise the group whose window covers the
-   slot — preferring one the slot STARTS inside, then lowest sort_order, then lowest
-   id. Window-covered squares are drawn dashed so hand-painted ones stay distinct. */
-const slotMins = computed(() => (Number(props.slotDuration) > 0 ? Number(props.slotDuration) : 60))
+/** A square exists only where that day actually has a bookable slot. */
+function slotInOpen(dayIndex, slot) {
+  return daySlots.value[dayIndex]?.has(slot) ?? false
+}
 
 function groupEndMin(g) {
   const m = minutesOf(g.end_time || '00:00')
+
   return m === 0 ? 24 * 60 : m   // midnight as an END is end-of-day
 }
+
+/** Does this group's window touch the square at (day, slot)? */
 function groupCoversSlot(g, day, slot) {
-  if (!groupDays(g).includes(day)) return false
+  if (! groupDays(g).includes(day)) return false
   const s = minutesOf(slot)
+
   return s < groupEndMin(g) && s + slotMins.value > minutesOf(g.start_time || '00:00')
 }
+
+/*
+ * Which group wins this square — resolved exactly as the backend resolves it in
+ * matchingPricingGroupForSlot(): prefer the group the slot STARTS inside, then
+ * the lowest sort_order, then the lowest id. The two must agree, or the admin
+ * is shown a price the customer will not be charged.
+ */
 function windowGroupFor(day, slot) {
   const covering = props.groups.filter(g => groupCoversSlot(g, day, slot))
-  if (!covering.length) return null
+  if (! covering.length) return null
+
   const s = minutesOf(slot)
   // An unsaved group has a `tmp-g-…` id; the backend will give it the highest id
   // of the save, so rank it last on that tiebreak rather than first.
@@ -161,21 +201,19 @@ function windowGroupFor(day, slot) {
     Number(g.sort_order) || 0,
     idRank(g),
   ]
+
   return [...covering].sort((a, b) => {
     const ra = rank(a), rb = rank(b)
     for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return ra[i] - rb[i]
+
     return 0
   })[0]
 }
-/**
- * What this square actually costs, and where the number came from — the same
- * order the backend resolves in, so both tabs show what the customer is charged.
- *   direct : a price painted straight onto the square in Slot Grid
- *   group  : a pricing group, either painted here or covering it by its window
- *   painted: a human put it here, vs. it following a group's Start/End/Days
- */
+
+/** The group pricing this square, and what it costs. */
 function resolvedCell(day, slot) {
   const g = windowGroupFor(day, slot)
+
   return { group: g || null, price: g ? Number(g.price) : Number(props.basePrice) }
 }
 
@@ -256,7 +294,13 @@ function rectanglesOf(squares) {
     if (from !== null) close()
   }
 
-  const hm = (m) => `${String(Math.floor((m % (24 * 60)) / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+  // End-of-day is 00:00 by this model's convention. A slot length that does not
+  // divide the day (a 50-minute slot, say) can push the last run past midnight,
+  // and `m % 1440` turned that into 01:00 — a window reading 23:00-01:00, which
+  // wraps and therefore matches nothing at all. Clamp instead of wrapping.
+  const hm = (m) => (m >= 24 * 60
+    ? '00:00'
+    : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)
   return [...daysByRun.entries()]
     .map(([run, days]) => {
       const [a, b] = run.split('-').map(Number)
@@ -304,12 +348,34 @@ function numberParts(list) {
   })
 }
 
-/** Apply a square change to every group, then keep the selection alive. */
-function repaint(mutate) {
+/**
+ * Apply a square change, touching ONLY the groups that edit concerns.
+ *
+ * Every group used to be round-tripped through squaresOf() -> rebuild() on any
+ * paint, and squaresOf() only sees squares the grid actually draws. A window
+ * that does not land on a slot boundary — 23:00-00:00 on a two-hour grid — maps
+ * to NO squares, so rebuilding it produced nothing and the group was silently
+ * deleted. Painting one unrelated square on Friday morning destroyed the Friday
+ * night price, with no warning and nothing in the payload to show why.
+ *
+ * A group is rebuilt only if it is the brush's target or if it actually owns one
+ * of the squares being taken. Everything else is passed through byte-identical,
+ * so it cannot be reshaped or lost by an edit somewhere else in the week.
+ */
+function applyPaint(keys, targetId, mutate) {
   markDirty()
   const wasActive = props.groups.find(g => g.id === activeGroupId.value)
+  const touches = (g) => keys.some(key => {
+    const [d, slot] = key.split('|')
+    return groupCoversSlot(g, Number(d), slot)
+  })
+
   const out = []
   for (const g of props.groups) {
+    if (g.id !== targetId && ! touches(g)) {
+      out.push(g)
+      continue
+    }
     const sq = squaresOf(g)
     mutate(g, sq)
     out.push(...rebuild(g, sq))
@@ -318,46 +384,39 @@ function repaint(mutate) {
 
   // Erasing a group's last square removes its row; fall back to whatever is left
   // of the same group rather than leaving the brush pointing at nothing.
-  if (!out.some(g => g.id === activeGroupId.value)) {
+  if (! out.some(g => g.id === activeGroupId.value)) {
     const kin = wasActive && out.find(g => baseName(g.name) === baseName(wasActive.name))
     activeGroupId.value = kin ? kin.id : (out[0]?.id ?? null)
   }
 }
 
-/*
- * The Slot Grid prices squares directly: type a number, paint it on. That used
- * to write a `direct_price` into pricing_cells — a second store that beat the
- * group windows and never re-checked them, which is why a square kept charging
- * an old price long after the group it belonged to had changed.
- *
- * The interaction stays; only where it lands changes. A painted price becomes a
- * pricing group of its own, named "Grid <price>", so there is still exactly one
- * place a slot's price can come from.
- *
- * Matching is by price, but ONLY against groups this grid created. The converter
- * that collapsed groups by price (and silently merged three different 300 groups
- * into one) matched against EVERY group, which is what destroyed the listing-52
- * pricing. A group the user named is never a candidate here.
- */
-const isGridGroup = (g) => /^Grid\s/.test(baseName(g.name))
-
 function paintWithPrice(keys, price) {
   markDirty()
   const erase = price === Number(props.basePrice)
+  const touches = (g) => keys.some(key => {
+    const [d, slot] = key.split('|')
+    return groupCoversSlot(g, Number(d), slot)
+  })
 
   // Every "Grid <price>" row is one logical brush — a scattered paint splits it
   // into several rectangles, and adding to only one of them would strand the
-  // rest. Pool their squares, add the new ones, and cut the whole set back into
-  // rectangles in one go, so neighbouring squares merge instead of piling up as
-  // separate one-hour groups.
+  // rest. Pool their squares so neighbouring ones merge instead of piling up.
   const mine = erase ? [] : props.groups.filter(g => isGridGroup(g) && Number(g.price) === price)
-  const others = props.groups.filter(g => ! mine.includes(g))
 
   const out = []
-  for (const g of others) {
+  for (const g of props.groups) {
+    if (mine.includes(g)) {
+      continue   // pooled below
+    }
+    // Untouched by this paint: pass through exactly as stored. Rebuilding it
+    // would re-derive its window from the grid and lose anything the grid
+    // cannot draw, such as a 23:00-00:00 window on a two-hour grid.
+    if (! touches(g)) {
+      out.push(g)
+      continue
+    }
     const sq = squaresOf(g)
-    // One price per square: giving it to the brush takes it from everyone else.
-    for (const key of keys) sq.delete(key)
+    for (const key of keys) sq.delete(key)   // one price per square
     out.push(...rebuild(g, sq))
   }
 
@@ -413,7 +472,7 @@ function paintCell(day, slot, mode) {
   }
 
   if (!activeGroupId.value) return
-  repaint((g, sq) => {
+  applyPaint([key], activeGroupId.value, (g, sq) => {
     if (g.id !== activeGroupId.value) sq.delete(key)
     else if (mode === 'erase') sq.delete(key)
     else sq.add(key)
@@ -499,7 +558,7 @@ function fillDay(day) {
   }
 
   if (!activeGroupId.value) return
-  repaint((g, sq) => {
+  applyPaint(mine, activeGroupId.value, (g, sq) => {
     for (const key of mine) g.id === activeGroupId.value ? sq.add(key) : sq.delete(key)
   })
 }
