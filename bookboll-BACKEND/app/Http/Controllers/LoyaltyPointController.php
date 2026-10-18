@@ -18,4 +18,13 @@ class LoyaltyPointController extends Controller
     {
         return $this->loyaltyPointService->customerLoyalty($request);
     }
+
+    /**
+     * How many points this checkout may spend. Prices nothing of the
+     * customer's: no booking is made and no points are debited or reserved.
+     */
+    public function checkoutQuote(Request $request)
+    {
+        return app(\App\Services\LoyaltyCheckoutQuoteService::class)->quote($request);
+    }
 }
