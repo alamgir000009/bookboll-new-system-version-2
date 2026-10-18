@@ -137,7 +137,48 @@ class AuditReadmeAlamgir extends Command
             'business_memberships_one_active_owner'
         );
 
-        // 6. Country/city availability
+        // 6. Own-site commission policy (readmeAlamgir "Requested policy")
+        $this->check(
+            'Commission: own-site halves only for a paid plan',
+            \App\Support\CommissionPolicy::PAID_PLAN_MULTIPLIER === 0.5,
+            'CommissionPolicy'
+        );
+        $this->check(
+            'Commission: 7.5% of 100 bills 7.50, not 7',
+            \App\Support\Money::percentOf(\App\Support\Money::toMinor(100, 'QAR'), 7.5) === 750,
+            'Money — floor() used to charge 7'
+        );
+        $this->check(
+            'Money: real currency exponents (JPY 0, KWD 3)',
+            \App\Support\Money::exponent('JPY') === 0
+                && \App\Support\Money::exponent('KWD') === 3
+                && \App\Support\Money::exponent('QAR') === 2,
+            'Money — round($x * 100) assumed 2 everywhere'
+        );
+        $this->check(
+            'Commission: fee + share always rebuild the total',
+            (function () {
+                foreach ([[10000, 7.5], [9999, 15], [3333, 33.33], [1, 50]] as [$m, $p]) {
+                    $s = \App\Support\Money::split($m, $p);
+                    if ($s['fee'] + $s['remainder'] !== $m) {
+                        return false;
+                    }
+                }
+
+                return true;
+            })(),
+            'Money::split'
+        );
+        $this->check(
+            'Plan: own_site_commission_discount_eligible is served',
+            str_contains(
+                (string) file_get_contents(app_path('Services/ProviderPlanService.php')),
+                'own_site_commission_discount_eligible'
+            ),
+            'GET /admin/plan'
+        );
+
+        // 7. Country/city availability
         $this->check(
             'Route: marketplace/countries',
             $this->hasRoute('GET', 'marketplace/countries'),
@@ -161,7 +202,10 @@ class AuditReadmeAlamgir extends Command
             'customer_types classification + advanced filters',
             'Category popularity aggregation + POST /marketplace/category-clicks',
             'Export scope/completeness guarantees',
-            'Own-site commission policy (half rate for paid Premium)',
+            'Own-site commission: the WALLET half — not crediting the online fee to'
+                .' the provider wallet on deposits, net-share-only on full online,'
+                .' and the cutover for existing cash-only listings (the policy,'
+                .' rating, rounding and method enforcement are DONE)',
             'Annual-only Premium with no trial',
             'GET /marketplace/users (people search)',
             'Community permissions persistence + moderator role hierarchy',
