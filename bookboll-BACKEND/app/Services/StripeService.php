@@ -879,6 +879,22 @@ class StripeService
      * Best-effort: a booking is paid whether or not the ledger writes, and the
      * payment must never be rolled back over an accounting error.
      */
+    /**
+     * The commission rate to settle this booking at.
+     *
+     * Prefers the snapshot taken when the booking was made. Falls back to the
+     * live marketplace rate only for bookings that predate the snapshot, which
+     * is exactly how they were settled before.
+     */
+    protected function bookingCommissionPct($booking, $listing): float
+    {
+        if ($booking->commission_effective_pct !== null) {
+            return (float) $booking->commission_effective_pct;
+        }
+
+        return (float) app(BookingWalletService::class)->courtCommissionPct($listing);
+    }
+
     protected function creditProviderWallet($booking, float $collected, bool $depositAlreadyPaid): void
     {
         try {
@@ -897,7 +913,12 @@ class StripeService
                 'countryId'     => $wallets->countryIdForVenue($venue),
                 'total'         => $collected,
                 'currency'      => $venue?->currency_override ?: (config('services.stripe.currency') ?: 'QAR'),
-                'ratePct'       => $depositAlreadyPaid ? 0 : $wallets->courtCommissionPct($listing),
+                // The rate this booking was QUOTED at, not today's. Resolving it
+                // live would let a later upgrade, cancellation or country-rate
+                // change rewrite what a confirmed booking charged, and would
+                // bill an own-site booking at the marketplace rate because the
+                // channel is not knowable from here.
+                'ratePct'       => $depositAlreadyPaid ? 0 : $this->bookingCommissionPct($booking, $listing),
                 'customerLabel' => $booking->user?->name ?: 'QR payment',
             ]);
         } catch (\Throwable $e) {

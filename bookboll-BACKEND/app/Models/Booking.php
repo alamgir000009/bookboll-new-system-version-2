@@ -50,6 +50,13 @@ class Booking extends Model
         'origin',
         'players',
         'program_id',
+        'commission_channel',
+        'commission_standard_pct',
+        'commission_effective_pct',
+        'commission_plan_eligible',
+        'commission_fee_minor',
+        'merchant_share_minor',
+        'commission_currency',
     ];
 
     protected $casts = [

@@ -12,6 +12,7 @@ use App\Models\Listing;
 use App\Models\LoyaltyPoint;
 use App\Models\Payment;
 use App\Support\CommissionPolicy;
+use App\Support\Money;
 use App\Support\StripeDocumentLink;
 use App\Models\Promocode;
 use App\Models\Resource;
@@ -3481,6 +3482,45 @@ class BookingService
         ]);
     }
 
+    /**
+     * What Bookboll charges for this booking, frozen at the moment it is made.
+     *
+     * The channel has to be recorded because `surface` otherwise dies with the
+     * request, and the ledger would later fall back to the marketplace rate —
+     * overcharging a paid Premium merchant whose own-site rate is halved. The
+     * rate has to be recorded because resolving it live is right for a new
+     * booking and wrong for an old receipt: an upgrade, a cancellation or a
+     * country rate change must not rewrite what a confirmed booking charged.
+     *
+     * @return array<string, mixed>
+     */
+    protected function commissionSnapshot($listing, array $formData, float $totalPrice): array
+    {
+        $channel = ($formData['surface'] ?? 'marketplace') === CommissionPolicy::CHANNEL_SITE
+            ? CommissionPolicy::CHANNEL_SITE
+            : CommissionPolicy::CHANNEL_MARKETPLACE;
+
+        $currency = CommissionPolicy::currencyFor($listing);
+
+        $quote = CommissionPolicy::quote(
+            $listing,
+            $channel,
+            Money::toMinor($totalPrice, $currency),
+            $currency,
+            ($formData['payment_method'] ?? '') === 'deposit_remaining_on_arrival' ? 'deposit' : 'online'
+        );
+
+        return [
+            'commission_channel'       => $quote['channel'],
+            'commission_standard_pct'  => $quote['standard_rate_pct'],
+            'commission_effective_pct' => $quote['effective_rate_pct'],
+            'commission_plan_eligible' => $quote['plan_eligible'],
+            'commission_fee_minor'     => $quote['fee_minor'],
+            'merchant_share_minor'     => $quote['merchant_share_minor'],
+            'commission_currency'      => $quote['currency'],
+        ];
+    }
+
     public function createSingleBooking(
         $user,
         array $formData,
@@ -3565,7 +3605,7 @@ class BookingService
                     'remaining_amount' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? $remainingAmount : 0,
                     'remaining_method' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? PaymentMethod::CASH : null,
                 ],
-            ]);
+            ] + $this->commissionSnapshot($listing, $formData, $totalPrice));
 
             $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
 
