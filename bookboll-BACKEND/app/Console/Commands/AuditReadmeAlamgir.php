@@ -109,7 +109,35 @@ class AuditReadmeAlamgir extends Command
             'readmeAlamgir §9'
         );
 
-        // 5. Country/city availability
+        // 5. Business identity (readmeAlamgir §1)
+        $this->check('Schema: business_memberships table', Schema::hasTable('business_memberships'), 'migration 2026_10_19_000002');
+        $this->check(
+            'Schema: businesses.owner_id is nullable (ownerless)',
+            \App\Models\Business::ownerlessSupported(),
+            'migration 2026_10_19_000001'
+        );
+        $this->check(
+            'Schema: businesses.idempotency_key (safe retries)',
+            Schema::hasColumn('businesses', 'idempotency_key'),
+            'migration 2026_10_19_000004'
+        );
+        $this->check(
+            'Route: GET admin/businesses/capabilities',
+            $this->hasRoute('GET', 'admin/businesses/capabilities'),
+            'readmeAlamgir §1'
+        );
+        $this->check(
+            'Route: POST admin/businesses (ownerless create)',
+            $this->hasRoute('POST', 'admin/businesses'),
+            'readmeAlamgir §1'
+        );
+        $this->check(
+            'DB enforces one active owner per business',
+            $this->hasOneActiveOwnerIndex(),
+            'business_memberships_one_active_owner'
+        );
+
+        // 6. Country/city availability
         $this->check(
             'Route: marketplace/countries',
             $this->hasRoute('GET', 'marketplace/countries'),
@@ -123,8 +151,8 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Business identity + business_memberships, ownerless businesses',
-            'GET /admin/businesses/capabilities and the 4 assignment endpoints',
+            'Business assignments: assignment-options, assignment-preview, assignments'
+                .' (identity foundation + capabilities + ownerless create are DONE)',
             'Effective-dated venue_operating_agreements (+ history contract v2)',
             'POST /admin/venues/{id}/contracts (private contract storage)',
             'Venue transfer preview/commit and legacy reconciliation',
@@ -174,6 +202,26 @@ class AuditReadmeAlamgir extends Command
                 && str_ends_with($route->uri(), $uri)) {
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    /** The generated-column index that makes a second active owner impossible. */
+    protected function hasOneActiveOwnerIndex(): bool
+    {
+        if (! Schema::hasTable('business_memberships')) {
+            return false;
+        }
+
+        try {
+            foreach (Schema::getIndexes('business_memberships') as $index) {
+                if (($index['name'] ?? '') === 'business_memberships_one_active_owner') {
+                    return true;
+                }
+            }
+        } catch (\Throwable $e) {
+            return false;
         }
 
         return false;
