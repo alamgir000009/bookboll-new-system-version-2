@@ -8,6 +8,8 @@ use App\Support\TenantOrigins;
 use App\Models\Listing;
 use App\Services\BookingWalletService;
 use App\Models\Payment;
+use App\Support\CommissionPolicy;
+use App\Support\Money;
 use App\Support\StripeDocumentLink;
 use App\Models\Venue;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -1757,22 +1759,35 @@ class PaymentService
         $po      = is_array($listing->payment_options) ? $listing->payment_options : [];
         $deposit = is_array($po['deposit'] ?? null) ? $po['deposit'] : [];
 
+        $isSite = $surface === CommissionPolicy::CHANNEL_SITE;
+
+        // A fixed deposit is the provider's own no-show protection and still
+        // wins on the MARKETPLACE. It must not win on the merchant's own site:
+        // there the deposit is Bookboll's commission, so letting a stored amount
+        // stand would let a merchant set their own fee.
         $amount = (float) ($deposit['amount'] ?? $po['deposit_amount'] ?? 0);
-        if ($amount > 0) {
+        if ($amount > 0 && ! $isSite) {
             return $amount * max(1, $totalBookings);
         }
 
-        $pct = $surface === 'site'
-            ? (float) ($po['site_deposit_percentage'] ?? 0)
+        // Derived here, never read from the listing's stored site percentage —
+        // that value is the preview the merchant was shown, and readmeAlamgir is
+        // explicit that client-supplied commission percentages are not authority.
+        $pct = $isSite
+            ? CommissionPolicy::effectiveRatePct($listing, CommissionPolicy::CHANNEL_SITE)
             : app(BookingWalletService::class)->courtCommissionPct($listing);
 
         if ($pct <= 0) {
             return 0.0;
         }
 
-        // floor(), not round() — booking.js shows the same figure next to the Pay
-        // button and Stripe has to charge exactly what the customer was quoted.
-        return (float) floor($totalPrice * $pct / 100);
+        // Rounded in minor units, so a fractional rate lands on the real money.
+        // This used to floor() in major units, which charged 7 on a 7.50 fee —
+        // the merchant saw one number and the processor took another.
+        $currency = CommissionPolicy::currencyFor($listing);
+        $feeMinor = Money::percentOf(Money::toMinor($totalPrice, $currency), $pct);
+
+        return Money::toMajor($feeMinor, $currency);
     }
 
     public function createCheckoutSession(array $validated, $user)

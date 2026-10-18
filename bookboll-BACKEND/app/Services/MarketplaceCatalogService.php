@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\ClassProgram;
 use App\Models\HostedGame;
 use App\Models\Listing;
+use App\Support\CommissionPolicy;
 use App\Services\BookingWalletService;
 use App\Models\LoyaltyProgram;
 use App\Models\Post;
@@ -735,9 +736,19 @@ class MarketplaceCatalogService
             'deposit_percentage'      => $this->marketplaceDepositPct($listing, $po, $deposit),
             'online_payment_enabled'  => (bool) ($listing->online_payment || ($po['online_payment_enabled'] ?? false)),
             'site_deposit_enabled'    => (bool) ($po['site_deposit_enabled'] ?? false),
-            'site_deposit_percentage' => (float) ($po['site_deposit_percentage'] ?? 10),
+            // LIVE, like the marketplace figure above. On the merchant's own site
+            // the deposit IS Bookboll's commission — standard rate, halved for a
+            // paid Premium merchant — so it must be the number checkout will
+            // actually bill. The stored value is a record of the preview the
+            // merchant last saw, never the authority, or a merchant could set
+            // their own fee by editing the payload.
+            'site_deposit_percentage' => CommissionPolicy::effectiveRatePct($listing, CommissionPolicy::CHANNEL_SITE),
             'site_online_enabled'     => (bool) ($po['site_online_enabled'] ?? false),
-            'site_cash_enabled'       => (bool) ($po['site_cash_enabled'] ?? false),
+            // Retired. Full payment on arrival is no longer an own-site method,
+            // so a legacy cash-only listing reports no usable method and the
+            // storefront says online booking is unavailable rather than quietly
+            // taking a cash booking the policy no longer allows.
+            'site_cash_enabled'       => false,
         ];
     }
 

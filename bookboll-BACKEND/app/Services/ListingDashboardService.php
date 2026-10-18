@@ -1074,9 +1074,18 @@ class ListingDashboardService
                     'percentage' => $pct,
                 ],
                 'site_deposit_enabled'    => (bool) ($pay['site_deposit_enabled'] ?? false),
-                'site_deposit_percentage' => (float) ($pay['site_deposit_percentage'] ?? 10),
+                // Stored as a RECORD of the preview the merchant was shown, never
+                // as the authority. The own-site deposit is Bookboll's commission,
+                // derived at booking time by CommissionPolicy — accepting this
+                // number as the fee would let a merchant set their own rate by
+                // editing the payload. readmeAlamgir: "Ignore client-supplied
+                // commission percentages as authority."
+                'site_deposit_percentage' => (float) ($pay['site_deposit_percentage'] ?? 0),
                 'site_online_enabled'     => (bool) ($pay['site_online_enabled'] ?? false),
-                'site_cash_enabled'       => (bool) ($pay['site_cash_enabled'] ?? false),
+                // Retired. Full payment on arrival is no longer an own-site
+                // method, so the flag is never stored true again — a legacy row
+                // keeps its value but is ignored everywhere that matters.
+                'site_cash_enabled'       => false,
             ],
         ];
     }

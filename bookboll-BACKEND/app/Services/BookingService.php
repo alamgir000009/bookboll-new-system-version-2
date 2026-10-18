@@ -11,6 +11,7 @@ use App\Models\Booking;
 use App\Models\Listing;
 use App\Models\LoyaltyPoint;
 use App\Models\Payment;
+use App\Support\CommissionPolicy;
 use App\Support\StripeDocumentLink;
 use App\Models\Promocode;
 use App\Models\Resource;
@@ -2040,6 +2041,61 @@ class BookingService
      *   promocode_applied?: bool,
      * }
      */
+    /**
+     * Why an own-site booking cannot go ahead with the method it asked for.
+     *
+     * Own-site listings offer exactly two things:
+     *   • deposit + the rest on arrival — the deposit is Bookboll's commission,
+     *     and it works without a payout connection;
+     *   • full payment online — which needs an active payout route for the
+     *     venue's country, because the merchant's share has to reach them.
+     *
+     * Full payment on arrival was removed from own-site bookings, so cash is
+     * refused here even if a legacy listing still has the flag set. A listing
+     * with neither method enabled takes no own-site bookings at all rather than
+     * quietly falling back to cash.
+     *
+     * @return array<string, array<int, string>>|null
+     */
+    protected function ownSiteMethodError(Listing $listing, array $formData): ?array
+    {
+        if (($formData['surface'] ?? 'marketplace') !== CommissionPolicy::CHANNEL_SITE) {
+            return null;
+        }
+
+        $method = (string) ($formData['payment_method'] ?? '');
+        $po     = is_array($listing->payment_options) ? $listing->payment_options : [];
+
+        $depositEnabled = (bool) ($po['site_deposit_enabled'] ?? false);
+        $onlineEnabled  = (bool) ($po['site_online_enabled'] ?? false);
+
+        if (! $depositEnabled && ! $onlineEnabled) {
+            return ['payment_method' => ['Online booking is not available for this listing yet.']];
+        }
+
+        // Cash is gone from this channel, whatever the stored flags say.
+        if (in_array($method, ['cash_on_arrival', 'paid_cash', 'cash'], true)) {
+            return ['payment_method' => ['Payment on arrival is not available for online bookings.']];
+        }
+
+        if ($method === 'deposit_remaining_on_arrival' && ! $depositEnabled) {
+            return ['payment_method' => ['This listing does not take a deposit booking.']];
+        }
+
+        if ($method === 'online_payment') {
+            if (! $onlineEnabled) {
+                return ['payment_method' => ['This listing does not take full payment online.']];
+            }
+            // Payouts decide whether the merchant's share can reach them. They
+            // never change the commission — only whether this method is usable.
+            if (! app(BookingWalletService::class)->venueHasActivePayout($listing->venue)) {
+                return ['payment_method' => ['Full payment online is unavailable for this venue right now.']];
+            }
+        }
+
+        return null;
+    }
+
     public function prepareCustomerCheckout(array $formData, User $user): array
     {
         $listing      = $this->listingModel::with('pricingGroups')->findOrFail($formData['listing_id']);
@@ -2055,6 +2111,14 @@ class BookingService
         $validationErrors = $this->collectCustomerSlotsValidationErrors($formData);
         if (! empty($validationErrors)) {
             return ['errors' => $validationErrors];
+        }
+
+        // The own-site payment rules, enforced where BOTH entry points pass —
+        // createCustomerBooking() and PaymentService::createCheckoutSession().
+        // The storefront refuses these too, but that is a UI guard: a request
+        // sent directly must not get a method the policy no longer allows.
+        if ($methodError = $this->ownSiteMethodError($listing, $formData)) {
+            return ['errors' => $methodError];
         }
 
         $quote = $quoteService->quoteSlots(

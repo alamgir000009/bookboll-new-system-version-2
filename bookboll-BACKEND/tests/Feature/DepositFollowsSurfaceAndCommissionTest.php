@@ -124,24 +124,45 @@ it('lets a per-listing override beat the country rate', function () {
         ->and(quotedMarketplacePct($listing))->toBe(20.0);
 });
 
-it('charges the provider own-site deposit on their own site', function () {
+/* ───────────────────────────────────────────────────────────────────────────
+ * Own-site deposits were REDEFINED by readmeAlamgir's commission policy.
+ *
+ * They used to be the provider's own no-show protection, set by the provider,
+ * with Bookboll taking nothing. They are now Bookboll's commission: the
+ * standard rate, halved for a paid Premium merchant, retained by Bookboll and
+ * included in the quoted price. The five tests that pinned the old rule are
+ * rewritten below to pin the new one — the behaviour they described is gone on
+ * purpose, so asserting it would now be asserting the bug.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+it('charges Bookboll commission on the own site, not the provider stored figure', function () {
     \App\Models\CommissionRate::create([
         'country_id' => $this->pakistan->id, 'listing_type' => 'facility', 'rate_percent' => 50,
     ]);
+    // The listing still carries the provider's old 10% in site_deposit_percentage.
     $listing = depositListing($this->pakistan, SNAPSHOT_15);
 
-    // The provider set 10% for their own site; Bookboll takes nothing there. The
-    // marketplace's 50% must not leak across.
-    expect(charged($listing, 100, 'site'))->toBe(10.0);
+    // On a Free plan the own-site rate IS the standard rate. The stored 10% is
+    // a record of a preview, never the authority.
+    expect(charged($listing, 100, 'site'))->toBe(50.0);
 });
 
-it('follows the own-site percentage when the provider changes it', function () {
-    $listing = depositListing($this->pakistan, array_merge(SNAPSHOT_15, ['site_deposit_percentage' => 20]));
+it('ignores the stored own-site percentage entirely, so a merchant cannot set their own fee', function () {
+    \App\Models\CommissionRate::create([
+        'country_id' => $this->pakistan->id, 'listing_type' => 'facility', 'rate_percent' => 50,
+    ]);
 
-    expect(charged($listing, 100, 'site'))->toBe(20.0);
+    // Same listing, three different stored percentages, one charged number.
+    foreach ([0, 20, 99] as $stored) {
+        $listing = depositListing($this->pakistan, array_merge(SNAPSHOT_15, [
+            'site_deposit_percentage' => $stored,
+        ]));
+
+        expect(charged($listing, 100, 'site'))->toBe(50.0);
+    }
 });
 
-it('keeps a fixed deposit amount on both surfaces', function () {
+it('keeps a fixed deposit amount on the marketplace, but never on the own site', function () {
     \App\Models\CommissionRate::create([
         'country_id' => $this->pakistan->id, 'listing_type' => 'facility', 'rate_percent' => 50,
     ]);
@@ -150,27 +171,35 @@ it('keeps a fixed deposit amount on both surfaces', function () {
         'deposit' => ['enabled' => true, 'amount' => 25, 'percentage' => 15],
     ]));
 
-    // Charged PER BOOKING, matching paymentSplit() in the storefront's booking.js.
-    expect(charged($listing, 350, 'marketplace', 3))->toBe(75.0)
-        ->and(charged($listing, 350, 'site', 3))->toBe(75.0);
-    // ...and quoted as an amount, not a misleading percentage.
-    expect(quotedMarketplacePct($listing))->toBe(0.0);
+    // Marketplace: unchanged. A fixed amount is the provider's no-show
+    // protection and is charged per booking.
+    expect(charged($listing, 350, 'marketplace', 3))->toBe(75.0);
+
+    // Own site: the deposit is Bookboll's fee, so a stored amount must not win —
+    // otherwise a merchant sets their own commission by typing a number.
+    expect(charged($listing, 350, 'site', 3))->toBe(175.0);   // 50% of 350
 });
 
-it('floors the deposit, as the storefront does', function () {
+it('rounds the deposit on the real money instead of flooring it', function () {
     \App\Models\CommissionRate::create([
         'country_id' => $this->pakistan->id, 'listing_type' => 'facility', 'rate_percent' => 50,
     ]);
     $listing = depositListing($this->pakistan, SNAPSHOT_15);
 
-    // 33.5 → 33: Stripe must take exactly what sat next to the Pay button.
-    expect(charged($listing, 67, 'marketplace'))->toBe(33.0);
+    // 50% of 67 is 33.50. This used to floor() in major units and charge 33,
+    // which is the same defect readmeAlamgir names for a 7.5% fee billed as 7.
+    // The storefront's paymentSplit() was moved off Math.floor in the same
+    // release so both ends still show one number.
+    expect(charged($listing, 67, 'marketplace'))->toBe(33.5);
 });
 
-it('takes nothing when there is no rate and no amount to charge', function () {
-    $listing = depositListing($this->pakistan, array_merge(SNAPSHOT_15, ['site_deposit_percentage' => 0]));
+it('takes nothing when the commission itself is zero', function () {
+    // Zero commission is a real configuration and must stay zero — never
+    // silently replaced by a default rate.
+    $listing = depositListing($this->pakistan, SNAPSHOT_15, ['commission_rate' => 0]);
 
-    expect(charged($listing, 100, 'site'))->toBe(0.0);
+    expect(charged($listing, 100, 'site'))->toBe(0.0)
+        ->and(charged($listing, 100, 'marketplace'))->toBe(0.0);
 });
 
 it('accepts surface on the booking payload', function () {

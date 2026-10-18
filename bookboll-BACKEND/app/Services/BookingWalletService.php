@@ -234,6 +234,52 @@ class BookingWalletService
         return self::COURT_COMMISSION_PCT;
     }
 
+    /**
+     * Can this venue's merchant actually be paid for a full-online booking?
+     *
+     * Needs a bookings-purpose wallet that is set up, active, not paused, and
+     * in the VENUE's country — money for a Qatar pitch cannot be settled
+     * through a route established for Pakistan. readmeAlamgir asks for exactly
+     * this: "Validate active payouts for full online payment in the correct
+     * venue country."
+     *
+     * This decides whether full-online is OFFERED. It never changes the
+     * commission: a connected payout does not waive Bookboll's fee, and the
+     * deposit method deliberately does not consult this at all.
+     */
+    public function venueHasActivePayout(?Venue $venue): bool
+    {
+        $ownerId = $venue?->owner_user_id;
+        if (! $ownerId) {
+            return false;
+        }
+
+        $wallets = ProviderWallet::where('owner_user_id', $ownerId)->get();
+        if ($wallets->isEmpty()) {
+            return false;
+        }
+
+        // Wallets predating the purpose column serve every purpose.
+        $migrated = $wallets->contains(fn ($w) => $w->purpose !== null);
+        $usable = $migrated
+            ? $wallets->filter(fn ($w) => ($w->purpose ?: 'subscription') === 'bookings')
+            : $wallets;
+
+        $venueCountryId = $this->countryIdForVenue($venue);
+
+        return $usable->contains(function ($w) use ($venueCountryId) {
+            if (! $w->setup_method || $w->setup_status !== 'active' || $w->payout_paused) {
+                return false;
+            }
+
+            // A wallet with no country recorded predates country-scoped payouts
+            // and is accepted, so this check cannot retire working routes.
+            return ! $venueCountryId
+                || ! $w->country_id
+                || (int) $w->country_id === (int) $venueCountryId;
+        });
+    }
+
     public function countryIdForVenue(?Venue $venue)
     {
         if (! $venue) {

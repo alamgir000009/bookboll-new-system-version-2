@@ -10,6 +10,7 @@ use App\Models\Promocode;
 use App\Models\PromocodeRedemption;
 use App\Models\User;
 use App\Support\AccessScope;
+use App\Support\CommissionPolicy;
 use App\Support\PremiumPlan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -80,6 +81,14 @@ class ProviderPlanService
             'renews_at'             => optional($sub?->current_period_end)?->toIso8601String(),
             'cancel_at_period_end'  => (bool) ($sub?->cancel_at_period_end),
             'has_subscription'      => (bool) ($sub?->stripe_subscription_id),
+            // Whether this merchant's own-site bookings get the halved
+            // commission. Deliberately NOT the same question as is_premium:
+            // a legacy trial and a past-due plan both keep product features
+            // but neither earns the discount, because neither has paid.
+            // The dashboard prefers this explicit answer over inferring one.
+            'own_site_commission_discount_eligible' => $platform
+                ? false
+                : CommissionPolicy::paidPlanEligible($b),
             'domain'                => [
                 'domain'     => $b?->brand_custom_domain ?: '',
                 'status'     => $b?->brand_domain_status ?: '',
