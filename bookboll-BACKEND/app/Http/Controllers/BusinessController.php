@@ -10,7 +10,20 @@ class BusinessController extends Controller
     public function __construct(
         protected BusinessService $businessService,
         protected \App\Services\EmailVerificationService $emailVerification,
+        protected \App\Services\BusinessIdentityService $identity,
     ) {}
+
+    /** What business administration this deployment actually supports. */
+    public function capabilities(Request $request)
+    {
+        return $this->identity->capabilities($request);
+    }
+
+    /** Register a business with no owner account (readmeAlamgir §1). */
+    public function adminStore(Request $request)
+    {
+        return $this->identity->store($request);
+    }
 
     public function register(Request $request)
     {

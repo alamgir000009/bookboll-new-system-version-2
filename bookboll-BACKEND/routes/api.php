@@ -402,6 +402,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::apiResource('users', UserController::class);
             Route::get('users/required-data', [UserController::class, 'requiredDataForUser']);
             Route::get('businesses', [BusinessController::class, 'adminIndex'])->name('businesses.index');
+            // Registering an operator before anyone from it has a login, and the
+            // capability probe the dashboard checks before offering that form.
+            Route::get('businesses/capabilities', [BusinessController::class, 'capabilities'])->name('businesses.capabilities');
+            Route::post('businesses', [BusinessController::class, 'adminStore'])->name('businesses.store');
         });
 
         // A user editing their OWN profile needs no team rights.

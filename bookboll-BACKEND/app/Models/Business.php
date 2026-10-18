@@ -68,6 +68,8 @@ class Business extends Model
         'brand_custom_domain',
         'brand_domain_status',
         'brand_domain_paid_at',
+        'created_by',
+        'idempotency_key',
     ];
 
     protected function casts(): array
@@ -101,6 +103,27 @@ class Business extends Model
      * id, so these survive an owner change and exist even when `owner_id` is
      * null — an unclaimed business can still have staff.
      */
+    /**
+     * Whether this deployment can hold a business with no owner account.
+     *
+     * Checked against the live schema rather than assumed: the create-without-
+     * owner capability is advertised from this, and advertising it on a database
+     * where owner_id is still NOT NULL would strand a half-filled form with a
+     * constraint violation.
+     */
+    public static function ownerlessSupported(): bool
+    {
+        try {
+            $column = collect(\Illuminate\Support\Facades\Schema::getColumns('businesses'))
+                ->firstWhere('name', 'owner_id');
+
+            return (bool) ($column['nullable'] ?? false);
+        } catch (\Throwable $e) {
+            // Cannot prove it, so do not promise it.
+            return false;
+        }
+    }
+
     public function memberships(): HasMany
     {
         return $this->hasMany(BusinessMembership::class);
