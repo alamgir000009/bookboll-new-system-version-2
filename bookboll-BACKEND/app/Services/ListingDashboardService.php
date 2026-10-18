@@ -634,85 +634,101 @@ class ListingDashboardService
         }
     }
 
+    /**
+     * Save the opening hours WITHOUT throwing the rows away first.
+     *
+     * This deleted every Schedule for the listing and re-inserted the payload,
+     * so merely opening the editor and pressing Save burned seven ids and wrote
+     * seven "Schedule created" lines into the activity log — for a listing
+     * nobody had touched. The log stopped being able to answer "what changed",
+     * which is the only thing it is for. (The mass delete fired no model events,
+     * so the matching deletions were not even recorded: the log showed creates
+     * out of nowhere.)
+     *
+     * A row's identity is its day plus its position in that day's list of
+     * periods — a day can legitimately have two windows, e.g. a morning and an
+     * evening block. Match on that, update in place, and only insert or delete
+     * what the payload actually added or removed.
+     */
     protected function syncHours(Listing $listing, array $hoursUi): void
     {
-        Schedule::where('listing_id', $listing->id)->delete();
         $venueId = (int) $listing->venue_id;
 
+        // Grouped by day, in a stable order, so period 2 of Tuesday keeps being
+        // period 2 of Tuesday across saves.
+        $existing = Schedule::where('listing_id', $listing->id)
+            ->orderBy('id')
+            ->get()
+            ->groupBy('day');
+
+        $keep = [];
+
         foreach ($hoursUi as $day) {
-            $dow = (int) ($day['day_of_week'] ?? -1);
+            $dow     = (int) ($day['day_of_week'] ?? -1);
             $dayName = self::DAY_NAMES[$dow] ?? null;
             if (! $dayName) {
                 continue;
             }
-            $isOpen = (bool) ($day['is_open'] ?? false);
+
+            $isOpen  = (bool) ($day['is_open'] ?? false);
             $inherit = (bool) ($day['inherit_from_location'] ?? false);
 
+            $rows = [];
             if (! $isOpen) {
-                Schedule::create([
+                $rows[] = [
+                    'is_open'    => false,
+                    'start_time' => null,
+                    'end_time'   => null,
+                ];
+            } else {
+                $periods = $day['periods'] ?? [];
+                if (! $periods && isset($day['open_time'])) {
+                    $periods = [['open_time' => $day['open_time'], 'close_time' => $day['close_time'] ?? '23:00']];
+                }
+                if (! $periods) {
+                    $periods = [['open_time' => '09:00', 'close_time' => '23:00']];
+                }
+
+                foreach ($periods as $p) {
+                    $rows[] = [
+                        'is_open'    => true,
+                        'start_time' => $this->normalizeHm($p['open_time'] ?? '09:00'),
+                        'end_time'   => $this->normalizeHm($p['close_time'] ?? '23:00'),
+                    ];
+                }
+            }
+
+            $forDay = $existing->get($dayName, collect())->values();
+
+            foreach ($rows as $idx => $attrs) {
+                $attrs += [
                     'venue_id'              => $venueId,
                     'listing_id'            => $listing->id,
                     'day'                   => $dayName,
-                    'is_open'               => false,
-                    'start_time'            => null,
-                    'end_time'              => null,
                     'inherit_from_location' => $inherit,
-                ]);
-                continue;
-            }
+                ];
 
-            $periods = $day['periods'] ?? [];
-            if (! $periods && isset($day['open_time'])) {
-                $periods = [['open_time' => $day['open_time'], 'close_time' => $day['close_time'] ?? '23:00']];
+                $row = $forDay->get($idx);
+                if ($row) {
+                    $row->fill($attrs)->save();
+                } else {
+                    $row = Schedule::create($attrs);
+                }
+                $keep[] = (int) $row->id;
             }
-            if (! $periods) {
-                $periods = [['open_time' => '09:00', 'close_time' => '23:00']];
-            }
+        }
 
-            foreach ($periods as $p) {
-                Schedule::create([
-                    'venue_id'              => $venueId,
-                    'listing_id'            => $listing->id,
-                    'day'                   => $dayName,
-                    'is_open'               => true,
-                    'start_time'            => $this->normalizeHm($p['open_time'] ?? '09:00'),
-                    'end_time'              => $this->normalizeHm($p['close_time'] ?? '23:00'),
-                    'inherit_from_location' => $inherit,
-                ]);
-            }
+        // Only the periods the editor actually dropped. Deleted one at a time so
+        // the removal is logged — a mass delete fires no model events, which is
+        // how the old churn stayed half-invisible.
+        $stale = Schedule::where('listing_id', $listing->id)
+            ->when($keep, fn ($q) => $q->whereNotIn('id', $keep))
+            ->get();
+        foreach ($stale as $row) {
+            $row->delete();
         }
     }
 
-    /**
-     * Save the pricing grid WITHOUT throwing the rows away first.
-     *
-     * This used to delete every group and cell for the listing and insert the
-     * payload fresh, so a group kept its identity for exactly as long as nobody
-     * pressed Save. Each save burned a block of auto-increment ids, reset
-     * `created_by` and `created_at` to the last editor, logged a delete and a
-     * create for every row, and changed the `source_id` the slot API hands out
-     * for a group that had not been touched. A real edit and a no-op save were
-     * indistinguishable in the audit log.
-     *
-     * So: match the payload against what is already stored, UPDATE those in
-     * place, INSERT only what is genuinely new, and delete only what the editor
-     * dropped. A group that nobody changed comes out byte-identical, same id.
-     */
-    /**
-     * Save the pricing grid. Groups are the only thing stored.
-     *
-     * There used to be a second table, `pricing_cells`, holding one row per
-     * painted square. It was read FIRST when pricing a slot and won outright,
-     * without re-checking that the group it named still covered that day or
-     * hour — so a square painted before a group's Days were edited went on
-     * charging the old price indefinitely while the group card said otherwise.
-     * Two writable sources for one number and nothing reconciling them.
-     *
-     * Posted cells are still accepted, because a square IS a statement about
-     * coverage: "this day and hour belong to group X". They are folded into the
-     * groups' own Start/End/Days and then discarded, so painting the grid and
-     * editing a group card are two ways of writing the same thing.
-     */
     protected function syncPricing(Listing $listing, array $groups, array $cells): void
     {
         $this->syncPricingGroups($listing, $this->foldCellsIntoGroups($groups, $cells));
