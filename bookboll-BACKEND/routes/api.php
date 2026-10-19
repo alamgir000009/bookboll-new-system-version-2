@@ -46,6 +46,7 @@ use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PromocodeController;
+use App\Http\Controllers\ProviderSettingsController;
 use App\Http\Controllers\ResourceController;
 use App\Http\Controllers\OAuthBrokerController;
 use App\Http\Controllers\ReviewController;
@@ -112,6 +113,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('subscribe-onesignal', [UserController::class, 'subscribeOneSignal'])->name('customer.subscribe-onesignal');
 
     Route::put('business/brand', [BusinessController::class, 'updateBrand'])->name('business.brand.update');
+
+    // Settings → Business Profile / My Account / Notifications. Each acts on
+    // the signed-in person and the business they own, never on a submitted id.
+    // These are the PERSONAL preferences; notification-templates below is the
+    // separate per-business copy that goes out to customers.
+    Route::get('business/settings', [ProviderSettingsController::class, 'show'])->name('business.settings.show');
+    Route::put('business/settings/profile', [ProviderSettingsController::class, 'updateBusiness'])->name('business.settings.profile');
+    Route::put('business/settings/account', [ProviderSettingsController::class, 'updateAccount'])->name('business.settings.account');
+    Route::put('business/settings/notifications', [ProviderSettingsController::class, 'updateNotifications'])->name('business.settings.notifications');
+
     Route::get('business/notification-templates', [BusinessNotificationTemplateController::class, 'show'])->name('business.notification-templates.show');
     Route::put('business/notification-templates', [BusinessNotificationTemplateController::class, 'update'])->name('business.notification-templates.update');
 

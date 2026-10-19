@@ -37,7 +37,8 @@ class ClassSubscriptionObserver
             'ok',
             'New member — '.($sub->customer_name ?: ($sub->customer_email ?: 'a customer')),
             $program?->name ?: 'Membership',
-            '/subscriptions'
+            '/subscriptions',
+            'member_new'
         );
     }
 

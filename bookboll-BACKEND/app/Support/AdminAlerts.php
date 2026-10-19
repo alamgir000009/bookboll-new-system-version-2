@@ -20,11 +20,22 @@ class AdminAlerts
     /** Bookboll staff who should see platform-wide alerts. */
     private const PLATFORM_ROLES = ['super_admin', 'admin', 'country_admin', 'platform_staff'];
 
-    /** Send to specific users. */
-    public static function toUsers($users, string $kind, string $tone, string $title, string $sub = '', string $link = '/admin'): void
+    /**
+     * Send to specific users.
+     *
+     * `$event` names the personal preference this alert answers to (see
+     * ProviderNotifications::EVENTS). Each recipient is checked separately —
+     * two people on one business choose differently. An alert with no event,
+     * or an event nobody listed, is always delivered: silence must never be
+     * what happens by accident.
+     */
+    public static function toUsers($users, string $kind, string $tone, string $title, string $sub = '', string $link = '/admin', ?string $event = null): void
     {
         try {
             foreach (collect($users)->filter() as $user) {
+                if (! ProviderNotifications::allows($user, $event)) {
+                    continue;
+                }
                 $user->notify(new AdminAlert($kind, $tone, $title, $sub, $link));
                 broadcast(new AdminAppRefresh((int) $user->id, ['reason' => 'notification']));
             }
@@ -34,13 +45,13 @@ class AdminAlerts
     }
 
     /** Send to one user id (the provider owner, a staff member, …). */
-    public static function toUser(?int $userId, string $kind, string $tone, string $title, string $sub = '', string $link = '/admin'): void
+    public static function toUser(?int $userId, string $kind, string $tone, string $title, string $sub = '', string $link = '/admin', ?string $event = null): void
     {
         if (! $userId) {
             return;
         }
 
-        self::toUsers(User::where('id', $userId)->get(), $kind, $tone, $title, $sub, $link);
+        self::toUsers(User::where('id', $userId)->get(), $kind, $tone, $title, $sub, $link, $event);
     }
 
     /** Send to Bookboll staff — country admins only for their own countries. */
@@ -65,12 +76,12 @@ class AdminAlerts
     }
 
     /** Send to whoever owns the venue (their team sees it via the owner's feed). */
-    public static function toVenueOwner(?int $venueId, string $kind, string $tone, string $title, string $sub = '', string $link = '/admin'): void
+    public static function toVenueOwner(?int $venueId, string $kind, string $tone, string $title, string $sub = '', string $link = '/admin', ?string $event = null): void
     {
         if (! $venueId) {
             return;
         }
 
-        self::toUser((int) Venue::where('id', $venueId)->value('owner_user_id') ?: null, $kind, $tone, $title, $sub, $link);
+        self::toUser((int) Venue::where('id', $venueId)->value('owner_user_id') ?: null, $kind, $tone, $title, $sub, $link, $event);
     }
 }

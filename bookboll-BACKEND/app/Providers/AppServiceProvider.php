@@ -2,10 +2,12 @@
 namespace App\Providers;
 
 use App\Observers\ClassSubscriptionObserver;
+use App\Observers\PaymentObserver;
 use App\Support\GeoSoftDeletes;
 use App\Support\TenantOrigins;
 use App\Observers\BookingObserver;
 use App\Models\ClassSubscription;
+use App\Models\Payment;
 use App\Models\Booking;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Gate;
@@ -19,6 +21,7 @@ class AppServiceProvider extends ServiceProvider
 
         Booking::observe(BookingObserver::class);
         ClassSubscription::observe(ClassSubscriptionObserver::class);
+        Payment::observe(PaymentObserver::class);
 
         Gate::define('viewLogViewer', function ($user = null) {
             return $user?->hasRole('super_admin') ?? false;

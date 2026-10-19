@@ -33,6 +33,8 @@ class Business extends Model
 
     protected $fillable = [
         'name',
+        'phone',
+        'description',
         'status',
         'owner_id',
         'username',

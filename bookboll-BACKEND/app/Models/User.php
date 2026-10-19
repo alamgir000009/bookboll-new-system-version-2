@@ -50,6 +50,7 @@ class User extends Authenticatable
         'bio',
         'is_private',
         'is_discoverable',
+        'notification_preferences',
         'phone',
         'email',
         'status',
@@ -111,6 +112,7 @@ class User extends Authenticatable
             'marketing_updated_at'  => 'datetime',
             'is_private'            => 'boolean',
             'is_discoverable'       => 'boolean',
+            'notification_preferences' => 'array',
         ];
     }
 

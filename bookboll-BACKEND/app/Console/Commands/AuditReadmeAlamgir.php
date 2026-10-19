@@ -691,6 +691,86 @@ class AuditReadmeAlamgir extends Command
             'the old owner/admin check locked moderators out of their job'
         );
 
+        // 20. Provider settings (readmeAlamgir §11)
+        $this->check(
+            'Routes: business/settings read + three updates',
+            $this->hasRoute('GET', 'business/settings')
+                && $this->hasRoute('PUT', 'business/settings/profile')
+                && $this->hasRoute('PUT', 'business/settings/account')
+                && $this->hasRoute('PUT', 'business/settings/notifications'),
+            'the save handler used to report updates unavailable'
+        );
+        $this->check(
+            'Schema: businesses.phone + businesses.description',
+            Schema::hasColumn('businesses', 'phone') && Schema::hasColumn('businesses', 'description'),
+            'the form showed fields that had no column anywhere'
+        );
+        $this->check(
+            'Schema: users.notification_preferences',
+            Schema::hasColumn('users', 'notification_preferences'),
+            'per person, not per business — two staff choose separately'
+        );
+        $this->check(
+            'Provider settings take no id from the request',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/ProviderSettingsService.php'));
+
+                // Resolved from the acting user only. An accepted id is how one
+                // provider edits another business.
+                return ! preg_match("/input\\('(business_id|owner_id|user_id)'/", $src)
+                    && str_contains($src, 'ownedBusiness(')
+                    && str_contains($src, "'owner_user_id', 'business_id'");
+            })(),
+            'staff cannot reach another business or rewrite owner identity'
+        );
+        $this->check(
+            'An email change is refused, not quietly ignored',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/ProviderSettingsService.php'));
+
+                return str_contains($src, 'Email changes need to be verified by support.');
+            })(),
+            'it controls where password resets are sent'
+        );
+        $this->check(
+            'Notification preferences are consulted by delivery',
+            (function () {
+                $alerts = (string) file_get_contents(app_path('Support/AdminAlerts.php'));
+                $policy = (string) file_get_contents(app_path('Support/ProviderNotifications.php'));
+
+                // A preference nothing reads is the same empty promise as a
+                // switch that saves nowhere.
+                return str_contains($alerts, 'ProviderNotifications::allows($user, $event)')
+                    && str_contains($policy, 'public const ALWAYS_ON');
+            })(),
+            'the switches used to change local component state only'
+        );
+        $this->check(
+            'Every offered switch has an alert that raises it',
+            (function () {
+                $events = \App\Support\ProviderNotifications::EVENTS;
+                $sources = '';
+                foreach ([
+                    'Observers/BookingObserver.php',
+                    'Observers/PaymentObserver.php',
+                    'Observers/ClassSubscriptionObserver.php',
+                ] as $file) {
+                    $sources .= (string) file_get_contents(app_path($file));
+                }
+
+                // A switch for an alert nobody sends is the same empty promise
+                // in a new coat — which is why wallet_low is not offered.
+                foreach (array_keys($events) as $event) {
+                    if (! str_contains($sources, "'".$event."'")) {
+                        return false;
+                    }
+                }
+
+                return $events !== [] && ! array_key_exists('wallet_low', $events);
+            })(),
+            'no switch for a notification nothing raises'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -708,7 +788,6 @@ class AuditReadmeAlamgir extends Command
             'Own-site commission: the owner review path for existing cash-only'
                 .' listings (policy, rating, rounding, method enforcement, the'
                 .' booking snapshot and the wallet ledger are DONE)',
-            'Provider settings profile/account + notification preferences',
             'Mobile-app adoption APIs',
             'Rewards for MEMBERSHIP, host_game and host_tournament checkouts'
                 .' (venue checkout is fully enforced; those three refuse a quote'
