@@ -870,6 +870,71 @@ class AuditReadmeAlamgir extends Command
             'deleting an account removes its records through the foreign key'
         );
 
+        // 22. Own-site owner review path (readmeAlamgir §5)
+        $this->check(
+            'Routes: own-site review queue + apply',
+            $this->hasRoute('GET', 'listings/own-site-review')
+                && $this->hasRoute('POST', 'listings/own-site-review'),
+            'cash-only own-site listings had no way back to bookable'
+        );
+        $this->check(
+            'The review path never chooses for the owner',
+            (function () {
+                $service = $this->code('Services/OwnSiteReviewService.php');
+                $policy = $this->code('Support/OwnSiteReview.php');
+
+                // Enabling deposits for them would start charging their
+                // customers a fee they never agreed to collect. The method is
+                // required, there is no default, and there are exactly three.
+                return str_contains($service, "'method'       => 'required|string|in:'")
+                    && str_contains($service, "'listing_ids'  => 'required|array|min:1")
+                    && str_contains($policy, "RESOLUTIONS = ['deposit', 'online', 'hide']")
+                    && ! preg_match('/method\\s*\\?\\?\\s*.deposit./', $service);
+            })(),
+            'readmeAlamgir: do not silently enable deposits on their behalf'
+        );
+        $this->check(
+            'The queue and the per-listing check cannot disagree',
+            (function () {
+                $policy = $this->code('Support/OwnSiteReview.php');
+
+                // The queue asks in SQL so it can be counted and paged; apply()
+                // asks in PHP. A disagreement either hides a broken listing or
+                // offers to fix a working one.
+                return str_contains($policy, 'public static function needsReview')
+                    && str_contains($policy, 'public static function scopeNeedsReview')
+                    // Without COALESCE a missing JSON key compares as NULL, and
+                    // the oldest rows — the ones with no own-site keys at all —
+                    // would be the ones left out of the queue.
+                    && str_contains($policy, 'COALESCE(JSON_UNQUOTE(JSON_EXTRACT(');
+            })(),
+            'one definition, asked two ways, pinned by a test'
+        );
+        $this->check(
+            'A bulk apply reports what it refused',
+            (function () {
+                $service = $this->code('Services/OwnSiteReviewService.php');
+
+                return str_contains($service, "'applied'   => \$applied")
+                    && str_contains($service, "'refused'   => \$refused")
+                    && str_contains($service, "'already_resolved'")
+                    && str_contains($service, "'payouts_not_connected'");
+            })(),
+            'silently skipping leaves an owner believing all is fixed'
+        );
+        $this->check(
+            'The deposit preview comes from the plan, not a stored number',
+            (function () {
+                $service = $this->code('Services/OwnSiteReviewService.php');
+
+                // A one-time database update could never be the source of
+                // truth: future plan changes have to apply dynamically.
+                return str_contains($service, 'CommissionPolicy::quote(')
+                    && str_contains($service, 'CommissionPolicy::effectiveRatePct(');
+            })(),
+            'upgrading changes the rate with no listing re-saved'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -884,9 +949,6 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Own-site commission: the owner review path for existing cash-only'
-                .' listings (policy, rating, rounding, method enforcement, the'
-                .' booking snapshot and the wallet ledger are DONE)',
             'Rewards for MEMBERSHIP, host_game and host_tournament checkouts'
                 .' (venue checkout is fully enforced; those three refuse a quote'
                 .' outright rather than ignoring one)',

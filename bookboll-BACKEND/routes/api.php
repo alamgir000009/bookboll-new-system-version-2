@@ -46,6 +46,7 @@ use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\MobileAppAdoptionController;
+use App\Http\Controllers\OwnSiteReviewController;
 use App\Http\Controllers\PromocodeController;
 use App\Http\Controllers\ProviderSettingsController;
 use App\Http\Controllers\ResourceController;
@@ -364,6 +365,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Listings dashboard
         Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
+            // The owner review path for own-site listings that can no longer be
+            // booked: payment on arrival is gone from that channel, so a
+            // cash-only row takes nothing. Read the queue, then apply a method
+            // the OWNER names — nothing here chooses for them.
+            Route::get('listings/own-site-review', [OwnSiteReviewController::class, 'index'])->name('listings.own-site-review');
+            Route::post('listings/own-site-review', [OwnSiteReviewController::class, 'apply'])->name('listings.own-site-review.apply');
             Route::get('listings/dashboard', [ListingController::class, 'dashboard'])->name('listings.dashboard');
             Route::post('listings/dashboard', [ListingController::class, 'dashboardStore'])->name('listings.dashboard.store');
             Route::post('listings/dashboard/sort', [ListingController::class, 'dashboardSort'])->name('listings.dashboard.sort');
