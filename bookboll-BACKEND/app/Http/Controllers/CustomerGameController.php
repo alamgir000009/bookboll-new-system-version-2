@@ -33,10 +33,14 @@ class CustomerGameController extends Controller
         // anything is reserved, priced or charged, so a rejected event has not
         // taken a court or the host's money. Tournaments are exempt: their form
         // has no photo step, so storeTournament() drops these rules.
-        return $this->games->create(auth()->user(), $request->validate($this->rules() + [
+        // array_merge, NOT the `+` union: with `+` the left operand wins on a
+        // duplicate key, so rules()' own `images => nullable|array` silently
+        // discarded both of these and a game could be published with no photo
+        // and with an image URL belonging to somebody else.
+        return $this->games->create(auth()->user(), $request->validate(array_merge($this->rules(), [
             'images'   => 'required|array|min:1',
             'images.*' => ['required', 'string', 'max:2048', new UploadedEventImage],
-        ]));
+        ])));
     }
 
     /** Events posted to a community. */

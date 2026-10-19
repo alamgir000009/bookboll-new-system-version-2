@@ -997,6 +997,23 @@ class AuditReadmeAlamgir extends Command
             'two same-priced programmes used to fingerprint identically'
         );
 
+        // 24. Hosted-event content (readmeAlamgir "Required hosting content")
+        $this->check(
+            'Game creation actually applies its photo rules',
+            (function () {
+                $code = $this->code('Http/Controllers/CustomerGameController.php');
+
+                // `$rules + [...]` keeps the LEFT operand on a duplicate key, so
+                // the base rules' own `images => nullable|array` threw away both
+                // the "at least one photo" requirement and the ownership check.
+                // A game could be published with no photo, or with somebody
+                // else's image URL.
+                return str_contains($code, 'array_merge($this->rules(), [')
+                    && ! str_contains($code, '$this->rules() + [');
+            })(),
+            'an array union silently discarded both of them'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
