@@ -121,3 +121,41 @@ test('chat permission changes reject invalid input, denial and silent API drops'
   reject()
   assert.equal((await api.updateCommunityChatPermission('crew', 'admins')).error, 'Action was denied.')
 })
+
+/* The server makes these same decisions (app/Support/CommunityPermissions.php).
+ * If the two disagree, a member is shown a compose box the server rejects, or a
+ * moderator is handed a permissions panel that 403s. This table is written out
+ * in full on both sides on purpose: changing one without the other fails. */
+const CONTRIBUTE_MATRIX = [
+  ['owner', 'members', true], ['owner', 'moderators', true], ['owner', 'admins', true],
+  ['admin', 'members', true], ['admin', 'moderators', true], ['admin', 'admins', true],
+  ['moderator', 'members', true], ['moderator', 'moderators', true], ['moderator', 'admins', false],
+  ['member', 'members', true], ['member', 'moderators', false], ['member', 'admins', false],
+  ['visitor', 'members', false], ['visitor', 'moderators', false], ['visitor', 'admins', false],
+]
+
+test('the role by audience matrix matches the server, for the feed and the chat alike', async () => {
+  const { canContribute } = await import('../src/lib/communityAccess.js')
+
+  for (const channel of ['posts', 'chat']) {
+    for (const [role, audience, expected] of CONTRIBUTE_MATRIX) {
+      // A visitor is anyone without accepted membership: never joined, or
+      // still pending. The owner is authoritative through owner_customer_id.
+      const community = {
+        owner_customer_id: role === 'owner' ? 'me' : 'someone-else',
+        membership: role === 'visitor' ? { status: 'pending', role: 'member' } : { status: 'accepted', role },
+        settings: { post_permission: channel === 'posts' ? audience : 'members', chat_permission: channel === 'chat' ? audience : 'members' },
+      }
+      assert.equal(canContribute(community, 'me', channel), expected, `${role} / ${audience} / ${channel}`)
+    }
+  }
+})
+
+test('a pending moderator has no powers at all, however the row reads', async () => {
+  const { canContribute, canModerateCommunity, communityRole } = await import('../src/lib/communityAccess.js')
+  const pendingMod = { owner_customer_id: 'other', membership: { status: 'pending', role: 'moderator' }, settings: { post_permission: 'members', chat_permission: 'members' } }
+
+  assert.equal(communityRole(pendingMod, 'me'), 'visitor')
+  assert.equal(canContribute(pendingMod, 'me', 'posts'), false)
+  assert.equal(canModerateCommunity(pendingMod, 'me'), false)
+})
