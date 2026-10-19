@@ -195,6 +195,10 @@ function mapLaravelUserToCustomer(user, preferences = {}) {
     bio: user?.bio || '',
     photos: Array.isArray(user?.photos) ? user.photos.filter(Boolean) : [],
     is_private: user?.is_private === true,
+    // Separate from is_private: a private profile is still reachable by link,
+    // so this is the one that governs being FOUND by name. Absent on an older
+    // server, which means findable — the same as the column's default.
+    is_discoverable: user?.is_discoverable !== false,
     marketing_email: !!notif.marketing_emails,
     marketing_sms: !!notif.marketing_sms,
     marketing_whatsapp: !!notif.marketing_whatsapp,
@@ -299,6 +303,7 @@ export async function updateCustomerProfile(patch) {
   if ('bio' in patch) body.bio = patch.bio ?? ''
   if ('photos' in patch) body.photos = Array.isArray(patch.photos) ? patch.photos.filter(Boolean) : []
   if ('is_private' in patch) body.is_private = !!patch.is_private
+  if ('is_discoverable' in patch) body.is_discoverable = !!patch.is_discoverable
 
   if (Object.keys(body).length) {
     const res = await apiFetch('/customer/update-profile', { method: 'POST', body })
@@ -364,6 +369,7 @@ export async function saveCustomerAccount(patch) {
       bio: patch.bio ?? '',
       photos: Array.isArray(patch.photos) ? patch.photos.filter(Boolean) : [],
       is_private: !!patch.is_private,
+      is_discoverable: patch.is_discoverable !== false,
     },
   })
   if (!profileRes.success) return { error: formatApiError(profileRes, 'Could not save your profile.') }

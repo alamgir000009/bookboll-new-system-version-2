@@ -11,10 +11,10 @@ import { ensureSignedIn } from '../../lib/authGate.js'
 import PersonalPage from '../components/PersonalPage.vue'
 useSeo({ title: 'My account', noindex: true, path: '/account' })
 import BrandMark from '../../components/BrandMark.vue'
-import { User, Mail, LogOut, Trophy, Ticket, Sparkles, CalendarCheck, Dumbbell, Camera, Plus, X, ArrowRight, Loader, Check, Lock, Globe } from 'lucide-vue-next'
+import { User, Mail, LogOut, Trophy, Ticket, Sparkles, CalendarCheck, Dumbbell, Camera, Plus, X, ArrowRight, Loader, Check, Lock, Globe, Search, EyeOff } from 'lucide-vue-next'
 
 const router = useRouter()
-const edit = ref({ full_name: '', bio: '', is_private: false, photos: [], marketing_email: false, marketing_sms: false, marketing_whatsapp: false })
+const edit = ref({ full_name: '', bio: '', is_private: false, is_discoverable: true, photos: [], marketing_email: false, marketing_sms: false, marketing_whatsapp: false })
 // Live profile-strength meter (mirrors what hosts see when accepting join requests).
 const strength = computed(() => profileStrength({
   full_name: edit.value.full_name, bio: edit.value.bio, avatar_url: avatarUrl.value, photos: edit.value.photos,
@@ -40,6 +40,7 @@ function fillFromCustomer() {
   edit.value.full_name = c.full_name || ''
   edit.value.bio = c.bio || ''
   edit.value.is_private = c.is_private === true
+  edit.value.is_discoverable = c.is_discoverable !== false
   edit.value.photos = Array.isArray(c.photos) ? [...c.photos] : []
   edit.value.marketing_email = c.marketing_email === true
   edit.value.marketing_sms = c.marketing_sms === true
@@ -99,6 +100,7 @@ async function saveProfile() {
     full_name: name,
     bio: edit.value.bio.trim(),
     is_private: edit.value.is_private,
+    is_discoverable: edit.value.is_discoverable,
     avatar_url: avatarUrl.value,
     photos: edit.value.photos,
     marketing_email: edit.value.marketing_email,
@@ -190,6 +192,18 @@ function signOut() { customerSignOut(); router.push('/') }
               <small>{{ edit.is_private ? 'Only approved followers see your posts, photos & stats. Follow requests need your approval.' : 'Anyone can see your profile, posts and photos.' }}</small>
             </span>
             <span class="acc-toggle" :class="{ on: edit.is_private }"><span class="acc-knob"></span></span>
+          </button>
+
+          <!-- Being FOUND is a separate choice from who can see your posts: a
+               private account is still reachable by link, so turning privacy on
+               does not take you out of search. This is the one that does. -->
+          <button type="button" role="switch" :aria-checked="edit.is_discoverable" aria-label="Findable by name in search" class="acc-priv" :class="{ on: edit.is_discoverable }" @click="edit.is_discoverable = !edit.is_discoverable">
+            <component :is="edit.is_discoverable ? Search : EyeOff" :size="18" />
+            <span class="acc-priv-txt">
+              <b>{{ edit.is_discoverable ? 'Findable by name' : 'Not findable by name' }}</b>
+              <small>{{ edit.is_discoverable ? 'People can find you by searching your name. Your profile link keeps working either way.' : 'You won’t appear in people search. Anyone with your profile link can still open it.' }}</small>
+            </span>
+            <span class="acc-toggle" :class="{ on: edit.is_discoverable }"><span class="acc-knob"></span></span>
           </button>
 
           <h3 class="acc-subsection-title">Profile photos</h3>

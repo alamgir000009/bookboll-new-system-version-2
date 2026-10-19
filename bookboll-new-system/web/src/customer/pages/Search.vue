@@ -7,6 +7,7 @@ import { brandShows } from '../../lib/brand.js'
 import { apiFetch } from '../../lib/api.js'
 import { useSeo } from '../../lib/seo.js'
 import { emptySearchCatalog, fetchSearchCatalog, readSearchQuery, searchCatalog } from '../../lib/marketplaceSearch.js'
+import { PEOPLE_PAGE_SIZE, fetchPeople, peopleSummary } from '../../lib/peopleSearch.js'
 import FacilityCard from '../components/FacilityCard.vue'
 import ProgramCard from '../components/ProgramCard.vue'
 import GameCard from '../components/GameCard.vue'
@@ -24,6 +25,14 @@ const limit = ref(24)
 let requestId = 0
 let searchTimer
 
+// People are searched on the server: the catalogue tabs filter a loaded page,
+// but there is no "all users" payload to filter and there must never be one.
+const people = ref([])
+const peopleResult = ref(null)
+const peopleLoading = ref(false)
+const peopleMore = ref(null)
+let peopleId = 0
+
 const sections = computed(() => [
   { key: 'listings', label: 'Listings', icon: Building2, to: '/facilities', hint: 'Courts, pitches and spaces', visible: brandShows('venues') },
   { key: 'communities', label: 'Communities', icon: UsersRound, to: '/communities', hint: 'Clubs and people to play with', visible: true },
@@ -38,6 +47,8 @@ const count = computed(() => sections.value.reduce((total, section) => total + m
 const shownCount = computed(() => activeType.value === 'all' ? count.value : (matches.value[activeType.value]?.length || 0))
 const visibleSections = computed(() => sections.value.filter(section => (activeType.value === 'all' || activeType.value === section.key) && matches.value[section.key].length))
 const relevantFailures = computed(() => sections.value.filter(section => failed.value.includes(section.key) && (activeType.value === 'all' || activeType.value === section.key)))
+const peopleCount = computed(() => peopleResult.value?.coverage?.status === 'complete' ? peopleResult.value.coverage.total : null)
+const peopleSummaryText = computed(() => peopleSummary(peopleResult.value, people.value.length))
 const suggestions = computed(() => [...new Set(catalog.value.listings.map(listing => listing.sport).filter(Boolean))].slice(0, 5))
 
 watch(activeType, async () => {
@@ -60,6 +71,28 @@ async function load() {
   failed.value = result.failed
   loading.value = false
 }
+async function loadPeople(cursor = null) {
+  const id = ++peopleId
+  peopleLoading.value = true
+  const result = await fetchPeople(apiFetch, { q: selection.value.q, cursor, limit: PEOPLE_PAGE_SIZE })
+  if (id !== peopleId) return
+  peopleResult.value = result
+  people.value = cursor ? [...people.value, ...result.users] : result.users
+  peopleMore.value = result.nextCursor
+  peopleLoading.value = false
+}
+
+// Searching people is a separate request, so it only runs while the tab is open
+// and only when the query changes — not on every city or catalogue change.
+watch([activeType, () => selection.value.q], ([type, q]) => {
+  if (type !== 'people') return
+  peopleId++
+  people.value = []
+  peopleMore.value = null
+  peopleResult.value = null
+  if (q.length >= 2) loadPeople()
+}, { immediate: true })
+
 watch([() => selectedCity.value?.id, () => selectedCity.value?.name, () => selectedCountry.value?.iso_code, () => enabledKeys.value.join(',')], load, { immediate: true })
 
 function commit(type = activeType.value, replace = false) {
@@ -72,7 +105,7 @@ function clearSearch() { draft.value = ''; commit(); input.value?.focus() }
 function trySearch(term) { draft.value = term; commit('all'); input.value?.focus() }
 watch(draft, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => commit(activeType.value, true), 250) })
 watch(() => route.query, () => { clearTimeout(searchTimer); draft.value = selection.value.q; limit.value = 24 })
-onBeforeUnmount(() => { clearTimeout(searchTimer); requestId++ })
+onBeforeUnmount(() => { clearTimeout(searchTimer); requestId++; peopleId++ })
 
 useSeo({ title: 'Search Bookboll', description: 'Find listings, communities, memberships and events on Bookboll.', path: '/search', noindex: true })
 </script>
@@ -95,14 +128,51 @@ useSeo({ title: 'Search Bookboll', description: 'Find listings, communities, mem
     <div ref="typeTrack" class="search-types" role="group" aria-label="Search categories">
       <button :aria-pressed="activeType === 'all'" @click="commit('all')">All<span v-if="ready && !loading">{{ count }}</span></button>
       <button v-for="section in sections" :key="section.key" :aria-pressed="activeType === section.key" @click="commit(section.key)"><component :is="section.icon" :size="16" />{{ section.label }}<span v-if="ready && !loading && !failed.includes(section.key)">{{ matches[section.key].length }}</span></button>
-      <button :aria-pressed="activeType === 'people'" @click="commit('people')"><UserRound :size="16" />People <small>Soon</small></button>
+      <button :aria-pressed="activeType === 'people'" @click="commit('people')"><UserRound :size="16" />People<span v-if="peopleCount !== null">{{ peopleCount }}</span></button>
     </div>
 
-    <div id="search-results" :aria-busy="loading && ready && activeType !== 'people'">
-      <section v-if="activeType === 'people'" class="search-empty">
-        <UserRound :size="30" /><h2>Find people on Bookboll</h2><p>Search by name is coming soon. You can already visit profiles through communities and events.</p>
-        <router-link to="/communities">Explore communities <ArrowRight :size="16" /></router-link>
-      </section>
+    <div id="search-results" :aria-busy="activeType === 'people' ? peopleLoading : (loading && ready)">
+      <template v-if="activeType === 'people'">
+        <p v-if="peopleLoading && !people.length" class="search-loading" role="status">Searching people…</p>
+
+        <!-- A server without the endpoint is not an error the customer caused. -->
+        <section v-else-if="peopleResult && peopleResult.unsupported" class="search-empty">
+          <UserRound :size="30" /><h2>Find people on Bookboll</h2><p>Search by name is coming soon. You can already visit profiles through communities and events.</p>
+          <router-link to="/communities">Explore communities <ArrowRight :size="16" /></router-link>
+        </section>
+
+        <!-- A search that could not run is not an empty result. -->
+        <div v-else-if="peopleResult && !peopleResult.ok" class="search-error" role="status">
+          <p>We couldn’t search people just now. Please try again.</p><button @click="loadPeople()">Retry</button>
+        </div>
+
+        <p v-else-if="!ready" class="search-minimum" role="status">Enter at least 2 characters to search for people.</p>
+
+        <template v-else-if="peopleResult">
+          <p class="search-summary" role="status">{{ peopleSummaryText }} for <strong>“{{ selection.q }}”</strong></p>
+
+          <section v-if="!people.length" class="search-empty">
+            <UserRound :size="30" /><h2>No people match “{{ selection.q }}”</h2>
+            <p>Try another spelling, or a first name on its own. People who turned off being found by name won’t appear here.</p>
+            <button @click="commit('all')">Search all categories <ArrowRight :size="16" /></button>
+          </section>
+
+          <section v-else class="search-section" aria-labelledby="results-people">
+            <div class="search-section-heading"><h2 id="results-people">People <span>{{ people.length }}</span></h2></div>
+            <div class="search-grid search-grid-people">
+              <router-link v-for="person in people" :key="person.id" class="search-person" :to="person.url">
+                <div class="search-person-photo"><img v-if="person.avatar" :src="person.avatar" alt="" loading="lazy" /><UserRound v-else :size="24" /></div>
+                <div class="search-person-body">
+                  <h3>{{ person.name }}<Lock v-if="person.isPrivate" :size="12" aria-label="Private profile" /></h3>
+                  <p>{{ person.hostedCount }} hosted · {{ person.joinedCount }} joined</p>
+                </div>
+                <ChevronRight :size="18" />
+              </router-link>
+            </div>
+            <button v-if="peopleMore" class="search-more" :disabled="peopleLoading" @click="loadPeople(peopleMore)">{{ peopleLoading ? 'Loading…' : 'Show more people' }}</button>
+          </section>
+        </template>
+      </template>
 
       <template v-else-if="!ready">
         <p v-if="selection.q" class="search-minimum" role="status">Enter at least 2 characters to search.</p>
@@ -157,6 +227,15 @@ useSeo({ title: 'Search Bookboll', description: 'Find listings, communities, mem
 .search-types button:hover { background: var(--surface); }
 .search-types span { font-size: 11px; font-weight: 600; background: var(--bg); padding: 2px 6px; border-radius: 5px; }
 .search-types small { font-size: 10px; font-weight: 500; }
+.search-grid-people { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.search-person { display: flex; align-items: center; gap: 13px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface); min-height: 44px; }
+.search-person:hover { border-color: var(--brand); }
+.search-person-photo { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 46px; height: 46px; border-radius: 50%; overflow: hidden; background: var(--bg); color: var(--text-muted); }
+.search-person-photo img { width: 100%; height: 100%; object-fit: cover; }
+.search-person-body { min-width: 0; flex: 1; }
+.search-person-body h3 { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; margin: 0 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-person-body p { font-size: 12px; color: var(--text-muted); }
+.search-person > svg:last-child { flex-shrink: 0; color: var(--text-muted); }
 .search-suggestions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 34px; }
 .search-suggestions > span { font-size: 13px; color: var(--text-muted); margin-inline-end: 4px; }
 .search-suggestions button { display: flex; align-items: center; gap: 7px; padding: 10px 14px; min-height: 44px; border: 1px solid var(--border); border-radius: 22px; background: var(--surface); font-size: 13px; color: var(--text); }
