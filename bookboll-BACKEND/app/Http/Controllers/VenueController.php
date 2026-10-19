@@ -24,6 +24,12 @@ class VenueController extends Controller
         return $this->agreements->store($request, (int) $id);
     }
 
+    /** Store a signed landlord contract on the private disk. */
+    public function storeVenueContract(Request $request, $id)
+    {
+        return $this->agreements->storeContract($request, (int) $id);
+    }
+
     public function index(Request $request)
     {
         return $this->venueService->all($request);

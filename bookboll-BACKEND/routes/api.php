@@ -301,6 +301,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
             // effective-dated, and never edited in place.
             Route::get('venues/{id}/operating-agreements', [VenueController::class, 'operatingAgreements'])->name('venues.agreements.index');
             Route::post('venues/{id}/operating-agreements', [VenueController::class, 'storeOperatingAgreement'])->name('venues.agreements.store');
+            // Signed contracts go to the PRIVATE disk, never the public image
+            // service, and carry no public URL.
+            Route::post('venues/{id}/contracts', [VenueController::class, 'storeVenueContract'])->name('venues.contracts.store');
             Route::get('venues/dashboard', [VenueController::class, 'dashboard'])->name('venues.dashboard');
             Route::post('venues/dashboard', [VenueController::class, 'dashboardStore'])->name('venues.dashboard.store');
             Route::post('venues/dashboard/sort', [VenueController::class, 'dashboardSort'])->name('venues.dashboard.sort');

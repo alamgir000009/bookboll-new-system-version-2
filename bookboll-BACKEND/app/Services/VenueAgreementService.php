@@ -6,6 +6,10 @@ use App\Models\Venue;
 use App\Models\VenueOperatingAgreement as Agreement;
 use App\Services\BookingWalletService;
 use App\Support\AccessScope;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
+use App\Support\ContractFileType;
+use App\Models\VenueContractDocument;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
@@ -27,6 +31,88 @@ class VenueAgreementService
 {
     public const CONTRACT_VERSION = 1;
     public const HISTORY_VERSION  = 2;
+
+    /** The largest contract this will take, matching the document's limit. */
+    public const MAX_CONTRACT_BYTES = 10 * 1024 * 1024;
+
+    /**
+     * Store a signed landlord contract, privately.
+     *
+     * Not an image upload: it never touches the public service, never gets a
+     * public URL, and is written to the private disk under a randomised name.
+     * The type is read from the file's own first bytes — an extension is chosen
+     * by whoever uploads and a content-type header is just a header.
+     *
+     * The document is created UNLINKED. It becomes a real contract only when an
+     * agreement citing it is saved; until then it is temporary and expires, so
+     * a failed save leaves an expiring upload rather than a permanent orphan.
+     */
+    public function storeContract(Request $request, int $venueId)
+    {
+        [$venue, $actor, $error] = $this->resolve($request, $venueId);
+        if ($error) {
+            return $error;
+        }
+        if (! $this->canManage($actor)) {
+            return sendError('You cannot manage operating agreements.', [], 403);
+        }
+
+        $request->validate([
+            'file'            => 'required|file|max:'.(self::MAX_CONTRACT_BYTES / 1024),
+            'idempotency_key' => 'required|string|max:120',
+        ]);
+
+        $key = (string) $request->input('idempotency_key');
+        if ($existing = VenueContractDocument::where('idempotency_key', $key)->first()) {
+            return sendSuccess('Contract stored', [
+                'contract_version' => self::CONTRACT_VERSION,
+                'document_id'      => (string) $existing->id,
+                'contract_name'    => $existing->original_name,
+            ]);
+        }
+
+        $file = $request->file('file');
+
+        // The bytes decide, not the name or the header.
+        $type = ContractFileType::detectFile($file->getRealPath());
+        if ($type === null) {
+            return sendError('That file is not a PDF, JPG or PNG.', [
+                'file' => ['Upload the signed contract as a PDF, JPG or PNG.'],
+            ], 422);
+        }
+
+        $path = sprintf(
+            'contracts/venues/%d/%s.%s',
+            $venue->id,
+            Str::uuid(),
+            ContractFileType::extensionFor($type)
+        );
+
+        // 'local' is storage/app/private — not web-served, so there is no URL
+        // to leak and nothing to guess.
+        if (! Storage::disk('local')->put($path, file_get_contents($file->getRealPath()))) {
+            return sendError('Could not store that contract. Please try again.', [], 500);
+        }
+
+        $doc = VenueContractDocument::create([
+            'venue_id'      => $venue->id,
+            'uploaded_by'   => $actor->id,
+            'disk'          => 'local',
+            'path'          => $path,
+            // Display only, trimmed; never used to build a path.
+            'original_name' => mb_substr((string) $file->getClientOriginalName(), 0, 255),
+            'mime'          => $file->getClientMimeType(),
+            'size_bytes'    => $file->getSize(),
+            'verified_type' => $type,
+            'idempotency_key' => $key,
+        ]);
+
+        return sendSuccess('Contract stored', [
+            'contract_version' => self::CONTRACT_VERSION,
+            'document_id'      => (string) $doc->id,
+            'contract_name'    => $doc->original_name,
+        ]);
+    }
 
     public function index(Request $request, int $venueId)
     {
@@ -95,7 +181,23 @@ class VenueAgreementService
             return sendError($shape[0], $shape[1], 422);
         }
 
-        return DB::transaction(function () use ($data, $venue, $actor) {
+        // A contract id is only usable if it is THIS venue's. Otherwise an id
+        // from another venue's agreement could be attached to this one, which
+        // is exactly the "Document must be owned by this venue/scope" rule.
+        $document = null;
+        if (! empty($data['contract_document_id'])) {
+            $document = VenueContractDocument::where('id', $data['contract_document_id'])
+                ->where('venue_id', $venue->id)
+                ->first();
+
+            if (! $document) {
+                return sendError('That contract is not available for this venue.', [
+                    'contract_document_id' => ['Upload the contract again.'],
+                ], 422);
+            }
+        }
+
+        return DB::transaction(function () use ($data, $venue, $actor, $document) {
             // Lock the venue's sequence so two saves cannot both believe they
             // are version N.
             $rows = Agreement::where('venue_id', $venue->id)
@@ -160,6 +262,12 @@ class VenueAgreementService
                 $latest->forceFill([
                     'superseded_on' => CarbonImmutable::parse($data['effective_from'])->subDay()->toDateString(),
                 ])->save();
+            }
+
+            // The upload stops being temporary now that an agreement cites it,
+            // so the expiry sweep leaves it alone.
+            if ($document && $document->isTemporary()) {
+                $document->forceFill(['linked_at' => now()])->save();
             }
 
             return sendSuccess('Operating agreement saved', [
@@ -232,7 +340,9 @@ class VenueAgreementService
             'change_reason'  => $a->change_reason ?: '',
             'supersedes_agreement_id' => $a->supersedes_agreement_id ? (string) $a->supersedes_agreement_id : null,
             'contract_document_id'    => $a->contract_document_id ? (string) $a->contract_document_id : null,
-            'contract_name'  => null,
+            'contract_name'  => $a->contract_document_id
+                ? VenueContractDocument::whereKey($a->contract_document_id)->value('original_name')
+                : null,
             'revenue_basis'  => $a->revenue_basis,
             'rent_proration' => $a->rent_proration,
             'notes'          => $a->notes ?: '',

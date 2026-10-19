@@ -36,3 +36,7 @@ Schedule::command('payments:backfill-stripe-urls')->hourly()->withoutOverlapping
 // run unattended. The unreferenced-file sweep is deliberately NOT scheduled:
 // it needs --delete-unreferenced and a human who has read its --dry-run first.
 Schedule::command('uploads:prune')->dailyAt('03:10');
+
+// Contract uploads nobody attached to an agreement. Only unlinked rows are
+// ever considered, so a contract in use is never at risk.
+Schedule::command('contracts:prune-temporary')->dailyAt('03:25');
