@@ -412,7 +412,32 @@ class AuditReadmeAlamgir extends Command
             'a half-migrated database gives the same answer'
         );
 
-        // 14. Subscriber saved-payment picker (readmeAlamgir §11)
+        // 14. Customer product types (readmeAlamgir "Customer product types")
+        $this->check(
+            'Customer types: a slot block never makes a booking customer',
+            (function () {
+                // The predicate used by both the filter and the badges.
+                $src = (string) file_get_contents(app_path('Support/CustomerTypes.php'));
+
+                return str_contains($src, 'BookingPurpose::scopeSales');
+            })(),
+            'CustomerTypes — the document calls this out by name'
+        );
+        $this->check(
+            'Customer types: an unknown type is refused, not ignored',
+            isset(\App\Support\CustomerTypes::fromRequest(
+                new \Illuminate\Http\Request(['customer_types' => ['spaceship']])
+            )['error']),
+            'silently dropping it returns an unfiltered page'
+        );
+        $this->check(
+            'Customer types: any and all are both honoured',
+            \App\Support\CustomerTypes::MATCH_ANY === 'any'
+                && \App\Support\CustomerTypes::MATCH_ALL === 'all',
+            'CustomerTypes'
+        );
+
+        // 15. Subscriber saved-payment picker (readmeAlamgir §11)
         $this->check(
             'Route: GET admin/subscriptions/dashboard/{id}/payment-methods',
             $this->hasRoute('GET', 'admin/subscriptions/dashboard/{id}/payment-methods'),
@@ -450,7 +475,6 @@ class AuditReadmeAlamgir extends Command
             'Analytics: wiring the dashboard cards and exports to the new aggregate'
                 .' endpoint (the server-side aggregates, coverage contract and'
                 .' filters are DONE; the raw-array view still feeds the UI)',
-            'customer_types classification + advanced filters',
             'Category popularity aggregation + POST /marketplace/category-clicks',
             'Export scope/completeness guarantees',
             'Own-site commission: the owner review path for existing cash-only'

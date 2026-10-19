@@ -10,6 +10,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
 use App\Support\AccessScope;
+use App\Support\CustomerTypes;
 use App\Models\Venue;
 use BookingPaymentStatus;
 use BookingStatus;
@@ -564,6 +565,20 @@ class CustomerService
             $query->whereIn('status', $statuses);
         }
 
+        // Product types, applied BEFORE sorting, pagination, counts, export and
+        // id selection — so the page, its total and a select-all all describe
+        // the same set.
+        $typeFilter = CustomerTypes::fromRequest($request);
+        if (isset($typeFilter['error'])) {
+            return sendError($typeFilter['error'], ['customer_types' => [$typeFilter['error']]], 422);
+        }
+
+        $scopeUser  = $request->user() ?? auth()->user();
+        $venueIds   = AccessScope::allowedVenueIds($scopeUser);
+        $programIds = $venueIds === null ? null : AccessScope::scopedProgramIds($scopeUser, $venueIds);
+
+        CustomerTypes::applyFilter($query, $typeFilter['types'], $typeFilter['match'], $venueIds, $programIds);
+
         $sort = (string) $request->input('sort', 'created_at');
         $dir  = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
         if ($sort === 'full_name') {
@@ -576,7 +591,20 @@ class CustomerService
         $pageUsers = $paginator->getCollection();
         $pageIds   = $pageUsers->pluck('id')->all();
 
-        $mapped = $pageUsers->map(fn (User $u) => $this->mapDashboardCustomer($u))->values();
+        // Three queries for the whole page, not three per row. An empty array
+        // is an authoritative "no qualifying activity", which is a different
+        // claim from the field being absent.
+        $typesByUser = CustomerTypes::forUsers($pageIds, $venueIds, $programIds);
+
+        $mapped = $pageUsers->map(function (User $u) use ($typesByUser) {
+            $row = $this->mapDashboardCustomer($u);
+            $row['customer_types'] = $typesByUser[(int) $u->id] ?? [];
+            // Derived from activity the viewer can see, and complete for that
+            // scope — so the client knows it is not looking at a partial answer.
+            $row['customer_types_complete'] = true;
+
+            return $row;
+        })->values();
 
         $bookings = Booking::query()
             ->whereIn('user_id', $pageIds ?: [0])
@@ -603,6 +631,15 @@ class CustomerService
 
         $lookups = $request->boolean('include_lookups', true) ? $this->dashboardLookups() : [];
         $loyaltyKey = CustomerLoyalty::ownerColumn();
+
+        // Echoed with the ACTUAL selection. A client that asked for a filter and
+        // gets no echo knows the server ignored it, rather than showing an
+        // unfiltered page as though it were filtered.
+        $lookups['customer_type_filter'] = [
+            'version' => CustomerTypes::FILTER_VERSION,
+            'types'   => $typeFilter['types'],
+            'match'   => $typeFilter['match'],
+        ];
 
         $lookups['customers'] = $paginator->toArray();
         $lookups['bookings'] = $bookings;

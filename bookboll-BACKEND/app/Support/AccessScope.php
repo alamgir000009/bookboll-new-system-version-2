@@ -280,7 +280,12 @@ class AccessScope
             : array_map('intval', self::jurisdictionOwnerIds($user));
     }
 
-    protected static function scopedProgramIds(?User $user, array $venueIds): array
+    /**
+     * Programmes this user may see. Public because customer-type classification
+     * needs exactly this boundary — a membership in a programme outside it must
+     * not show up as a type, or the badge leaks that the activity exists.
+     */
+    public static function scopedProgramIds(?User $user, array $venueIds): array
     {
         $ownerIds = self::scopeOwnerIds($user);
 
