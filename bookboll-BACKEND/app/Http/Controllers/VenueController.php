@@ -7,7 +7,22 @@ use Illuminate\Http\Request;
 
 class VenueController extends Controller
 {
-    public function __construct(protected VenueService $venueService){}
+    public function __construct(
+        protected VenueService $venueService,
+        protected \App\Services\VenueAgreementService $agreements,
+    ) {}
+
+    /* Operating agreements — what Bookboll owes a landlord, over time. */
+
+    public function operatingAgreements(Request $request, $id)
+    {
+        return $this->agreements->index($request, (int) $id);
+    }
+
+    public function storeOperatingAgreement(Request $request, $id)
+    {
+        return $this->agreements->store($request, (int) $id);
+    }
 
     public function index(Request $request)
     {

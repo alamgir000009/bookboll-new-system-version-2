@@ -297,6 +297,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Venues
         Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
+            // Operating agreements for venues Bookboll runs itself: append-only,
+            // effective-dated, and never edited in place.
+            Route::get('venues/{id}/operating-agreements', [VenueController::class, 'operatingAgreements'])->name('venues.agreements.index');
+            Route::post('venues/{id}/operating-agreements', [VenueController::class, 'storeOperatingAgreement'])->name('venues.agreements.store');
             Route::get('venues/dashboard', [VenueController::class, 'dashboard'])->name('venues.dashboard');
             Route::post('venues/dashboard', [VenueController::class, 'dashboardStore'])->name('venues.dashboard.store');
             Route::post('venues/dashboard/sort', [VenueController::class, 'dashboardSort'])->name('venues.dashboard.sort');
