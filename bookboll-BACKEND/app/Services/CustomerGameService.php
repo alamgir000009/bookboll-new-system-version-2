@@ -154,6 +154,46 @@ class CustomerGameService
         return sendSuccess('Quote', ['charge' => $charge]);
     }
 
+    /**
+     * What a reward may be funded from on this hosted event.
+     *
+     * Priced through priceHost(), the same code the create call charges, so a
+     * reward quote and the charge cannot drift apart. The split says which part
+     * of Bookboll's share each figure came from, because the funding rule
+     * counts the seats fee and the court commission separately and once each.
+     *
+     * @return array{currency:string, order_total:float, due_now:float, share:array{commission:float,event_fee:float,booking_fee:float}}|null
+     */
+    public function rewardBasis(User $host, array $data): ?array
+    {
+        $listing = ! empty($data['listing_id']) ? Listing::with('pricingGroups')->find($data['listing_id']) : null;
+
+        if (! empty($data['listing_id']) && ! $listing) {
+            return null;
+        }
+
+        // Priced with no reward applied: the quote decides the reward, so
+        // feeding one in here would cap it against itself.
+        $charge = $this->priceHost($host, $listing, array_merge($data, ['loyalty_redeem' => 0]));
+
+        $method = (string) ($charge['paymentMethod'] ?? ($listing ? 'cash' : 'online'));
+        $commission = $this->bookbollShareNow($listing, $charge['courtTotal'], $charge['courtNow'], 0.0, $method);
+
+        return [
+            'currency'    => (string) $charge['currency'],
+            'order_total' => round((float) $charge['courtTotal'] + (float) $charge['serviceFee'], 2),
+            'due_now'     => round((float) $charge['courtNow'] + (float) $charge['serviceFee'], 2),
+            'share' => [
+                // The court's commission, nothing more: the venue's revenue is
+                // collected alongside it but is not Bookboll's to give away.
+                'commission'  => round($commission, 2),
+                // The seats service fee is wholly Bookboll's.
+                'event_fee'   => round((float) $charge['serviceFee'], 2),
+                'booking_fee' => 0.0,
+            ],
+        ];
+    }
+
     /** Publish a game or a hangout. */
     public function create(User $host, array $data)
     {
@@ -658,6 +698,32 @@ class CustomerGameService
         return ['now' => round($deposit, 2), 'arrival' => round($total - $deposit, 2)];
     }
 
+    /**
+     * Bookboll's own money inside what this host pays today.
+     *
+     * The seats service fee is wholly Bookboll's. The court is not:
+     *
+     *   online   Bookboll collects the whole court price and credits the venue
+     *            its share, so only the commission is Bookboll's.
+     *   deposit  the deposit IS the commission — the venue is credited nothing
+     *            until the court is paid in full — so all of it is Bookboll's.
+     *   cash     nothing is collected online, so there is nothing here.
+     *
+     * This is the ceiling on a reward. Capping against the whole amount
+     * collected instead would let a host redeem points against the venue's
+     * revenue, which is not Bookboll's to give away.
+     */
+    protected function bookbollShareNow(?Listing $listing, float $courtTotal, float $courtNow, float $serviceFee, string $method): float
+    {
+        if ($method === 'online') {
+            $rate = $this->courtCommissionPct($listing);
+
+            return round($serviceFee + $courtTotal * max(0, min(100, $rate)) / 100, 2);
+        }
+
+        return round($serviceFee + max(0, $courtNow), 2);
+    }
+
     /** The method to charge on: what the host picked, if the provider allows it. */
     protected function resolveMethod(array $plan, ?string $wanted): string
     {
@@ -704,7 +770,11 @@ class CustomerGameService
             ? 0
             : round($seatsValue * $this->seatFeePct($listing, ! empty($data['community_id'])) / 100);
 
-        $loyalty = $this->loyaltyAllowed($host, (float) ($data['loyalty_redeem'] ?? 0), $courtNow + $serviceFee);
+        $loyalty = $this->loyaltyAllowed(
+            $host,
+            (float) ($data['loyalty_redeem'] ?? 0),
+            $this->bookbollShareNow($listing, $courtTotal, $courtNow, $serviceFee, $method)
+        );
 
         $charge = $this->charge($currency, $courtTotal, $courtNow, $serviceFee, $method === 'online', $loyalty);
         $charge['paymentMethod']  = $method;
@@ -743,6 +813,7 @@ class CustomerGameService
             ? 0
             : round($seatsValue * $this->seatFeePct(null, ! empty($data['community_id']), $this->hostCountryId($host, $data)) / 100);
 
+        // No court, so the service fee is the whole of Bookboll's share here.
         $loyalty = $this->loyaltyAllowed($host, (float) ($data['loyalty_redeem'] ?? 0), $serviceFee);
 
         return $this->charge($currency, 0, 0, $serviceFee, false, $loyalty);
@@ -920,6 +991,10 @@ class CustomerGameService
      */
     protected function loyaltyAllowed(User $host, float $requested, float $bookbollNow): float
     {
+        // $bookbollNow is BOOKBOLL'S OWN share of what is collected now, not the
+        // whole amount collected. The two differ on a fully-online court, where
+        // Bookboll collects the court price but keeps only its commission — the
+        // rest is the venue's, and a reward is never funded from it.
         $wanted = min(max(0, $requested), max(0, $bookbollNow));
 
         if ($wanted <= 0) {
@@ -1439,18 +1514,33 @@ class CustomerGameService
         // Same rule as every other booking: a deposit IS Bookboll's commission, so
         // the provider is credited only when the whole court was collected.
         if ($paidInFull) {
-            $this->creditProviderWallet($booking, $collected);
+            // The venue is paid on what the court COSTS, not on what was
+            // collected after a reward. These used to be the same number, so
+            // redeeming points on a hosted game quietly cut the venue's payout
+            // by the non-commission part of the discount — the reward has to
+            // come out of Bookboll's fee and nothing else.
+            $courtPrice = round((float) ($booking->total_price ?: $collected), 2);
+            $reward = max(0, round($courtPrice - $collected, 2));
+
+            $this->creditProviderWallet($booking, $courtPrice, $reward);
         }
     }
 
-    /** Credit the venue owner's wallet for court money Bookboll collected. */
-    protected function creditProviderWallet(Booking $booking, float $collected): void
+    /**
+     * Credit the venue owner's wallet for the court.
+     *
+     * `$courtPrice` is the court's real price and `$reward` whatever a reward
+     * took off it. The ledger computes the venue's share from the price and
+     * caps the reward at Bookboll's fee, so the payout is identical with or
+     * without a reward.
+     */
+    protected function creditProviderWallet(Booking $booking, float $courtPrice, float $reward = 0): void
     {
         try {
             $venue       = $booking->venue_id ? Venue::find($booking->venue_id) : null;
             $ownerUserId = $venue?->owner_user_id;
 
-            if (! $ownerUserId || $collected <= 0) {
+            if (! $ownerUserId || $courtPrice <= 0) {
                 return;   // Bookboll-run venue — there is no provider to pay
             }
 
@@ -1460,10 +1550,13 @@ class CustomerGameService
                 'bookingId'     => $booking->id,
                 'ownerUserId'   => $ownerUserId,
                 'countryId'     => $wallets->countryIdForVenue($venue),
-                'total'         => $collected,
+                'total'         => $courtPrice,
                 'currency'      => $this->venueCurrency($venue),
                 'ratePct'       => $wallets->courtCommissionPct($booking->listing),
                 'customerLabel' => $booking->user?->name ?: 'Hosted event',
+                // Capped at the platform fee inside the ledger, which leaves
+                // the venue's share untouched.
+                'loyaltyRedeem' => $reward,
             ]);
         } catch (\Throwable $e) {
             // A booking is paid whether or not the ledger writes; never roll the

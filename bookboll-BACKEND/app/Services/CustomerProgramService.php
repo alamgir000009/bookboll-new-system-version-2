@@ -847,6 +847,83 @@ class CustomerProgramService
         return self::INTERVAL_LABEL[$v ?? ''] ?? 'month';
     }
 
+    /**
+     * What a reward may be funded from on this membership's first charge.
+     *
+     * Mirrors the first-charge arithmetic in subscribe() deliberately field for
+     * field — the amount, any intro discount, the joining fee and the rate the
+     * programme actually charges — so the reward quote and the charge cannot
+     * disagree.
+     *
+     * A programme still in its free trial collects nothing today. That returns
+     * a due-now of zero rather than a rate applied to an amount nobody paid:
+     * the funding rule then declines, which is the honest answer.
+     *
+     * @return array{currency:string, order_total:float, due_now:float, share:array{commission:float,event_fee:float,booking_fee:float}}|null
+     */
+    public function rewardBasis(ClassProgram $program, ?string $promocode = null, ?int $userId = null): ?array
+    {
+        $interval = $program->billing_interval ?: 'monthly';
+        $mode = $this->offerModeFor($program);
+
+        $listPrice = (float) ($program->monthly_price ?: 0);
+        $amount = $mode === 'discount'
+            ? $this->discountedPrice($listPrice, $interval, (int) ($program->discount_months ?: 0))
+            : $listPrice;
+
+        $hasTrial = $mode === 'trial'
+            && ((int) ($program->free_trial_days ?: 0) > 0 || (int) ($program->free_trial_sessions ?: 0) > 0);
+
+        $joiningFee = max(0, (float) ($program->joining_fee ?: 0));
+        $fullCharge = round($amount + $joiningFee, 2);
+
+        // A promocode is re-validated here from the CODE alone. The browser
+        // also sends the discount it calculated, and that number is ignored:
+        // understating it would inflate the fee and hand out a bigger reward
+        // than Bookboll earned.
+        $discount = $this->promoDiscountFor($promocode, $fullCharge, $userId);
+        $chargeAmount = round(max(0, $fullCharge - $discount), 2);
+
+        // The rate this programme charges, with the same fallback the charge
+        // uses. Inventing a rate here would discount revenue nobody collected.
+        $commissionPct = (float) ($program->commission_percentage ?: 15);
+
+        return [
+            'currency'    => strtoupper((string) ($program->currency ?: 'AED')),
+            'order_total' => $chargeAmount,
+            // Nothing is collected while a trial is running.
+            'due_now'     => $hasTrial ? 0.0 : $chargeAmount,
+            'share' => [
+                'commission'  => $hasTrial ? 0.0 : round($chargeAmount * $commissionPct / 100, 2),
+                'event_fee'   => 0.0,
+                'booking_fee' => 0.0,
+            ],
+        ];
+    }
+
+    /**
+     * A promocode's discount, derived from the code rather than taken on trust.
+     *
+     * An unusable code discounts nothing, which is also what the charge would
+     * do with it — so the quote and the charge still agree.
+     */
+    protected function promoDiscountFor(?string $code, float $orderAmount, ?int $userId): float
+    {
+        $code = trim((string) $code);
+        if ($code === '' || $orderAmount <= 0) {
+            return 0.0;
+        }
+
+        try {
+            $promocode = app(PromocodeService::class)
+                ->validateForUse($code, $orderAmount, $userId, 'online');
+
+            return round(min($orderAmount, max(0, (float) $promocode->applyDiscount($orderAmount))), 2);
+        } catch (\Throwable $e) {
+            return 0.0;
+        }
+    }
+
     protected function offerModeFor(ClassProgram $p): string
     {
         $ongoing = $p->program_type !== 'fixed_duration';

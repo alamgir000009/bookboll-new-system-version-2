@@ -118,8 +118,21 @@ it('refuses a currency that is not the one the booking is charged in', function 
 });
 
 it('refuses a kind the server cannot price', function () {
-    askQuote(customerWith(10000), qaListing(), ['kind' => 'membership'])
-        ->assertStatus(422)->assertJsonValidationErrors('kind');
+    // membership, host_game and host_tournament are priced now; anything else
+    // is still refused rather than guessed at.
+    foreach (['subscription', 'event', 'anything', ''] as $kind) {
+        askQuote(customerWith(10000), qaListing(), ['kind' => $kind])
+            ->assertStatus(422)->assertJsonValidationErrors('kind');
+    }
+});
+
+it('refuses a priceable kind without the thing it is meant to price', function () {
+    $customer = customerWith(10000);
+
+    // A membership names a programme. Without one there is nothing to price,
+    // and falling back to the listing in the payload would price the wrong
+    // order entirely.
+    askQuote($customer, qaListing(), ['kind' => 'membership'])->assertStatus(422);
 });
 
 it('requires authentication', function () {

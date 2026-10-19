@@ -935,6 +935,68 @@ class AuditReadmeAlamgir extends Command
             'upgrading changes the rate with no listing re-saved'
         );
 
+        // 23. Rewards on memberships and hosted events
+        $this->check(
+            'Rewards price memberships and hosted events, not only bookings',
+            (function () {
+                $kinds = \App\Services\LoyaltyCheckoutQuoteService::KINDS;
+
+                return $kinds === ['listing', 'membership', 'host_game', 'host_tournament'];
+            })(),
+            'the quote used to refuse these three outright'
+        );
+        $this->check(
+            'Each kind is priced by the service that charges it',
+            (function () {
+                $quote = $this->code('Services/LoyaltyCheckoutQuoteService.php');
+
+                // A second copy of the arithmetic would drift, and a reward
+                // quote that disagrees with the charge either shorts the
+                // customer or gives away money nobody earned.
+                return str_contains($quote, 'CustomerProgramService::class)->rewardBasis(')
+                    && str_contains($quote, 'CustomerGameService::class)->rewardBasis(')
+                    && str_contains($quote, 'CommissionPolicy::quote(');
+            })(),
+            'one definition of the price, reused — never copied'
+        );
+        $this->check(
+            'A hosted-event reward is capped at Bookboll\'s own share',
+            (function () {
+                $games = $this->code('Services/CustomerGameService.php');
+
+                // Capping against everything collected would fund a reward from
+                // the venue's revenue on a fully-online court.
+                return str_contains($games, 'protected function bookbollShareNow(')
+                    && str_contains($games, 'bookbollShareNow($listing, $courtTotal, $courtNow, $serviceFee, $method)')
+                    && ! str_contains($games, 'loyaltyAllowed($host, (float) ($data[\'loyalty_redeem\'] ?? 0), $courtNow + $serviceFee)');
+            })(),
+            'the seats fee plus the court commission, never the court price'
+        );
+        $this->check(
+            'A hosted-event reward never reduces the venue payout',
+            (function () {
+                $games = $this->code('Services/CustomerGameService.php');
+
+                // The ledger computes the venue's share from the court's price
+                // and caps the reward at the platform fee, so the payout is
+                // identical with or without one.
+                return str_contains($games, 'creditProviderWallet($booking, $courtPrice, $reward)')
+                    && str_contains($games, "'loyaltyRedeem' => \$reward");
+            })(),
+            'the wallet used to be credited from the discounted amount'
+        );
+        $this->check(
+            'A reward quote cannot be spent on a different kind or subject',
+            (function () {
+                $quote = $this->code('Services/LoyaltyCheckoutQuoteService.php');
+
+                return str_contains($quote, "'subject'    => \$subject")
+                    && str_contains($quote, "'event_fee'  => \$policy['event_fee_minor'] ?? 0")
+                    && str_contains($quote, "'subject' => 'program:'.\$program->id");
+            })(),
+            'two same-priced programmes used to fingerprint identically'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -949,9 +1011,6 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Rewards for MEMBERSHIP, host_game and host_tournament checkouts'
-                .' (venue checkout is fully enforced; those three refuse a quote'
-                .' outright rather than ignoring one)',
             'Cookie/tracking infrastructure audit (deployment task, not code)',
         ] as $i => $item) {
             $this->line(sprintf('  %2d. %s', $i + 1, $item));
