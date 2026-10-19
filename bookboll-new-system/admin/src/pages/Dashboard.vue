@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue'
-import { loadAnalytics } from '../lib/analytics.js'
+import { loadAnalytics, loadAnalyticsAggregates } from '../lib/analytics.js'
 import { bookingFrequency } from '../lib/bookingFrequency.js'
 import { dateRangeError } from '../lib/finance.js'
 import {
@@ -112,8 +112,24 @@ const scopedBookings = computed(() => {
   return bookings.value.filter(b => ids && ids.has(b.location_id))
 })
 
+/* Totals the SERVER computed, with its coverage statement. The raw rows below
+   still drive the charts and tables; these drive the figures that must be
+   complete, because a capped list cannot produce a true total. */
+const serverTotals = ref(null)
+
+/* Whether the figures above describe everything, said by the server rather
+   than guessed from how many rows arrived. The old test was
+   `bookings.length >= 5000`, which is the cap talking, not the data: a venue
+   with exactly 5,000 bookings looked truncated and one with 4,999 looked
+   complete even when the server had stopped early. */
+const coverageIsComplete = computed(() => serverTotals.value?.coverage?.status === 'complete')
+
 async function load() {
   loading.value = true
+
+  // Asked for alongside the rows, not instead of them.
+  loadAnalyticsAggregates({}).then(a => { serverTotals.value = a?.ok ? a : null })
+
   const d = await loadAnalytics()
   loadError.value = d.error || ''
   bookings.value    = d.bookings
@@ -725,13 +741,24 @@ const platformKpis = computed(() => {
   const list = filteredBookings.value
   const commercial = list.filter(isCommercialBooking)
   const revenue = moneyMulti(mergeCurrencyGroups(sumByCurrency(commercial, x => x.total), membershipRevenueInView.value))
-  const frequency = bookingFrequency(list)
+  // Prefer the server's totals. They are computed across every authorised
+  // record; the loaded list is whatever fitted in the response.
+  const server = serverTotals.value?.bookings
+  const frequency = server
+    ? {
+        bookings: server.eligible,
+        customers: server.customers,
+        repeatCustomers: server.repeat_customers,
+        average: server.per_customer,
+        repeatRate: server.repeat_pct,
+      }
+    : bookingFrequency(list)
   const average = loading.value ? 'Loading…' : loadError.value ? 'Unavailable' : frequency.average == null ? '—' : `${frequency.average.toLocaleString(undefined,{maximumFractionDigits:2})}×`
   return [
     { label: 'Booking & membership value', value: revenue.value, sub: revenue.sub, note:'Gross sales value, not Bookboll earnings', icon: DollarSign, color: 'var(--info-ink)', bg: 'var(--info-bg)' },
     { label: 'Customer bookings', value: loading.value ? 'Loading…' : loadError.value ? 'Unavailable' : frequency.bookings, note:'Confirmed or completed venue bookings with an identified customer', icon: BookOpen, color: 'var(--info-ink)', bg: 'var(--info-bg)' },
     { label: 'Booking customers', value: loading.value ? 'Loading…' : loadError.value ? 'Unavailable' : frequency.customers, note:'Distinct customers in those confirmed venue bookings', icon: Users, color: 'var(--warning-ink)', bg: 'var(--warning-bg)' },
-    { label: 'Bookings per customer', value:average, sub: !loading.value && !loadError.value && frequency.repeatRate != null ? `${frequency.repeatRate.toLocaleString(undefined,{maximumFractionDigits:1})}% booked more than once` : '', note:loadError.value ? 'Analytics could not be loaded. Please retry.' : `${bookings.value.length >= 5000 ? 'Loaded history · ' : ''}Confirmed venue bookings ÷ booking customers in this period`, icon: Repeat, color: 'var(--positive-ink)', bg: 'var(--positive-bg)' },
+    { label: 'Bookings per customer', value:average, sub: !loading.value && !loadError.value && frequency.repeatRate != null ? `${frequency.repeatRate.toLocaleString(undefined,{maximumFractionDigits:1})}% booked more than once` : '', note:loadError.value ? 'Analytics could not be loaded. Please retry.' : `${coverageIsComplete.value ? '' : 'Loaded history · '}Confirmed venue bookings ÷ booking customers in this period`, icon: Repeat, color: 'var(--positive-ink)', bg: 'var(--positive-bg)' },
   ]
 })
 const pendingApprovals = computed(() =>
@@ -925,7 +952,7 @@ function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('e
     </div>
     <p v-if="activityDateError" class="fin-error" role="alert">{{ activityDateError }}</p>
     <div v-if="filtersActive && !activityDateError" class="dt-note">Showing {{ filteredBookings.length.toLocaleString() }} of {{ scopedBookings.length.toLocaleString() }} bookings</div>
-    <p v-if="bookings.length >= 5000" class="activity-coverage"><strong>Partial history</strong> Figures use {{ bookings.length.toLocaleString() }} loaded bookings. Older records may be missing.</p>
+    <p v-if="!coverageIsComplete" class="activity-coverage"><strong>Partial history</strong> Figures use {{ bookings.length.toLocaleString() }} loaded bookings. Older records may be missing.</p>
     <div v-if="loadError" class="analytics-load-error" role="alert">
       <span>{{ loadError }}</span>
       <button type="button" class="btn btn-secondary" :disabled="loading" @click="load">Retry</button>
