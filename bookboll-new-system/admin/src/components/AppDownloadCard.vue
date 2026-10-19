@@ -7,6 +7,8 @@ import adminIcon from '../assets/mobile-apps/bookboll-admin.png'
 import appStoreIcon from '../assets/mobile-apps/app-store.webp'
 import playStoreIcon from '../assets/mobile-apps/google-play.png'
 import { MOBILE_APPS, mobilePlatform, insideInstalledApp, canShowAppPrompt, rememberAppPrompt, promptKey } from '../lib/mobileApps.js'
+import { clearMobileAppStatus, fetchMobileAppStatus, setMobileAppSelfReport, shouldOfferApp } from '../lib/mobileAppStatus.js'
+import { apiFetch } from '../lib/api.js'
 
 const props = defineProps({
   audience: { type: String, required: true },
@@ -29,8 +31,30 @@ const visible = computed(() => !!(active.value && props.context && app.value && 
 const downloadUrl = computed(() => app.value?.download)
 let storage, timer, observer, resize, frame, mounted = false, installed = false, generation = 0
 
+// The server knows what the browser cannot: whether this ACCOUNT has signed in
+// from the native app. It can only ever take the prompt away — a server that
+// cannot answer leaves the existing per-visit behaviour exactly as it was.
+const serverStatus = ref({ known: false, status: null })
+const allowedByServer = () => shouldOfferApp(serverStatus.value, canShowAppPrompt(props.audience, storage, props.accountId))
+async function refreshServerStatus() {
+  if (!props.accountId) { serverStatus.value = { known: false, status: null }; return }
+  const asked = props.accountId
+  const result = await fetchMobileAppStatus(apiFetch, props.audience, asked)
+  // Ignore an answer for an identity that is no longer the one signed in.
+  if (asked !== props.accountId) return
+  serverStatus.value = result
+  if (result.known && result.status.suppress_prompt) active.value = false
+}
+
 function dismiss(action = 'dismissed') {
+  // The browser record is kept either way, so the preference holds even when
+  // the account-wide write fails or the server does not support it.
   rememberAppPrompt(props.audience, action, storage, props.accountId)
+  if (action === 'installed' && props.accountId) {
+    // Account-wide, so it survives a new device. Never awaited: dismissing a
+    // card must not wait on the network.
+    setMobileAppSelfReport(apiFetch, props.audience, props.accountId, true).catch(() => {})
+  }
   dismissedVisit.value = true
   active.value = false
 }
@@ -53,16 +77,25 @@ function inspect() { if (!frame) frame = requestAnimationFrame(detectObstruction
 function schedule() {
   clearTimeout(timer)
   if (!props.context || installed) { active.value = false; return }
-  if (!mounted || dismissedVisit.value || active.value || props.blocked || obstructed.value || !canShowAppPrompt(props.audience, storage, props.accountId)) return
+  if (!mounted || dismissedVisit.value || active.value || props.blocked || obstructed.value || !allowedByServer()) return
   // Let the route and its content settle before offering a secondary action.
   timer = setTimeout(() => {
-    if (dismissedVisit.value || !props.context || props.blocked || obstructed.value || !canShowAppPrompt(props.audience, storage, props.accountId)) return
+    if (dismissedVisit.value || !props.context || props.blocked || obstructed.value || !allowedByServer()) return
     active.value = true
   }, 1800)
 }
-watch([() => props.visitKey, () => props.context?.title, () => props.context?.body, () => props.accountId], () => {
+watch([() => props.visitKey, () => props.context?.title, () => props.context?.body, () => props.accountId], ([, , , accountId], [, , , previousAccountId]) => {
   active.value = false
   dismissedVisit.value = false
+  if (accountId !== previousAccountId) {
+    // Sign-out or an account switch: never carry one identity's answer over.
+    clearMobileAppStatus(previousAccountId)
+    serverStatus.value = { known: false, status: null }
+    // Asked alongside, not before: waiting on the network here would delay a
+    // prompt the page would otherwise show, and the answer can only ever take
+    // the prompt away — which the scheduled check re-reads before it opens.
+    refreshServerStatus()
+  }
   schedule()
 })
 watch([() => props.blocked, obstructed], schedule)
@@ -85,7 +118,7 @@ watch([downloadUrl, visible], async ([url, shown]) => {
   } catch { /* The download link remains usable if canvas/QR generation fails. */ }
 })
 function onStorage(event) {
-  if (event.key === promptKey(props.audience, props.accountId) && !canShowAppPrompt(props.audience, storage, props.accountId)) active.value = false
+  if (event.key === promptKey(props.audience, props.accountId) && !allowedByServer()) active.value = false
 }
 onMounted(() => {
   mounted = true
@@ -100,6 +133,9 @@ onMounted(() => {
   document.addEventListener('focusout', inspect)
   window.addEventListener('storage', onStorage)
   schedule()
+  // Asked after the first schedule, so a slow or absent answer never delays
+  // the prompt the page would already have shown.
+  refreshServerStatus()
 })
 onUnmounted(() => {
   mounted = false

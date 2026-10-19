@@ -108,7 +108,11 @@ test('both QR codes decode to their exact OneLink URL, with no localhost or user
   }
 })
 
-async function cardSetup(t, { platform = 'desktop', installed = false, audience = 'customer', accountId = 'account-one', saved = null } = {}) {
+/* `serverStatus` is what GET /{app}/mobile-app-status answers. The default is
+ * no answer at all — a server without the endpoint — because the whole point
+ * of the adapter is that the card then behaves exactly as it did before. Pass a
+ * status object to exercise server-side suppression. */
+async function cardSetup(t, { platform = 'desktop', installed = false, audience = 'customer', accountId = 'account-one', saved = null, serverStatus = null } = {}) {
   const source = readFileSync(new URL('../src/components/AppDownloadCard.vue',import.meta.url),'utf8')
   let code = compileScript(parse(source).descriptor,{id:'app-download-test'}).content
   for (const node of parseJs(code,{sourceType:'module'}).program.body.slice().reverse()) {
@@ -128,7 +132,18 @@ async function cardSetup(t, { platform = 'desktop', installed = false, audience 
     requestAnimationFrame: () => 1, cancelAnimationFrame(){}, getComputedStyle: () => ({visibility:'visible'}),
     setTimeout: fn => { timers.set(++timerId,fn); return timerId }, clearTimeout: id => timers.delete(id),
   }
-  const imports = { vue:{...vue,onMounted:fn=>mounted.push(fn),onUnmounted:fn=>unmounted.push(fn)}, qrcode:{ default:{toDataURL:async url=>`qr:${url}`} }, 'lucide-vue-next':{}, '../lib/mobileApps.js':p }
+  // The real status adapter against a stub API, so the card is tested through
+  // the code that actually decides, not a hand-written double of it.
+  const statusModule = await import(`../src/lib/mobileAppStatus.js?card=${Math.random()}`)
+  const apiCalls = []
+  const apiFetch = async (path, opts) => {
+    apiCalls.push({ path, ...(opts || {}) })
+    if (path.endsWith('mobile-app-status')) {
+      return serverStatus ? { success: true, status: 200, data: { status: serverStatus } } : { success: false, status: 404 }
+    }
+    return { success: true, status: 200, data: { status: { app: audience, usage_status: 'unknown', self_reported: !!opts?.body?.self_reported, suppress_prompt: !!opts?.body?.self_reported } } }
+  }
+  const imports = { vue:{...vue,onMounted:fn=>mounted.push(fn),onUnmounted:fn=>unmounted.push(fn)}, qrcode:{ default:{toDataURL:async url=>`qr:${url}`} }, 'lucide-vue-next':{}, '../lib/mobileApps.js':p, '../lib/mobileAppStatus.js':statusModule, '../lib/api.js':{ apiFetch } }
   for (const name of ['bookboll-customer.png','bookboll-admin.png','app-store.webp','google-play.png']) imports[`../assets/mobile-apps/${name}`] = {default:name}
   const props = vue.reactive({ audience,accountId,context:{ title:'Bookings',body:'Get the app' },blocked:false })
   const scope = vue.effectScope()
@@ -136,8 +151,8 @@ async function cardSetup(t, { platform = 'desktop', installed = false, audience 
   mounted.forEach(fn=>fn())
   await vue.nextTick()
   const tick = async () => { for (const [id, fn] of [...timers]) { timers.delete(id); fn() } await vue.nextTick(); await vue.nextTick() }
-  t.after(() => { unmounted.forEach(fn=>fn()); scope.stop() })
-  return {state,props,document,s,events,tick}
+  t.after(() => { unmounted.forEach(fn=>fn()); scope.stop(); statusModule.clearMobileAppStatus() })
+  return {state,props,document,s,events,tick,apiCalls}
 }
 
 test('card waits, shows the customer QR and keeps dismissal only for this visit', async t => {
@@ -255,4 +270,58 @@ test('same-copy pages still re-trigger by visit key while profile refreshes do n
   assert.equal(c.state.visible.value,false)
   c.props.visitKey = '/another-trigger'; await vue.nextTick(); await c.tick()
   assert.equal(c.state.visible.value,true)
+})
+
+/* The account-wide status the server reports. The browser only ever knew about
+ * this device; a person who used the app on their phone was still being asked
+ * on their laptop. The server can take the prompt away — and nothing else. */
+
+test('a server that reports recent app use takes the prompt away account-wide', async t => {
+  const c = await cardSetup(t, { serverStatus: { app: 'customer', usage_status: 'used_app', suppress_prompt: true, last_authenticated_use_at: '2026-10-01T00:00:00Z' } })
+  await vue.nextTick(); await c.tick()
+  assert.equal(c.state.visible.value, false)
+})
+
+test('evidence of past use that is no longer recent still prompts', async t => {
+  // used_app with suppress_prompt false: they used it once, and a timestamp
+  // that old cannot show the app is still installed.
+  const c = await cardSetup(t, { serverStatus: { app: 'customer', usage_status: 'used_app', suppress_prompt: false, last_authenticated_use_at: '2024-01-01T00:00:00Z' } })
+  await c.tick()
+  assert.equal(c.state.visible.value, true)
+})
+
+test('a server with no adoption endpoint changes nothing about the prompt', async t => {
+  const c = await cardSetup(t) // default: 404
+  await c.tick()
+  assert.equal(c.state.visible.value, true)
+  assert.equal(c.apiCalls.some(call => call.path === '/customer/mobile-app-status'), true)
+})
+
+test('"I already have the app" is recorded account-wide as well as locally', async t => {
+  const c = await cardSetup(t)
+  await c.tick()
+  c.state.dismiss('installed')
+  await vue.nextTick()
+
+  const write = c.apiCalls.find(call => call.path === '/customer/mobile-app-preferences')
+  assert.equal(write.method, 'PUT')
+  assert.deepEqual(write.body, { self_reported: true })
+  // The browser record is kept regardless, so the preference holds even if the
+  // account-wide write never lands.
+  assert.equal(JSON.parse(c.s.getItem(promptKey('customer', 'account-one'))).selfReported, true)
+})
+
+test('an ordinary dismissal is never sent as a self-report', async t => {
+  const c = await cardSetup(t)
+  await c.tick()
+  c.state.dismiss()
+  await vue.nextTick()
+
+  assert.equal(c.apiCalls.some(call => call.path === '/customer/mobile-app-preferences'), false)
+})
+
+test('a signed-out card asks nothing about adoption', async t => {
+  const c = await cardSetup(t, { accountId: '' })
+  await c.tick()
+  assert.equal(c.apiCalls.length, 0)
 })
