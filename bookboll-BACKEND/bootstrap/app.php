@@ -29,6 +29,12 @@ return Application::configure(basePath: dirname(__DIR__))
             'rewards.unsupported' => \App\Http\Middleware\RejectUnsupportedRewards::class,
         ]);
 
+        // Response headers for every surface this origin serves — the JSON API
+        // and the Livewire admin panel alike. Appended rather than prepended so
+        // a controller that has set its own framing answer keeps it.
+        $middleware->web(append: [\App\Http\Middleware\SecurityHeaders::class]);
+        $middleware->api(append: [\App\Http\Middleware\SecurityHeaders::class]);
+
         $middleware->preventRequestForgery(except: [
             'stripe/bookboll-webhook',
             'broadcasting/auth',
@@ -40,6 +46,14 @@ return Application::configure(basePath: dirname(__DIR__))
         // ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // An authentication or authorization failure is rendered here and
+        // unwinds without the middleware's response phase, so those 401/403
+        // answers — the admin area's included — went out with no security
+        // headers at all. Same definition as the middleware, applied once more.
+        $exceptions->respond(function (\Symfony\Component\HttpFoundation\Response $response, \Throwable $e, \Illuminate\Http\Request $request) {
+            return \App\Http\Middleware\SecurityHeaders::apply($request, $response);
+        });
+
         $exceptions->report(function (Exception $e) {
             try {
                 \Illuminate\Support\Facades\Mail::to('alamgir000009@gmail.com')

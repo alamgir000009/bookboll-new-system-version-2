@@ -1014,6 +1014,41 @@ class AuditReadmeAlamgir extends Command
             'an array union silently discarded both of them'
         );
 
+        // 25. Response security headers (cookie/tracking audit, server half)
+        $this->check(
+            'Security headers are sent, including on an auth failure',
+            (function () {
+                $mw = $this->code('Http/Middleware/SecurityHeaders.php');
+                $boot = (string) file_get_contents(base_path('bootstrap/app.php'));
+
+                // The API was serving none of these. An auth failure is
+                // rendered by the exception handler and unwinds without the
+                // middleware's response phase, so 401/403 went out bare until
+                // $exceptions->respond() applied the same definition.
+                return str_contains($mw, "'X-Content-Type-Options' => 'nosniff'")
+                    && str_contains($mw, "'X-Frame-Options'        => 'SAMEORIGIN'")
+                    && str_contains($mw, "'Referrer-Policy'        => 'strict-origin-when-cross-origin'")
+                    && str_contains($boot, 'SecurityHeaders::class')
+                    && str_contains($boot, 'SecurityHeaders::apply(');
+            })(),
+            'the admin panel is session-bearing HTML on this same origin'
+        );
+        $this->check(
+            'HSTS cannot take a provider domain down from code',
+            (function () {
+                $mw = $this->code('Http/Middleware/SecurityHeaders.php');
+
+                // HSTS is cached by the browser, so a wrong setting cannot be
+                // deployed away. Subdomains and preload stay off until whoever
+                // owns the DNS turns them on.
+                return str_contains($mw, '$request->isSecure()')
+                    && (int) config('security.hsts.max_age') > 0
+                    && ! config('security.hsts.include_subdomains')
+                    && ! config('security.hsts.preload');
+            })(),
+            'https only, short max-age, subdomains and preload opt-in'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
