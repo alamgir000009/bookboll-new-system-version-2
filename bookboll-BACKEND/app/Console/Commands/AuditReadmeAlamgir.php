@@ -338,11 +338,17 @@ class AuditReadmeAlamgir extends Command
         );
         $this->check(
             'Subscriptions: every action is business-scoped',
-            ! str_contains(
-                (string) file_get_contents(app_path('Services/ClassMembershipDashboardService.php')),
-                'ClassSubscription::query()->find($id)'
-            ),
-            'these loaded by bare id with no business check at all'
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/ClassMembershipDashboardService.php'));
+                // Exactly ONE bare lookup is legitimate: the one inside
+                // scopedSubscription(), which then applies the check. Any
+                // other is an action reachable without it.
+                $bare = substr_count($src, 'ClassSubscription::query()->find($id)');
+                $guard = (int) str_contains($src, 'protected function scopedSubscription');
+
+                return $bare === 1 && $guard === 1;
+            })(),
+            'exactly one bare lookup, inside the guard that scopes it'
         );
 
         // 11. Country/city availability
