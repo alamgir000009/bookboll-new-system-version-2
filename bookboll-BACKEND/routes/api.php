@@ -304,6 +304,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
             // Signed contracts go to the PRIVATE disk, never the public image
             // service, and carry no public URL.
             Route::post('venues/{id}/contracts', [VenueController::class, 'storeVenueContract'])->name('venues.contracts.store');
+            // Moving a venue, with an OPTIONAL reconciliation of its history.
+            // Reviewed first, because the reconciliation restates what already
+            // collected money meant.
+            Route::get('venues/{id}/transfer-options', [VenueController::class, 'transferOptions'])->name('venues.transfer-options');
+            Route::post('venues/{id}/transfer-preview', [VenueController::class, 'transferPreview'])->name('venues.transfer-preview');
+            Route::post('venues/{id}/transfers', [VenueController::class, 'storeTransfer'])->name('venues.transfers.store');
             Route::get('venues/dashboard', [VenueController::class, 'dashboard'])->name('venues.dashboard');
             Route::post('venues/dashboard', [VenueController::class, 'dashboardStore'])->name('venues.dashboard.store');
             Route::post('venues/dashboard/sort', [VenueController::class, 'dashboardSort'])->name('venues.dashboard.sort');

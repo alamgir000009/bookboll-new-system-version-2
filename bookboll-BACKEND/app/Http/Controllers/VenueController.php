@@ -10,7 +10,25 @@ class VenueController extends Controller
     public function __construct(
         protected VenueService $venueService,
         protected \App\Services\VenueAgreementService $agreements,
+        protected \App\Services\VenueTransferService $transfers,
     ) {}
+
+    /* Moving a venue to a business, reviewed before anything is committed. */
+
+    public function transferOptions(Request $request, $id)
+    {
+        return $this->transfers->options($request, (int) $id);
+    }
+
+    public function transferPreview(Request $request, $id)
+    {
+        return $this->transfers->preview($request, (int) $id);
+    }
+
+    public function storeTransfer(Request $request, $id)
+    {
+        return $this->transfers->transfer($request, (int) $id);
+    }
 
     /* Operating agreements — what Bookboll owes a landlord, over time. */
 

@@ -330,7 +330,47 @@ class AuditReadmeAlamgir extends Command
             'abandoned uploads expire; linked ones never do'
         );
 
-        // 11. Subscriber saved-payment picker (readmeAlamgir §11)
+        // 11. Venue transfer (readmeAlamgir §3)
+        $this->check(
+            'Schema: venue transfer tables (+ immutable allocations)',
+            Schema::hasTable('venue_transfers')
+                && Schema::hasTable('venue_transfer_previews')
+                && Schema::hasTable('venue_transfer_allocations'),
+            'migration 2026_10_19_000013'
+        );
+        $this->check(
+            'Schema: payments record who collected cash directly',
+            Schema::hasColumn('payments', 'collection_method')
+                && Schema::hasColumn('payments', 'collected_by_business_id')
+                && Schema::hasColumn('payments', 'reconciliation_batch_id'),
+            'said explicitly, not implied by a recipient label'
+        );
+        foreach ([
+            ['GET', 'admin/venues/{id}/transfer-options'],
+            ['POST', 'admin/venues/{id}/transfer-preview'],
+            ['POST', 'admin/venues/{id}/transfers'],
+        ] as [$verb, $uri]) {
+            $this->check("Route: {$verb} {$uri}", $this->hasRoute($verb, $uri), 'readmeAlamgir §3');
+        }
+        $this->check(
+            'Reconciliation: slot blocks are never a marketplace sale',
+            \App\Support\LegacyReconciliation::exclusionFor(
+                (object) ['type' => 'deposit', 'status' => 'paid', 'amount' => 20, 'currency' => 'QAR'],
+                (object) ['payment_method' => 'payment_skipped', 'status' => 'completed']
+            ) !== null,
+            'LegacyReconciliation'
+        );
+        $this->check(
+            'Reconciliation: provider cash never moves Bookboll earnings',
+            ! \App\Support\LegacyReconciliation::affectsEarnings(
+                \App\Support\LegacyReconciliation::KIND_PROVIDER_CASH
+            ) && \App\Support\LegacyReconciliation::affectsEarnings(
+                \App\Support\LegacyReconciliation::KIND_DEPOSIT_TO_FEE
+            ),
+            'it was never Bookboll\'s money'
+        );
+
+        // 12. Subscriber saved-payment picker (readmeAlamgir §11)
         $this->check(
             'Route: GET admin/subscriptions/dashboard/{id}/payment-methods',
             $this->hasRoute('GET', 'admin/subscriptions/dashboard/{id}/payment-methods'),
@@ -365,7 +405,6 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Venue transfer preview/commit and legacy reconciliation',
             'Analytics filter-aware aggregates (the 5,000-row limit is still in place)',
             'bookings.record_purpose backfill for provider slot blocks',
             'customer_types classification + advanced filters',
