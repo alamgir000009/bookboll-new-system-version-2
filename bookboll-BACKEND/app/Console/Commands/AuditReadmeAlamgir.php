@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Services\BrandResolutionService;
 use App\Support\StripeDocumentLink;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 
@@ -1059,14 +1060,7 @@ class AuditReadmeAlamgir extends Command
         $this->line('');
         $this->table(['check', 'result', 'where'], $this->rows);
 
-        $this->line('');
-        $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
-        $this->line('');
-        foreach ([
-            'Cookie/tracking infrastructure audit (deployment task, not code)',
-        ] as $i => $item) {
-            $this->line(sprintf('  %2d. %s', $i + 1, $item));
-        }
+        $this->outstanding();
 
         $this->line('');
         if ($this->failed > 0) {
@@ -1075,9 +1069,93 @@ class AuditReadmeAlamgir extends Command
             return self::FAILURE;
         }
 
-        $this->info('All implemented checks passed. The list above is still outstanding.');
+        $this->info('Every backend task in readmeAlamgir.md is implemented. What remains above needs a person, not code.');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * What is left, and who it belongs to.
+     *
+     * This used to be one hardcoded line under the heading "nothing below
+     * exists on any environment yet", which stopped being true: the consent
+     * system is implemented and tested, and the server half of that audit is
+     * verified by checks in the table above. Reporting a finished thing as
+     * non-existent is worse than not reporting it — it reads as unfinished
+     * work forever.
+     *
+     * So the two kinds are separated. Code still to write is its own list, and
+     * it is empty. Everything else is named with its owner and with what has
+     * already been done, so nobody re-does the parts that are closed.
+     */
+    protected function outstanding(): void
+    {
+        $this->line('');
+        $this->warn('CODE STILL TO WRITE');
+        $this->line('');
+        $this->line('  (none — every backend contract in the document is implemented)');
+
+        $this->line('');
+        $this->warn('NEEDS A PERSON, NOT CODE — these cannot be closed from this repository');
+        $this->line('');
+
+        $items = [
+            [
+                'Cookie/tracking infrastructure audit',
+                'deployment + legal',
+                'Code side DONE and asserted above: the API sets no cookies, tracking IDs '
+                    .'are never server-rendered, the consent gate touches only GA4/Meta/GTM '
+                    .'and category clicks (never auth, booking or payment), cookie cleanup '
+                    .'is an allowlist, and security headers ship on every response. '
+                    .'Outstanding: publish the cookie/vendor/retention inventory and privacy '
+                    .'notice, audit GTM container contents, check CDN/proxy/service-worker '
+                    .'injections, and run the before/after-consent network test with real '
+                    .'vendor IDs (none are configured yet, so that test cannot run).',
+            ],
+            [
+                'Supported cities to seed',
+                'product',
+                $this->citiesGap().' Country/city matching and the availability metadata '
+                    .'(cities_count, has_cities) are implemented; WHICH cities to seed is a '
+                    .'market decision the code cannot make.',
+            ],
+            [
+                'Event guest ticket payment',
+                'deferred by the document itself',
+                'readmeAlamgir: "event guest payment redemption is not implemented here… '
+                    .'apply the same Bookboll-share cap when that payment surface is '
+                    .'available." No guest ticket-payment surface exists in either repo — '
+                    .'/games/{uuid}/join is a join request. The checkable half IS enforced: '
+                    .'that endpoint accepts no rewards fields and spends no points.',
+            ],
+        ];
+
+        foreach ($items as $i => [$title, $owner, $detail]) {
+            $this->line(sprintf('  %d. %s  [%s]', $i + 1, $title, $owner));
+            foreach (str_split(wordwrap($detail, 74, "\n", true), 1) === [] ? [] : explode("\n", wordwrap($detail, 74, "\n", true)) as $line) {
+                $this->line('       '.$line);
+            }
+            $this->line('');
+        }
+    }
+
+    /**
+     * How many countries have no city rows — the audit the document asks for,
+     * answered with a live number rather than left as a to-do.
+     */
+    protected function citiesGap(): string
+    {
+        try {
+            $total = DB::table('countries')->count();
+            $without = DB::table('countries')
+                ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('cities')
+                    ->whereColumn('cities.country_id', 'countries.id'))
+                ->count();
+
+            return "{$without} of {$total} countries currently have no city rows.";
+        } catch (\Throwable $e) {
+            return 'Countries with no city rows could not be counted here.';
+        }
     }
 
     protected function check(string $label, bool $ok, string $where): void
