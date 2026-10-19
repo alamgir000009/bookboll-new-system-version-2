@@ -33,6 +33,7 @@ import { idIn } from '../lib/geoFilter.js'
 import { contentChanged } from '../lib/approvalState.js'
 import PhotoOrderEditor from '../components/PhotoOrderEditor.vue'
 import PricingSetupReminder from '../components/PricingSetupReminder.vue'
+import OwnSiteReviewPanel from '../components/OwnSiteReviewPanel.vue'
 import { missingPricingSetup, pricingSetupGate } from '../lib/pricingSetup.js'
 import StorefrontOrderSettings from '../components/StorefrontOrderSettings.vue'
 import MultiSelectDropdown from '../components/MultiSelectDropdown.vue'
@@ -2366,6 +2367,10 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
           <button class="btn btn-primary" :disabled="listingOpening" @click="openNewListing(null)"><Plus :size="16" />{{ listingOpening ? 'Loading…' : 'Create listing' }}</button>
         </div>
       </div>
+
+      <!-- Own-site listings that can no longer take bookings. Self-contained:
+           it loads its own queue and hides itself when there is nothing to do. -->
+      <OwnSiteReviewPanel v-if="canManageListings" ref="ownSiteReview" @resolved="loadList" />
 
       <div v-if="createdVenue" class="cf-created" role="status"><CircleCheck :size="20" /><div><strong>{{ createdVenue.name }} is ready</strong><p>Next, add a listing customers can book at this venue.</p></div><button class="btn btn-primary" @click="openNewListing(createdVenue.id); createdVenue = null">Create first listing</button><button aria-label="Dismiss venue confirmation" @click="createdVenue = null"><X :size="16" /></button></div>
       <div class="toolbar lf-bar">
