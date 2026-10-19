@@ -330,6 +330,21 @@ class AuditReadmeAlamgir extends Command
             'abandoned uploads expire; linked ones never do'
         );
 
+        // 11. Subscriber saved-payment picker (readmeAlamgir §11)
+        $this->check(
+            'Route: GET admin/subscriptions/dashboard/{id}/payment-methods',
+            $this->hasRoute('GET', 'admin/subscriptions/dashboard/{id}/payment-methods'),
+            'staff pick a stored card, never type a reference'
+        );
+        $this->check(
+            'Subscriptions: every action is business-scoped',
+            ! str_contains(
+                (string) file_get_contents(app_path('Services/ClassMembershipDashboardService.php')),
+                'ClassSubscription::query()->find($id)'
+            ),
+            'these loaded by bare id with no business check at all'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -356,7 +371,6 @@ class AuditReadmeAlamgir extends Command
             'GET /marketplace/users (people search)',
             'Community permissions persistence + moderator role hierarchy',
             'Provider settings profile/account + notification preferences',
-            'Secure saved-payment-method picker for subscribers',
             'Mobile-app adoption APIs',
             'Rewards for MEMBERSHIP, host_game and host_tournament checkouts'
                 .' (venue checkout is fully enforced; those three refuse a quote'
