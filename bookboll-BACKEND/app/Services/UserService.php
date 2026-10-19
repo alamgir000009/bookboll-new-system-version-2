@@ -216,6 +216,7 @@ class UserService
             'photos'        => 'nullable|array',
             'photos.*'      => 'nullable|string|max:2048',
             'is_private'    => 'sometimes|boolean',
+            'is_discoverable' => 'sometimes|boolean',
             'date_of_birth' => 'nullable|date|before:today',
             'gender'        => 'nullable',
             'nationality'   => 'nullable|string',
@@ -258,6 +259,13 @@ class UserService
 
             if (array_key_exists('is_private', $formData)) {
                 $updateData['is_private'] = (bool) $formData['is_private'];
+            }
+
+            // Separate from is_private on purpose: a private profile is still
+            // reachable at /u/:id, so it cannot also mean "do not list me by
+            // name". This is the flag people search honours.
+            if (array_key_exists('is_discoverable', $formData)) {
+                $updateData['is_discoverable'] = (bool) $formData['is_discoverable'];
             }
 
             $this->ensurePublicUuid($user);

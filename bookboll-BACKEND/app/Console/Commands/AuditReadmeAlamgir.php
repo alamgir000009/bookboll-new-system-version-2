@@ -566,6 +566,64 @@ class AuditReadmeAlamgir extends Command
             'catalogue-checked, deduped, capped per visitor, previews excluded'
         );
 
+        // 18. People search (readmeAlamgir §7)
+        $this->check(
+            'Route: GET marketplace/users',
+            $this->hasRoute('GET', 'marketplace/users'),
+            'the People tab had no source and said coming soon'
+        );
+        $this->check(
+            'People search is rate limited',
+            (bool) collect(Route::getRoutes())
+                ->first(fn ($r) => $r->uri() === 'api/marketplace/users'
+                    && in_array('throttle:30,1', $r->gatherMiddleware(), true)),
+            'public, unauthenticated, and reads across all customer rows'
+        );
+        $this->check(
+            'People search returns only public profile fields',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/PeopleSearchService.php'));
+                $start = strpos($src, 'protected function card(');
+                if ($start === false) {
+                    return false;
+                }
+                $card = substr($src, $start, 900);
+                preg_match_all("/^ {12}'(\\w+)'\\s*=>/m", $card, $m);
+
+                // An explicit list, checked here, so that adding a column to
+                // users can never start publishing it.
+                return $m[1] === ['id', 'url', 'name', 'avatar', 'isPrivate', 'hostedCount', 'joinedCount', 'joinedAt'];
+            })(),
+            'never email, phone, bio, photos, address or the internal id'
+        );
+        $this->check(
+            'Schema: users.is_discoverable',
+            Schema::hasColumn('users', 'is_discoverable'),
+            'is_private governs who sees posts, not whether you are listed'
+        );
+        $this->check(
+            'Discoverability is a setting a customer can change',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/UserService.php'));
+
+                // A column nobody can set is not a preference being honoured.
+                return str_contains($src, "'is_discoverable' => 'sometimes|boolean'")
+                    && str_contains($src, "array_key_exists('is_discoverable', \$formData)");
+            })(),
+            'update-profile accepts and persists it'
+        );
+        $this->check(
+            'People search: a short query is not reported as zero results',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/PeopleSearchService.php'));
+
+                return str_contains($src, "'reason'     => 'query_too_short'")
+                    && str_contains($src, "'status' => 'not_searched'")
+                    && str_contains($src, "'status' => 'at_least'");
+            })(),
+            'a count never claims more than the server checked'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -583,7 +641,6 @@ class AuditReadmeAlamgir extends Command
             'Own-site commission: the owner review path for existing cash-only'
                 .' listings (policy, rating, rounding, method enforcement, the'
                 .' booking snapshot and the wallet ledger are DONE)',
-            'GET /marketplace/users (people search)',
             'Community permissions persistence + moderator role hierarchy',
             'Provider settings profile/account + notification preferences',
             'Mobile-app adoption APIs',

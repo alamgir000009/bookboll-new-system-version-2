@@ -818,6 +818,10 @@ Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('loyalty-config', [MarketplaceCatalogController::class, 'loyaltyConfig'])->name('loyalty-config');
     // Build-time sitemap generator (apps/web scripts/gen-sitemap.mjs).
     Route::get('sitemap', [MarketplaceCatalogController::class, 'sitemap'])->name('sitemap');
+    // People search. Throttled per address: public, unauthenticated and the
+    // only endpoint here that reads across all customer rows.
+    Route::get('users', [PublicProfileController::class, 'search'])
+        ->middleware('throttle:30,1')->name('users');
     Route::get('profiles/{uuid}', [PublicProfileController::class, 'show'])->name('profiles.show');
     Route::get('communities/probe', [CustomerCommunityController::class, 'probe'])->name('communities.probe');
     Route::get('communities', [CustomerCommunityController::class, 'index'])->name('communities.index');

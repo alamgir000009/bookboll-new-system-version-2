@@ -49,6 +49,7 @@ class User extends Authenticatable
         'image',
         'bio',
         'is_private',
+        'is_discoverable',
         'phone',
         'email',
         'status',
@@ -109,6 +110,7 @@ class User extends Authenticatable
             'marketing_whatsapp'    => 'boolean',
             'marketing_updated_at'  => 'datetime',
             'is_private'            => 'boolean',
+            'is_discoverable'       => 'boolean',
         ];
     }
 
