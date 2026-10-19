@@ -370,7 +370,27 @@ class AuditReadmeAlamgir extends Command
             'it was never Bookboll\'s money'
         );
 
-        // 12. Subscriber saved-payment picker (readmeAlamgir §11)
+        // 12. Analytics aggregates (readmeAlamgir "Activity dashboard")
+        $this->check(
+            'Route: GET admin/dashboard/analytics/aggregates',
+            $this->hasRoute('GET', 'admin/dashboard/analytics/aggregates'),
+            'totals computed by the database, not the browser'
+        );
+        $this->check(
+            'Analytics: the raw-array endpoint still exists for other consumers',
+            $this->hasRoute('GET', 'admin/dashboard/analytics'),
+            'the aggregate endpoint is additive, not a replacement'
+        );
+        $this->check(
+            'Analytics: aggregates report their own coverage',
+            str_contains(
+                (string) file_get_contents(app_path('Services/AnalyticsAggregateService.php')),
+                "'missing_reason'"
+            ),
+            'a number with no coverage statement hides a partial total'
+        );
+
+        // 13. Subscriber saved-payment picker (readmeAlamgir §11)
         $this->check(
             'Route: GET admin/subscriptions/dashboard/{id}/payment-methods',
             $this->hasRoute('GET', 'admin/subscriptions/dashboard/{id}/payment-methods'),
@@ -405,7 +425,9 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Analytics filter-aware aggregates (the 5,000-row limit is still in place)',
+            'Analytics: wiring the dashboard cards and exports to the new aggregate'
+                .' endpoint (the server-side aggregates, coverage contract and'
+                .' filters are DONE; the raw-array view still feeds the UI)',
             'bookings.record_purpose backfill for provider slot blocks',
             'customer_types classification + advanced filters',
             'Category popularity aggregation + POST /marketplace/category-clicks',

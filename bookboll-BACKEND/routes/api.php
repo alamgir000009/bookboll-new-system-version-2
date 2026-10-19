@@ -150,6 +150,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         // Analytics dashboard dataset (/dashboard) — raw collections, scoped.
         Route::get('dashboard/analytics', [AnalyticsController::class, 'index'])->name('dashboard.analytics');
+        // Totals the DATABASE computed, across every authorised record, with an
+        // explicit coverage statement. The raw-array endpoint above is
+        // unchanged for existing consumers.
+        Route::get('dashboard/analytics/aggregates', [AnalyticsController::class, 'aggregates'])->name('dashboard.analytics.aggregates');
 
         // A provider's connected bank account (Listings → payment account).
         Route::middleware('capability:manage_listings,manage_platform_catalog')->group(function () {
