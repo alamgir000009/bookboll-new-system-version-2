@@ -2019,6 +2019,11 @@ class BookingService
             'add_ons.*'              => 'exists:add_ons,id',
             'use_gift_card_balance'  => 'nullable|boolean',
             'gift_card_balance_used' => 'nullable|numeric|min:0',
+            // Rewards proof. The storefront sends the opaque quote id and the
+            // integer points it was quoted — never a discount it computed
+            // itself, which the server would have to trust.
+            'loyalty_quote_id'       => 'nullable|string|max:80',
+            'loyalty_points'         => 'nullable|integer|min:0',
         ];
     }
 
@@ -2042,6 +2047,56 @@ class BookingService
      *   promocode_applied?: bool,
      * }
      */
+    /**
+     * Validate and reserve a rewards quote for this checkout.
+     *
+     * A quote that is absent means no rewards and full price. A quote that is
+     * present and unusable is an ERROR, not a silent fall back to full price —
+     * the customer asked to spend points and must be told it did not happen
+     * rather than simply charged more than they expected.
+     *
+     * @return array{quote: ?\App\Models\LoyaltyCheckoutQuote, discount: float}|array{errors: array}
+     */
+    protected function applyRewardsQuote($user, $listing, array $formData, float $orderTotal): array
+    {
+        $quoteId = $formData['loyalty_quote_id'] ?? null;
+        if (! $quoteId) {
+            return ['quote' => null, 'discount' => 0.0];
+        }
+
+        $rewards  = app(LoyaltyRedemptionService::class);
+        $currency = $rewards->currencyFor($listing);
+        // The VENUE's country governs, not a website picker.
+        $country  = $rewards->countryFor($listing);
+
+        if (! $country) {
+            return ['errors' => ['loyalty_quote_id' => ['Rewards are not available for this venue.']]];
+        }
+
+        $method = ($formData['payment_method'] ?? '') === 'deposit_remaining_on_arrival' ? 'deposit' : 'online';
+        $channel = ($formData['surface'] ?? 'marketplace') === CommissionPolicy::CHANNEL_SITE
+            ? CommissionPolicy::CHANNEL_SITE
+            : CommissionPolicy::CHANNEL_MARKETPLACE;
+
+        // Re-price from the server's own numbers, then check the quote against
+        // THAT. A changed order no longer matches the hash it was issued with.
+        $policy = CommissionPolicy::quote(
+            $listing, $channel, Money::toMinor($orderTotal, $currency), $currency, $method
+        );
+
+        $result = $rewards->reserve(
+            $quoteId,
+            isset($formData['loyalty_points']) ? (int) $formData['loyalty_points'] : null,
+            $user, $listing, $policy, $country, $currency
+        );
+
+        if (! ($result['ok'] ?? false)) {
+            return ['errors' => ['loyalty_quote_id' => [$result['error']]]];
+        }
+
+        return ['quote' => $result['quote'], 'discount' => (float) $result['discount']];
+    }
+
     /**
      * Why an own-site booking cannot go ahead with the method it asked for.
      *
@@ -2170,6 +2225,20 @@ class BookingService
             $giftCardBalanceUsed = min($giftCardBalanceUsed, $totalAfterDiscount);
         }
 
+        // Rewards, applied where BOTH payment entry points pass. The discount
+        // is whatever the server quoted, never what the client asked for.
+        $rewards = $this->applyRewardsQuote($user, $listing, $formData, $combinedSubtotal - $totalDiscount);
+        if (isset($rewards['errors'])) {
+            return ['errors' => $rewards['errors']];
+        }
+        $totalDiscount = round($totalDiscount + $rewards['discount'], 2);
+
+        if ($giftCardBalanceUsed > 0) {
+            // Rewards come off before the gift card, so a card cannot be spent
+            // against money the points already covered.
+            $giftCardBalanceUsed = min($giftCardBalanceUsed, max(0, $combinedSubtotal - $totalDiscount));
+        }
+
         return [
             'listing'             => $listing,
             'formData'            => $formData,
@@ -2180,6 +2249,8 @@ class BookingService
             'totalDiscount'       => $totalDiscount,
             'giftCardBalanceUsed' => $giftCardBalanceUsed,
             'promocode'           => $promocode,
+            'loyaltyQuote'        => $rewards['quote'],
+            'loyaltyDiscount'     => $rewards['discount'],
             'discounts'           => $this->splitAmountAcrossBookings($totalDiscount, $totalBookings),
             'giftCardAmounts'     => $this->splitAmountAcrossBookings($giftCardBalanceUsed, $totalBookings),
         ];
@@ -3605,7 +3676,12 @@ class BookingService
                     'remaining_amount' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? $remainingAmount : 0,
                     'remaining_method' => ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID || ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival')) ? PaymentMethod::CASH : null,
                 ],
-            ] + $this->commissionSnapshot($listing, $formData, $totalPrice));
+            ] + $this->commissionSnapshot($listing, $formData, $totalPrice) + [
+                // Which rewards quote paid part of this, so a redirect payment
+                // can find the reservation to consume and a refund can find
+                // what to give back.
+                'loyalty_quote_id' => $formData['loyalty_quote_id'] ?? null,
+            ]);
 
             $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
 

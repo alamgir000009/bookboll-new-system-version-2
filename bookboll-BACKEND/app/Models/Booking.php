@@ -57,6 +57,8 @@ class Booking extends Model
         'commission_fee_minor',
         'merchant_share_minor',
         'commission_currency',
+        'loyalty_quote_id',
+        'loyalty_discount',
     ];
 
     protected $casts = [

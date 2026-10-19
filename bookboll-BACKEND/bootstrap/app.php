@@ -23,6 +23,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // Capability gate — the server-side twin of the dashboard's can(CAP.…).
             // Several capabilities mean "any of", as in PAGE_CAP.
             'capability' => \App\Http\Middleware\CheckCapability::class,
+            // Payment routes that cannot honour a rewards quote yet refuse one
+            // outright, rather than charging full price while the customer
+            // believes their points were applied.
+            'rewards.unsupported' => \App\Http\Middleware\RejectUnsupportedRewards::class,
         ]);
 
         $middleware->preventRequestForgery(except: [

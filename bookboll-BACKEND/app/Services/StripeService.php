@@ -866,6 +866,11 @@ class StripeService
         ]);
 
         $this->creditProviderWallet($booking, $pendingPayments->sum('amount'), $depositAlreadyPaid);
+
+        // The charge is confirmed, so the points reserved at checkout are now
+        // genuinely spent. Idempotent: a duplicate webhook finds the quote
+        // already consumed and takes nothing twice.
+        $this->consumeLoyaltyQuote($booking);
     }
 
     /**
@@ -886,6 +891,27 @@ class StripeService
      * live marketplace rate only for bookings that predate the snapshot, which
      * is exactly how they were settled before.
      */
+    /** Spend the rewards reservation a confirmed booking was made with. */
+    protected function consumeLoyaltyQuote($booking): void
+    {
+        if (! $booking?->loyalty_quote_id) {
+            return;
+        }
+
+        try {
+            $quote = \App\Models\LoyaltyCheckoutQuote::where('quote_id', $booking->loyalty_quote_id)->first();
+            if ($quote) {
+                app(\App\Services\LoyaltyRedemptionService::class)->consume($quote, $booking->id);
+            }
+        } catch (\Throwable $e) {
+            // The booking is paid either way; a ledger error must never undo a
+            // confirmed payment.
+            Log::error('Loyalty quote consume failed', [
+                'booking_id' => $booking->id ?? null, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     protected function bookingCommissionPct($booking, $listing): float
     {
         if ($booking->commission_effective_pct !== null) {

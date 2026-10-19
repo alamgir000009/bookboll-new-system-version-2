@@ -736,7 +736,7 @@ Route::prefix('customer')->group(function () {
         Route::post('stripe/payouts/keys', [HostPayoutController::class, 'saveKeys'])->name('customer.stripe.payouts.keys');
         Route::delete('stripe/payouts', [HostPayoutController::class, 'destroy'])->name('customer.stripe.payouts.destroy');
         Route::post('games/quote', [CustomerGameController::class, 'quote'])->name('customer.games.quote');
-        Route::post('games', [CustomerGameController::class, 'store'])->name('customer.games.store');
+        Route::post('games', [CustomerGameController::class, 'store'])->middleware('rewards.unsupported')->name('customer.games.store');
         Route::patch('games/{uuid}/community', [CustomerGameController::class, 'setCommunity'])->name('customer.games.community');
         Route::get('games/{uuid}/requests', [CustomerGameController::class, 'requests'])->name('customer.games.requests');
         Route::post('games/{uuid}/requests/accept-all', [CustomerGameController::class, 'acceptAllRequests'])->name('customer.games.requests.accept-all');
@@ -749,7 +749,7 @@ Route::prefix('customer')->group(function () {
         Route::delete('game-requests/{requestUuid}', [CustomerGameController::class, 'cancelRequest'])->name('customer.game-requests.cancel');
         Route::post('game-requests/{requestUuid}/attendance', [CustomerGameController::class, 'attendance'])->name('customer.game-requests.attendance');
 
-        Route::post('tournaments', [CustomerGameController::class, 'storeTournament'])->name('customer.tournaments.store');
+        Route::post('tournaments', [CustomerGameController::class, 'storeTournament'])->middleware('rewards.unsupported')->name('customer.tournaments.store');
         Route::post('tournaments/{uuid}/matchups', [CustomerGameController::class, 'generateMatchups'])->name('customer.tournaments.matchups');
         Route::patch('tournament-matches/{matchUuid}/winner', [CustomerGameController::class, 'setMatchWinner'])->name('customer.tournament-matches.winner');
         Route::delete('tournament-matches/{matchUuid}/winner', [CustomerGameController::class, 'clearMatchWinner'])->name('customer.tournament-matches.winner.clear');
@@ -758,7 +758,7 @@ Route::prefix('customer')->group(function () {
         Route::get('programs/passes', [CustomerProgramController::class, 'passes'])->name('customer.programs.passes');
         Route::get('programs/offers/check', [CustomerProgramController::class, 'checkOffer'])->name('customer.programs.offers.check');
         Route::post('programs/offers/check', [CustomerProgramController::class, 'checkOffer'])->name('customer.programs.offers.check.post');
-        Route::post('programs/{uuid}/enroll', [CustomerProgramController::class, 'enroll'])->name('customer.programs.enroll');
+        Route::post('programs/{uuid}/enroll', [CustomerProgramController::class, 'enroll'])->middleware('rewards.unsupported')->name('customer.programs.enroll');
         Route::get('programs/checkout/{sessionId}', [CustomerProgramController::class, 'checkoutState'])->name('customer.programs.checkout-state');
         Route::post('programs/subscriptions/{uuid}/cancel', [CustomerProgramController::class, 'cancel'])->name('customer.programs.cancel');
         // Undo a cancellation that has not taken effect yet (cancel_pending).

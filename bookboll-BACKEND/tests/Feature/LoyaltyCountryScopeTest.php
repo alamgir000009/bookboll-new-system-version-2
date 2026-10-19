@@ -133,12 +133,17 @@ it('returns a null programme rather than inventing rules for an unconfigured cou
         ->and($res->json('data.tiers'))->toBe([]);
 });
 
-it('does not advertise checkout redemption until the quote is enforced', function () {
+it('advertises checkout redemption now that venue checkout enforces the quote', function () {
     $res = $this->actingAs(User::factory()->create())
         ->getJson('/api/customer/loyalty?country_id='.QATAR)->assertOk();
 
-    // Deploying the website is not what makes redemption work.
-    expect($res->json('data.redemption_checkout_v1'))->toBeFalse();
+    // This asserted false while the quote endpoint existed but nothing honoured
+    // it — deploying the website is not what makes redemption work. Venue
+    // checkout now validates the quote against the server's own prices,
+    // reserves its points at payment and consumes them on confirmation, and
+    // the payments that cannot honour a quote refuse one outright. So the
+    // capability no longer promises anything that silently fails.
+    expect($res->json('data.redemption_checkout_v1'))->toBeTrue();
 });
 
 it('shows the ledger for that country only, with spends signed negative', function () {

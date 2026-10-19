@@ -117,11 +117,14 @@ class LoyaltyPointService
             ] : null,
             'tiers'  => LoyaltyCountry::tiers($program),
             'ledger' => $ledger,
-            // Checkout redemption is advertised only once every payment entry
-            // point enforces the quote contract. Until then this stays false,
-            // and the storefront keeps its control disabled — deploying the
-            // website is not what makes redemption work.
-            'redemption_checkout_v1' => false,
+            // Venue checkout enforces the quote: it is validated against the
+            // server's own prices, its points are reserved when payment is
+            // attempted, consumed on confirmation and released on failure.
+            // Membership, game and tournament payments cannot honour a quote
+            // yet and REFUSE one outright rather than charging full price
+            // while the customer believes their points were applied, so this
+            // promises nothing that silently fails.
+            'redemption_checkout_v1' => true,
         ]);
     }
 }

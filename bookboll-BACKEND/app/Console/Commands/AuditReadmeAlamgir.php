@@ -262,6 +262,25 @@ class AuditReadmeAlamgir extends Command
             'the old membership path fell back to 15%'
         );
 
+        $this->check(
+            'Rewards: redemption_checkout_v1 is advertised',
+            str_contains(
+                preg_replace('#//.*$#m', '', (string) file_get_contents(app_path('Services/LoyaltyPointService.php'))),
+                "'redemption_checkout_v1' => true"
+            ),
+            'venue checkout enforces the quote'
+        );
+        $this->check(
+            'Rewards: unsupported payments refuse a quote',
+            class_exists(\App\Http\Middleware\RejectUnsupportedRewards::class),
+            'never charge full price while the customer thinks points applied'
+        );
+        $this->check(
+            'Schema: bookings.loyalty_quote_id',
+            Schema::hasColumn('bookings', 'loyalty_quote_id'),
+            'migration 2026_10_19_000009 — lets a redirect consume its reservation'
+        );
+
         // 10. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -292,10 +311,9 @@ class AuditReadmeAlamgir extends Command
             'Provider settings profile/account + notification preferences',
             'Secure saved-payment-method picker for subscribers',
             'Mobile-app adoption APIs',
-            'Loyalty redemption ENFORCEMENT on the five payment endpoints, and the'
-                .' membership / host_game / host_tournament quote kinds (the quote'
-                .' endpoint, funding rule and country scoping are DONE;'
-                .' redemption_checkout_v1 stays false until enforcement lands)',
+            'Rewards for MEMBERSHIP, host_game and host_tournament checkouts'
+                .' (venue checkout is fully enforced; those three refuse a quote'
+                .' outright rather than ignoring one)',
             'Cookie/tracking infrastructure audit (deployment task, not code)',
         ] as $i => $item) {
             $this->line(sprintf('  %2d. %s', $i + 1, $item));
