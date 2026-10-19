@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\BrandResolutionService;
+use App\Services\CategoryPopularityService;
 use App\Services\MarketplaceCatalogService;
 use App\Services\MarketplaceGeoService;
 use Illuminate\Http\Request;
@@ -28,6 +29,18 @@ class MarketplaceCatalogController extends Controller
     public function listings(Request $request)
     {
         return $this->catalog->listings($request);
+    }
+
+    /**
+     * Record one explicit category selection.
+     *
+     * Public and unauthenticated — the storefront posts this before anyone
+     * signs in. Nothing in the payload is a count: the server decides whether
+     * a selection counts at all.
+     */
+    public function categoryClick(Request $request, CategoryPopularityService $popularity)
+    {
+        return $popularity->record($request);
     }
 
     public function venues(Request $request)

@@ -799,6 +799,10 @@ Route::get('fetch-listings', [ListingController::class, 'fetchListings'])->name(
 
 Route::prefix('marketplace')->name('marketplace.')->group(function () {
     Route::get('listings', [MarketplaceCatalogController::class, 'listings'])->name('listings');
+    // One explicit category selection. Throttled per address because it is
+    // public and unauthenticated; the service also dedupes and caps.
+    Route::post('category-clicks', [MarketplaceCatalogController::class, 'categoryClick'])
+        ->middleware('throttle:60,1')->name('category-clicks');
     Route::get('venues', [MarketplaceCatalogController::class, 'venues'])->name('venues');
     Route::get('venues/{id}', [MarketplaceCatalogController::class, 'venue'])->name('venues.show');
     Route::get('brand-locations', [MarketplaceCatalogController::class, 'brandLocations'])->name('brand-locations');

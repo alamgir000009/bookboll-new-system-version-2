@@ -488,6 +488,84 @@ class AuditReadmeAlamgir extends Command
             'exactly one bare lookup, inside the guard that scopes it'
         );
 
+        // 17. Category popularity by real choices (readmeAlamgir §Features)
+        $this->check(
+            'Route: POST marketplace/category-clicks',
+            $this->hasRoute('POST', 'marketplace/category-clicks'),
+            'the endpoint the storefront posts selections to'
+        );
+        $this->check(
+            'Category clicks: stored per scope, deduped per visitor',
+            Schema::hasTable('category_clicks')
+                && collect(['category', 'type', 'city_id', 'country_id', 'brand_slug', 'visitor_hash'])
+                    ->every(fn ($c) => Schema::hasColumn('category_clicks', $c)),
+            'marketplace and each storefront keep separate counts'
+        );
+        $this->check(
+            'Categories ranked by choices, not by listing count',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/MarketplaceCatalogService.php'));
+
+                // All three must ship together: the counts, the scope they
+                // describe, and the flag. The flag alone would make the
+                // storefront post into an endpoint that is not there.
+                return str_contains($src, "'category_popularity' =>")
+                    && str_contains($src, "'category_popularity_scope' =>")
+                    && str_contains($src, "'category_click_tracking_enabled' => true");
+            })(),
+            'catalogue response carries counts, scope and the tracking flag'
+        );
+        $this->check(
+            'Category scope echo names only what the storefront sent',
+            (function () {
+                // The storefront drops every count when this block names a
+                // scope it did not ask for, so an internal numeric country id
+                // here would silently return the catalogue to alphabetical
+                // ordering with nothing visibly broken.
+                $src = (string) file_get_contents(app_path('Services/MarketplaceCatalogService.php'));
+                $start = strpos($src, "'category_popularity_scope' => [");
+                if ($start === false) {
+                    return false;
+                }
+                // The array's own closing bracket, at its own indent — not the
+                // first `'],` inside it, which belongs to a subscript.
+                $close = strpos($src, "\n            ],", $start);
+                $block = $close === false ? '' : substr($src, $start, $close - $start);
+                preg_match_all("/^ {16}'(\\w+)'\\s*=>/m", $block, $m);
+
+                return $m[1] === ['city_id', 'country_iso', 'brand_slug', 'fallback', 'window_days'];
+            })(),
+            'echoed in the client\'s own terms, so counts are not discarded'
+        );
+        $this->check(
+            'Category clicks: the client sends a selection, never a count',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/CategoryPopularityService.php'));
+                $start = strpos($src, '$request->validate([');
+                if ($start === false) {
+                    return false;
+                }
+                $rules = substr($src, $start, (int) strpos($src, '])', $start) - $start);
+                preg_match_all("/'(\\w+)'\\s*=>/", $rules, $m);
+
+                // Anything resembling a tally would let a client rank itself.
+                return $m[1] === ['category', 'type', 'source', 'city_id', 'city', 'country_iso', 'brand_slug'];
+            })(),
+            'no count, weight or score is accepted from the request'
+        );
+        $this->check(
+            'Category clicks: unknown categories, bots and repeats excluded',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/CategoryPopularityService.php'));
+
+                return str_contains($src, 'categoryExists(')
+                    && str_contains($src, 'DEDUPE_MINUTES')
+                    && str_contains($src, 'VISITOR_CAP')
+                    && str_contains($src, 'looksAutomated(');
+            })(),
+            'catalogue-checked, deduped, capped per visitor, previews excluded'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -502,7 +580,6 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Category popularity aggregation + POST /marketplace/category-clicks',
             'Own-site commission: the owner review path for existing cash-only'
                 .' listings (policy, rating, rounding, method enforcement, the'
                 .' booking snapshot and the wallet ledger are DONE)',

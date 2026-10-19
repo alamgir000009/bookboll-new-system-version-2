@@ -6,6 +6,7 @@ use App\Models\Business;
 use App\Models\ClassProgram;
 use App\Models\HostedGame;
 use App\Models\Listing;
+use App\Services\CategoryPopularityService;
 use App\Support\CommissionPolicy;
 use App\Services\BookingWalletService;
 use App\Models\LoyaltyProgram;
@@ -54,7 +55,63 @@ class MarketplaceCatalogService
             return $this->listingCard($listing, $venue);
         })->filter()->values();
 
-        return sendSuccess('Listings fetched successfully', ['listings' => $cards]);
+        return sendSuccess('Listings fetched successfully', array_merge(
+            ['listings' => $cards],
+            $this->categoryPopularityPayload($request, $scope)
+        ));
+    }
+
+    /**
+     * Category ranking by what visitors choose, for this exact scope.
+     *
+     * Returned alongside the listings so Home and the catalogue rank
+     * identically — they ask the same question and get the same answer.
+     *
+     * The tracking flag is advertised only because the endpoint that receives
+     * clicks exists. The document is explicit that it must not be set before
+     * then, or the storefront posts into nothing.
+     */
+    protected function categoryPopularityPayload(Request $request, array $scope): array
+    {
+        $cityId = is_array($scope['cityIds'] ?? null) && count($scope['cityIds']) === 1
+            ? (int) $scope['cityIds'][0]
+            : null;
+
+        $countryId = null;
+        if ($cityId) {
+            $countryId = City::where('id', $cityId)->value('country_id');
+        } elseif ($iso = strtoupper(trim((string) $request->input('country_iso', '')))) {
+            $countryId = Country::where('iso2', $iso)->value('id');
+        }
+
+        $brandSlug = $scope['whiteLabel'] ?? false
+            ? strtolower(trim((string) $request->input('brand_slug', ''))) ?: null
+            : null;
+
+        $result = app(CategoryPopularityService::class)->forScope($cityId, $countryId, $brandSlug);
+
+        return [
+            'category_popularity' => $result['popularity'],
+            // Which scope produced these, said plainly — a country-level
+            // fallback for a new city is reasonable, but only when reported.
+            //
+            // Echoed in the client's own terms: the city id and brand slug it
+            // asked with, and the ISO code it sent. Internal numeric country
+            // ids are deliberately NOT echoed — the storefront checks this
+            // block against its own request before trusting the counts, and
+            // an id it never sent reads as a mismatched scope, which would
+            // silently discard every count.
+            'category_popularity_scope' => [
+                'city_id'     => $result['scope']['city_id'],
+                'country_iso' => $result['scope']['country_id']
+                    ? Country::where('id', $result['scope']['country_id'])->value('iso2')
+                    : null,
+                'brand_slug'  => $brandSlug,
+                'fallback'    => $result['scope']['fallback'],
+                'window_days' => CategoryPopularityService::WINDOW_DAYS,
+            ],
+            'category_click_tracking_enabled' => true,
+        ];
     }
 
     public function venues(Request $request)
