@@ -130,7 +130,7 @@ class CustomerCommunityController extends Controller
     public function setMemberRole(Request $request, string $uuid, string $memberUuid)
     {
         $data = $request->validate([
-            'role' => 'required|string|in:admin,member',
+            'role' => 'required|string|in:admin,moderator,member',
         ]);
 
         return $this->communities->setMemberRole(
@@ -144,7 +144,7 @@ class CustomerCommunityController extends Controller
     public function setMemberRoleById(Request $request, string $memberUuid)
     {
         $data = $request->validate([
-            'role' => 'required|string|in:admin,member',
+            'role' => 'required|string|in:admin,moderator,member',
         ]);
 
         return $this->communities->setMemberRoleById(

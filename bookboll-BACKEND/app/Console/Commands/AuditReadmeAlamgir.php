@@ -624,6 +624,73 @@ class AuditReadmeAlamgir extends Command
             'a count never claims more than the server checked'
         );
 
+        // 19. Community permissions and moderation (readmeAlamgir §9)
+        $this->check(
+            'Community settings are always returned explicitly',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/CustomerCommunityService.php'));
+
+                // An absent permission is indistinguishable from a server that
+                // dropped it — the exact failure the client read-back catches.
+                return str_contains($src, "'settings'          => CommunityPermissions::settings(\$c)");
+            })(),
+            'an absent permission reads as a dropped one'
+        );
+        $this->check(
+            'Feed and chat audiences are enforced, not only stored',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/CustomerCommunityService.php'));
+
+                return substr_count($src, 'CommunityPermissions::canContribute(') === 2
+                    && str_contains($src, "'posts'")
+                    && str_contains($src, "'chat'");
+            })(),
+            'an Admins-only feed used to accept posts from every member'
+        );
+        $this->check(
+            'Moderator is a real role the hierarchy enforces',
+            (function () {
+                $controller = (string) file_get_contents(app_path('Http/Controllers/CustomerCommunityController.php'));
+                $policy = (string) file_get_contents(app_path('Support/CommunityPermissions.php'));
+
+                return str_contains($controller, "'role' => 'required|string|in:admin,moderator,member'")
+                    && str_contains($policy, 'Only the owner can assign or remove admins.')
+                    && str_contains($policy, 'You cannot change your own role.');
+            })(),
+            'admin was previously any admin\'s to give, including to themselves'
+        );
+        $this->check(
+            'Moderators get the narrow chat patch and nothing else',
+            (function () {
+                $policy = (string) file_get_contents(app_path('Support/CommunityPermissions.php'));
+                $src = (string) file_get_contents(app_path('Services/CustomerCommunityService.php'));
+
+                return str_contains($policy, 'public static function isModeratorChatPatch')
+                    && str_contains($policy, "MODERATOR_SETTINGS = ['chat_permission', 'chat_locked']")
+                    && str_contains($src, 'CommunityPermissions::isModeratorChatPatch(');
+            })(),
+            'refused whole, never applied in part'
+        );
+        $this->check(
+            'Community settings patches merge rather than replace',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/CustomerCommunityService.php'));
+
+                // Two callers merge: the general edit and the moderator patch.
+                return substr_count($src, 'CommunityPermissions::mergeSettings(') === 3;
+            })(),
+            'one permission must not erase the other or a custom key'
+        );
+        $this->check(
+            'Moderators can remove posts and group messages',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/CustomerCommunityService.php'));
+
+                return substr_count($src, 'CommunityPermissions::canModerate(') === 2;
+            })(),
+            'the old owner/admin check locked moderators out of their job'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -641,7 +708,6 @@ class AuditReadmeAlamgir extends Command
             'Own-site commission: the owner review path for existing cash-only'
                 .' listings (policy, rating, rounding, method enforcement, the'
                 .' booking snapshot and the wallet ledger are DONE)',
-            'Community permissions persistence + moderator role hierarchy',
             'Provider settings profile/account + notification preferences',
             'Mobile-app adoption APIs',
             'Rewards for MEMBERSHIP, host_game and host_tournament checkouts'

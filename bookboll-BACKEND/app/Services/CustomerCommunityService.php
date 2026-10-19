@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Community;
 use App\Models\CommunityMember;
+use App\Support\CommunityPermissions;
 use App\Models\CommunityPost;
 use App\Models\CustomerMessage;
 use App\Models\StreetCred;
@@ -109,6 +110,14 @@ class CustomerCommunityService
 
         $data = $this->mapCommunity($withCount);
         $data['membership'] = $membership;
+        // The viewer's effective role, decided here. The client otherwise has
+        // to infer it, and an owner whose membership row is missing would read
+        // as a visitor in their own community.
+        $data['viewer_role'] = CommunityPermissions::role(
+            $community,
+            $viewer?->uuid ? CommunityMember::where('community_id', $community->id)->where('customer_id', $viewer->uuid)->first() : null,
+            $viewer?->uuid
+        );
 
         return sendSuccess('Community fetched', ['community' => $data]);
     }
@@ -199,8 +208,15 @@ class CustomerCommunityService
             return sendError('Give your community a name.');
         }
 
+        // Validated before the transaction opens: a bad enum is the caller's
+        // mistake, not a half-created community to roll back.
+        [$settings, $settingsError] = CommunityPermissions::mergeSettings(null, is_array($fields['settings'] ?? null) ? $fields['settings'] : []);
+        if ($settingsError) {
+            return sendError($settingsError, ['settings' => [$settingsError]], 422);
+        }
+
         try {
-            $community = DB::transaction(function () use ($user, $fields, $name) {
+            $community = DB::transaction(function () use ($user, $fields, $name, $settings) {
                 $community = Community::create([
                     'owner_customer_id' => $user->uuid,
                     'name'              => $name,
@@ -213,7 +229,7 @@ class CustomerCommunityService
                     'avatar_image'      => $fields['avatar_image'] ?? null,
                     'images'            => $fields['images'] ?? [],
                     'is_private'        => (bool) ($fields['is_private'] ?? false),
-                    'settings'          => $fields['settings'] ?? [],
+                    'settings'          => $settings,
                     'moderation_status' => 'active',
                 ]);
 
@@ -244,7 +260,28 @@ class CustomerCommunityService
         }
 
         $membership = $this->membershipFor($community->id, $user->uuid);
-        if (! $this->canManage($membership)) {
+        $role = CommunityPermissions::role($community, $membership, $user->uuid);
+
+        if (! CommunityPermissions::canConfigure($role)) {
+            // A moderator may change the group-chat audience and nothing else.
+            // The patch is accepted whole or refused whole: silently dropping
+            // the rest would report success for a request half ignored.
+            if ($role === 'moderator' && CommunityPermissions::isModeratorChatPatch($patch)) {
+                [$merged, $error] = CommunityPermissions::mergeSettings($community, $patch['settings']);
+                if ($error) {
+                    return sendError($error, ['settings' => [$error]], 422);
+                }
+
+                $community->settings = $merged;
+                $community->save();
+
+                return sendSuccess('Community updated', ['community' => $this->mapCommunity($community->fresh())]);
+            }
+
+            if ($role === 'moderator') {
+                return sendError('Moderators can only change who can send group messages.', [], 403);
+            }
+
             return sendError('You cannot edit this community.', [], 403);
         }
 
@@ -253,6 +290,18 @@ class CustomerCommunityService
             if (array_key_exists($key, $patch)) {
                 $clean[$key] = $patch[$key];
             }
+        }
+        if (array_key_exists('settings', $clean)) {
+            // Merged over what is stored, so a patch naming one permission
+            // cannot erase the other or any custom key saved beside them.
+            [$merged, $error] = CommunityPermissions::mergeSettings(
+                $community,
+                is_array($clean['settings']) ? $clean['settings'] : []
+            );
+            if ($error) {
+                return sendError($error, ['settings' => [$error]], 422);
+            }
+            $clean['settings'] = $merged;
         }
         if (isset($clean['name'])) {
             $clean['name'] = trim((string) $clean['name']);
@@ -353,7 +402,7 @@ class CustomerCommunityService
             ->get(['uuid', 'name', 'image'])
             ->keyBy('uuid');
 
-        $rank = ['owner' => 0, 'admin' => 1, 'member' => 2];
+        $rank = ['owner' => 0, 'admin' => 1, 'moderator' => 2, 'member' => 3];
         $rows = $mems->map(function (CommunityMember $m) use ($people) {
             $p = $people->get($m->customer_id);
             $mapped = $this->mapMembership($m);
@@ -367,8 +416,8 @@ class CustomerCommunityService
             if ($ap !== $bp) {
                 return $ap <=> $bp;
             }
-            $ar = $rank[$a['role'] ?? 'member'] ?? 2;
-            $br = $rank[$b['role'] ?? 'member'] ?? 2;
+            $ar = $rank[$a['role'] ?? 'member'] ?? 3;
+            $br = $rank[$b['role'] ?? 'member'] ?? 3;
             if ($ar !== $br) {
                 return $ar <=> $br;
             }
@@ -427,7 +476,8 @@ class CustomerCommunityService
         if (! $community) {
             return sendError('Community not found.', [], 404);
         }
-        if (! $this->canManage($this->membershipFor($community->id, $user->uuid))) {
+        $actorRole = CommunityPermissions::role($community, $this->membershipFor($community->id, $user->uuid), $user->uuid);
+        if (! CommunityPermissions::canConfigure($actorRole)) {
             return sendError('Not allowed.', [], 403);
         }
 
@@ -439,6 +489,17 @@ class CustomerCommunityService
         }
         if ($member->role === 'owner') {
             return sendError('Cannot remove the owner.');
+        }
+
+        // Removing an admin is a demotion by another route, so it follows the
+        // same rule: the owner's call alone. Otherwise two admins could remove
+        // each other and the community would turn on who clicked first.
+        if ($member->role === 'admin' && $actorRole !== 'owner') {
+            return sendError('Only the owner can remove an admin.', [], 403);
+        }
+
+        if ((string) $member->customer_id === (string) $user->uuid) {
+            return sendError('Use Leave community to remove yourself.', [], 422);
         }
 
         $member->delete();
@@ -462,32 +523,41 @@ class CustomerCommunityService
 
     public function setMemberRole(User $user, string $uuid, string $memberUuid, string $role)
     {
-        if (! in_array($role, ['admin', 'member'], true)) {
-            return sendError('Invalid role');
-        }
-
         $community = $this->findVisibleByUuid($uuid);
         if (! $community) {
             return sendError('Community not found.', [], 404);
         }
-        if (! $this->canManage($this->membershipFor($community->id, $user->uuid))) {
-            return sendError('Not allowed.', [], 403);
-        }
 
+        // Scoped to THIS community: a member uuid is not proof of access to it.
         $member = CommunityMember::where('community_id', $community->id)
             ->where('uuid', $memberUuid)
             ->first();
         if (! $member) {
             return sendError('Member not found.', [], 404);
         }
-        if ($member->role === 'owner') {
-            return sendError('Cannot change the owner role.');
+
+        $actorRole = CommunityPermissions::role($community, $this->membershipFor($community->id, $user->uuid), $user->uuid);
+        $targetRole = CommunityPermissions::role($community, $member, $member->customer_id);
+        $isSelf = (string) $member->customer_id === (string) $user->uuid;
+
+        [$allowed, $why, $status] = CommunityPermissions::canSetRole($actorRole, $targetRole, $role, $isSelf);
+        if (! $allowed) {
+            return sendError($why, [], $status);
+        }
+
+        if ($member->status !== 'accepted') {
+            return sendError('Accept this member before giving them a role.', [], 422);
         }
 
         $member->role = $role;
         $member->save();
 
-        return sendSuccess('Role updated', ['ok' => true]);
+        // The role is read back from the row, because the client only reports
+        // success when the role it asked for is the role that came back.
+        return sendSuccess('Role updated', [
+            'ok'     => true,
+            'member' => array_merge($this->mapMembership($member->fresh()), ['community_id' => $community->uuid]),
+        ]);
     }
 
     public function setMemberRoleById(User $user, string $memberUuid, string $role)
@@ -565,8 +635,21 @@ class CustomerCommunityService
         }
 
         $membership = $this->membershipFor($community->id, $user->uuid);
-        if (! $this->isMember($membership)) {
+        $role = CommunityPermissions::role($community, $membership, $user->uuid);
+        if (! CommunityPermissions::isMember($role)) {
             return sendError('Join the community to post.', [], 403);
+        }
+
+        // The configured feed audience, enforced here and not only in the UI.
+        $settings = CommunityPermissions::settings($community);
+        if (! CommunityPermissions::canContribute($role, $settings, 'posts')) {
+            return sendError(
+                $settings['post_permission'] === 'admins'
+                    ? 'Only the owner and admins can post in this community.'
+                    : 'Only admins and moderators can post in this community.',
+                [],
+                403
+            );
         }
 
         $body = trim((string) ($data['body'] ?? ''));
@@ -610,8 +693,13 @@ class CustomerCommunityService
         }
 
         $membership = $this->membershipFor($community->id, $user->uuid);
+        $role = CommunityPermissions::role($community, $membership, $user->uuid);
         $isAuthor = $post->author_id === $user->uuid;
-        if (! $isAuthor && ! $this->canManage($membership)) {
+
+        // Authors keep their own posts; moderators remove unwanted ones. The
+        // role is read from THIS community's membership, so a moderator
+        // elsewhere has no powers here.
+        if (! $isAuthor && ! CommunityPermissions::canModerate($role)) {
             return sendError('Not allowed.', [], 403);
         }
 
@@ -728,12 +816,13 @@ class CustomerCommunityService
         }
 
         $membership = $this->membershipFor($community->id, $user->uuid);
-        if (! $this->isMember($membership)) {
+        $role = CommunityPermissions::role($community, $membership, $user->uuid);
+        if (! CommunityPermissions::isMember($role)) {
             return sendError('Members only.', [], 403);
         }
 
         $isAuthor = $message->sender_id === $user->uuid;
-        if (! $isAuthor && ! $this->canManage($membership)) {
+        if (! $isAuthor && ! CommunityPermissions::canModerate($role)) {
             return sendError('Not allowed.', [], 403);
         }
 
@@ -762,13 +851,23 @@ class CustomerCommunityService
         }
 
         $membership = $this->membershipFor($community->id, $user->uuid);
-        if (! $this->isMember($membership)) {
+        $role = CommunityPermissions::role($community, $membership, $user->uuid);
+        if (! CommunityPermissions::isMember($role)) {
             return sendError('Members only.', [], 403);
         }
 
-        $settings = is_array($community->settings) ? $community->settings : [];
-        if (! empty($settings['chat_locked']) && ! $this->canManage($membership)) {
-            return sendError('Chat is locked to announcements only.');
+        // Accepted members always READ the thread; sending follows the
+        // configured audience. The legacy chat_locked flag is folded into that
+        // one decision rather than checked separately.
+        $settings = CommunityPermissions::settings($community);
+        if (! CommunityPermissions::canContribute($role, $settings, 'chat')) {
+            return sendError(
+                $settings['chat_permission'] === 'admins'
+                    ? 'Only the owner and admins can send messages here.'
+                    : 'Only admins and moderators can send messages here.',
+                [],
+                403
+            );
         }
 
         $message = CustomerMessage::create([
@@ -1017,9 +1116,10 @@ class CustomerCommunityService
             'avatar_image'      => $c->avatar_image ?? '',
             'images'            => $c->images ?? [],
             'is_private'        => (bool) $c->is_private,
-            'settings'          => is_array($c->settings) && array_is_list($c->settings) && count($c->settings) === 0
-                ? (object) []
-                : ($c->settings ?: (object) []),
+            // Always explicit. An absent permission is indistinguishable from
+            // a server that dropped it, which is the exact failure the client's
+            // read-back check exists to catch.
+            'settings'          => CommunityPermissions::settings($c),
             'moderation_status' => $c->moderation_status ?: 'active',
             'memberCount'       => (int) ($c->memberCount ?? 0),
             'created_at'        => optional($c->created_at)?->toIso8601String(),
