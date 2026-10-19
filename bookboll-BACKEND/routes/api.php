@@ -380,6 +380,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::delete('subscriptions/programs/{id}', [ClassMembershipController::class, 'destroyProgram'])->name('subscriptions.programs.destroy');
             Route::get('subscriptions/dashboard/{id}', [ClassMembershipController::class, 'show'])->name('subscriptions.dashboard.show');
             Route::get('subscriptions/dashboard/{id}/payments', [ClassMembershipController::class, 'payments'])->name('subscriptions.dashboard.payments');
+            // The customer's own saved cards, so staff pick a stored method
+            // instead of typing a reference. No card number is ever collected
+            // here and the Stripe token never reaches the browser.
+            Route::get('subscriptions/dashboard/{id}/payment-methods', [ClassMembershipController::class, 'paymentMethods'])->name('subscriptions.dashboard.payment-methods');
             Route::post('subscriptions/dashboard/{id}/charge', [ClassMembershipController::class, 'charge'])->name('subscriptions.dashboard.charge');
             Route::post('subscriptions/dashboard/{id}/retry-charge', [ClassMembershipController::class, 'retryCharge'])->name('subscriptions.dashboard.retry-charge');
             Route::post('subscriptions/dashboard/{id}/cancel', [ClassMembershipController::class, 'cancel'])->name('subscriptions.dashboard.cancel');

@@ -30,6 +30,12 @@ class ClassMembershipController extends Controller
         return $this->service->payments($id);
     }
 
+    /** The saved cards this subscription's customer can be charged on. */
+    public function paymentMethods($id)
+    {
+        return $this->service->paymentMethods($id);
+    }
+
     public function charge(Request $request, $id)
     {
         return $this->service->charge($request, $id);

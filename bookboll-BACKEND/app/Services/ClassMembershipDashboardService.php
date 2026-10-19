@@ -9,6 +9,8 @@ use App\Models\ClassSubscription;
 use App\Models\OfferRedemption;
 use App\Models\Payment;
 use App\Models\User;
+use App\Support\AccessScope;
+use App\Models\PaymentMethod;
 use App\Models\Venue;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -71,9 +73,9 @@ class ClassMembershipDashboardService
 
     public function show($id)
     {
-        $sub = ClassSubscription::query()->find($id);
-        if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
         }
 
         $program = ClassProgram::query()->find($sub->program_id);
@@ -88,9 +90,9 @@ class ClassMembershipDashboardService
 
     public function payments($id)
     {
-        $sub = ClassSubscription::query()->find($id);
-        if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
         }
 
         return sendSuccess('Payments fetched', [
@@ -206,12 +208,12 @@ class ClassMembershipDashboardService
 
     public function charge($request, string $id)
     {
-        return $this->doCharge($id, false);
+        return $this->doCharge($id, false, $request);
     }
 
     public function retryCharge($request, string $id)
     {
-        return $this->doCharge($id, true);
+        return $this->doCharge($id, true, $request);
     }
 
     public function cancel($request, string $id)
@@ -220,9 +222,9 @@ class ClassMembershipDashboardService
             'cancel_reason' => 'nullable|string|max:255',
         ]);
 
-        $sub = ClassSubscription::query()->find($id);
-        if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
         }
 
         $patch = ['status' => 'cancelled', 'cancelled_at' => now()];
@@ -256,8 +258,11 @@ class ClassMembershipDashboardService
 
         $n = 0;
         foreach ($data['ids'] as $id) {
-            $sub = ClassSubscription::query()->find($id);
-            if (! $sub) {
+            // Scoped per id: a bulk action must not become the way to reach
+            // subscriptions the single-id endpoints refuse. An id outside the
+            // actor's business is skipped, exactly like a missing one.
+            [$sub, $denied] = $this->scopedSubscription((string) $id);
+            if ($denied || ! $sub) {
                 continue;
             }
             $patch = ['status' => 'cancelled', 'cancelled_at' => now()];
@@ -278,9 +283,9 @@ class ClassMembershipDashboardService
 
     public function pause($request, string $id)
     {
-        $sub = ClassSubscription::query()->find($id);
-        if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
         }
 
         $sub->update([
@@ -302,9 +307,9 @@ class ClassMembershipDashboardService
 
     public function resume($request, string $id)
     {
-        $sub = ClassSubscription::query()->find($id);
-        if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
         }
         $program = ClassProgram::query()->find($sub->program_id);
         $today = Carbon::today()->toDateString();
@@ -330,9 +335,9 @@ class ClassMembershipDashboardService
 
     public function markPastDue($request, string $id)
     {
-        $sub = ClassSubscription::query()->find($id);
-        if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
         }
 
         $sub->update([
@@ -353,9 +358,12 @@ class ClassMembershipDashboardService
             'cancel_reason' => 'nullable|string|max:255',
         ]);
 
-        $sub = ClassSubscription::query()->find($id);
-        if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+        [$sub, $denied] = $this->scopedSubscription($id);
+
+        if ($denied) {
+
+            return $denied;
+
         }
 
         $base = $sub->next_billing_at
@@ -378,9 +386,9 @@ class ClassMembershipDashboardService
 
     public function winback($request, string $id)
     {
-        $sub = ClassSubscription::query()->find($id);
-        if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
         }
 
         // Customer WhatsApp is still FE-driven; acknowledge for API parity.
@@ -435,11 +443,144 @@ class ClassMembershipDashboardService
 
     // ── Charge core ──────────────────────────────────────────────────────────
 
-    protected function doCharge(string $id, bool $isRetry)
+    /**
+     * The subscription, but only if the acting account may act on it.
+     *
+     * These actions took a bare id and loaded it with no scoping at all, so a
+     * provider could charge, cancel or pause a subscription belonging to a
+     * different business by passing its id. Platform roles are unscoped by
+     * design; a provider is held to the programmes their own business runs.
+     *
+     * @return array{0: ?ClassSubscription, 1: mixed}
+     */
+    protected function scopedSubscription(string $id): array
     {
         $sub = ClassSubscription::query()->find($id);
         if (! $sub) {
-            return sendError('Subscription not found', [], 404);
+            return [null, sendError('Subscription not found', [], 404)];
+        }
+
+        $ownerId = AccessScope::ownerUserId(auth()->user());
+        if ($ownerId === null) {
+            // Platform side: jurisdiction is enforced by the route capability.
+            return [$sub, null];
+        }
+
+        $program = ClassProgram::query()->find($sub->program_id);
+        $programOwner = $program?->mapped_owner_user_id ?: $program?->owner_user_id;
+
+        if (! $programOwner || (string) $programOwner !== (string) $ownerId) {
+            // Deliberately the same 404 as a missing row: confirming that a
+            // subscription exists but belongs to someone else is itself a leak.
+            return [null, sendError('Subscription not found', [], 404)];
+        }
+
+        return [$sub, null];
+    }
+
+    /**
+     * The saved cards this subscription's customer can actually be charged on.
+     *
+     * Scoped twice over: the actor must be allowed to act on the subscription,
+     * and only that customer's own methods are listed. Card numbers are never
+     * involved — the dashboard picks a stored method, it does not collect one.
+     */
+    public function paymentMethods(string $id)
+    {
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
+        }
+
+        $customer = $this->customerUserFor($sub);
+        if (! $customer) {
+            return sendSuccess('Saved payment methods', ['payment_methods' => []]);
+        }
+
+        $methods = PaymentMethod::query()
+            ->where('user_id', $customer->id)
+            ->orderByDesc('default')
+            ->orderByDesc('id')
+            ->get(['id', 'brand', 'last_four', 'exp_month', 'exp_year', 'default'])
+            ->map(fn ($m) => [
+                // Our own id. The Stripe token is never sent to the browser:
+                // the dashboard chooses a method, the server resolves it.
+                'id'        => (string) $m->id,
+                'brand'     => $m->brand ?: '',
+                'last_four' => $m->last_four ?: '',
+                'exp_month' => $m->exp_month,
+                'exp_year'  => $m->exp_year,
+                'default'   => (bool) $m->default,
+            ])->values()->all();
+
+        return sendSuccess('Saved payment methods', ['payment_methods' => $methods]);
+    }
+
+    /** The account this subscription bills, if it resolves to a real user. */
+    protected function customerUserFor(ClassSubscription $sub): ?User
+    {
+        return $sub->customer_id
+            ? User::query()->where('uuid', $sub->customer_id)->first()
+            : null;
+    }
+
+    /**
+     * Resolve a chosen saved method, refusing anything that is not this
+     * customer's.
+     *
+     * readmeAlamgir: "Validate payment-method ownership and
+     * subscription/customer/provider scope on the server. Do not accept
+     * arbitrary token text as sufficient authorization." So a raw Stripe token
+     * is not an accepted input at all — only an id of a stored method, which is
+     * then checked against the customer being billed.
+     *
+     * @return array{0: ?PaymentMethod, 1: mixed}
+     */
+    protected function resolvePaymentMethod(ClassSubscription $sub, $methodId): array
+    {
+        if ($methodId === null || $methodId === '') {
+            return [null, null];   // no choice made; existing behaviour
+        }
+
+        $customer = $this->customerUserFor($sub);
+        if (! $customer) {
+            return [null, sendError('This subscription has no customer account to charge.', [], 422)];
+        }
+
+        $method = PaymentMethod::query()
+            ->where('id', $methodId)
+            ->where('user_id', $customer->id)
+            ->first();
+
+        if (! $method) {
+            return [null, sendError(
+                'That payment method is not available for this customer.',
+                ['payment_method_id' => ['Choose one of the customer\'s saved payment methods.']],
+                422
+            )];
+        }
+
+        return [$method, null];
+    }
+
+    protected function doCharge(string $id, bool $isRetry, $request = null)
+    {
+        [$sub, $denied] = $this->scopedSubscription($id);
+        if ($denied) {
+            return $denied;
+        }
+
+        // A chosen saved method, validated against this customer. Only an id of
+        // a stored method is accepted — never raw token text.
+        $chosen = null;
+        if ($request) {
+            $data = $request->validate([
+                'payment_method_id' => 'nullable|integer',
+            ]);
+            [$chosen, $methodError] = $this->resolvePaymentMethod($sub, $data['payment_method_id'] ?? null);
+            if ($methodError) {
+                return $methodError;
+            }
         }
         $program = ClassProgram::query()->find($sub->program_id);
         if (! $program || ($program->status ?? '') !== 'active' || $this->rowState($program) !== 'active') {
