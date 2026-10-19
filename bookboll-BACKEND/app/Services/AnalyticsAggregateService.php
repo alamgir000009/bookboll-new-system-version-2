@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Support\AccessScope;
+use App\Support\BookingPurpose;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
@@ -91,6 +92,10 @@ class AnalyticsAggregateService
                     ? round($repeat / $customerCount * 100, 1)
                     : null,
             ],
+            // The card that replaced Platform Commission: these are provider
+            // reservations, reported so they are visible and explicitly NOT
+            // counted as sales anywhere above.
+            'provider_slot_blocks' => BookingPurpose::scopeBlocks($base())->distinct()->count('bookings.id'),
             'series' => $this->series($base(), $filters),
         ]);
     }
@@ -105,15 +110,14 @@ class AnalyticsAggregateService
      */
     protected function eligible($query)
     {
-        return $query
-            ->whereIn('bookings.status', self::SALE_STATUSES)
-            ->whereNull('bookings.refunded_at')
-            ->where(fn ($q) => $q
-                ->whereNull('bookings.payment_method')
-                ->orWhere('bookings.payment_method', '!=', 'payment_skipped'))
-            ->where(fn ($q) => $q
-                ->whereNull('bookings.payment_status')
-                ->orWhereNotIn('bookings.payment_status', ['payment_skipped', 'cancelled']));
+        return BookingPurpose::scopeSales(
+            $query
+                ->whereIn('bookings.status', self::SALE_STATUSES)
+                ->whereNull('bookings.refunded_at')
+                ->where(fn ($q) => $q
+                    ->whereNull('bookings.payment_status')
+                    ->orWhere('bookings.payment_status', '!=', 'cancelled'))
+        );
     }
 
     /**

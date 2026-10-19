@@ -59,6 +59,7 @@ class Booking extends Model
         'commission_currency',
         'loyalty_quote_id',
         'loyalty_discount',
+        'record_purpose',
     ];
 
     protected $casts = [
@@ -299,6 +300,29 @@ class Booking extends Model
         static::creating(function ($booking) {
             if (auth()->check()) {
                 $booking->created_by = $booking->created_by ?? auth()->id();
+            }
+
+            /*
+             * Say what this row IS, at the moment it is written.
+             *
+             * Three different things share this table — a real sale, a provider
+             * reserving a slot for their own customer, and a membership session
+             * placeholder — and they were told apart by inspecting payment
+             * fields at every call site. Recording it here means every creation
+             * path says so, including ones added later, and the backfill's
+             * inference never has to be relied on for new rows.
+             */
+            if ($booking->record_purpose === null) {
+                if (($booking->origin ?? null) === 'class_program') {
+                    $booking->record_purpose = \App\Support\BookingPurpose::SESSION;
+                } else {
+                    $skipped = ($booking->payment_method ?? null) === 'payment_skipped'
+                        || ($booking->payment_status ?? null) === 'payment_skipped';
+
+                    $booking->record_purpose = $skipped
+                        ? \App\Support\BookingPurpose::BLOCK
+                        : \App\Support\BookingPurpose::SALE;
+                }
             }
 
             // Stamp the currency once, here, rather than in each of the five places

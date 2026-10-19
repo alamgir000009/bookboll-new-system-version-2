@@ -390,7 +390,29 @@ class AuditReadmeAlamgir extends Command
             'a number with no coverage statement hides a partial total'
         );
 
-        // 13. Subscriber saved-payment picker (readmeAlamgir §11)
+        // 13. Booking record purpose (readmeAlamgir "Legacy skipped payments")
+        $this->check(
+            'Schema: bookings.record_purpose',
+            Schema::hasColumn('bookings', 'record_purpose'),
+            'migration 2026_10_19_000014'
+        );
+        $this->check(
+            'Slot blocks are classified, not inferred from origin',
+            \App\Support\BookingPurpose::isSale((object) [
+                'record_purpose' => \App\Support\BookingPurpose::BLOCK,
+                'origin' => 'bookboll_web',
+            ]) === false,
+            'every legacy block carries origin bookboll_web'
+        );
+        $this->check(
+            'Legacy rows still classify by the old inference',
+            \App\Support\BookingPurpose::isSale((object) [
+                'record_purpose' => null, 'payment_method' => 'payment_skipped',
+            ]) === false,
+            'a half-migrated database gives the same answer'
+        );
+
+        // 14. Subscriber saved-payment picker (readmeAlamgir §11)
         $this->check(
             'Route: GET admin/subscriptions/dashboard/{id}/payment-methods',
             $this->hasRoute('GET', 'admin/subscriptions/dashboard/{id}/payment-methods'),
@@ -428,7 +450,6 @@ class AuditReadmeAlamgir extends Command
             'Analytics: wiring the dashboard cards and exports to the new aggregate'
                 .' endpoint (the server-side aggregates, coverage contract and'
                 .' filters are DONE; the raw-array view still feeds the UI)',
-            'bookings.record_purpose backfill for provider slot blocks',
             'customer_types classification + advanced filters',
             'Category popularity aggregation + POST /marketplace/category-clicks',
             'Export scope/completeness guarantees',

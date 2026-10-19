@@ -36,9 +36,12 @@ class LegacyReconciliation
 
         // A provider reserving their own court was never a marketplace sale,
         // so there is no deposit that was a fee and no arrival cash owed.
-        if (($booking->payment_method ?? null) === 'payment_skipped'
-            || ($booking->payment_status ?? null) === 'payment_skipped') {
-            return 'Provider slot block — never a marketplace sale.';
+        // Read from record_purpose where it exists, falling back to the old
+        // inference for rows written before that column.
+        if (! BookingPurpose::isSale($booking)) {
+            return ($booking->record_purpose ?? null) === BookingPurpose::REVIEW
+                ? 'Slot block carrying a posted payment — needs manual review.'
+                : 'Provider slot block — never a marketplace sale.';
         }
 
         if (in_array($booking->status ?? '', ['cancelled'], true)
