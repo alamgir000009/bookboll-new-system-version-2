@@ -281,7 +281,56 @@ class AuditReadmeAlamgir extends Command
             'migration 2026_10_19_000009 — lets a redirect consume its reservation'
         );
 
-        // 10. Country/city availability
+        // 10. Venue operating agreements + private contracts
+        $this->check(
+            'Schema: venue_operating_agreements (immutable versions)',
+            Schema::hasTable('venue_operating_agreements')
+                && Schema::hasColumn('venue_operating_agreements', 'superseded_on'),
+            'migration 2026_10_19_000011'
+        );
+        $this->check(
+            'Schema: venues.operator_type (recorded, not inferred)',
+            Schema::hasColumn('venues', 'operator_type'),
+            'a null owner must not grant payout exemptions'
+        );
+        $this->check(
+            'Schema: venue_contract_documents (private)',
+            Schema::hasTable('venue_contract_documents'),
+            'migration 2026_10_19_000012'
+        );
+        foreach ([
+            ['GET', 'admin/venues/{id}/operating-agreements'],
+            ['POST', 'admin/venues/{id}/operating-agreements'],
+            ['POST', 'admin/venues/{id}/contracts'],
+        ] as [$verb, $uri]) {
+            $this->check("Route: {$verb} {$uri}", $this->hasRoute($verb, $uri), 'readmeAlamgir §2');
+        }
+        $this->check(
+            'Rent: the document October example is 4,700',
+            \App\Support\RentProration::monthFromSegments('2026-10', [
+                ['monthly_minor' => 310000, 'from' => '2026-10-01', 'to' => '2026-10-15'],
+                ['monthly_minor' => 620000, 'from' => '2026-10-16', 'to' => '2026-10-31'],
+            ]) === 470000,
+            'RentProration — 15 x 100 + 16 x 200'
+        );
+        $this->check(
+            'Rent: a full month sums exactly, no rounding drift',
+            array_sum(\App\Support\RentProration::monthly(100000, '2026-04-01', '2026-04-30')) === 100000,
+            '1,000 over 30 days does not divide evenly'
+        );
+        $this->check(
+            'Contracts: type is read from the file bytes',
+            \App\Support\ContractFileType::detect('%PDF-1.7') === 'pdf'
+                && \App\Support\ContractFileType::detect('<?php echo 1;') === null,
+            'an extension and a content-type header are not evidence'
+        );
+        $this->check(
+            'Scheduled: contracts:prune-temporary',
+            $this->isScheduled('contracts:prune-temporary'),
+            'abandoned uploads expire; linked ones never do'
+        );
+
+        // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
             $this->hasRoute('GET', 'marketplace/countries'),
@@ -295,8 +344,6 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Effective-dated venue_operating_agreements (+ history contract v2)',
-            'POST /admin/venues/{id}/contracts (private contract storage)',
             'Venue transfer preview/commit and legacy reconciliation',
             'Analytics filter-aware aggregates (the 5,000-row limit is still in place)',
             'bookings.record_purpose backfill for provider slot blocks',
