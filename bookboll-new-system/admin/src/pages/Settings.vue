@@ -9,6 +9,7 @@ import { useRouter } from 'vue-router'
 import FeatureSearch from '../components/FeatureSearch.vue'
 import { askConfirm } from '../lib/confirm.js'
 import { hasPaidWebsiteDiscount } from '../lib/listingPayments.js'
+import { loadProviderSettings, saveBusinessProfile, saveAccountDetails, saveNotificationPreferences } from '../lib/providerSettings.js'
 import {
   planState, ensurePlan, openUpgrade, endPlan, keepPlan,
   PREMIUM_YEARLY_TOTAL,
@@ -193,23 +194,87 @@ async function doKeepPlan() {
 }
 
 const providerTab = ref('profile')
-const providerForm = ref({ business_name: '', description: '', phone: '', full_name: '', email: '' })
-const providerNotifications = ref({ newBooking: true, cancellation: true, paymentReceived: true, lowWallet: false })
+const providerForm = ref({ business_name: '', description: '', phone: '', full_name: '', account_phone: '', email: '' })
 const saving = ref(false)
 const saved = ref(false)
+
+// Loaded from the server, not from the signed-in user payload: business name,
+// phone and description are the BUSINESS's, and the old form read them off the
+// user, where those fields do not exist.
+const providerLoading = ref(false)
+const providerUnsupported = ref(false)
+const providerError = ref('')
+const providerFieldErrors = ref({})
+const canEditBusiness = ref(false)
+const notificationPrefs = ref({})
+const notificationCatalogue = ref([])
+const notificationAlwaysOn = ref([])
+
+const providerSaveHint = computed(() => {
+  if (providerUnsupported.value) return 'Updates are not available on this server yet'
+  if (providerTab.value === 'profile' && !canEditBusiness.value) return 'Only the business owner can change these details'
+  return 'Save changes'
+})
+
+function applyProviderSettings(settings) {
+  canEditBusiness.value = settings.can_edit_business
+  providerForm.value = {
+    business_name: settings.business?.name || '',
+    description: settings.business?.description || '',
+    phone: settings.business?.phone || '',
+    full_name: settings.account.name,
+    account_phone: settings.account.phone,
+    email: settings.account.email,
+  }
+  notificationPrefs.value = { ...settings.notifications.preferences }
+  notificationCatalogue.value = settings.notifications.available
+  notificationAlwaysOn.value = settings.notifications.always_on
+}
+
+async function loadProvider() {
+  providerLoading.value = true
+  providerError.value = ''
+  providerFieldErrors.value = {}
+  const result = await loadProviderSettings()
+  providerUnsupported.value = result.unsupported === true
+  if (result.ok) applyProviderSettings(result.settings)
+  else if (!result.unsupported) providerError.value = result.error
+  providerLoading.value = false
+}
+
+async function saveProviderSection() {
+  if (saving.value || providerUnsupported.value) return
+  saving.value = true
+  providerError.value = ''
+  providerFieldErrors.value = {}
+
+  const result = providerTab.value === 'profile'
+    ? await saveBusinessProfile({ name: providerForm.value.business_name, phone: providerForm.value.phone, description: providerForm.value.description })
+    : providerTab.value === 'account'
+      ? await saveAccountDetails({ name: providerForm.value.full_name, phone: providerForm.value.account_phone })
+      : await saveNotificationPreferences(notificationPrefs.value, notificationCatalogue.value)
+
+  saving.value = false
+  providerFieldErrors.value = result.fields || {}
+
+  if (!result.ok) {
+    // Only after persistence is confirmed is this a success — the read-back
+    // check is why these controls were switched off in the first place.
+    providerError.value = result.error
+    pushToast(result.error, 'error')
+    return
+  }
+
+  if (result.notifications) notificationPrefs.value = { ...result.notifications.preferences }
+  saved.value = true
+  setTimeout(() => { saved.value = false }, 2500)
+  pushToast(providerTab.value === 'notifications' ? 'Notification preferences saved' : 'Saved', 'success')
+}
 
 onMounted(async () => {
   ensurePlan()
   if (isAdminView.value) await loadAdminSettings()
-  if (!isAdminView.value && currentUser.value) {
-    providerForm.value = {
-      business_name: currentUser.value.business_name || '',
-      description: currentUser.value.description || '',
-      phone: currentUser.value.phone || '',
-      full_name: currentUser.value.full_name || currentUser.value.name || '',
-      email: currentUser.value.email || '',
-    }
-  }
+  else await loadProvider()
 })
 
 // ── Change password (Laravel /change-password) ────────────────
@@ -230,13 +295,6 @@ async function changePassword() {
   pushToast('Password changed — use the new one from your next sign-in.', 'success')
 }
 
-async function saveProviderProfile() {
-  if (!currentUser.value) return
-  saving.value = true
-  // Provider profile still pending a dedicated Laravel business profile endpoint.
-  pushToast('Business profile save will be wired to Laravel next.', 'error')
-  saving.value = false
-}
 </script>
 
 <template>
@@ -436,8 +494,14 @@ async function saveProviderProfile() {
           <h1 class="page-title">Settings</h1>
           <div class="page-subtitle">Manage your business profile and preferences</div>
         </div>
-        <button v-if="providerTab === 'profile' || providerTab === 'account'" class="btn btn-secondary" disabled title="Profile updates are not available yet" @click="saveProviderProfile">
-          Save unavailable
+        <button
+          v-if="['profile', 'account', 'notifications'].includes(providerTab)"
+          class="btn btn-primary"
+          :disabled="saving || providerLoading || providerUnsupported || (providerTab === 'profile' && !canEditBusiness)"
+          :title="providerSaveHint"
+          @click="saveProviderSection"
+        >
+          {{ saving ? 'Saving…' : providerUnsupported ? 'Save unavailable' : 'Save changes' }}
         </button>
       </div>
 
@@ -455,29 +519,70 @@ async function saveProviderProfile() {
         </div>
 
         <div class="card" style="padding: 28px;">
-          <div v-if="providerTab==='profile'">
+          <p v-if="providerLoading" class="muted" role="status">Loading your settings…</p>
+
+          <!-- An API without these endpoints keeps the old read-only behaviour
+               rather than offering a save that cannot work. -->
+          <p v-else-if="providerUnsupported && providerTab !== 'security' && providerTab !== 'plan'" class="info-banner">
+            <Info :size="16" />Profile and notification updates are not available on this server yet. You can edit your public website name and content in My Website.
+          </p>
+
+          <p v-else-if="providerError && providerTab !== 'security' && providerTab !== 'plan'" class="info-banner" role="alert">
+            <Info :size="16" />{{ providerError }}
+          </p>
+
+          <div v-if="providerTab==='profile' && !providerLoading && !providerUnsupported">
             <h3>Business Profile</h3>
-            <p class="muted">Your business information on Bookboll.</p><p class="info-banner"><Info :size="16" />Profile updates are not available here yet. You can edit your public website name and content in My Website.</p>
-            <div class="form-group"><label class="form-label">Business Name</label><input readonly aria-label="Business name" v-model="providerForm.business_name" placeholder="e.g. Desert Sports Club" /></div>
-            <div class="form-group"><label class="form-label">Phone Number</label><input readonly aria-label="Phone number" v-model="providerForm.phone" placeholder="+971 50 000 0000" /></div>
-            <div class="form-group"><label class="form-label">Description</label><textarea readonly aria-label="Business description" v-model="providerForm.description" rows="4" placeholder="Tell customers about your facilities, sports offered, and what makes you unique…"></textarea></div>
+            <p class="muted">Your business information on Bookboll.</p>
+            <p class="info-banner"><Info :size="16" />This is your business name. Your public website name and content are edited in My Website.</p>
+            <p v-if="!canEditBusiness" class="info-banner"><Shield :size="16" /><div>Only the business owner can change these details.</div></p>
+            <div class="form-group">
+              <label class="form-label" for="pv-biz-name">Business Name</label>
+              <input id="pv-biz-name" :readonly="!canEditBusiness" aria-label="Business name" v-model="providerForm.business_name" placeholder="e.g. Desert Sports Club" :aria-invalid="!!providerFieldErrors.name" :aria-describedby="providerFieldErrors.name ? 'pv-biz-name-error' : undefined" />
+              <p v-if="providerFieldErrors.name" id="pv-biz-name-error" class="field-error-text" role="alert">{{ providerFieldErrors.name }}</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="pv-biz-phone">Phone Number</label>
+              <input id="pv-biz-phone" :readonly="!canEditBusiness" aria-label="Phone number" v-model="providerForm.phone" placeholder="+971 50 000 0000" :aria-invalid="!!providerFieldErrors.phone" :aria-describedby="providerFieldErrors.phone ? 'pv-biz-phone-error' : undefined" />
+              <p v-if="providerFieldErrors.phone" id="pv-biz-phone-error" class="field-error-text" role="alert">{{ providerFieldErrors.phone }}</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="pv-biz-desc">Description</label>
+              <textarea id="pv-biz-desc" :readonly="!canEditBusiness" aria-label="Business description" v-model="providerForm.description" rows="4" placeholder="Tell customers about your facilities, sports offered, and what makes you unique…" :aria-invalid="!!providerFieldErrors.description" :aria-describedby="providerFieldErrors.description ? 'pv-biz-desc-error' : undefined"></textarea>
+              <p v-if="providerFieldErrors.description" id="pv-biz-desc-error" class="field-error-text" role="alert">{{ providerFieldErrors.description }}</p>
+            </div>
           </div>
 
-          <div v-if="providerTab==='account'">
+          <div v-if="providerTab==='account' && !providerLoading && !providerUnsupported">
             <h3>My Account</h3>
-            <p class="muted">Your personal details as the account owner. Profile updates are not available here yet.</p>
-            <div class="form-group"><label class="form-label">Full Name</label><input readonly aria-label="Full name" v-model="providerForm.full_name" /></div>
+            <p class="muted">Your personal details on this account.</p>
+            <div class="form-group">
+              <label class="form-label" for="pv-acc-name">Full Name</label>
+              <input id="pv-acc-name" aria-label="Full name" v-model="providerForm.full_name" :aria-invalid="!!providerFieldErrors.name" :aria-describedby="providerFieldErrors.name ? 'pv-acc-name-error' : undefined" />
+              <p v-if="providerFieldErrors.name" id="pv-acc-name-error" class="field-error-text" role="alert">{{ providerFieldErrors.name }}</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="pv-acc-phone">Phone Number</label>
+              <input id="pv-acc-phone" aria-label="Your phone number" v-model="providerForm.account_phone" placeholder="+971 50 000 0000" :aria-invalid="!!providerFieldErrors.phone" :aria-describedby="providerFieldErrors.phone ? 'pv-acc-phone-error' : undefined" />
+              <p v-if="providerFieldErrors.phone" id="pv-acc-phone-error" class="field-error-text" role="alert">{{ providerFieldErrors.phone }}</p>
+            </div>
             <div class="form-group"><label class="form-label">Email</label><input :value="providerForm.email" disabled style="opacity:0.6; cursor:not-allowed;" /></div>
             <div class="info-banner"><Shield :size="16" /><div>Email changes require contacting support to verify your identity.</div></div>
           </div>
 
-          <div v-if="providerTab==='notifications'">
+          <div v-if="providerTab==='notifications' && !providerLoading && !providerUnsupported">
             <h3>Notifications</h3>
-            <p class="muted">Personal notification preferences are not available yet. These preview switches do not change which messages you receive.</p>
-            <label class="toggle"><input type="checkbox" disabled v-model="providerNotifications.newBooking" />New booking received</label>
-            <label class="toggle"><input type="checkbox" disabled v-model="providerNotifications.cancellation" />Booking cancellation</label>
-            <label class="toggle"><input type="checkbox" disabled v-model="providerNotifications.paymentReceived" />Payment received</label>
-            <label class="toggle"><input type="checkbox" disabled v-model="providerNotifications.lowWallet" />Low wallet balance warning</label>
+            <p class="muted">Choose which messages you receive. These are your own settings — other people on this business choose separately.</p>
+            <label v-for="row in notificationCatalogue" :key="row.key" class="toggle">
+              <input type="checkbox" :checked="notificationPrefs[row.key] === true" @change="notificationPrefs[row.key] = $event.target.checked" />{{ row.label }}
+            </label>
+            <p v-if="!notificationCatalogue.length" class="muted">This server does not offer any personal notification settings yet.</p>
+
+            <!-- Alerts nobody may switch off, named rather than quietly absent. -->
+            <div v-if="notificationAlwaysOn.length" class="info-banner">
+              <Shield :size="16" />
+              <div>Always sent: <template v-for="(row, i) in notificationAlwaysOn" :key="row.kind">{{ i ? ' · ' : '' }}{{ row.reason }}</template></div>
+            </div>
           </div>
 
           <div v-if="providerTab==='plan'">
