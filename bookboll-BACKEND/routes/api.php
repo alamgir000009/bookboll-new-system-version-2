@@ -45,6 +45,7 @@ use App\Http\Controllers\NewsletterController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PostCategoryController;
 use App\Http\Controllers\PostController;
+use App\Http\Controllers\MobileAppAdoptionController;
 use App\Http\Controllers\PromocodeController;
 use App\Http\Controllers\ProviderSettingsController;
 use App\Http\Controllers\ResourceController;
@@ -118,6 +119,28 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // the signed-in person and the business they own, never on a submitted id.
     // These are the PERSONAL preferences; notification-templates below is the
     // separate per-business copy that goes out to customers.
+    // Mobile-app adoption. The audience is fixed by the route and the account
+    // by the session — a body cannot name either. Registration is throttled
+    // because an authenticated native call is the only evidence we have, and
+    // a chatty or hostile client must not be able to flood it.
+    Route::post('customer/mobile-app/sessions', [MobileAppAdoptionController::class, 'registerCustomer'])
+        ->middleware('throttle:20,1')->name('customer.mobile-app.sessions');
+    Route::get('customer/mobile-app-status', [MobileAppAdoptionController::class, 'customerStatus'])
+        ->name('customer.mobile-app-status');
+    Route::put('customer/mobile-app-preferences', [MobileAppAdoptionController::class, 'setCustomerPreference'])
+        ->name('customer.mobile-app-preferences');
+
+    Route::post('admin/mobile-app/sessions', [MobileAppAdoptionController::class, 'registerAdmin'])
+        ->middleware('throttle:20,1')->name('admin.mobile-app.sessions');
+    Route::get('admin/mobile-app-status', [MobileAppAdoptionController::class, 'adminStatus'])
+        ->name('admin.mobile-app-status');
+    Route::put('admin/mobile-app-preferences', [MobileAppAdoptionController::class, 'setAdminPreference'])
+        ->name('admin.mobile-app-preferences');
+
+    // Adoption reporting, behind a capability and scoped inside the service.
+    Route::get('admin/mobile-app/adoption-report', [MobileAppAdoptionController::class, 'report'])
+        ->name('admin.mobile-app.adoption-report');
+
     Route::get('business/settings', [ProviderSettingsController::class, 'show'])->name('business.settings.show');
     Route::put('business/settings/profile', [ProviderSettingsController::class, 'updateBusiness'])->name('business.settings.profile');
     Route::put('business/settings/account', [ProviderSettingsController::class, 'updateAccount'])->name('business.settings.account');

@@ -51,6 +51,7 @@ class User extends Authenticatable
         'is_private',
         'is_discoverable',
         'notification_preferences',
+        'mobile_app_self_reported',
         'phone',
         'email',
         'status',
@@ -113,6 +114,7 @@ class User extends Authenticatable
             'is_private'            => 'boolean',
             'is_discoverable'       => 'boolean',
             'notification_preferences' => 'array',
+            'mobile_app_self_reported' => 'array',
         ];
     }
 

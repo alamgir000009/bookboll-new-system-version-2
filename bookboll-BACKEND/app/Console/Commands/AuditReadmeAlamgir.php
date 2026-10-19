@@ -771,6 +771,105 @@ class AuditReadmeAlamgir extends Command
             'no switch for a notification nothing raises'
         );
 
+        // 21. Mobile-app adoption (readmeAlamgir, mobile-app section)
+        $this->check(
+            'Routes: mobile-app sessions, status and preferences for both apps',
+            $this->hasRoute('POST', 'customer/mobile-app/sessions')
+                && $this->hasRoute('POST', 'admin/mobile-app/sessions')
+                && $this->hasRoute('GET', 'customer/mobile-app-status')
+                && $this->hasRoute('GET', 'admin/mobile-app-status')
+                && $this->hasRoute('PUT', 'customer/mobile-app-preferences')
+                && $this->hasRoute('PUT', 'admin/mobile-app-preferences'),
+            'the websites could only ever keep a browser self-report'
+        );
+        $this->check(
+            'Schema: mobile_app_installations',
+            Schema::hasTable('mobile_app_installations')
+                && collect(['app', 'installation_id', 'user_id', 'platform', 'first_authenticated_use_at', 'last_authenticated_use_at', 'rebound_at'])
+                    ->every(fn ($c) => Schema::hasColumn('mobile_app_installations', $c)),
+            'an authenticated call from the app is the only evidence there is'
+        );
+        $this->check(
+            'Adoption states are unknown or used_app, never downloaded',
+            (function () {
+                // Comments stripped: the prose here explains why "not
+                // downloaded" is wrong, and would match the check itself.
+                $policy = $this->code('Support/MobileAppAdoption.php');
+
+                // People install apps without signing in, so "not downloaded"
+                // is a claim this data cannot support.
+                return str_contains($policy, "STATUS_UNKNOWN = 'unknown'")
+                    && str_contains($policy, "STATUS_USED = 'used_app'")
+                    && str_contains($policy, "'Used the app' : 'No confirmed app use'")
+                    && ! str_contains($policy, 'Not downloaded')
+                    && ! str_contains($policy, 'Downloaded');
+            })(),
+            'a click, a QR scan or a user agent proves nothing'
+        );
+        $this->check(
+            'Adoption takes the account from the session, never the request',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/MobileAppAdoptionService.php'));
+
+                // Reading a client-supplied id would let any caller credit or
+                // discredit somebody else's adoption.
+                return ! preg_match("/input\\('(user_id|account_id|uuid)'/", $src)
+                    && substr_count($src, '$request->user()') === 4;
+            })(),
+            'a client-supplied id is never read'
+        );
+        $this->check(
+            'A shared device stops crediting the account that left',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/MobileAppAdoptionService.php'));
+
+                return str_contains($src, "'rebound_at'                 => \$now")
+                    && str_contains($src, "'first_authenticated_use_at' => \$now");
+            })(),
+            'the installation rebinds and first use restarts'
+        );
+        $this->check(
+            'A self-report stays a preference, separate from evidence',
+            (function () {
+                $policy = (string) file_get_contents(app_path('Support/MobileAppAdoption.php'));
+
+                // It silences the prompt; it never becomes used_app.
+                return str_contains($policy, 'public static function selfReported')
+                    && str_contains($policy, "'usage_status' => \$used ? self::STATUS_USED : self::STATUS_UNKNOWN")
+                    && Schema::hasColumn('users', 'mobile_app_self_reported');
+            })(),
+            'undoable, and never reported as use'
+        );
+        $this->check(
+            'The adoption report is capability-gated and leaks nothing',
+            (function () {
+                $src = $this->code('Services/MobileAppAdoptionService.php');
+
+                // The row shape only: installation_id is written on
+                // registration, which is correct — it must not be READ BACK.
+                $start = strpos($src, "'account_id'");
+                $row = $start === false ? '' : substr($src, $start, 700);
+
+                return $start !== false
+                    && str_contains($src, 'MobileAppAdoption::REPORT_CAPABILITY')
+                    && str_contains($src, 'applyCustomerScope')
+                    && ! str_contains($row, 'email')
+                    && ! str_contains($row, 'phone')
+                    && ! str_contains($row, 'installation_id');
+            })(),
+            'no email, no device identifier, provider staff scoped to their own'
+        );
+        $this->check(
+            'Installation records have a retention policy that runs',
+            (function () {
+                $policy = (string) file_get_contents(app_path('Support/MobileAppAdoption.php'));
+
+                return str_contains($policy, 'RETENTION_DAYS')
+                    && file_exists(app_path('Console/Commands/PruneMobileAppInstallations.php'));
+            })(),
+            'deleting an account removes its records through the foreign key'
+        );
+
         // 11. Country/city availability
         $this->check(
             'Route: marketplace/countries',
@@ -788,7 +887,6 @@ class AuditReadmeAlamgir extends Command
             'Own-site commission: the owner review path for existing cash-only'
                 .' listings (policy, rating, rounding, method enforcement, the'
                 .' booking snapshot and the wallet ledger are DONE)',
-            'Mobile-app adoption APIs',
             'Rewards for MEMBERSHIP, host_game and host_tournament checkouts'
                 .' (venue checkout is fully enforced; those three refuse a quote'
                 .' outright rather than ignoring one)',
@@ -815,6 +913,31 @@ class AuditReadmeAlamgir extends Command
             $this->failed++;
         }
         $this->rows[] = [$label, $ok ? 'PASS' : 'FAIL', $where];
+    }
+
+    /**
+     * Source with comments removed.
+     *
+     * Checks that grep for a phrase otherwise match the comment explaining why
+     * the phrase must not be there — which passes or fails for entirely the
+     * wrong reason.
+     */
+    protected function code(string $relativePath): string
+    {
+        $out = '';
+        foreach (token_get_all((string) file_get_contents(app_path($relativePath))) as $token) {
+            if (is_array($token)) {
+                if (in_array($token[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                    continue;
+                }
+                $out .= $token[1];
+
+                continue;
+            }
+            $out .= $token;
+        }
+
+        return $out;
     }
 
     protected function hasRoute(string $method, string $uri): bool
