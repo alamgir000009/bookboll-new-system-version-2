@@ -587,9 +587,30 @@ class CustomerService
             $query->orderBy('users.created_at', $dir);
         }
 
-        $paginator = $query->paginate($perPage);
-        $pageUsers = $paginator->getCollection();
-        $pageIds   = $pageUsers->pluck('id')->all();
+        /*
+         * Export asks for every matching row; the table asks for one page.
+         *
+         * Without this branch an export was simply a page: the client requested
+         * 5,000 rows, records_per_page capped it at 250, and the CSV was built
+         * from those 250 as though they were everything. readmeAlamgir: "do not
+         * silently return a current page as a full export."
+         */
+        $isExport = $request->boolean('export');
+
+        if ($isExport) {
+            $exportRows = (clone $query)->limit(self::EXPORT_MAX + 1)->get();
+            // One row over the cap proves there are more; report it rather than
+            // handing back a short file that looks complete.
+            $truncated = $exportRows->count() > self::EXPORT_MAX;
+            $pageUsers = $truncated ? $exportRows->take(self::EXPORT_MAX) : $exportRows;
+            $paginator = null;
+        } else {
+            $paginator = $query->paginate($perPage);
+            $pageUsers = $paginator->getCollection();
+            $truncated = false;
+        }
+
+        $pageIds = $pageUsers->pluck('id')->all();
 
         // Three queries for the whole page, not three per row. An empty array
         // is an authoritative "no qualifying activity", which is a different
@@ -606,8 +627,18 @@ class CustomerService
             return $row;
         })->values();
 
+        /*
+         * In export mode $pageIds can hold twenty thousand entries, and an IN
+         * clause that size is both slow and liable to hit a packet limit. The
+         * same rows are selected with a subquery over the already-filtered
+         * customer query instead, which the database can plan properly.
+         */
+        $customerIdSource = $isExport
+            ? (clone $query)->reorder()->select('users.id')
+            : ($pageIds ?: [0]);
+
         $bookings = Booking::query()
-            ->whereIn('user_id', $pageIds ?: [0])
+            ->whereIn('user_id', $customerIdSource)
             ->where('status', '!=', BookingStatus::CANCELLED)
             ->orderByDesc('date')
             ->get(['id', 'user_id', 'listing_id', 'venue_id', 'date', 'total_price', 'status', 'payment_status', 'start_time', 'end_time', 'created_at'])
@@ -627,7 +658,9 @@ class CustomerService
             return $c;
         })->values();
 
-        $paginator->setCollection($mapped);
+        if ($paginator) {
+            $paginator->setCollection($mapped);
+        }
 
         $lookups = $request->boolean('include_lookups', true) ? $this->dashboardLookups() : [];
         $loyaltyKey = CustomerLoyalty::ownerColumn();
@@ -641,10 +674,22 @@ class CustomerService
             'match'   => $typeFilter['match'],
         ];
 
-        $lookups['customers'] = $paginator->toArray();
+        // Lookups below are built from $pageIds, which in export mode is EVERY
+        // exported customer — so the CSV's aggregates are computed from the
+        // same rows it lists rather than from whichever page was on screen.
+        $lookups['customers'] = $paginator
+            ? $paginator->toArray()
+            : [
+                'data'  => $mapped->all(),
+                'total' => $mapped->count(),
+                // Named so a client cannot mistake a capped export for a
+                // complete one, and can narrow its filters instead.
+                'truncated'  => $truncated,
+                'export_max' => self::EXPORT_MAX,
+            ];
         $lookups['bookings'] = $bookings;
         $lookups['customer_loyalty'] = CustomerLoyalty::query()
-            ->whereIn($loyaltyKey, $pageIds ?: [0])
+            ->whereIn($loyaltyKey, $customerIdSource)
             ->get()
             ->map(fn (CustomerLoyalty $row) => $this->mapLoyaltyRow($row))
             ->values();
@@ -895,6 +940,9 @@ class CustomerService
 
         return sendSuccess('Loyalty removed');
     }
+
+    /** How many rows one export may pull, so a runaway export cannot exhaust memory. */
+    private const EXPORT_MAX = 20000;
 
     protected function customerQuery()
     {

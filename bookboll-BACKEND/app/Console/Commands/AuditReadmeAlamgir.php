@@ -437,7 +437,37 @@ class AuditReadmeAlamgir extends Command
             'CustomerTypes'
         );
 
-        // 15. Subscriber saved-payment picker (readmeAlamgir §11)
+        // 15. Export completeness (readmeAlamgir "Export scope and completeness")
+        $this->check(
+            'Exports: customers honour export=1 rather than returning a page',
+            str_contains(
+                (string) file_get_contents(app_path('Services/CustomerService.php')),
+                "\$isExport = \$request->boolean('export')"
+            ),
+            'the client asked for 5,000 and the paginator capped it at 250'
+        );
+        $this->check(
+            'Exports: a capped export says so',
+            str_contains(
+                (string) file_get_contents(app_path('Services/CustomerService.php')),
+                "'truncated'"
+            ),
+            'never hand back a short file that looks complete'
+        );
+        $this->check(
+            'Payments: the dashboard sort has a deterministic tie-breaker',
+            (function () {
+                $src = (string) file_get_contents(app_path('Services/PaymentService.php'));
+                $sort = substr($src, strpos($src, 'function applyDashboardSort'));
+                $sort = substr($sort, 0, strpos($sort, "\n    }"));
+
+                // Every branch, or paging an export can repeat and skip rows.
+                return substr_count($sort, "orderByDesc('id')") >= 5;
+            })(),
+            'without it, paged exports can repeat or miss rows'
+        );
+
+        // 16. Subscriber saved-payment picker (readmeAlamgir §11)
         $this->check(
             'Route: GET admin/subscriptions/dashboard/{id}/payment-methods',
             $this->hasRoute('GET', 'admin/subscriptions/dashboard/{id}/payment-methods'),
@@ -476,7 +506,6 @@ class AuditReadmeAlamgir extends Command
                 .' endpoint (the server-side aggregates, coverage contract and'
                 .' filters are DONE; the raw-array view still feeds the UI)',
             'Category popularity aggregation + POST /marketplace/category-clicks',
-            'Export scope/completeness guarantees',
             'Own-site commission: the owner review path for existing cash-only'
                 .' listings (policy, rating, rounding, method enforcement, the'
                 .' booking snapshot and the wallet ledger are DONE)',
