@@ -502,9 +502,6 @@ class AuditReadmeAlamgir extends Command
         $this->warn('NOT IMPLEMENTED — nothing below exists on any environment yet');
         $this->line('');
         foreach ([
-            'Analytics: wiring the dashboard cards and exports to the new aggregate'
-                .' endpoint (the server-side aggregates, coverage contract and'
-                .' filters are DONE; the raw-array view still feeds the UI)',
             'Category popularity aggregation + POST /marketplace/category-clicks',
             'Own-site commission: the owner review path for existing cash-only'
                 .' listings (policy, rating, rounding, method enforcement, the'
