@@ -471,3 +471,49 @@ it('is closed to anyone without the listings capability, and to the signed out',
 
     reviewQueue($customer->fresh())->assertStatus(403);
 });
+
+// ── A platform admin is not the owner ───────────────────────────────────────
+
+function platformAdmin(): User
+{
+    $u = User::factory()->create(['name' => 'Platform Staff', 'status' => User::ACTIVE, 'uuid' => (string) Str::uuid()]);
+    $u->assignRole('super_admin');
+
+    return $u->fresh();
+}
+
+it('shows a platform admin every business, and says it is not theirs to decide', function () {
+    legacyCashOnly($this->venue, ['name' => 'Mine']);
+    $other = reviewOwner('South Club');
+    legacyCashOnly(reviewVenue($other, $this->country), ['name' => 'Theirs']);
+
+    $data = reviewQueue(platformAdmin())->assertOk()->json('data');
+
+    // Unscoped, which is useful to know about as an operational signal.
+    expect(collect($data['listings'])->pluck('name')->sort()->values()->all())->toBe(['Mine', 'Theirs']);
+    expect($data['viewer']['scope'])->toBe('platform');
+    expect($data['viewer']['can_apply'])->toBeFalse();
+});
+
+it('refuses a platform admin applying a method to a business they do not own', function () {
+    // This would decide, for dozens of businesses at once, to start charging
+    // their customers a deposit — the exact thing the review path exists to
+    // prevent, only with a person clicking it.
+    $listing = legacyCashOnly($this->venue);
+
+    applyReview(platformAdmin(), ['method' => 'deposit', 'listing_ids' => [$listing->id]])
+        ->assertStatus(403);
+
+    expect($listing->fresh()->payment_options['site_deposit_enabled'])->toBeFalse();
+});
+
+it('still lets the business that owns the listing decide', function () {
+    $listing = legacyCashOnly($this->venue);
+
+    $data = reviewQueue($this->owner)->assertOk()->json('data');
+    expect($data['viewer']['scope'])->toBe('business');
+    expect($data['viewer']['can_apply'])->toBeTrue();
+
+    applyReview($this->owner, ['method' => 'deposit', 'listing_ids' => [$listing->id]])->assertOk();
+    expect($listing->fresh()->payment_options['site_deposit_enabled'])->toBeTrue();
+});

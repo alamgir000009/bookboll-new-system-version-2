@@ -53,6 +53,13 @@ class OwnSiteReviewService
             'listings' => $rows,
             'total'    => $total,
             'coverage' => ['status' => 'complete', 'total' => $total],
+            // Whose listings these are. A platform admin sees every provider's,
+            // which is useful to know about and NOT theirs to decide on — the
+            // dashboard changes its wording and drops the buttons on this.
+            'viewer'   => [
+                'scope'     => $this->actorScope($user),
+                'can_apply' => $this->mayApply($user),
+            ],
             // Named here so the dashboard offers exactly these and nothing else.
             'resolutions' => OwnSiteReview::RESOLUTIONS,
             'pagination'  => [
@@ -74,6 +81,19 @@ class OwnSiteReviewService
     public function apply(Request $request)
     {
         $user = $request->user();
+
+        if (! $this->mayApply($user)) {
+            // The whole point of this path is that the OWNER chooses. A platform
+            // admin applying a method here would be deciding, for dozens of
+            // businesses at once, to start charging their customers a deposit —
+            // which is the thing the document forbids, just with a human
+            // clicking it. Support can still fix one listing in its editor.
+            return sendError(
+                'Only the business can choose how its own website takes payment. Open the listing to change one.',
+                [],
+                403
+            );
+        }
 
         $data = $request->validate([
             'method'       => 'required|string|in:'.implode(',', OwnSiteReview::RESOLUTIONS),
@@ -136,6 +156,24 @@ class OwnSiteReviewService
                 )->count('listings.id'),
             ]
         );
+    }
+
+    /**
+     * Whose listings the queue is showing.
+     *
+     * A provider sees their own. Platform staff see every business's, because
+     * AccessScope leaves them unscoped — worth knowing as an operational
+     * signal, but not the same thing as owning the decision.
+     */
+    protected function actorScope(?\App\Models\User $user): string
+    {
+        return AccessScope::isProviderScoped($user) ? 'business' : 'platform';
+    }
+
+    /** Only the business that owns the listings may change how they charge. */
+    protected function mayApply(?\App\Models\User $user): bool
+    {
+        return $this->actorScope($user) === 'business';
     }
 
     /**

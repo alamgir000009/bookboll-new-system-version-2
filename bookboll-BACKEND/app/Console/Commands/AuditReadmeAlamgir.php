@@ -912,6 +912,21 @@ class AuditReadmeAlamgir extends Command
             'one definition, asked two ways, pinned by a test'
         );
         $this->check(
+            'Only the business may change how its own site charges',
+            (function () {
+                $src = $this->code('Services/OwnSiteReviewService.php');
+
+                // Platform staff see every business's listings here, because
+                // AccessScope leaves them unscoped. Applying a method would
+                // decide, for dozens of businesses at once, to start charging
+                // their customers a deposit.
+                return str_contains($src, 'protected function mayApply(')
+                    && str_contains($src, 'if (! $this->mayApply($user)) {')
+                    && str_contains($src, "'can_apply' => \$this->mayApply(\$user)");
+            })(),
+            'a platform admin is not the owner of those listings'
+        );
+        $this->check(
             'A bulk apply reports what it refused',
             (function () {
                 $service = $this->code('Services/OwnSiteReviewService.php');
