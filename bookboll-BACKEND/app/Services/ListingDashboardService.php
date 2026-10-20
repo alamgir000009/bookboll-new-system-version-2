@@ -717,6 +717,7 @@ class ListingDashboardService
             'previous_snapshot'      => 'nullable|array',
             'show_on_marketplace'    => 'sometimes|boolean',
             'show_on_provider_site'  => 'sometimes|boolean',
+            'show_slot_capacity'     => 'sometimes|boolean',
             'sort_order'             => 'sometimes|integer|min:0',
             'approval_status'        => 'sometimes|in:pending,approved,rejected',
             'pending_content'        => 'nullable|array',
@@ -1114,6 +1115,8 @@ class ListingDashboardService
             'pending_content'         => $l->pending_content,
             'show_on_marketplace'     => $l->show_on_marketplace !== false,
             'show_on_provider_site'   => $l->show_on_provider_site !== false,
+            // Presentational only — capacity is still enforced either way.
+            'show_slot_capacity'      => $l->show_slot_capacity !== false,
             'extension_pricing'       => $l->extension_pricing ?? 'none',
             'extension_value'         => (float) ($l->extension_value ?? 0),
             'extension_max_slots'     => (int) ($l->extension_max_slots ?? 1),

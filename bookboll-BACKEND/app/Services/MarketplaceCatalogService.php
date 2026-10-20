@@ -749,6 +749,10 @@ class MarketplaceCatalogService
             'slot_duration'           => $this->slotMinutes($listing),
             'buffer_time'             => (int) ($listing->buffer_time ?? 0),
             'capacity'                => (int) ($listing->capacity ?? 1),
+            // Whether a slot advertises how many spaces are left. Presentation
+            // only: capacity is still enforced and a full slot still stops
+            // selling, whatever this says.
+            'show_slot_capacity'      => $listing->show_slot_capacity !== false,
             'description'             => $listing->description,
             'category'                => $listing->category ?: 'sports',
             'sport_category'          => $this->sportName($listing),
