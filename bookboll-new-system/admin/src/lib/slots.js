@@ -173,6 +173,65 @@ export function dayPeriod(hhmm) {
 export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 /**
+ * A day's open periods, in the editor's shape: [{open_time, close_time}].
+ * Accepts the grouped row ({is_open, periods}) or a raw DB row (open_time/close_time).
+ */
+export function periodsOf(dayRow) {
+  if (!dayRow || !dayRow.is_open) return []
+  if (dayRow.periods?.length) return dayRow.periods.filter(p => p?.open_time && p?.close_time)
+  if (dayRow.open_time && dayRow.close_time) return [{ open_time: dayRow.open_time, close_time: dayRow.close_time }]
+  return []
+}
+
+/**
+ * Where two period lists overlap — the listing's hours cut down to the venue's.
+ *
+ * The server only ever sells a slot inside BOTH schedules
+ * (ListingService::findOverlappingScheduleBlocks), so an admin view that reads
+ * the listing's hours alone shows hours the venue is shut for, and prices them.
+ * Midnight as a close is end-of-day on both sides, exactly as the server treats it.
+ *
+ * @returns {Array<{open_time, close_time}>} minute-sorted, non-overlapping
+ */
+export function intersectPeriods(a, b) {
+  const out = []
+  for (const x of a) {
+    const xs = toMinutes(x.open_time), xe = endMinutes(x.close_time)
+    for (const y of b) {
+      const ys = toMinutes(y.open_time), ye = endMinutes(y.close_time)
+      const s = Math.max(xs, ys), e = Math.min(xe, ye)
+      if (s < e) out.push({ open_time: toTimeStr(s), close_time: e === 24 * 60 ? '00:00' : toTimeStr(e) })
+    }
+  }
+  return out.sort((p, q) => toMinutes(p.open_time) - toMinutes(q.open_time))
+}
+
+/**
+ * The slot start minutes a list of periods produces, mirroring
+ * ListingService::generateTimeSlots() exactly:
+ *  - step by the slot length (the server does NOT add buffer_time here)
+ *  - keep a slot whose START is inside the period
+ *  - allow the last one to overrun only when the period closes at midnight,
+ *    which is how a legitimate 23:00-01:00 slot exists
+ *
+ * @returns {number[]} ascending, de-duplicated
+ */
+export function periodSlotStarts(periods, step) {
+  const starts = new Set()
+  if (!(step > 0)) return []
+  for (const p of periods) {
+    const open = toMinutes(p.open_time)
+    const close = endMinutes(p.close_time)
+    const closesAtMidnight = toMinutes(p.close_time) === 0
+    for (let m = open; m < close; m += step) {
+      if (!closesAtMidnight && m + step > close) break
+      starts.add(m)
+    }
+  }
+  return [...starts].sort((x, y) => x - y)
+}
+
+/**
  * The slots a listing can actually be booked at, per day of the week.
  *
  * This is the ONE place the admin works out bookable times, because every other
@@ -181,52 +240,40 @@ export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
  * that no customer could ever book, and its real 21:00 and 23:00 slots were
  * missing entirely. The pricing grid had its own copy of the same mistake.
  *
- * Mirrors ListingService::generateTimeSlots() exactly:
- *  - walk each of the day's open periods
- *  - step by the slot length (the server does NOT add buffer_time here, so
- *    neither do we — a mismatch would put the admin and the customer on
- *    different slot boundaries)
- *  - keep a slot whose START is inside the period
- *  - allow the last one to overrun only when the period closes at midnight,
- *    which is how a legitimate 23:00-01:00 slot exists
- *
- * @param {Array} hours - [{ day_of_week, is_open, periods: [{open_time, close_time}] }]
+ * @param {Array} hours - listing rows [{ day_of_week, is_open, periods }]
  * @param {number} slotDuration - minutes
+ * @param {Array} [venueHours] - the venue's rows in the same shape; when given,
+ *   each day is cut down to the hours the venue is also open, as the server does.
+ *   A day the venue has no row for stays as the listing says — that means the
+ *   venue's hours simply were not loaded, not that it is shut.
  * @returns {Array<{start_time: string, end_time: string, days: number[]}>}
  */
-export function bookableSlots(hours, slotDuration) {
+export function bookableSlots(hours, slotDuration, venueHours = null) {
   const step = normalizeDuration(slotDuration)
   if (!step || !Array.isArray(hours)) return []
 
   const byStart = new Map()
-
   for (const day of hours) {
-    if (!day?.is_open) continue
-    const dow = Number(day.day_of_week)
-    const periods = day.periods?.length
-      ? day.periods
-      : (day.open_time ? [{ open_time: day.open_time, close_time: day.close_time }] : [])
-
-    for (const p of periods) {
-      if (!p?.open_time || !p?.close_time) continue
-      const open = toMinutes(p.open_time)
-      const close = endMinutes(p.close_time)
-      const closesAtMidnight = toMinutes(p.close_time) === 0
-
-      for (let m = open; m < close; m += step) {
-        if (!closesAtMidnight && m + step > close) break
-        const start = toTimeStr(m)
-        if (!byStart.has(start)) {
-          byStart.set(start, { start_time: start, end_time: toTimeStr(m + step), days: new Set() })
-        }
-        byStart.get(start).days.add(dow)
-      }
+    const dow = Number(day?.day_of_week)
+    for (const m of periodSlotStarts(effectivePeriods(day, venueHours), step)) {
+      const start = toTimeStr(m)
+      if (!byStart.has(start)) byStart.set(start, { start_time: start, end_time: toTimeStr((m + step) % (24 * 60)), days: new Set() })
+      byStart.get(start).days.add(dow)
     }
   }
 
   return [...byStart.values()]
     .sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
     .map(r => ({ ...r, days: [...r.days].sort((a, b) => a - b) }))
+}
+
+/** A day's listing periods, cut down to the venue's where the venue's are known. */
+export function effectivePeriods(dayRow, venueHours = null) {
+  const mine = periodsOf(dayRow)
+  if (!mine.length || !Array.isArray(venueHours) || !venueHours.length) return mine
+  const venueDay = venueHours.find(v => Number(v?.day_of_week) === Number(dayRow?.day_of_week))
+  if (!venueDay) return mine
+  return intersectPeriods(mine, periodsOf(venueDay))
 }
 
 /** "Every day", "Fri, Sat", "Mon-Thu, Sun" — how a start time's days read. */

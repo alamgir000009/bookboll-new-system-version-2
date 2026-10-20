@@ -1,8 +1,9 @@
-export function missingPricingSetup({ enabled, cells = [], groups = [], form }) {
+export function missingPricingSetup({ enabled, groups = [], form }) {
   const base = Number(form.base_price)
-  const hasCustomPrice = enabled && cells.some(cell => {
-    const group = groups.find(group => group.id === cell.pricing_group_id)
-    const price = Number(cell.direct_price ?? group?.price)
+  // Pricing groups are the only store for dynamic prices now (the grid is a view
+  // of them), so "has a custom price" means a group priced away from base.
+  const hasCustomPrice = enabled && groups.some(group => {
+    const price = Number(group?.price)
     return Number.isFinite(price) && price > 0 && price !== base
   })
   const discount = Number(form.extension_value)

@@ -141,7 +141,7 @@ async function requestExitEditor() {
 function listingDraftKey() { return editing.value?.id ? `listing_${editing.value.id}` : 'listing_new' }
 function listingDraftSnapshot() {
   return {
-    form: form.value, hours: hours.value, groups: groups.value, cells: cells.value,
+    form: form.value, hours: hours.value, groups: groups.value,
     pattern: pattern.value, dynamicPricing: dynamicPricing.value, pay: pay.value,
     connectedAddons: connectedAddons.value, connectedResources: connectedResources.value,
     openSection: openSection.value,
@@ -151,7 +151,6 @@ function applyListingDraft(d) {
   if (d.form) form.value = { ...form.value, ...d.form }
   if (Array.isArray(d.hours)) hours.value = d.hours
   if (Array.isArray(d.groups)) groups.value = d.groups
-  if (Array.isArray(d.cells)) cells.value = d.cells
   if (d.pattern) pattern.value = d.pattern
   if (typeof d.dynamicPricing === 'boolean') dynamicPricing.value = d.dynamicPricing
   if (d.pay) pay.value = { ...pay.value, ...d.pay }
@@ -764,7 +763,6 @@ const form = ref(defaultForm())
 const hours = ref(defaultHours())
 const locationHours = ref([])
 const groups = ref([])
-const cells = ref([])
 const pattern = ref('B')
 const pay = ref(defaultPay())
 const connectedAddons = ref([])        /* [{id?, addon_id, sort_order}] */
@@ -877,7 +875,7 @@ function selectListingStep(step) {
   if (step === 'review' && !validateListingSteps()) return
   if (['payments','review'].includes(step) && !['payments','review'].includes(listingStep.value)) {
     if (!validateListingSteps(['pricing'])) return
-    const features = pricingGate.missing(missingPricingSetup({ enabled:dynamicPricing.value, cells:cells.value, groups:groups.value, form:form.value }))
+    const features = pricingGate.missing(missingPricingSetup({ enabled:dynamicPricing.value, groups:groups.value, form:form.value }))
     if (features.length) { listingStep.value = 'pricing'; openSection.value = 'pricing'; pricingReminder.value = { features, step }; return }
   }
   listingStep.value = step
@@ -1059,7 +1057,7 @@ async function openNewListingForm(presetLocationId) {
   syncFixedFromTimes(form.value.fixed_start_times)
   hours.value = defaultHours()
   // Dynamic pricing is optional and can be enabled in Pricing & extras.
-  groups.value = []; cells.value = []; pattern.value = 'B'; dynamicPricing.value = false
+  groups.value = []; pattern.value = 'B'; dynamicPricing.value = false
   pay.value = defaultPay({ forNewListing: true })
   connectedAddons.value = []
   connectedResources.value = []
@@ -1168,10 +1166,12 @@ async function openEditListingForm(l) {
     } else {
       hours.value = hoursFromLocation()
     }
+    // Groups are the only store; the grid is drawn from them. The server still
+    // sends a derived `pricing_cells` for older clients — it is not read here,
+    // and above all it is never posted back (see the save payload).
     groups.value = dash.data.pricing_groups || []
-    cells.value = dash.data.pricing_cells || []
-    pattern.value = cells.value.some(x => x.pricing_group_id) ? 'A' : (cells.value.length ? 'B' : 'A')
-    dynamicPricing.value = cells.value.length > 0 || groups.value.length > 0
+    pattern.value = 'A'
+    dynamicPricing.value = groups.value.length > 0
     pay.value = dash.data.payment ? { ...defaultPay(), ...dash.data.payment } : defaultPay()
     // The dashboard API casts ids to strings; the catalogue endpoints hand back
     // ints, which is what the PickerSelect options carry. Normalise on the way
@@ -1182,7 +1182,6 @@ async function openEditListingForm(l) {
     // Succeeded but carried no detail — a genuinely empty listing. Defaults are right.
     hours.value = hoursFromLocation()
     groups.value = []
-    cells.value = []
     pattern.value = 'A'
     dynamicPricing.value = false
     pay.value = defaultPay()
@@ -1423,7 +1422,7 @@ const mergedHoursList = computed(() => hours.value)
  * 11 PM slots were missing entirely. bookableSlots() walks each day's periods
  * the way the server does.
  */
-const startTimeRows = computed(() => bookableSlots(hours.value, form.value.slot_duration))
+const startTimeRows = computed(() => bookableSlots(hours.value, form.value.slot_duration, locationHoursGrouped.value))
 const autoStartTimes = computed(() => startTimeRows.value.map(r => r.start_time))
 // The slots offered to customers: the automatic grid (slot length + buffer + weekly
 // schedule) minus any the provider has tapped off. All on = every slot offered.
@@ -1524,7 +1523,7 @@ const dynamicPricing = ref(false)
 async function onToggleDynamic() {
   if (dynamicPricing.value) return
   // Turning it off — clear any custom day/time prices (with a heads-up if there are any).
-  if (cells.value.length || groups.value.length) {
+  if (groups.value.length) {
     const ok = await confirm({
       title: 'Turn off dynamic pricing?',
       message: 'This clears all custom day & time prices. Every slot will use the base price above.',
@@ -1532,7 +1531,7 @@ async function onToggleDynamic() {
     })
     if (!ok) { dynamicPricing.value = true; return }
   }
-  cells.value = []; groups.value = []; pricingBelowBase.value = false
+  groups.value = []; pricingBelowBase.value = false
 }
 
 // Placement: warn before a provider/admin turns OFF the recommended Bookboll
@@ -1942,7 +1941,6 @@ async function save() {
     extension_max_slots: Math.max(1, Number(form.value.extension_max_slots) || 1),
     hours: hours.value,
     pricing_groups: groups.value,
-    pricing_cells: cells.value,
     payment: {
       cash_on_arrival: !!pay.value.cash_on_arrival,
       deposit_enabled: !!pay.value.deposit_enabled,
@@ -3001,10 +2999,11 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             </div>
 
             <PricingGrid v-if="dynamicPricing"
-              :groups="groups" :cells="cells" :base-price="Number(form.base_price)"
+              :groups="groups" :base-price="Number(form.base_price)"
               :slot-duration="Number(form.slot_duration)" :pattern="pattern" :hours="mergedHoursList"
+              :venue-hours="locationHoursGrouped"
               :currency="currencyForLocation(form.location_id)"
-              @update:groups="groups = $event" @update:cells="cells = $event" @update:pattern="pattern = $event"
+              @update:groups="groups = $event" @update:pattern="pattern = $event"
               @below-base="pricingBelowBase = $event"
             />
 

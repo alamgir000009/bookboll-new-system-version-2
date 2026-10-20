@@ -7,7 +7,9 @@
     "dev": "vite --port 5174",
     "build": "vite build",
     "preview": "vite preview",
-    "check:render": "node scripts/render-check.mjs"
+    "check:render": "node scripts/render-check.mjs",
+    "check:paint": "node scripts/paint-check.mjs",
+    "check:grid": "npm run check:render && npm run check:paint"
   },
   "dependencies": {
     "@unhead/vue": "^1.11.20",
