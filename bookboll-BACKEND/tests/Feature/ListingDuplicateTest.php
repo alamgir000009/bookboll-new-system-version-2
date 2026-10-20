@@ -149,3 +149,84 @@ it('asks which venue rather than guessing one', function () {
     // A venue that does not exist is refused by store()'s own validation.
     duplicateInto($this->owner, $this->listing, 999999)->assertStatus(422);
 });
+
+it('copies the gallery, which lives in assets and not the photos column', function () {
+    // Almost every listing's pictures are asset rows on this platform; the
+    // photos column is mostly empty. A copy that only carried the column came
+    // out with no images at all.
+    foreach ([['uploads/listings/a.jpg', 0], ['uploads/listings/b.jpg', 1]] as [$path, $order]) {
+        \App\Models\Asset::create([
+            'path' => $path, 'type' => 'image', 'sort_order' => $order,
+            'assetable_type' => Listing::class, 'assetable_id' => $this->listing->id,
+        ]);
+    }
+
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+
+    $copy = Listing::where('venue_id', $this->venueB->id)->first();
+
+    // Same files, same order — pointed at, not re-uploaded.
+    expect($copy->assets()->pluck('path')->all())
+        ->toBe(['uploads/listings/a.jpg', 'uploads/listings/b.jpg']);
+    // And the original keeps its own.
+    expect($this->listing->assets()->count())->toBe(2);
+});
+
+it('copies the dynamic pricing groups as new rows', function () {
+    \App\Models\PricingGroup::create([
+        'listing_id' => $this->listing->id, 'name' => 'Peak', 'price_per_hour' => 400,
+        'days' => [1, 2], 'start_time' => '18:00', 'end_time' => '22:00', 'sort_order' => 0,
+    ]);
+
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+
+    $copy = Listing::where('venue_id', $this->venueB->id)->first();
+    $group = $copy->pricingGroups()->first();
+
+    expect($group->name)->toBe('Peak');
+    expect((float) $group->price_per_hour)->toBe(400.0);
+    // A new row, not the original's — carrying the id would have edited it.
+    expect($group->listing_id)->toBe($copy->id);
+    expect($this->listing->pricingGroups()->count())->toBe(1);
+});
+
+it('copies the weekly schedule and the payment methods', function () {
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+
+    $copy = Listing::where('venue_id', $this->venueB->id)->first();
+
+    expect($copy->schedules()->count())->toBeGreaterThan(0);
+    expect($copy->payment_options['site_deposit_enabled'])->toBeTrue();
+});
+
+it('is visible on the marketplace once it is approved', function () {
+    // The copy arrives pending. Approving it is all that should stand between
+    // it and the catalogue.
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+
+    $copy = Listing::where('venue_id', $this->venueB->id)->first();
+    expect($copy->show_on_marketplace)->not->toBeFalse();
+
+    $before = collect(test()->withHeader('from', 'frontend-web')
+        ->getJson('/api/marketplace/listings')->json('data.listings') ?? [])->pluck('name');
+    expect($before)->not->toContain($copy->name);
+
+    $copy->update(['approval_status' => Listing::APPROVAL_APPROVED]);
+
+    $after = collect(test()->withHeader('from', 'frontend-web')
+        ->getJson('/api/marketplace/listings')->json('data.listings') ?? [])->pluck('name');
+    expect($after)->toContain($copy->name);
+});
+
+it('refuses to copy an off-marketplace listing on a free plan, rather than quietly putting it on the marketplace', function () {
+    // Hiding a listing from Bookboll is a Premium feature. A copy is a NEW
+    // off-marketplace listing, so it is a new use of that feature — refused
+    // with 402. The alternative, silently flipping the copy on to the
+    // marketplace, would publish something the provider deliberately hid.
+    $this->listing->update(['show_on_marketplace' => false]);
+
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertStatus(402);
+
+    expect(Listing::where('venue_id', $this->venueB->id)->count())->toBe(0);
+    expect($this->listing->fresh()->show_on_marketplace)->toBeFalse();
+});

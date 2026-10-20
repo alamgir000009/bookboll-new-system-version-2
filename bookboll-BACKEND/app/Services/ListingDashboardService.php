@@ -436,7 +436,41 @@ class ListingDashboardService
 
         $payload = $this->duplicatePayload($data, $targetVenueId, (string) $request->input('name', ''));
 
-        return $this->store(new \Illuminate\Http\Request($payload));
+        $created = $this->store(new \Illuminate\Http\Request($payload));
+
+        // Gallery images live in the `assets` morph table, not in the `photos`
+        // column — on this platform almost every listing's pictures are there.
+        // store() copies the column, so without this the copy came out with no
+        // images at all.
+        $newId = $created instanceof \Illuminate\Http\JsonResponse
+            ? ($created->getData(true)['data']['listing']['id'] ?? null)
+            : null;
+        if ($newId) {
+            $this->copyAssets($source, (int) $newId);
+
+            return $this->show($newId);
+        }
+
+        return $created;
+    }
+
+    /** Point the copy at the same stored files; nothing is re-uploaded. */
+    protected function copyAssets(Listing $source, int $newListingId): void
+    {
+        $rows = $source->assets()->get()->map(fn ($a) => [
+            'path'           => $a->path,
+            'type'           => $a->type,
+            'sort_order'     => $a->sort_order,
+            'created_by'     => $a->created_by,
+            'assetable_type' => Listing::class,
+            'assetable_id'   => $newListingId,
+            'created_at'     => now(),
+            'updated_at'     => now(),
+        ])->all();
+
+        if ($rows) {
+            DB::table('assets')->insert($rows);
+        }
     }
 
     /**
