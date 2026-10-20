@@ -937,7 +937,7 @@ function defaultForm() {
     // while hidden from customers, or the reverse. Both off = inactive.
     show_on_admin: true, show_on_customer: true,
     loyalty_points: 0, booking_color: '#10b981', listing_type: 'per_space',
-    max_bookings_per_slot: 1, commission_rate: null,
+    max_bookings_per_slot: 1, show_slot_capacity: true, commission_rate: null,
     extension_pricing: 'none', extension_value: 0, extension_max_slots: 1,
   }
 }
@@ -1089,6 +1089,7 @@ async function openEditListingForm(l) {
     booking_color: l.booking_color || '#10b981',
     listing_type: l.listing_type || 'per_space',
     max_bookings_per_slot: l.max_bookings_per_slot ?? 1,
+    show_slot_capacity: l.show_slot_capacity !== false,
     extension_max_slots: Math.max(1, Number(l.extension_max_slots) || 1),
     show_on_marketplace: l.show_on_marketplace !== false,
     show_on_provider_site: l.show_on_provider_site !== false,
@@ -1124,6 +1125,7 @@ async function openEditListingForm(l) {
         booking_color: det.booking_color || form.value.booking_color || '#10b981',
         listing_type: det.listing_type || form.value.listing_type || 'per_space',
         max_bookings_per_slot: det.max_bookings_per_slot ?? form.value.max_bookings_per_slot ?? 1,
+        show_slot_capacity: det.show_slot_capacity !== false,
         extension_max_slots: Math.max(1, Number(det.extension_max_slots ?? form.value.extension_max_slots) || 1),
         show_on_marketplace: det.show_on_marketplace !== false,
         show_on_provider_site: det.show_on_provider_site !== false,
@@ -1875,6 +1877,7 @@ async function save() {
     booking_color: form.value.booking_color,
     listing_type: 'per_space',   // all listings are per-space; per-person is handled via Events now
     max_bookings_per_slot: Number(form.value.max_bookings_per_slot) || 1,
+    show_slot_capacity: form.value.show_slot_capacity !== false,
     commission_rate: (form.value.commission_rate !== null && form.value.commission_rate !== '') ? Number(form.value.commission_rate) : null,
   }
 
@@ -2932,6 +2935,13 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             <div class="grid grid-2">
               <div class="form-group"><label class="form-label">Max Bookings per Time Slot <span class="req">*</span><InfoTip text="How many separate bookings can share the same start time — e.g. set to 3 if you have 3 identical courts." /></label>
                 <input aria-label="Maximum bookings at the same time" type="number" min="1" v-model="form.max_bookings_per_slot" />
+                <!-- Presentation only: the limit is still enforced and a full
+                     slot still stops selling whichever way this is set. -->
+                <label class="toggle" style="margin-top:10px">
+                  <input type="checkbox" :checked="form.show_slot_capacity !== false" aria-label="Show how many spaces are left on each time slot" @change="form.show_slot_capacity = $event.target.checked; markDirty()" />
+                  Show “3 left” on each time slot
+                </label>
+                <div class="form-hint">Turn this off to hide the remaining spaces from customers. Bookings are still limited to the number above.</div>
               </div>
               <div class="form-group"><label class="form-label">Slot Duration <span class="req">*</span><InfoTip text="How long one bookable slot lasts. Customers book in blocks of this length (e.g. 1 hour). Options go in 15-minute steps." /></label>
                 <select aria-label="Booking duration" v-model.number="form.slot_duration">

@@ -11,7 +11,7 @@ const template=source.match(/<button v-for="s in visibleSlots"[\s\S]*?<\/button>
 const render=compile(template)
 async function slot(overrides={},extra={}) {
   const s={start_time:'6:00 PM',end_time:'7:00 PM',available:true,price:100,spacesLeft:2,capacity:4,...overrides}
-  return renderToString(createSSRApp({components:{Check},render,setup:()=>({visibleSlots:[s],selectedSet:new Set(),tierClass:()=> 'tier-mid',toggleSlot:()=>{},periodIcon:()=>Sun,dayPeriod:()=> 'night',fmtTime:t=>t,cur:'QAR',selectMode:false,isDisc:()=>false,priceFor:s=>s.price,...extra})}))
+  return renderToString(createSSRApp({components:{Check},render,setup:()=>({visibleSlots:[s],selectedSet:new Set(),tierClass:()=> 'tier-mid',toggleSlot:()=>{},periodIcon:()=>Sun,dayPeriod:()=> 'night',fmtTime:t=>t,cur:'QAR',selectMode:false,isDisc:()=>false,priceFor:s=>s.price,showSpacesLeft:true,...extra})}))
 }
 test('slots preserve both times, price, tier, day-period icon and remaining capacity', async()=>{
   const html=await slot()
@@ -28,4 +28,12 @@ test('host selection retains base price and unavailable reasons are disabled', a
     const html=await slot({available:false,...props})
     assert.match(html,/disabled/);assert.ok(html.includes(label));assert.ok(!html.includes('QAR'))
   }
+})
+
+test('a listing that hides remaining spaces keeps everything else on the slot', async () => {
+  // Presentation only: the time, the price and whether it can be booked are
+  // untouched — just the "N left" label is gone.
+  const html = await slot({}, { showSpacesLeft: false })
+  assert.equal(html.includes('2 left'), false)
+  for (const text of ['6:00 PM', '7:00 PM', 'QAR 100', 'aria-pressed="false"']) assert.ok(html.includes(text), text)
 })

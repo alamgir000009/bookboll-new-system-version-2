@@ -32,6 +32,10 @@ import { browseReturnPath } from '../../lib/browseCatalog.js'
 const route = useRoute()
 const router = useRouter()
 const data = ref(null)
+// Whether a slot advertises how many spaces are left. Absent means show it,
+// so an older server behaves exactly as before. Presentation only — capacity
+// is still enforced and a full slot still stops selling either way.
+const showSpacesLeft = computed(() => data.value?.listing?.show_slot_capacity !== false)
 const loading = ref(true)
 let listingLoad = 0
 
@@ -815,7 +819,7 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
                 <span class="ld-slot-endt">to {{ fmtTime(s.end_time) }}</span>
                 <template v-if="s.available">
                   <span class="ld-slot-price" :class="{ disc: !selectMode && isDisc(s) }">{{ cur }} {{ Number(selectMode ? s.price : priceFor(s)).toLocaleString() }}<s v-if="!selectMode && isDisc(s)" class="ld-slot-was">{{ Number(s.price).toLocaleString() }}</s></span>
-                  <span class="ld-slot-meta"><span v-if="!selectMode && isDisc(s)" class="ld-slot-discount">↓ Extension</span><span v-if="s.capacity > 1" class="ld-slot-left">{{ s.spacesLeft }} left</span></span>
+                  <span class="ld-slot-meta"><span v-if="!selectMode && isDisc(s)" class="ld-slot-discount">↓ Extension</span><span v-if="showSpacesLeft && s.capacity > 1" class="ld-slot-left">{{ s.spacesLeft }} left</span></span>
                 </template>
                 <span v-else class="ld-slot-x">{{ s.siblingTaken ? 'In this event' : (s.past ? 'Passed' : (s.capacity > 1 ? 'Full' : 'Booked')) }}</span>
               </button>
