@@ -37,6 +37,21 @@ export async function deleteListing(id) {
   return apiFetch(`/admin/listings/dashboard/${id}`, { method: 'DELETE' })
 }
 
+/**
+ * Copy a listing into a venue.
+ *
+ * The venue is named explicitly — the server authorizes it exactly as it would
+ * a listing typed by hand, so a provider cannot copy into another business's
+ * venue by sending its id.
+ */
+export async function duplicateListing(id, { venueId, name = '' } = {}) {
+  if (!id || !venueId) return { success: false, message: 'Choose the venue to copy this listing into.' }
+  return apiFetch(`/admin/listings/dashboard/${id}/duplicate`, {
+    method: 'POST',
+    body: { venue_id: venueId, ...(name.trim() ? { name: name.trim() } : {}) },
+  })
+}
+
 export async function sortListings(updates) {
   return apiFetch('/admin/listings/dashboard/sort', {
     method: 'POST',

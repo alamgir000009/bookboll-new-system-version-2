@@ -14,14 +14,14 @@ import {
 } from '../lib/venues.js'
 import {
   fetchListingsDashboard, fetchListingDashboard, createListing, updateListing,
-  patchListing, deleteListing, sortListings,
+  patchListing, deleteListing, duplicateListing, sortListings,
   fetchAddOns, createAddOn, updateAddOn, deleteAddOn as apiDeleteAddOn,
   fetchResources, createResource, updateResource, deleteResource as apiDeleteResource,
   mapAddOnRow, mapResourceRow,
   firstError as listingFirstError,
 } from '../lib/listings.js'
 import { appBaseUrl } from '../lib/appBase.js'
-import { Search, Plus, Minus, Trash2, Pencil as Edit2, ChevronDown, ChevronUp, ChevronRight, Eye, EyeOff, ArrowLeft, Check, Info, Wallet, Clock, DollarSign, PackagePlus, Boxes, Image as ImgIcon, X, GripVertical, LayoutList, Layers, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, LocateFixed, MapPin as MapPinIcon, Landmark, Building2 as BldIcon, Upload, Download, SlidersHorizontal, Store, Globe, TrendingDown, ExternalLink, CircleCheck, ShieldCheck, Lock, Bell, Users } from 'lucide-vue-next'
+import { Search, Plus, Minus, Trash2, Pencil as Edit2, ChevronDown, ChevronUp, ChevronRight, Eye, EyeOff, ArrowLeft, Check, Info, Wallet, Clock, DollarSign, PackagePlus, Boxes, Image as ImgIcon, X, GripVertical, LayoutList, Layers, CirclePause as PauseCircle, CirclePlay as PlayCircle, TriangleAlert as AlertTriangle, RefreshCw, LocateFixed, MapPin as MapPinIcon, Landmark, Building2 as BldIcon, Upload, Download, SlidersHorizontal, Store, Globe, TrendingDown, ExternalLink, CircleCheck, ShieldCheck, Lock, Bell, Users, Copy } from 'lucide-vue-next'
 import { useRouter, useRoute } from 'vue-router'
 import { VENUE_CATEGORIES, subcategoriesFor, normCategory, categoryLabel } from '../lib/venueCategories.js'
 import { loadApprovedTypes, approvedTypesFor, addPendingType } from '../lib/customTypes.js'
@@ -2030,6 +2030,33 @@ async function saveAndClose() {
   } finally { listingSaving.value = false }
 }
 
+// ── Copy a listing into a venue ───────────────────────────────────────────────
+// The venue list is whatever the server already scoped to this account, so a
+// provider is offered their own venues and an admin every venue, without this
+// page deciding that for itself.
+const copyFrom = ref(null)
+const copyVenueId = ref('')
+const copyName = ref('')
+const copyBusy = ref(false)
+function openCopyListing(l) {
+  copyFrom.value = l
+  copyVenueId.value = String(l.location_id || '')
+  copyName.value = ''
+  copyBusy.value = false
+}
+async function confirmCopyListing() {
+  if (!copyVenueId.value || copyBusy.value) return
+  copyBusy.value = true
+  const res = await duplicateListing(copyFrom.value.id, { venueId: copyVenueId.value, name: copyName.value })
+  copyBusy.value = false
+  if (!res.success) { toast.error(listingFirstError(res, 'Could not copy the listing.')); return }
+  const made = res.data?.listing
+  copyFrom.value = null
+  await loadList()
+  // Named, because a copy landing in another venue is easy to lose.
+  toast.success(`${made?.name || 'Listing'} created in ${locations.value.find(v => String(v.id) === String(copyVenueId.value))?.name || 'the selected venue'}.`)
+}
+
 async function removeListing(id) {
   const l = listings.value.find(x => x.id === id)
   if (!(await confirm({
@@ -2521,6 +2548,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                 </div>
               </div>
               <div class="flat-actions listing-actions">
+                <button v-if="canManageListings" class="btn-icon" :aria-label="'Copy ' + l.name" title="Copy to a venue" @click="openCopyListing(l)"><Copy :size="15" /></button>
                 <button v-if="canManageListings" class="btn-icon" :aria-label="'Edit ' + l.name" @click="openEditListing(l)"><Edit2 :size="15" /></button>
                 <button v-if="canManageListings" class="btn-icon danger" :aria-label="'Delete ' + l.name" @click="removeListing(l.id)"><Trash2 :size="15" /></button>
                 <span v-if="!canManageListings" class="muted" style="font-size:12px">View only</span>
@@ -2663,6 +2691,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                     <PlayCircle :size="16" />
                   </button>
                 </template>
+                <button v-if="canManageListings" class="btn-icon" :aria-label="'Copy ' + l.name" title="Copy to a venue" @click="openCopyListing(l)"><Copy :size="16" /></button>
                 <button v-if="canManageListings" class="btn-icon" :aria-label="'Edit ' + l.name" @click="openEditListing(l)"><Edit2 :size="16" /></button>
                 <button v-if="canManageListings" class="btn-icon danger" :aria-label="'Delete ' + l.name" @click="removeListing(l.id)"><Trash2 :size="16" /></button>
               </div>
@@ -3463,6 +3492,46 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
         </div>
       </div>
     </Teleport>
+
+    <!-- Copy a listing into a venue. The venue list is the one the server
+         already scoped to this account, so an admin sees every venue and a
+         provider only their own. -->
+    <div v-if="copyFrom" class="modal-backdrop" style="z-index:3600" @click.self="copyFrom = null">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="copy-listing-title" v-dialog="() => (copyFrom = null)">
+        <div class="modal-header">
+          <div class="modal-title" id="copy-listing-title">Copy listing</div>
+          <button class="btn-icon" aria-label="Close" @click="copyFrom = null"><X :size="18" /></button>
+        </div>
+        <div class="modal-body">
+          <p class="muted">Makes a new listing with the same setup as <strong>{{ copyFrom.name }}</strong>. The copy is submitted for review before it goes live.</p>
+
+          <div class="form-group">
+            <label class="form-label" for="copy-venue">Copy into venue <span aria-hidden="true">*</span></label>
+            <select id="copy-venue" v-model="copyVenueId">
+              <option value="">Choose a venue…</option>
+              <option v-for="v in locations" :key="v.id" :value="String(v.id)">{{ v.name }}</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="copy-name">Name <small>optional</small></label>
+            <input id="copy-name" v-model="copyName" :placeholder="copyFrom.name + ' (copy)'" />
+          </div>
+
+          <!-- Said plainly: add-ons and resources belong to a venue's own
+               catalogue, so they cannot follow the copy somewhere else. -->
+          <p v-if="copyVenueId && String(copyVenueId) !== String(copyFrom.location_id)" class="form-hint">
+            Add-ons and resources stay with their own venue, so they aren’t copied across.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" @click="copyFrom = null">Cancel</button>
+          <button class="btn btn-primary" :disabled="!copyVenueId || copyBusy" @click="confirmCopyListing">
+            {{ copyBusy ? 'Copying…' : 'Copy listing' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
