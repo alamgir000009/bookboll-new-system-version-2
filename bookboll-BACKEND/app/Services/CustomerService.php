@@ -140,6 +140,13 @@ class CustomerService
 
     public function createCustomer($request)
     {
+        // Gender is stored lowercase and validated against lowercase values, but
+        // clients have sent it capitalised ("Male") and were refused with
+        // "invalid gender" for a value that is perfectly clear. Normalise first.
+        if (is_string($request->input('gender'))) {
+            $request->merge(['gender' => strtolower(trim($request->input('gender'))) ?: null]);
+        }
+
         $formData = $request->validate([
             'name'                         => 'nullable|string|max:100',
             'email'                        => 'required|email|unique:users,email',
@@ -990,6 +997,13 @@ class CustomerService
         $emailRule = $partial
             ? 'sometimes|nullable|email|unique:users,email' . ($ignoreId ? ',' . $ignoreId : '')
             : 'nullable|email|unique:users,email' . ($ignoreId ? ',' . $ignoreId : '');
+
+        // Gender is stored lowercase and validated against lowercase values, but
+        // clients have sent it capitalised ("Male") and were refused with
+        // "invalid gender" for a value that is perfectly clear. Normalise first.
+        if (is_string($request->input('gender'))) {
+            $request->merge(['gender' => strtolower(trim($request->input('gender'))) ?: null]);
+        }
 
         return $request->validate([
             'full_name'                 => ($partial ? 'sometimes|' : 'required|') . 'string|max:100',
