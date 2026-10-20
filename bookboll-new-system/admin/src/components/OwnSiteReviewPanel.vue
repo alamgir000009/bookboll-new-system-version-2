@@ -31,12 +31,25 @@ const busy = ref('')
 const selected = ref(new Set())
 
 const visible = computed(() => !loading.value && !unsupported.value && (queue.value.total > 0 || !!error.value))
+
+// Platform staff see every business's listings. Saying "your website" to them
+// is wrong, and offering the buttons would invite one person to start charging
+// dozens of businesses' customers a deposit. The server refuses it either way;
+// this stops the dashboard asking for something that cannot happen.
+const isPlatform = computed(() => queue.value.scope !== 'business')
+const canApplyAtAll = computed(() => queue.value.canApply === true)
+const heading = computed(() => isPlatform.value
+  ? `${queue.value.total} ${queue.value.total === 1 ? 'listing' : 'listings'} can’t take bookings on their provider’s website`
+  : `${queue.value.total} ${queue.value.total === 1 ? 'listing' : 'listings'} on your website can’t take bookings`)
+const explanation = computed(() => isPlatform.value
+  ? 'Payment on arrival is no longer available for bookings made on a provider’s own website. Each business chooses how its listings take payment — open a listing to change one.'
+  : 'Payment on arrival is no longer available for bookings made on your own website. Choose how each listing should take payment, or remove it from your site.')
 const selectedIds = computed(() => [...selected.value])
 const allSelected = computed(() => queue.value.listings.length > 0 && selected.value.size === queue.value.listings.length)
 
 // Only offered when every selected listing can actually take it. A button that
 // half-works reads as a failure the owner caused.
-const canApply = method => selectedIds.value.length > 0 && !busy.value
+const canApply = method => canApplyAtAll.value && selectedIds.value.length > 0 && !busy.value
   && queue.value.listings.filter(l => selected.value.has(l.id)).every(l => l.available[method])
 
 function toggle(id) {
@@ -95,12 +108,9 @@ defineExpose({ reload: load })
     <header class="osr-head">
       <AlertTriangle :size="18" aria-hidden="true" />
       <div class="osr-head-text">
-        <h2 id="osr-title">
-          {{ queue.total }} {{ queue.total === 1 ? 'listing' : 'listings' }} on your website can’t take bookings
-        </h2>
+        <h2 id="osr-title">{{ heading }}</h2>
         <p>
-          Payment on arrival is no longer available for bookings made on your own website.
-          Choose how each listing should take payment, or remove it from your site.
+          {{ explanation }}
           <span v-if="!queue.complete && queue.total"> Showing the first {{ queue.listings.length }}.</span>
         </p>
       </div>
@@ -113,7 +123,7 @@ defineExpose({ reload: load })
     <div v-if="error" class="osr-error" role="alert">{{ error }}</div>
 
     <div v-show="open" id="osr-body" class="osr-body">
-      <div class="osr-actions">
+      <div v-if="canApplyAtAll" class="osr-actions">
         <label class="osr-all">
           <input type="checkbox" :checked="allSelected" aria-label="Select every listing" @change="toggleAll" />
           Select all {{ queue.listings.length }}
@@ -133,8 +143,8 @@ defineExpose({ reload: load })
 
       <ul class="osr-list">
         <li v-for="row in queue.listings" :key="row.id">
-          <label class="osr-row">
-            <input type="checkbox" :checked="selected.has(row.id)" :aria-label="`Select ${row.name}`" @change="toggle(row.id)" />
+          <label class="osr-row" :class="{ 'osr-row-static': !canApplyAtAll }">
+            <input v-if="canApplyAtAll" type="checkbox" :checked="selected.has(row.id)" :aria-label="`Select ${row.name}`" @change="toggle(row.id)" />
             <span class="osr-row-main">
               <strong>{{ row.name }}</strong>
               <small v-if="row.venueName">{{ row.venueName }}</small>
@@ -154,28 +164,38 @@ defineExpose({ reload: load })
 </template>
 
 <style scoped>
-.osr { border: 1px solid var(--warn-border, #f0c36d); border-radius: 12px; background: var(--warn-bg, #fff8e6); margin-bottom: 18px; }
+/* The dashboard already ships light AND dark values for these three tokens
+ * (dashboardTheme.css). An earlier version invented --warn-bg / --warn-ink,
+ * which exist nowhere, so every rule fell through to a hardcoded light
+ * fallback — a cream panel that kept its cream in dark mode while the text
+ * turned light, leaving the heading unreadable. Never name a token that is
+ * not defined, and never let a fallback decide the colour scheme. */
+.osr { border: 1px solid var(--warning-border); border-radius: 12px; background: var(--warning-bg); margin-bottom: 18px; }
 .osr-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px; }
-.osr-head > svg { flex-shrink: 0; margin-top: 2px; color: var(--warn-ink, #a05a00); }
+.osr-head > svg { flex-shrink: 0; margin-top: 2px; color: var(--warning-ink); }
 .osr-head-text { flex: 1; min-width: 0; }
-.osr-head h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
-.osr-head p { font-size: 13px; line-height: 1.6; color: var(--text-secondary); margin: 0; }
+/* Explicit, not inherited: the panel keeps its own background in both themes,
+ * so its text has to be stated against that background rather than the page. */
+.osr-head h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; color: var(--warning-ink); }
+.osr-head p { font-size: 13px; line-height: 1.6; color: var(--text); margin: 0; }
 .osr-head button { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; }
-.osr-error { margin: 0 18px 14px; font-size: 13px; color: var(--danger-ink, #b91c1c); font-weight: 500; }
-.osr-body { border-top: 1px solid var(--warn-border, #f0c36d); padding: 14px 18px 18px; }
+.osr-error { margin: 0 18px 14px; font-size: 13px; color: var(--danger-ink); font-weight: 500; }
+.osr-body { border-top: 1px solid var(--warning-border); padding: 14px 18px 18px; }
 .osr-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-.osr-all { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; }
+.osr-all { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--text); }
 .osr-count { font-size: 12px; color: var(--text-secondary); margin-right: auto; }
 .osr-actions .btn { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; font-size: 13px; }
 .osr-spin { animation: osr-rotate 1s linear infinite; }
 @keyframes osr-rotate { to { transform: rotate(360deg); } }
 .osr-list { display: flex; flex-direction: column; gap: 8px; }
 .osr-row { display: flex; align-items: flex-start; gap: 11px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); min-height: 44px; }
+/* Read-only for platform staff: nothing to tick, so it must not look clickable. */
+.osr-row-static { cursor: default; }
 .osr-row-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.osr-row-main strong { font-size: 14px; font-weight: 600; }
+.osr-row-main strong { font-size: 14px; font-weight: 600; color: var(--text); }
 .osr-row-side { display: flex; flex-direction: column; gap: 2px; text-align: right; flex-shrink: 0; }
 .osr-row small { font-size: 12px; color: var(--text-secondary); }
-.osr-row .osr-warn { color: var(--warn-ink, #a05a00); }
+.osr-row .osr-warn { color: var(--warning-ink); }
 @media (max-width: 720px) {
   .osr-head { flex-wrap: wrap; }
   .osr-row { flex-wrap: wrap; }

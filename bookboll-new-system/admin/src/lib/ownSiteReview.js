@@ -29,7 +29,7 @@ export const REFUSAL_LABELS = {
   payouts_not_connected: 'Connect payouts before taking full payment online',
 }
 
-export const EMPTY_QUEUE = { listings: [], total: 0, complete: false, resolutions: RESOLUTIONS }
+export const EMPTY_QUEUE = { listings: [], total: 0, complete: false, resolutions: RESOLUTIONS, scope: 'business', canApply: false }
 
 function listingRow(row) {
   if (!row || !Number.isInteger(row.id)) return null
@@ -99,6 +99,12 @@ export async function loadOwnSiteReview({ perPage = 100 } = {}) {
       total,
       complete: res.data.coverage?.status === 'complete',
       resolutions: Array.isArray(res.data.resolutions) ? res.data.resolutions.filter(r => RESOLUTIONS.includes(r)) : RESOLUTIONS,
+      // Platform staff see every business's listings here. That is worth
+      // knowing about and is not theirs to decide — an older server that says
+      // nothing is treated as platform, so the buttons stay hidden rather than
+      // offering an action the server would refuse anyway.
+      scope: res.data.viewer?.scope === 'business' ? 'business' : 'platform',
+      canApply: res.data.viewer?.can_apply === true,
     },
   }
 }

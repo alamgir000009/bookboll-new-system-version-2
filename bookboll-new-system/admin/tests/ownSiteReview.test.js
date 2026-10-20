@@ -189,3 +189,81 @@ test('the panel offers a method only when every selected listing can take it', (
   assert.equal(/fix ?all/i.test(code), false)
   assert.equal(/site_deposit_enabled/.test(code), false)
 })
+
+/* Two things a super admin found on the live dashboard. */
+
+test('a token the theme never defines is a bug, not a fallback', () => {
+  // The panel invented --warn-bg / --warn-ink / --warn-border, which exist
+  // nowhere, so every rule fell through to a hardcoded LIGHT fallback. In dark
+  // mode the cream panel kept its cream while the text turned light, and the
+  // heading became unreadable. The dashboard already ships light and dark
+  // values for --warning-*; the fix is to use the tokens that exist.
+  const css = readFileSync(new URL('../src/components/OwnSiteReviewPanel.vue', import.meta.url), 'utf8')
+    .split('<style')[1] || ''
+  const theme = readFileSync(new URL('../src/dashboardTheme.css', import.meta.url), 'utf8')
+
+  // Every custom property the panel reads must be defined by the theme.
+  const used = [...css.matchAll(/var\((--[\w-]+)/g)].map(m => m[1])
+  assert.ok(used.length > 0)
+  for (const token of new Set(used)) {
+    assert.ok(theme.includes(`${token}:`), `${token} is used but never defined`)
+  }
+
+  // And defined for BOTH themes, so the panel cannot be light-only again.
+  const [light, dark] = theme.split('html.adm-dark')
+  for (const token of ['--warning-bg', '--warning-ink', '--warning-border']) {
+    assert.ok(light.includes(`${token}:`), `${token} missing from the light palette`)
+    assert.ok(dark.includes(`${token}:`), `${token} missing from the dark palette`)
+  }
+})
+
+test('the panel states its own text colours instead of inheriting the page', () => {
+  // It keeps its own background in both themes, so text stated against the
+  // page rather than against that background is how the heading disappeared.
+  const css = readFileSync(new URL('../src/components/OwnSiteReviewPanel.vue', import.meta.url), 'utf8')
+  assert.match(css, /\.osr-head h2 \{[^}]*color: var\(--warning-ink\)/)
+  assert.match(css, /\.osr-head p \{[^}]*color: var\(--text\)/)
+})
+
+test('platform staff are shown the scale but never offered the buttons', async () => {
+  // A super admin sees every business's listings here, because AccessScope
+  // leaves them unscoped. Applying a method would decide, for dozens of
+  // businesses at once, to start charging their customers a deposit.
+  const { loadOwnSiteReview } = load(async () => queueBody([queueRow()], {
+    viewer: { scope: 'platform', can_apply: false },
+  }))
+
+  const { queue } = await loadOwnSiteReview()
+  assert.equal(queue.scope, 'platform')
+  assert.equal(queue.canApply, false)
+})
+
+test('a business owner keeps the buttons', async () => {
+  const { loadOwnSiteReview } = load(async () => queueBody([queueRow()], {
+    viewer: { scope: 'business', can_apply: true },
+  }))
+
+  const { queue } = await loadOwnSiteReview()
+  assert.equal(queue.scope, 'business')
+  assert.equal(queue.canApply, true)
+})
+
+test('a server that says nothing about the viewer is treated as platform', async () => {
+  // Hiding an action the server would refuse is better than offering one that
+  // fails; silence must not be read as permission.
+  const { loadOwnSiteReview } = load(async () => queueBody([queueRow()]))
+
+  const { queue } = await loadOwnSiteReview()
+  assert.equal(queue.scope, 'platform')
+  assert.equal(queue.canApply, false)
+})
+
+test('the component gates both the buttons and the checkboxes on that flag', () => {
+  const source = readFileSync(new URL('../src/components/OwnSiteReviewPanel.vue', import.meta.url), 'utf8')
+  // The action row and the per-row checkbox are both behind it, so there is
+  // nothing to select and nothing to click.
+  assert.match(source, /v-if="canApplyAtAll" class="osr-actions"/)
+  assert.match(source, /<input v-if="canApplyAtAll" type="checkbox"/)
+  // And the copy does not call another business's site "your website".
+  assert.match(source, /their provider’s website/)
+})
