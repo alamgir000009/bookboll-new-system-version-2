@@ -1252,6 +1252,11 @@ class ListingDashboardService
             'calendar_color'        => $v['booking_color'] ?? ($v['calendar_color'] ?? '#10b981'),
             'listing_type'          => $v['listing_type'] ?? 'per_space',
             'max_bookings_per_slot' => $v['max_bookings_per_slot'] ?? 1,
+            // Only written when sent, so a partial save cannot silently turn
+            // the label back on. Absent means "leave it as it is".
+            ...(array_key_exists('show_slot_capacity', $v)
+                ? ['show_slot_capacity' => filter_var($v['show_slot_capacity'], FILTER_VALIDATE_BOOLEAN)]
+                : []),
             'commission_rate'       => array_key_exists('commission_rate', $v) ? $v['commission_rate'] : null,
             'photo_url'             => $photoUrl ?: '',
             'photos'                => $photos,
@@ -1332,6 +1337,7 @@ class ListingDashboardService
             'booking_color'           => 'nullable|string|max:32',
             'listing_type'            => 'nullable|string|max:64',
             'max_bookings_per_slot'   => 'nullable|integer|min:1',
+            'show_slot_capacity'      => 'sometimes|boolean',
             'commission_rate'         => 'nullable|numeric',
             'photo_url'               => 'nullable|string|max:1024',
             'photos'                  => 'nullable|array',
