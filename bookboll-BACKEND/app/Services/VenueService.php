@@ -1032,6 +1032,31 @@ class VenueService
         return $rows;
     }
 
+    /**
+     * The name to show for whoever operates this venue.
+     *
+     * The business row first, because a venue can belong to a business that has
+     * no owner user at all; the owner's own business name, then their name, as
+     * fallbacks for rows that predate business_id.
+     */
+    protected function businessNameFor(Venue $v): ?string
+    {
+        if ($v->business_id) {
+            $name = \App\Models\Business::where('id', $v->business_id)->value('name');
+            if ($name) {
+                return (string) $name;
+            }
+        }
+
+        if (! $v->owner_user_id) {
+            return null;
+        }
+
+        $owner = \App\Models\User::with('ownedBusiness')->find($v->owner_user_id);
+
+        return $owner?->ownedBusiness?->name ?: ($owner?->name ?: null);
+    }
+
     protected function mapDashboardVenue(Venue $v): array
     {
         $photos = $v->photos;
@@ -1043,6 +1068,17 @@ class VenueService
             'id'                 => (string) $v->id,
             'name'               => $v->name,
             'owner_user_id'      => $v->owner_user_id ? (string) $v->owner_user_id : null,
+            // The business this venue belongs to, and its name.
+            //
+            // Neither was returned, so the dashboard could only name a venue's
+            // owner by looking the user id up in a list it happens to hold —
+            // and after a transfer to a business whose owner is not in that
+            // list (an ownerless business, say) it had nothing to show and
+            // printed a dash. readmeAlamgir asks for business_id on venues for
+            // exactly this reason.
+            'business_id'        => $v->business_id ? (string) $v->business_id : null,
+            'business_name'      => $this->businessNameFor($v),
+            'operator_type'      => $v->operator_type,
             'city_id'            => $v->city_id ? (string) $v->city_id : null,
             'country_id'         => $v->country_id ? (string) $v->country_id : null,
             'state_id'           => $v->state_id ? (string) $v->state_id : null,
