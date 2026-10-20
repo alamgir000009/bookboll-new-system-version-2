@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Listing;
 use App\Support\AccessScope;
 use App\Support\AdminAlerts;
+use App\Support\Capabilities;
 use App\Support\CityModules;
 use App\Support\HourPeriods;
 use Nnjeim\World\Models\City;
@@ -447,11 +448,42 @@ class ListingDashboardService
             : null;
         if ($newId) {
             $this->copyAssets($source, (int) $newId);
+            $this->autoApproveCopy((int) $newId, $source);
 
             return $this->show($newId);
         }
 
         return $created;
+    }
+
+    /**
+     * Someone who can approve listings does not need to approve their own copy.
+     *
+     * Sending a platform admin a notification about work they just did, so
+     * they can approve it in the same dashboard, is a review that reviews
+     * nothing. The capability is the test — not the role name — so whoever may
+     * approve a listing may also create an approved copy of one.
+     *
+     * The copy still cannot out-rank its source: duplicating something that is
+     * itself pending or rejected leaves the copy pending, because approving it
+     * here would launder unreviewed content through a copy.
+     */
+    protected function autoApproveCopy(int $newListingId, Listing $source): void
+    {
+        $user = auth()->user();
+        if (! $user || ! $user->hasCapability(Capabilities::APPROVE_LISTINGS)) {
+            return;
+        }
+
+        $sourceApproved = ($source->approval_status ?: Listing::APPROVAL_APPROVED) === Listing::APPROVAL_APPROVED;
+        if (! $sourceApproved) {
+            return;
+        }
+
+        $this->listingModel::whereKey($newListingId)->update([
+            'approval_status' => Listing::APPROVAL_APPROVED,
+            'submitted_at'    => null,
+        ]);
     }
 
     /** Point the copy at the same stored files; nothing is re-uploaded. */
@@ -1343,6 +1375,13 @@ class ListingDashboardService
         }
         if ($listing->show_on_marketplace === false) {
             return;   // own-site only — Bookboll has nothing to review
+        }
+        // Nobody is asked to review their own work. A platform admin creating
+        // or copying a listing was being sent an approval notification for it,
+        // then approving it in the same dashboard — a review that reviews
+        // nothing. Providers still go to the queue exactly as before.
+        if (auth()->user()?->hasCapability(Capabilities::APPROVE_LISTINGS)) {
+            return;
         }
 
         try {

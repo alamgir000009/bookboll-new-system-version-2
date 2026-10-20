@@ -230,3 +230,41 @@ it('refuses to copy an off-marketplace listing on a free plan, rather than quiet
     expect(Listing::where('venue_id', $this->venueB->id)->count())->toBe(0);
     expect($this->listing->fresh()->show_on_marketplace)->toBeFalse();
 });
+
+it('approves a copy made by someone who can approve listings', function () {
+    // An admin was sent an approval notification for their own copy, then
+    // approved it in the same dashboard. A review that reviews nothing.
+    duplicateInto($this->admin, $this->listing, $this->venueB->id)->assertOk();
+
+    $copy = Listing::where('venue_id', $this->venueB->id)->first();
+    expect($copy->approval_status)->toBe(Listing::APPROVAL_APPROVED);
+
+    // Live on the marketplace immediately, with no approval step.
+    expect(collect(test()->withHeader('from', 'frontend-web')
+        ->getJson('/api/marketplace/listings')->json('data.listings') ?? [])->pluck('name'))
+        ->toContain($copy->name);
+});
+
+it('still sends a provider copy to the queue', function () {
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+
+    expect(Listing::where('venue_id', $this->venueB->id)->value('approval_status'))
+        ->toBe(Listing::APPROVAL_PENDING);
+});
+
+it('does not launder an unreviewed listing through a copy', function () {
+    // Copying something pending or rejected leaves the copy pending, even for
+    // an admin: approving here would publish content nobody reviewed.
+    $this->listing->update(['approval_status' => Listing::APPROVAL_PENDING]);
+
+    duplicateInto($this->admin, $this->listing, $this->venueB->id)->assertOk();
+
+    expect(Listing::where('venue_id', $this->venueB->id)->value('approval_status'))
+        ->toBe(Listing::APPROVAL_PENDING);
+});
+
+it('does not notify an approver about their own listing', function () {
+    duplicateInto($this->admin, $this->listing, $this->venueB->id)->assertOk();
+
+    expect($this->admin->fresh()->notifications()->count())->toBe(0);
+});
