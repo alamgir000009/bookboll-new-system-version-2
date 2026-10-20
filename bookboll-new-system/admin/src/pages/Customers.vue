@@ -166,6 +166,11 @@ function buildCustomerQuery({ useFilters = true, includeLookups = false, exportA
   if (locationFilter.value.length) q.location_id = locationFilter.value
   if (listingFilter.value.length) q.listing_id = listingFilter.value
   if (sportFilter.value.length) q.sport = sportFilter.value
+  // These three were collected by the modal and never sent — the server could not
+  // apply a filter it never received, so "All programs" was the only program.
+  if (programFilter.value.length) q.program_id = programFilter.value
+  if (currencyFilter.value.length) q.currency = currencyFilter.value
+  if (subStatusFilter.value.length) q.sub_status = subStatusFilter.value
   if (tagFilter.value.length) q.tag = tagFilter.value
   if (marketingFilter.value.length) q.marketing = marketingFilter.value
   if (tierFilter.value) q.tier = tierFilter.value
