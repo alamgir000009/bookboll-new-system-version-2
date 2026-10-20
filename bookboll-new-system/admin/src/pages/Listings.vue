@@ -2935,19 +2935,57 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             <div class="grid grid-2">
               <div class="form-group"><label class="form-label">Max Bookings per Time Slot <span class="req">*</span><InfoTip text="How many separate bookings can share the same start time — e.g. set to 3 if you have 3 identical courts." /></label>
                 <input aria-label="Maximum bookings at the same time" type="number" min="1" v-model="form.max_bookings_per_slot" />
-                <!-- Presentation only: the limit is still enforced and a full
-                     slot still stops selling whichever way this is set. -->
-                <label class="toggle" style="margin-top:10px">
-                  <input type="checkbox" :checked="form.show_slot_capacity !== false" aria-label="Show how many spaces are left on each time slot" @change="form.show_slot_capacity = $event.target.checked; markDirty()" />
-                  Show “3 left” on each time slot
-                </label>
-                <div class="form-hint">Turn this off to hide the remaining spaces from customers. Bookings are still limited to the number above.</div>
               </div>
               <div class="form-group"><label class="form-label">Slot Duration <span class="req">*</span><InfoTip text="How long one bookable slot lasts. Customers book in blocks of this length (e.g. 1 hour). Options go in 15-minute steps." /></label>
                 <select aria-label="Booking duration" v-model.number="form.slot_duration">
                   <option v-for="d in slotDurationOptions" :key="d.value" :value="d.value">{{ d.label }}</option>
                 </select>
               </div>
+            </div>
+
+            <!-- Showing spaces left. Its own row with a live preview, because
+                 the question "what will my customer actually see?" is the only
+                 one that matters here and a checkbox cannot answer it. -->
+            <div class="sl-cap">
+              <div class="sl-cap-main">
+                <div class="sl-cap-text">
+                  <strong id="slot-capacity-name">Remaining spaces on each time slot</strong>
+                  <p id="slot-capacity-desc">
+                    You allow <b>{{ Number(form.max_bookings_per_slot) || 1 }}</b>
+                    {{ (Number(form.max_bookings_per_slot) || 1) === 1 ? 'booking' : 'bookings' }} at the same time.
+                    This only decides whether customers are told how many are still free — the limit itself never changes.
+                  </p>
+                </div>
+                <label class="sl-cap-control" for="slot-capacity-switch">
+                  <span class="sl-cap-state" :class="{ on: form.show_slot_capacity !== false }">{{ form.show_slot_capacity !== false ? 'Shown' : 'Hidden' }}</span>
+                  <span class="sl-cap-switch">
+                    <input id="slot-capacity-switch" type="checkbox" role="switch"
+                      :checked="form.show_slot_capacity !== false"
+                      aria-labelledby="slot-capacity-name" aria-describedby="slot-capacity-desc"
+                      @change="form.show_slot_capacity = $event.target.checked; markDirty()" />
+                    <span aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+
+              <div class="sl-cap-demo" aria-hidden="true">
+                <span class="sl-cap-demo-label">What customers see</span>
+                <div class="sl-cap-slot" :class="{ 'is-hidden': form.show_slot_capacity === false }">
+                  <div class="sl-cap-slot-time">6:00 PM<small>to 7:00 PM</small></div>
+                  <div class="sl-cap-slot-price">{{ currencyForLocation(form.location_id) || 'QAR' }} {{ Number(form.base_price) || 100 }}</div>
+                  <div v-if="form.show_slot_capacity !== false" class="sl-cap-slot-left">
+                    {{ Math.max(1, (Number(form.max_bookings_per_slot) || 1) - 1) }} left
+                  </div>
+                </div>
+                <p class="sl-cap-demo-note">
+                  {{ form.show_slot_capacity !== false
+                    ? 'Shows urgency when a slot is filling up.'
+                    : 'Customers cannot tell how busy you are. A full slot still disappears.' }}
+                </p>
+              </div>
+            </div>
+
+            <div class="grid grid-2">
               <div class="form-group">
                 <label class="form-label">Buffer Between Bookings<InfoTip text="A gap automatically reserved after each booking — for cleaning or turnaround — before the next one can start." /></label>
                 <select aria-label="Buffer between bookings" v-model.number="form.buffer_time">
@@ -4391,4 +4429,44 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .listing-pause-block .chan-action, .flat-status .chan-action { background:var(--danger-bg); color:var(--danger-ink); }
 .listing-pause-block .vis-badge, .flat-status .vis-badge { display:inline-flex; align-items:center; gap:5px; background:transparent; color:var(--text-muted); font-weight:500; font-size:11px; padding:0 0 5px; }
 @media(max-width:600px) { .listing-pause-block .chan,.flat-status .chan { min-height:44px; } .listing-pause-block .chan-open,.flat-status .chan-open { min-width:44px; min-height:44px; } }
+
+/* ── Remaining-spaces control ────────────────────────────────────────────────
+ * A checkbox cannot answer the only question a venue has here: what will my
+ * customer actually see? So the switch sits beside a live slot preview built
+ * from this listing's own price and limit. Theme tokens throughout — the card
+ * keeps its own surface, so its text is stated against that, not the page. */
+.sl-cap { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; align-items: center;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg); padding: 16px 18px; margin: 4px 0 18px; }
+.sl-cap-main { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.sl-cap-text { min-width: 0; }
+.sl-cap-text strong { display: block; font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.sl-cap-text p { font-size: 13px; line-height: 1.6; color: var(--text-secondary); margin: 0; }
+.sl-cap-text b { color: var(--text); font-weight: 600; }
+
+.sl-cap-demo { border-left: 1px solid var(--border); padding-left: 18px; }
+.sl-cap-demo-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
+/* A miniature of the real storefront slot card. */
+.sl-cap-slot { border: 1px solid var(--border-strong, var(--border)); border-radius: 10px; background: var(--surface); padding: 10px 12px; }
+.sl-cap-slot-time { font-size: 14px; font-weight: 600; color: var(--text); }
+.sl-cap-slot-time small { display: block; font-size: 12px; font-weight: 400; color: var(--text-secondary); margin-top: 1px; }
+.sl-cap-slot-price { font-size: 14px; font-weight: 700; color: var(--positive-ink, #16714b); margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.sl-cap-slot-left { font-size: 12px; font-weight: 600; color: var(--warning-ink); margin-top: 3px; }
+.sl-cap-demo-note { font-size: 12px; line-height: 1.5; color: var(--text-secondary); margin: 8px 0 0; }
+
+@media (max-width: 900px) {
+  .sl-cap { grid-template-columns: 1fr; }
+  .sl-cap-demo { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: 14px; }
+}
+
+/* The switch, mirroring the one on My Website so the two read the same. */
+.sl-cap-control { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; cursor: pointer; }
+.sl-cap-state { font-size: 12px; font-weight: 600; color: var(--text-muted); min-width: 46px; text-align: right; }
+.sl-cap-state.on { color: var(--primary-ink, #0f766e); }
+.sl-cap-switch { position: relative; display: grid; place-items: center; width: 44px; height: 44px; }
+.sl-cap-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.sl-cap-switch > span { pointer-events: none; width: 42px; height: 24px; border-radius: 20px; background: var(--text-muted); position: relative; transition: background .15s; }
+.sl-cap-switch > span::before { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.sl-cap-switch input:checked + span { background: var(--primary-ink, #0f766e); }
+.sl-cap-switch input:checked + span::before { transform: translateX(18px); }
+.sl-cap-switch input:focus-visible + span { outline: 2px solid var(--primary-ink, #0f766e); outline-offset: 2px; }
 </style>

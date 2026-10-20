@@ -53,3 +53,35 @@ test('the dialog offers the venue list the server already scoped', () => {
   // Copy is disabled until a venue is chosen.
   assert.match(page, /:disabled="!copyVenueId \|\| copyBusy"/)
 })
+
+/* The remaining-spaces control. A checkbox cannot answer the only question a
+ * venue has — what will my customer actually see — so the switch sits beside a
+ * live preview built from this listing's own price and limit. */
+
+test('the control previews the real slot and names both states', () => {
+  const page = readFileSync(new URL('../src/pages/Listings.vue', import.meta.url), 'utf8')
+
+  // A switch with a readable state, not a bare checkbox.
+  assert.match(page, /id="slot-capacity-switch" type="checkbox" role="switch"/)
+  assert.match(page, /'Shown' : 'Hidden'/)
+  // Described for screen readers by the same text sighted users read.
+  assert.match(page, /aria-labelledby="slot-capacity-name" aria-describedby="slot-capacity-desc"/)
+
+  // The preview is built from this listing, not from invented numbers.
+  assert.match(page, /sl-cap-slot-price[\s\S]{0,120}form\.base_price/)
+  assert.match(page, /sl-cap-slot-left[\s\S]{0,160}form\.max_bookings_per_slot/)
+
+  // And it says plainly that the limit is unaffected either way.
+  assert.match(page, /the limit itself never changes/)
+  assert.match(page, /A full slot still disappears/)
+})
+
+test('the control styles itself from theme tokens, so it works in dark mode', () => {
+  const page = readFileSync(new URL('../src/pages/Listings.vue', import.meta.url), 'utf8')
+  const theme = readFileSync(new URL('../src/dashboardTheme.css', import.meta.url), 'utf8')
+  const block = page.slice(page.indexOf('.sl-cap {'))
+
+  for (const token of new Set([...block.matchAll(/var\((--[\w-]+)/g)].map(m => m[1]))) {
+    assert.ok(theme.includes(`${token}:`), `${token} is used but never defined by the theme`)
+  }
+})
