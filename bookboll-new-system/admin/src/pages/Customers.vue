@@ -2162,7 +2162,7 @@ function avatarColor(id) {
             <div class="form-group"><label class="form-label">Email</label><input aria-label="Customer email" v-model="form.email" type="email" :class="{ 'input-invalid': triedSave && form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()) }" /></div>
             <div class="form-group"><label class="form-label">Phone</label><input aria-label="Customer phone" v-model="form.phone" /></div>
             <div class="form-group"><label class="form-label">Gender</label>
-              <select aria-label="Gender" v-model="form.gender"><option value="">—</option><option>Male</option><option>Female</option></select>
+              <select aria-label="Gender" v-model="form.gender"><option value="">—</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select>
             </div>
             <div class="form-group"><label class="form-label">Country</label>
               <select aria-label="Country" v-model="form.country_id"><option value="">Select</option><option v-for="co in countries" :key="co.id" :value="co.id">{{ co.name }}</option></select>
