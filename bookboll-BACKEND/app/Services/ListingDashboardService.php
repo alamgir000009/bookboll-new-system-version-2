@@ -393,6 +393,110 @@ class ListingDashboardService
         ]);
     }
 
+    /**
+     * Copy a listing into a venue the caller may touch.
+     *
+     * Deliberately routed through store(): the copy then gets the same
+     * validation, the same access check on the TARGET venue, the same
+     * city-module and marketplace guards, and the same child syncing as a
+     * listing typed by hand. A bespoke insert here would be a second way to
+     * create a listing, and the two would drift.
+     *
+     * The destination is checked by store()'s own assertAccess, so a provider
+     * cannot copy into another business's venue by naming its id, and the
+     * source is checked here for the same reason.
+     */
+    public function duplicate($request, $id)
+    {
+        $targetVenueId = (int) ($request->input('venue_id') ?: $request->input('location_id') ?: 0);
+        if ($targetVenueId <= 0) {
+            return sendError('Choose the venue to copy this listing into.', [
+                'venue_id' => ['Required.'],
+            ], 422);
+        }
+
+        $source = $this->listingModel::with(['schedules', 'pricingGroups', 'addOns', 'resources'])->find($id);
+        if (! $source) {
+            return sendError('Listing not found', [], 404);
+        }
+        // Reading the original is its own permission; being able to write to the
+        // destination does not entitle anyone to copy from somewhere they
+        // cannot see.
+        if ($err = $this->assertAccess((int) $source->venue_id)) {
+            return $err;
+        }
+
+        $detail = $this->show($id);
+        $data = $detail instanceof \Illuminate\Http\JsonResponse
+            ? ($detail->getData(true)['data'] ?? [])
+            : [];
+        if (! ($data['listing'] ?? null)) {
+            return $detail;
+        }
+
+        $payload = $this->duplicatePayload($data, $targetVenueId, (string) $request->input('name', ''));
+
+        return $this->store(new \Illuminate\Http\Request($payload));
+    }
+
+    /**
+     * The copy's payload: everything that describes the listing, nothing that
+     * identifies the original.
+     *
+     * Approval is NOT carried over. A copy is a new listing that nobody has
+     * reviewed, and inheriting the original's approved status would put
+     * unreviewed content straight onto the marketplace.
+     */
+    protected function duplicatePayload(array $data, int $targetVenueId, string $name): array
+    {
+        $listing = $data['listing'];
+
+        foreach (['id', 'uuid', 'slug', 'created_at', 'updated_at', 'sort_order',
+            'approval_status', 'eligibility_status', 'submitted_at', 'admin_note'] as $identity) {
+            unset($listing[$identity]);
+        }
+
+        $listing['name'] = trim($name) !== '' ? trim($name) : $this->copyName((string) ($listing['name'] ?? 'Listing'));
+        $listing['location_id'] = (string) $targetVenueId;
+        $listing['venue_id'] = (string) $targetVenueId;
+
+        return array_merge($listing, [
+            'hours'          => $data['hours'] ?? [],
+            'pricing_groups' => $this->forgetIds($data['pricing_groups'] ?? []),
+            'pricing_cells'  => $data['pricing_cells'] ?? [],
+            'payment'        => $data['payment'] ?? [],
+            // Add-ons and resources are the venue's own catalogue rows. They are
+            // referenced by id, so they only transfer within the same venue —
+            // copying the references into another venue would point at things
+            // that are not there.
+            'addons'    => (int) ($data['listing']['location_id'] ?? 0) === $targetVenueId ? ($data['addons'] ?? []) : [],
+            'resources' => (int) ($data['listing']['location_id'] ?? 0) === $targetVenueId ? ($data['resources'] ?? []) : [],
+        ]);
+    }
+
+    /** Pricing groups are new rows; carrying their ids would edit the originals. */
+    protected function forgetIds(array $rows): array
+    {
+        return array_map(function ($row) {
+            unset($row['id'], $row['listing_id']);
+
+            return $row;
+        }, $rows);
+    }
+
+    /** "Court 1" → "Court 1 (copy)", then "(copy 2)" and so on. */
+    protected function copyName(string $name): string
+    {
+        $base = preg_replace('/\s*\(copy(?: \d+)?\)$/i', '', $name) ?: $name;
+        $candidate = $base.' (copy)';
+
+        for ($n = 2; $this->listingModel::where('name', $candidate)->exists() && $n < 50; $n++) {
+            $candidate = $base.' (copy '.$n.')';
+        }
+
+        return mb_substr($candidate, 0, 255);
+    }
+
     public function store($request)
     {
         $validated = $this->validatePayload($request, true);

@@ -373,6 +373,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('listings/own-site-review', [OwnSiteReviewController::class, 'apply'])->name('listings.own-site-review.apply');
             Route::get('listings/dashboard', [ListingController::class, 'dashboard'])->name('listings.dashboard');
             Route::post('listings/dashboard', [ListingController::class, 'dashboardStore'])->name('listings.dashboard.store');
+            // Copy a listing into any venue the caller may touch — the target is
+            // authorized by the same check a hand-made listing goes through.
+            Route::post('listings/dashboard/{id}/duplicate', [ListingController::class, 'dashboardDuplicate'])->name('listings.dashboard.duplicate');
             Route::post('listings/dashboard/sort', [ListingController::class, 'dashboardSort'])->name('listings.dashboard.sort');
             Route::get('listings/dashboard/{id}', [ListingController::class, 'dashboardShow'])->name('listings.dashboard.show');
             Route::put('listings/dashboard/{id}', [ListingController::class, 'dashboardUpdate'])->name('listings.dashboard.update');

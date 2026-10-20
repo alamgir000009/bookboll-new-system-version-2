@@ -135,6 +135,12 @@ class ListingController extends Controller
         return $this->listingDashboardService->store($request);
     }
 
+    /** Copy a listing into a venue the caller may touch. */
+    public function dashboardDuplicate(Request $request, $id)
+    {
+        return $this->listingDashboardService->duplicate($request, $id);
+    }
+
     public function dashboardUpdate(Request $request, $id)
     {
         return $this->listingDashboardService->update($request, $id);

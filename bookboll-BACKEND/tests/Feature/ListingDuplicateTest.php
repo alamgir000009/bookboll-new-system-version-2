@@ -1,0 +1,151 @@
+<?php
+
+/**
+ * Copying a listing into a venue.
+ *
+ * The copy goes through store(), so it gets the same validation and the same
+ * access check on the TARGET venue as a listing typed by hand. These pin the
+ * parts that are easy to get wrong: that a provider cannot copy into — or out
+ * of — another business's venue, and that a copy is not born approved.
+ */
+
+use App\Models\Listing;
+use App\Models\User;
+use App\Models\Venue;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
+use Laravel\Sanctum\Sanctum;
+use Spatie\Permission\Models\Role;
+
+uses(RefreshDatabase::class);
+
+beforeEach(function () {
+    foreach (['super_admin', 'provider_admin'] as $r) {
+        Role::findOrCreate($r, 'web');
+    }
+
+    $this->admin = dupUser('super_admin');
+    $this->owner = dupUser('provider_admin');
+    $this->venueA = dupVenue($this->owner, 'Al Gharafa');
+    $this->venueB = dupVenue($this->owner, 'Abu Hamor');
+    $this->listing = dupListing($this->venueA, '9v9 Full Court');
+});
+
+function dupUser(string $role): User
+{
+    $u = User::factory()->create(['status' => User::ACTIVE, 'uuid' => (string) Str::uuid()]);
+    $u->assignRole($role);
+
+    return $u->fresh();
+}
+
+function dupVenue(User $owner, string $name): Venue
+{
+    return Venue::create([
+        'name' => $name, 'status' => Venue::ACTIVE, 'owner_user_id' => $owner->id,
+        'maps_url' => 'https://maps.google.com/?q=0,0',
+        'min_advance_booking' => 0, 'max_bookings_per_slot' => 1,
+    ]);
+}
+
+function dupListing(Venue $venue, string $name): Listing
+{
+    return Listing::create([
+        'name' => $name, 'venue_id' => $venue->id, 'status' => 'active',
+        'base_price' => 250, 'capacity' => 18, 'slot_duration' => 60,
+        'max_bookings_per_slot' => 1, 'payment_options' => ['site_deposit_enabled' => true],
+        'approval_status' => Listing::APPROVAL_APPROVED,
+    ]);
+}
+
+function duplicateInto(User $actor, Listing $listing, $venueId, array $extra = [])
+{
+    Sanctum::actingAs($actor);
+
+    return test()->postJson("/api/admin/listings/dashboard/{$listing->id}/duplicate",
+        array_merge(['venue_id' => $venueId], $extra));
+}
+
+it('copies a listing into another venue of the same business', function () {
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+
+    $copy = Listing::where('venue_id', $this->venueB->id)->first();
+
+    expect($copy)->not->toBeNull();
+    expect($copy->name)->toBe('9v9 Full Court (copy)');
+    expect((float) $copy->base_price)->toBe(250.0);
+    expect((int) $copy->capacity)->toBe(18);
+    // The original is untouched.
+    expect(Listing::where('venue_id', $this->venueA->id)->count())->toBe(1);
+});
+
+it('copies into the same venue when that is what was asked', function () {
+    duplicateInto($this->owner, $this->listing, $this->venueA->id)->assertOk();
+
+    expect(Listing::where('venue_id', $this->venueA->id)->pluck('name')->sort()->values()->all())
+        ->toBe(['9v9 Full Court', '9v9 Full Court (copy)']);
+});
+
+it('does not number the first copy, and does number the next', function () {
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+
+    // Compared as a set: ')' sorts after ' ', so "(copy 2)" precedes "(copy)".
+    expect(Listing::where('venue_id', $this->venueB->id)->pluck('name')->all())
+        ->toEqualCanonicalizing(['9v9 Full Court (copy)', '9v9 Full Court (copy 2)']);
+});
+
+it('takes a name when one is given', function () {
+    duplicateInto($this->owner, $this->listing, $this->venueB->id, ['name' => '9v9 Full Court - Abu Hamor'])
+        ->assertOk();
+
+    expect(Listing::where('venue_id', $this->venueB->id)->value('name'))->toBe('9v9 Full Court - Abu Hamor');
+});
+
+it('never carries the original approval over to the copy', function () {
+    // A copy is a new listing nobody has reviewed. Inheriting "approved" would
+    // put unreviewed content straight onto the marketplace.
+    expect($this->listing->approval_status)->toBe(Listing::APPROVAL_APPROVED);
+
+    duplicateInto($this->owner, $this->listing, $this->venueB->id)->assertOk();
+
+    expect(Listing::where('venue_id', $this->venueB->id)->value('approval_status'))
+        ->toBe(Listing::APPROVAL_PENDING);
+});
+
+it('refuses to copy into another business venue', function () {
+    $stranger = dupUser('provider_admin');
+    $theirVenue = dupVenue($stranger, 'Someone Else');
+
+    duplicateInto($this->owner, $this->listing, $theirVenue->id)->assertStatus(403);
+
+    expect(Listing::where('venue_id', $theirVenue->id)->count())->toBe(0);
+});
+
+it('refuses to copy a listing the caller cannot see', function () {
+    $stranger = dupUser('provider_admin');
+    $theirListing = dupListing(dupVenue($stranger, 'Their Venue'), 'Their Court');
+
+    // Being able to write to the destination does not entitle anyone to copy
+    // from somewhere they cannot see.
+    duplicateInto($this->owner, $theirListing, $this->venueB->id)->assertStatus(403);
+
+    expect(Listing::where('venue_id', $this->venueB->id)->count())->toBe(0);
+});
+
+it('lets a platform admin copy across businesses', function () {
+    $stranger = dupUser('provider_admin');
+    $theirVenue = dupVenue($stranger, 'Another Business');
+
+    duplicateInto($this->admin, $this->listing, $theirVenue->id)->assertOk();
+
+    expect(Listing::where('venue_id', $theirVenue->id)->count())->toBe(1);
+});
+
+it('asks which venue rather than guessing one', function () {
+    duplicateInto($this->owner, $this->listing, null)
+        ->assertStatus(422)->assertJsonValidationErrors(['venue_id']);
+
+    // A venue that does not exist is refused by store()'s own validation.
+    duplicateInto($this->owner, $this->listing, 999999)->assertStatus(422);
+});
