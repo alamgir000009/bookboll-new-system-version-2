@@ -24,7 +24,13 @@ const icons = { success: CircleCheck, error: CircleX, info: Info, warning: Trian
   position: fixed;
   top: 18px;
   right: 18px;
-  z-index: 4000;
+  /* The toast is the top layer, above every dialog in the app.
+   *
+   * It sat at 4000, under the confirm and input dialogs at 4500 and the Add
+   * menu at 5000, so a message raised BY one of those was rendered behind it —
+   * the one moment it matters most. This clears everything the app uses,
+   * including InfoTip at 9999. Nothing should be given a higher value. */
+  z-index: 100000;
   display: flex;
   flex-direction: column;
   gap: 10px;

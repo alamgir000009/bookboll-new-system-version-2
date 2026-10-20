@@ -24,7 +24,14 @@ const icons = { success: CircleCheck, error: CircleX, info: Info, warning: Trian
   position: fixed;
   top: 18px;
   right: 18px;
-  z-index: 4000;
+  /* The toast is the top layer, above every dialog in the app.
+   *
+   * It sat at 4000, under the upgrade modal's backdrop at 4300, so a checkout
+   * error reported by the server was rendered behind the dialog that caused
+   * it — the one moment the message matters most. This clears everything the
+   * app uses: dialogs (4300-5000), InfoTip (9999) and the MultiSelect
+   * dropdown (10050). Nothing should be given a higher value than this. */
+  z-index: 100000;
   display: flex;
   flex-direction: column;
   gap: 10px;
