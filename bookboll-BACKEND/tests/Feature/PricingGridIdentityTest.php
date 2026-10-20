@@ -187,27 +187,18 @@ it('does not let a payload id from another listing edit that listing group', fun
  * otherwise. Painting is now a statement about the group's coverage, folded into
  * its own Start/End/Days, so editing either view writes the same thing.
  */
-it('folds a painted square into the group coverage', function () {
+it('ignores posted cells entirely — groups are the only input', function () {
     ($this->put)($this->fresh)->assertOk();
     $peak = PricingGroup::where('listing_id', $this->listing->id)->where('name', 'Peak')->sole();
+    expect($peak->days)->not->toContain('4');
 
-    expect($peak->days)->not->toContain('4');   // Peak is Sun+Mon to start with
-
-    // Paint Thursday 22:00 with Peak, exactly as the grid posts it.
+    // A Thursday cell naming Peak, with Peak's own days unchanged: Thursday must
+    // NOT appear. (It used to — and that is how unticking a day failed to stick.)
     ($this->put)(($this->reposted)(), [
-        ['day_of_week' => 4, 'slot_time' => '22:00',
-         'pricing_group_id' => (string) $peak->id, 'direct_price' => null],
+        ['day_of_week' => 4, 'slot_time' => '22:00', 'pricing_group_id' => (string) $peak->id, 'direct_price' => null],
     ])->assertOk();
 
-    $peak->refresh();
-    expect($peak->days)->toContain('4')
-        // …and the days it already had are kept, not replaced.
-        ->and($peak->days)->toContain('0')
-        ->and($peak->days)->toContain('1');
-
-    // The slot now prices from the group, with nothing else stored anywhere.
-    $listing = Listing::with('pricingGroups')->find($this->listing->id);
-    expect(matchingPricingGroupForSlot($listing, 'thursday', '22:00', '23:00')?->name)->toBe('Peak');
+    expect($peak->refresh()->days)->not->toContain('4');
 });
 
 it('keeps no second store for the grid', function () {

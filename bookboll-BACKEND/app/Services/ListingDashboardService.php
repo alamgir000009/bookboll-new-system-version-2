@@ -640,15 +640,12 @@ class ListingDashboardService
      * This deleted every Schedule for the listing and re-inserted the payload,
      * so merely opening the editor and pressing Save burned seven ids and wrote
      * seven "Schedule created" lines into the activity log — for a listing
-     * nobody had touched. The log stopped being able to answer "what changed",
-     * which is the only thing it is for. (The mass delete fired no model events,
-     * so the matching deletions were not even recorded: the log showed creates
-     * out of nowhere.)
+     * nobody had touched. (The mass delete fired no model events, so the
+     * matching deletions were not even recorded.)
      *
      * A row's identity is its day plus its position in that day's list of
-     * periods — a day can legitimately have two windows, e.g. a morning and an
-     * evening block. Match on that, update in place, and only insert or delete
-     * what the payload actually added or removed.
+     * periods — a day can legitimately have two windows. Match on that, update
+     * in place, and only insert or delete what the payload actually changed.
      */
     protected function syncHours(Listing $listing, array $hoursUi): void
     {
@@ -675,11 +672,7 @@ class ListingDashboardService
 
             $rows = [];
             if (! $isOpen) {
-                $rows[] = [
-                    'is_open'    => false,
-                    'start_time' => null,
-                    'end_time'   => null,
-                ];
+                $rows[] = ['is_open' => false, 'start_time' => null, 'end_time' => null];
             } else {
                 $periods = $day['periods'] ?? [];
                 if (! $periods && isset($day['open_time'])) {
@@ -688,7 +681,6 @@ class ListingDashboardService
                 if (! $periods) {
                     $periods = [['open_time' => '09:00', 'close_time' => '23:00']];
                 }
-
                 foreach ($periods as $p) {
                     $rows[] = [
                         'is_open'    => true,
@@ -719,8 +711,7 @@ class ListingDashboardService
         }
 
         // Only the periods the editor actually dropped. Deleted one at a time so
-        // the removal is logged — a mass delete fires no model events, which is
-        // how the old churn stayed half-invisible.
+        // the removal is logged — a mass delete fires no model events.
         $stale = Schedule::where('listing_id', $listing->id)
             ->when($keep, fn ($q) => $q->whereNotIn('id', $keep))
             ->get();
@@ -729,72 +720,21 @@ class ListingDashboardService
         }
     }
 
-    protected function syncPricing(Listing $listing, array $groups, array $cells): void
-    {
-        $this->syncPricingGroups($listing, $this->foldCellsIntoGroups($groups, $cells));
-    }
-
     /**
-     * Fold painted squares back into the coverage of the groups they name.
+     * Save the pricing grid. Groups are the only thing stored.
      *
-     * A group's window is a rectangle — one hour range across a set of days — so
-     * a square set that is not rectangular cannot be one group. Rather than
-     * silently dropping the odd squares, the group keeps the hour range that
-     * spans them and the days they fall on; anything the user paints outside a
-     * neat block widens the group rather than vanishing.
-     *
-     * @param  array<int, array<string, mixed>>  $groups
-     * @param  array<int, array<string, mixed>>  $cells
-     * @return array<int, array<string, mixed>>
+     * `pricing_cells` is still accepted in the payload so an older client does
+     * not fail validation, but it is IGNORED. It used to be folded back into the
+     * groups' days — and the editor posts back the cells it was handed at open
+     * time, derived from the groups as they were THEN. Untick Thursday on a
+     * group and the stale Thursday squares in that list still named the group,
+     * so the fold put Thursday straight back. The save reported success, the
+     * card reopened with Thursday ticked, and nothing explained why. The grid is
+     * a view of the groups; it is never an input to them.
      */
-    protected function foldCellsIntoGroups(array $groups, array $cells): array
+    protected function syncPricing(Listing $listing, array $groups, array $cells = []): void
     {
-        if (! $cells) {
-            return $groups;
-        }
-
-        $byGroup = [];
-        foreach ($cells as $c) {
-            $gid = $c['pricing_group_id'] ?? null;
-            if ($gid === null || $gid === '') {
-                continue;   // a bare price with no group names nothing to widen
-            }
-            $slot = $this->normalizeHm($c['slot_time'] ?? '00:00');
-            $byGroup[(string) $gid][] = [(int) ($c['day_of_week'] ?? 0), $slot];
-        }
-
-        if (! $byGroup) {
-            return $groups;
-        }
-
-        foreach ($groups as $idx => $g) {
-            $key = isset($g['id']) ? trim((string) $g['id']) : '';
-            if ($key === '' || ! isset($byGroup[$key])) {
-                continue;
-            }
-
-            $days   = [];
-            $starts = [];
-            foreach ($byGroup[$key] as [$dow, $slot]) {
-                $days[(int) $dow] = true;
-                $starts[] = $slot;
-            }
-            sort($starts);
-
-            // Keep whatever the card already covers as well — painting adds to a
-            // group, it does not redefine it out from under the user.
-            foreach ($this->normalizeGroupDays($g['days'] ?? null) as $d) {
-                $d = is_numeric($d) ? (int) $d : (\App\Models\Schedule::DAY_INDEX[strtolower((string) $d)] ?? null);
-                if ($d !== null) {
-                    $days[$d] = true;
-                }
-            }
-
-            $groups[$idx]['days'] = implode(',', array_keys($days));
-            $groups[$idx]['start_time'] = min($starts, $this->normalizeHm($g['start_time'] ?? '18:00'));
-        }
-
-        return $groups;
+        $this->syncPricingGroups($listing, $groups);
     }
 
     /**

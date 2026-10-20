@@ -126,22 +126,28 @@ it('reflects a group card edit in the grid', function () {
         ->and($cells->first(fn ($c) => (int) $c['day_of_week'] === 1 && $c['slot_time'] === '22:00'))->not->toBeNull();
 });
 
-it('reflects a grid paint in the group card', function () {
-    $g2 = PricingGroup::where('name', 'Group 2')->sole();
-    $card = [
-        'id' => (string) $g2->id, 'name' => 'Group 2', 'price' => 275, 'sort_order' => 1,
-        'start_time' => '22:00', 'end_time' => '00:00', 'days' => '1,2,3,6,0',
-    ];
+it('takes a grid paint from the groups the editor posts, never from cells', function () {
+    // Repost the whole set as the editor does, with one group changed — a save
+    // that posts only one group correctly drops the rest.
+    $withGroup = function (string $name, array $patch) {
+        return collect(($this->show)()['pricing_groups'])
+            ->map(fn ($g) => $g['name'] === $name ? array_replace($g, $patch) : $g)
+            ->values()->all();
+    };
 
-    // Paint Thursday 22:00 with Group 2 — a day its card does not list.
-    ($this->save)([$card], [[
-        'day_of_week' => 4, 'slot_time' => '22:00',
-        'pricing_group_id' => (string) $g2->id, 'direct_price' => null,
+    // Painting Thursday in the grid rewrites the GROUP in the editor, which then
+    // posts the group with Thursday on it. That is the only channel.
+    ($this->save)($withGroup('Group 2', ['days' => '1,2,3,6,0,4']))->assertOk();
+    $g2 = PricingGroup::where('listing_id', $this->listing->id)->where('name', 'Group 2')->sole();
+    expect($g2->days)->toContain('4')->and($g2->days)->toContain('0');
+
+    // Cells on their own change nothing: a stray Thursday cell naming Group 1
+    // does not put Thursday on Group 1.
+    $g1 = PricingGroup::where('listing_id', $this->listing->id)->where('name', 'Group 1')->sole();
+    ($this->save)($withGroup('Group 1', ['days' => '5']), [[
+        'day_of_week' => 4, 'slot_time' => '19:00', 'pricing_group_id' => (string) $g1->id, 'direct_price' => null,
     ]])->assertOk();
-
-    $g2->refresh();
-    expect($g2->days)->toContain('4')
-        ->and($g2->days)->toContain('0');   // and keeps what the card already had
+    expect($g1->refresh()->days)->toBe(['5']);
 });
 
 it('survives a full round trip without drifting', function () {
@@ -159,4 +165,38 @@ it('survives a full round trip without drifting', function () {
 
     expect($after)->toBe($before)
         ->and(PricingGroup::where('listing_id', $this->listing->id)->count())->toBe(5);
+});
+
+/*
+ * Unticking a day must stick, even though the editor posts back the grid it
+ * was handed when it opened.
+ *
+ * The admin keeps the `pricing_cells` the server derived at open time and
+ * posts them back unchanged on save. Those squares were derived from the
+ * groups as they were THEN, so after unticking Thursday on a group, the stale
+ * Thursday squares still named it — and the save folded Thursday straight back
+ * in. The card reopened with Thursday ticked and no error anywhere.
+ */
+it('keeps a day unticked even when stale grid squares for it are posted back', function () {
+    $g2 = PricingGroup::where('name', 'Group 2')->sole();   // Sun,Mon,Tue,Wed,Sat 22:00-00:00
+
+    // What the editor was handed at open time: the grid as derived from the
+    // groups as they stood, Saturday squares included.
+    $stale = ($this->show)()['pricing_cells'];
+    expect(collect($stale)->contains(fn ($c) => (int) $c['day_of_week'] === 6 && $c['pricing_group_id'] === (string) $g2->id))->toBeTrue();
+
+    // Untick Saturday on the card, and post the stale squares back exactly as a
+    // real client does.
+    ($this->save)([[
+        'id' => (string) $g2->id, 'name' => 'Group 2', 'price' => 275, 'sort_order' => 1,
+        'start_time' => '22:00', 'end_time' => '00:00', 'days' => '0,1,2,3',
+    ]], $stale)->assertOk();
+
+    $g2->refresh();
+    expect($g2->days)->not->toContain('6')
+        ->and($g2->days)->toContain('0');
+
+    // And the customer is no longer charged Group 2 on Saturday.
+    $listing = Listing::with('pricingGroups')->find($this->listing->id);
+    expect(matchingPricingGroupForSlot($listing, 'saturday', '22:00', '23:00')?->name)->not->toBe('Group 2');
 });
