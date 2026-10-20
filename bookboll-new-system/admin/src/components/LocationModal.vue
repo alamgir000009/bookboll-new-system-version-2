@@ -192,10 +192,30 @@ const resolvedGeo = computed(() => {
   }
 })
 
+// String(), not ===. The venue API returns ids as strings ('42') while this
+// list holds numbers, so a strict compare never matched and an assigned venue
+// showed a dash where its operator's name belongs.
 const providerName = (id) => {
-  const p = allBusinessOwners.value.find(x => x.id === id)
-  return p?.business_name || p?.full_name || '—'
+  if (id == null || id === '') return ''
+  const p = allBusinessOwners.value.find(x => String(x.id) === String(id))
+  return p?.business_name || p?.full_name || ''
 }
+
+/**
+ * Who operates this venue, in the order we can actually trust.
+ *
+ * The server's own business_name first — it is the only source that still
+ * works when the venue belongs to a business with no owner user, which is
+ * exactly what a transfer can produce. The local lookup is the fallback for an
+ * older server, and "External business" the last resort so the chip never
+ * shows a bare dash where a name belongs.
+ */
+const ownerLabel = computed(() => {
+  if (originalBookboll.value) return 'Operated by Bookboll'
+  return form.value.business_name
+    || providerName(form.value.owner_user_id)
+    || 'External business'
+})
 
 const canSave = computed(() => !!form.value.name && !!form.value.city_id && !coordsInvalid.value)
 
@@ -707,7 +727,7 @@ async function applyScheduleToSelected() {
                 {{ p.business_name || p.full_name }} (@{{ p.username || p.email }})
               </option>
             </select>
-            <div v-else class="assigned-chip"><Building2 :size="14"/>{{ originalBookboll ? 'Operated by Bookboll' : form.business_name || providerName(form.owner_user_id) || 'External business' }}</div>
+            <div v-else class="assigned-chip"><Building2 :size="14"/>{{ ownerLabel }}</div>
             <div v-if="!form.owner_user_id && !form.business_id" class="form-hint">Bookboll collects venue income. The operating agreement determines rent or the landlord’s share.</div>
             <div v-else class="form-hint">Bookboll earns the agreed platform fees. The provider’s share is recorded separately.</div>
             <button v-if="editingExisting && originalBookboll" type="button" class="btn btn-secondary btn-sm" style="margin-top:12px" @click="beginTransfer">Move to an external business</button>
