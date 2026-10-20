@@ -19,7 +19,7 @@ uses(RefreshDatabase::class);
 
 beforeEach(fn () => Role::findOrCreate('super_admin', 'web'));
 
-function platformAdmin(): User
+function agreementPlatformAdmin(): User
 {
     $u = User::factory()->create(['status' => User::ACTIVE]);
     $u->assignRole('super_admin');
@@ -48,7 +48,7 @@ function saveAgreement(User $a, Venue $v, array $over = [])
 }
 
 it('returns the revision 2 contract the editor requires', function () {
-    $res = $this->actingAs(platformAdmin())
+    $res = $this->actingAs(agreementPlatformAdmin())
         ->getJson('/api/admin/venues/'.bookbollVenue()->id.'/operating-agreements')->assertOk();
 
     expect($res->json('data.contract_version'))->toBe(1)
@@ -64,12 +64,12 @@ it('refuses agreements on a venue Bookboll does not operate', function () {
     $v = bookbollVenue();
     $v->update(['operator_type' => 'provider', 'owner_user_id' => User::factory()->create()->id]);
 
-    $this->actingAs(platformAdmin())
+    $this->actingAs(agreementPlatformAdmin())
         ->getJson("/api/admin/venues/{$v->id}/operating-agreements")->assertStatus(422);
 });
 
 it('supersedes rather than edits, preserving what the old contract said', function () {
-    $a = platformAdmin();
+    $a = agreementPlatformAdmin();
     $v = bookbollVenue();
 
     saveAgreement($a, $v, ['effective_from' => '2026-01-01', 'monthly_rent' => 3100])->assertOk();
@@ -94,7 +94,7 @@ it('supersedes rather than edits, preserving what the old contract said', functi
 });
 
 it('rejects a stale version rather than overwriting someone else edit', function () {
-    $a = platformAdmin();
+    $a = agreementPlatformAdmin();
     $v = bookbollVenue();
     saveAgreement($a, $v)->assertOk();
 
@@ -108,7 +108,7 @@ it('rejects a stale version rather than overwriting someone else edit', function
 });
 
 it('rejects new terms that do not follow the latest version', function () {
-    $a = platformAdmin();
+    $a = agreementPlatformAdmin();
     $v = bookbollVenue();
     saveAgreement($a, $v)->assertOk();
 
@@ -119,7 +119,7 @@ it('rejects new terms that do not follow the latest version', function () {
 });
 
 it('rejects a successor starting on or before the version it replaces', function () {
-    $a = platformAdmin();
+    $a = agreementPlatformAdmin();
     $v = bookbollVenue();
     saveAgreement($a, $v, ['effective_from' => '2026-05-01'])->assertOk();
     $first = Agreement::first();
@@ -135,7 +135,7 @@ it('rejects a successor starting on or before the version it replaces', function
 });
 
 it('reports the agreement governing today, not merely the newest', function () {
-    $a = platformAdmin();
+    $a = agreementPlatformAdmin();
     $v = bookbollVenue();
 
     saveAgreement($a, $v, ['effective_from' => '2020-01-01'])->assertOk();
@@ -154,7 +154,7 @@ it('reports the agreement governing today, not merely the newest', function () {
 
 it('requires the fields each deal type cannot be costed without', function (array $case) {
     [$payload, $field] = $case;
-    saveAgreement(platformAdmin(), bookbollVenue(), $payload)
+    saveAgreement(agreementPlatformAdmin(), bookbollVenue(), $payload)
         ->assertStatus(422)->assertJsonValidationErrors($field);
 })->with([
     'rent with no amount'   => [[['deal_type' => 'fixed_rent', 'monthly_rent' => 0], 'monthly_rent']],
@@ -164,7 +164,7 @@ it('requires the fields each deal type cannot be costed without', function (arra
 ]);
 
 it('accepts a zero percent share, because the landlord may take everything', function () {
-    saveAgreement(platformAdmin(), bookbollVenue(), [
+    saveAgreement(agreementPlatformAdmin(), bookbollVenue(), [
         'deal_type' => 'revenue_share', 'bookboll_share_percent' => 0, 'monthly_rent' => null,
     ])->assertOk();
 
@@ -172,7 +172,7 @@ it('accepts a zero percent share, because the landlord may take everything', fun
 });
 
 it('requires a reason for a renewal but not for the first agreement', function () {
-    $a = platformAdmin();
+    $a = agreementPlatformAdmin();
     $v = bookbollVenue();
     saveAgreement($a, $v)->assertOk();          // initial, no reason needed
     $first = Agreement::first();
@@ -184,7 +184,7 @@ it('requires a reason for a renewal but not for the first agreement', function (
 });
 
 it('returns the same version when a save is retried', function () {
-    $a = platformAdmin();
+    $a = agreementPlatformAdmin();
     $v = bookbollVenue();
     $key = 'same-key';
 

@@ -10,6 +10,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\Preference;
 use App\Models\User;
 use App\Support\AccessScope;
+use App\Support\CustomerFilters;
 use App\Support\CustomerTypes;
 use App\Models\Venue;
 use BookingPaymentStatus;
@@ -586,6 +587,10 @@ class CustomerService
 
         CustomerTypes::applyFilter($query, $typeFilter['types'], $typeFilter['match'], $venueIds, $programIds);
 
+        // Everything else the filter sheet offers. These were collected by the
+        // client and read by nobody here, so picking a listing changed nothing.
+        CustomerFilters::apply($query, $request, $venueIds, $programIds);
+
         $sort = (string) $request->input('sort', 'created_at');
         $dir  = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
         if ($sort === 'full_name') {
@@ -680,6 +685,7 @@ class CustomerService
             'types'   => $typeFilter['types'],
             'match'   => $typeFilter['match'],
         ];
+        $lookups['filters_applied'] = CustomerFilters::$applied;
 
         // Lookups below are built from $pageIds, which in export mode is EVERY
         // exported customer — so the CSV's aggregates are computed from the
