@@ -124,6 +124,86 @@ const businessApiReady = ref(false)
 const businessCapabilityLoading = ref(false)
 let businessRequestKey = newRequestKey()
 async function assignmentSaved() { assignmentBusiness.value=null; pushToast('Account moved to business','success'); await load(); await loadUserContext() }
+
+/*
+ * Optional owner on the Add business form.
+ *
+ * Creating a business still refuses an owner — BusinessIdentityService::store
+ * accepts `owner_user_id` only as null, because attaching an account is a move
+ * that has to be audited: it takes the person OUT of the platform team and can
+ * be blocked (last super admin, already in a business, inactive). So the owner
+ * chosen here is applied straight after creation through the SAME reviewed path
+ * the "Assign platform account" button uses — preview, blockers, commit — rather
+ * than a second, unaudited way in.
+ */
+const businessOwnerCandidates = ref([])
+const businessOwnerRoles = ref([])
+const businessOwnerLoading = ref(false)
+const businessOwnerNotice = ref('')
+const businessOwnerSearch = ref('')
+const businessOwnerAck = ref(false)
+const businessOwner = computed(() =>
+  businessOwnerCandidates.value.find(c => String(c.id) === String(adminForm.value.assign_owner_user_id)) || null)
+const businessOwnerMatches = computed(() => {
+  const q = businessOwnerSearch.value.trim().toLowerCase()
+  if (!q) return businessOwnerCandidates.value
+  return businessOwnerCandidates.value.filter(c => `${c.name} ${c.email}`.toLowerCase().includes(q))
+})
+/**
+ * Attach an existing account to a just-created business: preview, then commit.
+ *
+ * Nothing here is new policy — it is the same two calls BusinessAssignment.vue
+ * makes. Blockers are reported verbatim rather than summarised, because they
+ * name the specific thing to fix ("This is the last active super admin").
+ *
+ * @returns {Promise<{ok: boolean, message: string}>}
+ */
+async function assignOwnerToBusiness(businessId, userId, role) {
+  const preview = await financeRequest(`/admin/businesses/${businessId}/assignment-preview`, {
+    method: 'POST',
+    body: { user_id: userId, role, scope: 'all', location_ids: [] },
+  })
+  if (!preview.ok || !preview.data?.preview_token) {
+    return { ok: false, message: preview.message || 'the assignment could not be reviewed.' }
+  }
+  // The token is only valid for the exact move it was minted for; check the
+  // server agreed to the move we asked for before committing it.
+  if (String(preview.data.user_id) !== String(userId)
+    || String(preview.data.business_id) !== String(businessId)
+    || preview.data.role !== role) {
+    return { ok: false, message: 'the reviewed assignment did not match the request.' }
+  }
+  const blockers = preview.data.blockers || []
+  if (blockers.length) return { ok: false, message: blockers.join(' ') }
+
+  const commit = await financeRequest(`/admin/businesses/${businessId}/assignments`, {
+    method: 'POST',
+    body: { preview_token: preview.data.preview_token, idempotency_key: newRequestKey() },
+  })
+  if (!commit.ok || !commit.data?.membership?.id) {
+    return { ok: false, message: commit.message || 'the assignment was not confirmed.' }
+  }
+  return { ok: true, message: '' }
+}
+
+async function loadBusinessOwnerCandidates() {
+  businessOwnerLoading.value = true
+  businessOwnerNotice.value = ''
+  const result = await financeRequest('/admin/businesses/assignment-candidates')
+  businessOwnerLoading.value = false
+  if (!result.ok) {
+    businessOwnerCandidates.value = []
+    businessOwnerRoles.value = []
+    // Not fatal: the business can still be created and staffed afterwards.
+    businessOwnerNotice.value = 'Existing accounts could not be loaded, so an owner cannot be chosen here. Create the business and use “Assign platform account”.'
+    return
+  }
+  businessOwnerCandidates.value = result.data?.candidates || []
+  businessOwnerRoles.value = result.data?.roles || []
+  if (!businessOwnerRoles.value.includes(adminForm.value.assign_owner_role)) {
+    adminForm.value.assign_owner_role = businessOwnerRoles.value[0] || 'provider_admin'
+  }
+}
 const newBusiness = computed(() => !editing.value && adminForm.value.role === 'provider_admin')
 const businessErrors = computed(() => businessFormErrors(adminForm.value))
 function openBusinessNew() {
@@ -133,10 +213,26 @@ function openBusinessNew() {
   adminForm.value.role = 'provider_admin'
   businessReview.value = false
   teamView.value = 'businesses'
+  businessOwnerSearch.value = ''
+  businessOwnerAck.value = false
+  businessOwnerCandidates.value = []
+  loadBusinessOwnerCandidates()
 }
 async function reviewBusiness() {
   triedSave.value = true
   if (Object.keys(businessErrors.value).length) { formError.value = 'Complete the highlighted fields.'; return }
+  // An owner is optional, but a chosen one must be a real candidate: the list is
+  // what the server says this admin may move, so a stale id is refused here
+  // rather than after the business has already been created.
+  if (adminForm.value.assign_owner_user_id && !businessOwner.value) {
+    formError.value = 'That account is no longer available to assign. Choose another, or leave the owner empty.'
+    return
+  }
+  if (adminForm.value.assign_owner_user_id && !businessOwnerRoles.value.includes(adminForm.value.assign_owner_role)) {
+    formError.value = 'Choose a business role for the owner.'
+    return
+  }
+  businessOwnerAck.value = false
   formError.value = ''
   businessReview.value = true
   businessCapabilityLoading.value=true
@@ -173,6 +269,9 @@ function defaultAdminForm() {
   return {
     business_name: '', business_types: [], full_name: '', email: '', role: 'staff', country_id: '', location_id: '',
     owner_user_id: '', status: 'active', username: '', phone: '', city_id: '',
+    // Add business only: an EXISTING platform account to make this business's
+    // owner. Empty = create the business unclaimed, as before.
+    assign_owner_user_id: '', assign_owner_role: 'provider_admin',
     commission_rate_facility: null, commission_rate_program: null,
     business_status: 'approved', description: '', license_number: '',
     custom_permissions: {}, assigned_location_ids: [], assigned_listing_ids: [], assigned_program_ids: [],
@@ -285,7 +384,29 @@ async function saveAdmin() {
     const result=await financeRequest('/admin/businesses', {method:'POST',body:{business_name:adminForm.value.business_name.trim(),username:adminForm.value.username.trim(),business_types:normalizeBusinessTypes(adminForm.value.business_types),country_id:adminForm.value.country_id || null,status:adminForm.value.status,owner_user_id:null,idempotency_key:businessRequestKey}})
     saving.value=false
     if(!result.ok || !result.data?.business?.id) {formError.value=result.message || 'The server did not confirm the business. Your draft is still here.';return}
-    clearDirty();showModal.value=false;pushToast('Business created. Assign an owner whenever you’re ready.','success');await load();return
+    const createdId = result.data.business.id
+    // No owner chosen: unchanged behaviour.
+    if (!adminForm.value.assign_owner_user_id) {
+      clearDirty();showModal.value=false;pushToast('Business created. Assign an owner whenever you’re ready.','success');await load();return
+    }
+    /*
+     * Owner chosen: attach through the reviewed path. The business now EXISTS,
+     * so every failure below says so — the admin must never be told the whole
+     * thing failed and create a duplicate.
+     */
+    const owner = businessOwner.value
+    saving.value = true
+    const assigned = await assignOwnerToBusiness(createdId, adminForm.value.assign_owner_user_id, adminForm.value.assign_owner_role)
+    saving.value = false
+    clearDirty();showModal.value=false
+    if (assigned.ok) {
+      pushToast(`Business created and ${owner?.name || 'the account'} assigned as ${roleLabel(adminForm.value.assign_owner_role)}.`,'success')
+    } else {
+      // Deliberately a long-lived error toast: the business is real and the
+      // admin has to know the owner step still needs doing.
+      pushToast(`Business created, but the owner was not assigned — ${assigned.message} Open the business and use “Assign platform account”.`,'error')
+    }
+    await load(); await loadUserContext(); return
   }
   if (!adminForm.value.full_name.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminForm.value.email.trim())) {
     formError.value = 'Enter a name and a valid email address.'
@@ -862,6 +983,12 @@ function avatarColor(id) {
               <span v-if="g.provider.country_id" class="biz-country-pill">{{ countryName(g.provider.country_id) }}</span>
             </div>
             <div class="biz-actions" @click.stop>
+              <!-- The owner gap is read in the header ("Owner not assigned"), so
+                   the fix for it belongs here rather than below a staff table the
+                   admin has to expand first. -->
+              <button v-if="!g.provider.id" class="btn btn-sm btn-primary biz-assign-btn" @click="assignmentBusiness=g.provider">
+                <UsersRound :size="13" />Assign platform account
+              </button>
               <button v-if="false && isSuperAdmin && !isPremiumPlan(g.provider)" class="btn-icon plan-up" :disabled="planBusyId === g.provider.id" @click="setProviderPlan(g.provider, 'premium')" title="Upgrade to Premium"><Crown :size="15" /></button>
               <button v-else-if="false && isSuperAdmin" class="btn-icon plan-down" :disabled="planBusyId === g.provider.id" @click="setProviderPlan(g.provider, 'free')" title="Move to Free"><CircleArrowDown :size="15" /></button>
               <button v-if="g.provider.id" class="btn-icon" @click="openAdminEdit(g.provider)" title="Edit business"><Edit2 :size="15" /></button>
@@ -901,7 +1028,7 @@ function avatarColor(id) {
               </tbody>
             </table></div>
             <div class="staff-add-row">
-              <button class="btn btn-sm btn-primary" @click="assignmentBusiness=g.provider"><UsersRound :size="13"/>Assign platform account</button>
+              <button v-if="g.provider.id" class="btn btn-sm btn-secondary" @click="assignmentBusiness=g.provider"><UsersRound :size="13"/>Assign platform account</button>
               <button v-if="g.provider.id" class="btn btn-sm btn-secondary" @click="openAddStaffFor(g.provider.id)">
                 <Plus :size="13" />Add staff member
               </button>
@@ -922,8 +1049,21 @@ function avatarColor(id) {
           <div class="modal-body">
             <div v-if="newBusiness && businessReview" class="business-review">
               <Building2 :size="28" /><h3>{{ adminForm.business_name }}</h3><p>@{{ adminForm.username }}</p>
-              <dl><dt>Owner</dt><dd>Assign later</dd><dt>Business type</dt><dd>{{ adminForm.business_types.map(businessTypeLabel).join(', ') }}</dd><dt>Country</dt><dd>{{ countryName(adminForm.country_id) || 'Not specified' }}</dd></dl>
-              <p class="workspace-note">This creates the business without a login or owner account. Assign an existing platform account as owner or staff afterwards.</p>
+              <dl>
+                <dt>Owner</dt>
+                <dd v-if="businessOwner">{{ businessOwner.name }}<br /><span class="biz-review-sub">{{ businessOwner.email }} · {{ roleLabel(adminForm.assign_owner_role) }}</span></dd>
+                <dd v-else>Assign later</dd>
+                <dt>Business type</dt><dd>{{ adminForm.business_types.map(businessTypeLabel).join(', ') }}</dd>
+                <dt>Country</dt><dd>{{ countryName(adminForm.country_id) || 'Not specified' }}</dd>
+              </dl>
+              <p v-if="!businessOwner" class="workspace-note">This creates the business without a login or owner account. Assign an existing platform account as owner or staff afterwards.</p>
+              <template v-else>
+                <p class="workspace-note">The business is created first, then this account is moved into it. The move is reviewed by the server and can be refused — if it is, the business still exists and you can assign someone from its card.</p>
+                <label class="biz-owner-ack">
+                  <input type="checkbox" v-model="businessOwnerAck" />
+                  <span>I confirm {{ businessOwner.name }} should leave the platform team and become {{ roleLabel(adminForm.assign_owner_role) }} of this business.</span>
+                </label>
+              </template>
             </div>
             <template v-else>
             <p v-if="newBusiness" class="workspace-note">Create the business now. You can assign an owner and other roles from the platform team later.</p>
@@ -953,6 +1093,41 @@ function avatarColor(id) {
               <div class="biz-country-note">
                 <Info :size="13" />
                 <span>This business can operate in any country. Its countries &amp; currencies are set automatically from the locations it adds — a wallet is created per country.</span>
+              </div>
+              <!-- Optional owner: an EXISTING platform account. Left empty, the
+                   business is created unclaimed exactly as before. -->
+              <div v-if="newBusiness" class="biz-owner">
+                <div class="inline-business-header"><UsersRound :size="14" />Owner (optional)</div>
+                <p v-if="businessOwnerNotice" class="field-hint biz-owner-notice">{{ businessOwnerNotice }}</p>
+                <template v-else>
+                  <div class="gridd">
+                    <div class="form-group">
+                      <label class="form-label" for="biz-owner-search">Find an existing account</label>
+                      <input id="biz-owner-search" v-model="businessOwnerSearch" type="search" placeholder="Search name or email" :disabled="businessOwnerLoading" />
+                    </div>
+                    <div class="form-group">
+                      <label class="form-label" for="biz-owner">Account</label>
+                      <select id="biz-owner" v-model="adminForm.assign_owner_user_id" :disabled="businessOwnerLoading">
+                        <option value="">{{ businessOwnerLoading ? 'Loading accounts…' : 'Assign later' }}</option>
+                        <option v-for="person in businessOwnerMatches" :key="person.id" :value="person.id">{{ person.name }} · {{ person.email }}</option>
+                      </select>
+                      <div class="field-hint">Admins and employees who aren’t already in a business.</div>
+                    </div>
+                  </div>
+                  <div v-if="adminForm.assign_owner_user_id" class="form-group">
+                    <label class="form-label" for="biz-owner-role">Business role *</label>
+                    <select id="biz-owner-role" v-model="adminForm.assign_owner_role">
+                      <option v-for="r in businessOwnerRoles" :key="r" :value="r">{{ roleLabel(r) }}</option>
+                    </select>
+                  </div>
+                  <p v-if="adminForm.assign_owner_user_id" class="field-hint biz-owner-warn">
+                    <Info :size="13" />
+                    <span>This moves the account into the business: it leaves the platform team and its existing sessions are refreshed. You’ll confirm on the next step.</span>
+                  </p>
+                  <p v-else-if="!businessOwnerLoading && !businessOwnerCandidates.length" class="field-hint">
+                    No eligible accounts — everyone is already in a business. Create it unclaimed and assign later.
+                  </p>
+                </template>
               </div>
               <p class="field-hint">Commission is configured in Countries &amp; Cities. This account starts on the Free plan.</p>
             </div>
@@ -1010,7 +1185,7 @@ function avatarColor(id) {
             <button class="btn btn-secondary" @click="requestCloseTeamModal">Cancel</button>
             <button v-if="newBusiness && businessReview" class="btn btn-secondary" :disabled="saving" @click="businessReview = false">Back to details</button>
             <button v-if="newBusiness && !businessReview" class="btn btn-primary" @click="reviewBusiness">Review business</button>
-            <button v-else class="btn btn-primary" :disabled="saving || (newBusiness && (!businessApiReady || businessCapabilityLoading))" @click="saveAdmin">{{ saving ? 'Saving…' : newBusiness ? 'Create business' : 'Save changes' }}</button>
+            <button v-else class="btn btn-primary" :disabled="saving || (newBusiness && (!businessApiReady || businessCapabilityLoading || (!!adminForm.assign_owner_user_id && !businessOwnerAck)))" @click="saveAdmin">{{ saving ? 'Saving…' : newBusiness ? (businessOwner ? 'Create business & assign owner' : 'Create business') : 'Save changes' }}</button>
           </div>
         </div>
       </div>
@@ -1156,6 +1331,14 @@ function avatarColor(id) {
 </template>
 
 <style scoped>
+.biz-assign-btn { white-space: nowrap; margin-right: 4px; }
+@media (max-width: 760px) { .biz-assign-btn { font-size: 12px; padding: 6px 10px; } }
+.biz-owner { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.biz-owner-notice { color: var(--warning-ink, #92400e); }
+.biz-owner-warn { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; line-height: 1.5; }
+.biz-owner-ack { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: 13px; line-height: 1.5; text-align: left; }
+.biz-owner-ack input { margin-top: 2px; flex-shrink: 0; }
+.biz-review-sub { color: var(--text-muted); font-size: 12.5px; }
 /* Role explanation panel in the create/edit account form */
 .role-explain { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--border); background: var(--surface-hover, #f8fafc); border-radius: 0 8px 8px 0; }
 .role-explain-head { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
