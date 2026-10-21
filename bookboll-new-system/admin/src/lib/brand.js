@@ -128,6 +128,38 @@ function isLocalHost(host) {
 // phone. The whole tunnel host is a single apex — its first label is a random tunnel id, NOT a
 // white-label subdomain — so we treat it like the apex marketplace (custom platform theme + ?b=
 // convenience), never as a provider slug.
+/*
+ * Preview hosts: a staging storefront that should be linked to like localhost.
+ *
+ * White-label sites resolve by subdomain, so once the public app is deployed to a
+ * testing domain such as new.bookboll.com the dashboard's "open my site" and
+ * "preview" links had nowhere valid to go: they pointed at <slug>.bookboll.com —
+ * PRODUCTION — because that is the only place a subdomain resolves. The hosts in
+ * VITE_PREVIEW_HOSTS (comma-separated, exact match) are storefronts where the
+ * `?b=<slug>` / `?bid=<owner>&preview=1` overrides are honoured, so links to them
+ * are built that way. The real apex can never be listed.
+ */
+const PREVIEW_HOSTS = new Set(
+  String(import.meta.env.VITE_PREVIEW_HOSTS || '')
+    .split(',')
+    .map(h => h.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''))
+    .filter(h => h && h !== BRAND_APEX && h !== 'www.' + BRAND_APEX),
+)
+export function isPreviewHost(host) {
+  return PREVIEW_HOSTS.has(String(host || '').toLowerCase())
+}
+/** The storefront this dashboard links to is one where `?b=` works: we are on
+ *  localhost / a tunnel, or the configured web app is a preview host. */
+export function storefrontIsPreview() {
+  if (typeof window === 'undefined') return false
+  if (isLocalHost(window.location.hostname) || isDevTunnel(window.location.hostname)) return true
+  try {
+    return isPreviewHost(new URL(appBaseUrl()).hostname)
+  } catch {
+    return false
+  }
+}
+
 function isDevTunnel(host) {
   return /\.trycloudflare\.com$/.test(host) || /\.ngrok(-free)?\.(app|io)$/.test(host) || /\.ngrok\.app$/.test(host)
 }
@@ -326,7 +358,7 @@ export function brandPreviewUrl(slug, { preview = false } = {}) {
   const s = (slug || '').toLowerCase()
   // Dev / local: load the public web app with ?b=. appBaseUrl() prefers VITE_WEB_URL
   // so this works from the admin app (port 5174 → 5173) as well.
-  if (typeof window !== 'undefined' && isLocalHost(window.location.hostname)) {
+  if (storefrontIsPreview()) {
     return `${appBaseUrl()}/?b=${encodeURIComponent(s)}${preview ? '&preview=1' : ''}`
   }
   return `https://${brandHost(s)}${preview ? '?preview=1' : ''}`
@@ -342,8 +374,9 @@ export function brandPreviewById(ownerId) {
  *  whether it can hand out the provider's real address or must fall back to `?bid=`. */
 export function wildcardDnsAvailable() {
   if (typeof window === 'undefined') return true
-  const host = window.location.hostname
-  return !isLocalHost(host) && !isDevTunnel(host)
+  // A preview storefront has no wildcard DNS of its own: `<slug>.new.bookboll.com`
+  // resolves nowhere, and `<slug>.bookboll.com` is production. Fall back to `?bid=`.
+  return !storefrontIsPreview()
 }
 
 /** The link to hand a provider when they click "open my site".

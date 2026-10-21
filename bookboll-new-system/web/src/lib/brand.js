@@ -127,6 +127,35 @@ function isLocalHost(host) {
   return host === 'localhost' || host.endsWith('.localhost') || host === '127.0.0.1' || /^\d+\.\d+\.\d+\.\d+$/.test(host)
 }
 
+/*
+ * Preview hosts: a staging deployment that should behave like localhost.
+ *
+ * White-label sites resolve by subdomain, so on a testing domain such as
+ * new.bookboll.com there is no way to see a provider's site at all — its first
+ * label is read as a provider slug ("new"), no provider matches, and the `?b=`
+ * convenience is refused because it is only honoured on localhost. Hosts listed
+ * in VITE_PREVIEW_HOSTS (comma-separated, exact match) are treated as a preview
+ * apex: `?b=<slug>` and `?bid=<owner>&preview=1` work there, the host itself is
+ * never read as a slug, and "browse Bookboll" links stay on that origin.
+ *
+ * The real apex can never be listed — that is the origin the `?b=` restriction
+ * exists to protect (a provider's pixels and custom <head> code must never run
+ * on bookboll.com).
+ */
+const PREVIEW_HOSTS = new Set(
+  String(import.meta.env.VITE_PREVIEW_HOSTS || '')
+    .split(',')
+    .map(h => h.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''))
+    .filter(h => h && h !== BRAND_APEX && h !== 'www.' + BRAND_APEX),
+)
+export function isPreviewHost(host) {
+  return PREVIEW_HOSTS.has(String(host || '').toLowerCase())
+}
+/** localhost, a dev tunnel, or a configured preview host — anywhere `?b=` is honoured. */
+export function isPreviewEnvironment(host) {
+  return isLocalHost(host) || isDevTunnel(host) || isPreviewHost(host)
+}
+
 // Public dev tunnels (Cloudflare quick tunnel / ngrok) used to preview the dev server on a
 // phone. The whole tunnel host is a single apex — its first label is a random tunnel id, NOT a
 // white-label subdomain — so we treat it like the apex marketplace (custom platform theme + ?b=
@@ -139,7 +168,11 @@ function isDevTunnel(host) {
  *  enabled/published, so a provider can preview their site while setting it up. */
 export function isBrandPreview() {
   if (typeof window === 'undefined') return false
-  return new URLSearchParams(window.location.search).get('preview') === '1'
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('preview') === '1') return true
+  // On a preview host a `?b=` / `?bid=` override is by definition a preview: the
+  // provider's analytics and custom <head> code must not run on the staging origin.
+  return isPreviewHost(window.location.hostname) && !!(params.get('b') || params.get('bid'))
 }
 
 /** Dashboard live-preview only: a provider's owner id passed as `?bid=<id>`, so the
@@ -160,9 +193,10 @@ export function detectBrandSlug() {
   // force-loaded on the apex origin via https://bookboll.com/?b=<slug> (which would leak
   // marketplace traffic into a provider's tracking and expose the apex origin to a provider's
   // scripts). In production, white-label sites resolve by SUBDOMAIN only (needs wildcard DNS).
-  if (q && (isLocalHost(host) || isDevTunnel(host))) return q
-  // A dev tunnel is the apex itself (its subdomain is a random tunnel id, not a provider slug).
-  if (isDevTunnel(host)) return ''
+  if (q && isPreviewEnvironment(host)) return q
+  // A dev tunnel or a configured preview host is the apex itself — its first label is a
+  // tunnel id or a staging name such as "new", never a provider slug.
+  if (isDevTunnel(host) || isPreviewHost(host)) return ''
 
   const parts = host.split('.')
   // apex length: localhost is 1 label, bookboll.com is 2.
@@ -235,6 +269,10 @@ export function moduleForPath(path) {
 export function marketplaceUrl(path = '') {
   if (typeof window === 'undefined') return path || '/'
   const { hostname, protocol } = window.location
+  // A preview host IS the marketplace: the same origin without the brand override.
+  // It must not be rewritten to the production apex just because it is a
+  // subdomain of it — that would walk a tester off the testing site.
+  if (isPreviewHost(hostname)) return `${appBaseUrl()}${path || '/'}`
   // Strip the brand label ONLY on a real white-label subdomain of the apex —
   // any other host (dev, Pages preview under a subpath) is the marketplace itself.
   if (hostname.endsWith('.' + BRAND_APEX)) {
@@ -330,7 +368,7 @@ export function brandPreviewUrl(slug, { preview = false } = {}) {
   const s = (slug || '').toLowerCase()
   // Dev / local: load the public web app with ?b=. appBaseUrl() prefers VITE_WEB_URL
   // so this works from the admin app (port 5174 → 5173) as well.
-  if (typeof window !== 'undefined' && isLocalHost(window.location.hostname)) {
+  if (typeof window !== 'undefined' && isPreviewEnvironment(window.location.hostname)) {
     return `${appBaseUrl()}/?b=${encodeURIComponent(s)}${preview ? '&preview=1' : ''}`
   }
   return `https://${brandHost(s)}${preview ? '?preview=1' : ''}`
