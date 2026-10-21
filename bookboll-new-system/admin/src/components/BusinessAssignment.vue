@@ -4,18 +4,26 @@ import { computed, ref, watch } from 'vue'
 import { X, ArrowRight } from 'lucide-vue-next'
 import { previewReady, newRequestKey } from '../lib/finance.js'
 import { roleLabel, PROVIDER_ROLES } from '../lib/permissions.js'
+import AccountPicker from './AccountPicker.vue'
 import './finance.css'
 const props=defineProps({ business:{type:Object,required:true} })
 const emit=defineEmits(['close','assigned'])
-const options=ref(null), notice=ref(''), error=ref(''), busy=ref(false), query=ref(''), preview=ref(null), agreed=ref(false)
+const options=ref(null), notice=ref(''), error=ref(''), busy=ref(false), preview=ref(null), agreed=ref(false)
 const form=ref({user_id:'',role:'provider_admin',scope:'all',location_ids:[]})
 let generation=0, key=newRequestKey()
-const people=computed(()=>(options.value?.candidates || []).filter(person=>`${person.name} ${person.email}`.toLowerCase().includes(query.value.toLowerCase())))
 const roles=computed(()=>(options.value?.roles || []).filter(role=>PROVIDER_ROLES.includes(role)))
 const scopeRequired=computed(()=>form.value.role!=='provider_admin' && form.value.scope==='selected')
 watch(form,()=>{generation++;preview.value=null;agreed.value=false;key=newRequestKey()},{deep:true,flush:'sync'})
 watch(()=>form.value.role,()=>{form.value.location_ids=[];form.value.scope='all'})
-async function load(){const result=await financeRequest(`/admin/businesses/${props.business.business_id}/assignment-options`);if(!result.ok)notice.value=result.message.replace('finance backend','business management backend');else{options.value=result.data;form.value.role=roles.value[0] || 'staff'}}
+const loading=ref(true)
+async function load(search=''){
+  loading.value=true
+  const result=await financeRequest(`/admin/businesses/${props.business.business_id}/assignment-options`,{query:search?{search}:{}})
+  loading.value=false
+  if(!result.ok){notice.value=result.message.replace('finance backend','business management backend');return}
+  options.value=result.data
+  if(!roles.value.includes(form.value.role))form.value.role=roles.value[0] || 'staff'
+}
 async function review(){
   error.value=''
   if(!form.value.user_id || !roles.value.includes(form.value.role)){error.value='Choose an existing account and business role.';return}
@@ -40,8 +48,12 @@ load()
     <div class="modal-header"><div><div class="fin-eyebrow">{{ business.business_name }}</div><h2 id="assign-title" class="modal-title">Assign an existing platform account</h2></div><button class="btn-icon" :disabled="busy" aria-label="Close assignment" @click="emit('close')"><X :size="18"/></button></div>
     <div class="modal-body"><p class="fin-help" style="margin-bottom:18px">Move an existing account into this business. Its login stays the same; platform access is removed.</p><p v-if="notice" class="fin-notice">{{ notice }}</p>
       <fieldset v-show="!preview" :disabled="busy" style="border:0;padding:0;margin:0"><div class="fin-form-grid">
-        <label class="fin-field fin-wide">Find a platform account<input v-model="query" type="search" placeholder="Search name or email"/></label>
-        <label class="fin-field fin-wide">Account *<select v-model="form.user_id"><option value="">Select account</option><option v-for="person in people" :key="person.id" :value="person.id">{{ person.name }} · {{ person.email }}</option></select></label>
+        <div class="fin-field fin-wide">
+          <span class="fin-field-label">Account *</span>
+          <AccountPicker v-model="form.user_id" :candidates="options?.candidates || []" :loading="loading"
+                         empty-text="No eligible accounts — everyone on the platform team is already in a business."
+                         @search="load" />
+        </div>
         <label class="fin-field">Business role *<select v-model="form.role"><option v-for="role in roles" :key="role" :value="role">{{ roleLabel(role) }}</option></select></label>
         <label v-if="form.role!=='provider_admin'" class="fin-field">Venue access<select v-model="form.scope"><option value="all">All venues in this business</option><option value="selected">Selected business venues</option></select></label>
       </div><div v-if="scopeRequired" style="margin-top:16px"><label v-for="venue in options?.venues || []" :key="venue.id" class="fin-checkbox"><input v-model="form.location_ids" type="checkbox" :value="venue.id"/>{{ venue.name }}</label><p v-if="!options?.venues?.length" class="fin-help">This business has no venues yet. Choose all business venues or add a venue first.</p></div></fieldset>

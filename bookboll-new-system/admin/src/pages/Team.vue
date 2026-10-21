@@ -1,5 +1,6 @@
 <script setup>
 import BusinessAssignment from '../components/BusinessAssignment.vue'
+import AccountPicker from '../components/AccountPicker.vue'
 import { financeRequest } from '../lib/financeApi.js'
 import { newRequestKey } from '../lib/finance.js'
 import { businessTeam, businessFormErrors } from '../lib/businessTeam.js'
@@ -140,15 +141,9 @@ const businessOwnerCandidates = ref([])
 const businessOwnerRoles = ref([])
 const businessOwnerLoading = ref(false)
 const businessOwnerNotice = ref('')
-const businessOwnerSearch = ref('')
 const businessOwnerAck = ref(false)
 const businessOwner = computed(() =>
   businessOwnerCandidates.value.find(c => String(c.id) === String(adminForm.value.assign_owner_user_id)) || null)
-const businessOwnerMatches = computed(() => {
-  const q = businessOwnerSearch.value.trim().toLowerCase()
-  if (!q) return businessOwnerCandidates.value
-  return businessOwnerCandidates.value.filter(c => `${c.name} ${c.email}`.toLowerCase().includes(q))
-})
 /**
  * Attach an existing account to a just-created business: preview, then commit.
  *
@@ -186,10 +181,10 @@ async function assignOwnerToBusiness(businessId, userId, role) {
   return { ok: true, message: '' }
 }
 
-async function loadBusinessOwnerCandidates() {
+async function loadBusinessOwnerCandidates(search = '') {
   businessOwnerLoading.value = true
   businessOwnerNotice.value = ''
-  const result = await financeRequest('/admin/businesses/assignment-candidates')
+  const result = await financeRequest('/admin/businesses/assignment-candidates', { query: search ? { search } : {} })
   businessOwnerLoading.value = false
   if (!result.ok) {
     businessOwnerCandidates.value = []
@@ -213,7 +208,6 @@ function openBusinessNew() {
   adminForm.value.role = 'provider_admin'
   businessReview.value = false
   teamView.value = 'businesses'
-  businessOwnerSearch.value = ''
   businessOwnerAck.value = false
   businessOwnerCandidates.value = []
   loadBusinessOwnerCandidates()
@@ -1100,21 +1094,15 @@ function avatarColor(id) {
                 <div class="inline-business-header"><UsersRound :size="14" />Owner (optional)</div>
                 <p v-if="businessOwnerNotice" class="field-hint biz-owner-notice">{{ businessOwnerNotice }}</p>
                 <template v-else>
-                  <div class="gridd">
-                    <div class="form-group">
-                      <label class="form-label" for="biz-owner-search">Find an existing account</label>
-                      <input id="biz-owner-search" v-model="businessOwnerSearch" type="search" placeholder="Search name or email" :disabled="businessOwnerLoading" />
-                    </div>
-                    <div class="form-group">
-                      <label class="form-label" for="biz-owner">Account</label>
-                      <select id="biz-owner" v-model="adminForm.assign_owner_user_id" :disabled="businessOwnerLoading">
-                        <option value="">{{ businessOwnerLoading ? 'Loading accounts…' : 'Assign later' }}</option>
-                        <option v-for="person in businessOwnerMatches" :key="person.id" :value="person.id">{{ person.name }} · {{ person.email }}</option>
-                      </select>
-                      <div class="field-hint">Admins and employees who aren’t already in a business.</div>
-                    </div>
-                  </div>
-                  <div v-if="adminForm.assign_owner_user_id" class="form-group">
+                  <p class="field-hint biz-owner-lead">Pick a colleague from the platform team, or leave this empty and assign someone later.</p>
+                  <AccountPicker
+                    v-model="adminForm.assign_owner_user_id"
+                    :candidates="businessOwnerCandidates"
+                    :loading="businessOwnerLoading"
+                    empty-text="No eligible accounts — everyone on the platform team is already in a business."
+                    @search="loadBusinessOwnerCandidates"
+                  />
+                  <div v-if="adminForm.assign_owner_user_id" class="form-group biz-owner-role">
                     <label class="form-label" for="biz-owner-role">Business role *</label>
                     <select id="biz-owner-role" v-model="adminForm.assign_owner_role">
                       <option v-for="r in businessOwnerRoles" :key="r" :value="r">{{ roleLabel(r) }}</option>
@@ -1123,9 +1111,6 @@ function avatarColor(id) {
                   <p v-if="adminForm.assign_owner_user_id" class="field-hint biz-owner-warn">
                     <Info :size="13" />
                     <span>This moves the account into the business: it leaves the platform team and its existing sessions are refreshed. You’ll confirm on the next step.</span>
-                  </p>
-                  <p v-else-if="!businessOwnerLoading && !businessOwnerCandidates.length" class="field-hint">
-                    No eligible accounts — everyone is already in a business. Create it unclaimed and assign later.
                   </p>
                 </template>
               </div>
@@ -1335,6 +1320,8 @@ function avatarColor(id) {
 @media (max-width: 760px) { .biz-assign-btn { font-size: 12px; padding: 6px 10px; } }
 .biz-owner { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
 .biz-owner-notice { color: var(--warning-ink, #92400e); }
+.biz-owner-lead { margin: 0 0 10px; }
+.biz-owner-role { margin-top: 12px; }
 .biz-owner-warn { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; line-height: 1.5; }
 .biz-owner-ack { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: 13px; line-height: 1.5; text-align: left; }
 .biz-owner-ack input { margin-top: 2px; flex-shrink: 0; }

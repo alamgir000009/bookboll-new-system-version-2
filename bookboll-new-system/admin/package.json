@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "check:render": "node scripts/render-check.mjs",
     "check:paint": "node scripts/paint-check.mjs",
-    "check:grid": "npm run check:render && npm run check:paint"
+    "check:grid": "npm run check:render && npm run check:paint",
+    "check:accounts": "node scripts/account-picker-check.mjs"
   },
   "dependencies": {
     "@unhead/vue": "^1.11.20",

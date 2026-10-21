@@ -5,6 +5,9 @@
 .fin-eyebrow { font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--primary-ink); margin:0 0 8px; }
 .fin-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
 .fin-field { display:flex; flex-direction:column; gap:7px; min-width:0; font-size:12px; font-weight:600; }
+/* `.fin-field` is normally a <label>; where it wraps a composite control the
+   caption is its own element instead, and needs the same weight. */
+.fin-field-label { font-size:12px; font-weight:600; }
 .fin-field input, .fin-field select, .fin-field textarea { width:100%; min-width:0; min-height:42px; font:inherit; font-size:14px; font-weight:400; }
 .fin-wide { grid-column:1/-1; }
 .fin-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:18px; }
