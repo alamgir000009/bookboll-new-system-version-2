@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { AlertTriangle, ChevronDown, ChevronUp, Loader } from 'lucide-vue-next'
 import { pushToast } from '../lib/toast.js'
+import { askConfirm } from '../lib/confirm.js'
 import {
   EMPTY_QUEUE, RESOLUTION_LABELS, REASON_LABELS,
   applyOwnSiteMethod, applySummary, loadOwnSiteReview,
@@ -37,19 +38,30 @@ const visible = computed(() => !loading.value && !unsupported.value && (queue.va
 // dozens of businesses' customers a deposit. The server refuses it either way;
 // this stops the dashboard asking for something that cannot happen.
 const isPlatform = computed(() => queue.value.scope !== 'business')
-const canApplyAtAll = computed(() => queue.value.canApply === true)
+// Whatever the SERVER says this account may apply. A platform admin may
+// restore a broken channel (deposit, hide) but not switch one to full online
+// payment, which settles into that business's own wallet.
+const allowedMethods = computed(() => queue.value.allowedMethods || [])
+const canApplyAtAll = computed(() => allowedMethods.value.length > 0)
+const offeredMethods = computed(() => queue.value.resolutions.filter(m => allowedMethods.value.includes(m)))
+
+// One click can span several businesses, so say whose listings are about to
+// change before it happens.
+const selectedBusinesses = computed(() => [...new Set(
+  queue.value.listings.filter(l => selected.value.has(l.id)).map(l => l.venueName).filter(Boolean)
+)])
 const heading = computed(() => isPlatform.value
   ? `${queue.value.total} ${queue.value.total === 1 ? 'listing' : 'listings'} can’t take bookings on their provider’s website`
   : `${queue.value.total} ${queue.value.total === 1 ? 'listing' : 'listings'} on your website can’t take bookings`)
 const explanation = computed(() => isPlatform.value
-  ? 'Payment on arrival is no longer available for bookings made on a provider’s own website. Each business chooses how its listings take payment — open a listing to change one.'
+  ? 'Payment on arrival is no longer available for bookings made on a provider’s own website. You can switch these to a deposit, or remove them from the provider’s site, on their behalf — a deposit is Bookboll’s fee, so the venue still collects the same amount on arrival. Full online payment stays the business’s own choice.'
   : 'Payment on arrival is no longer available for bookings made on your own website. Choose how each listing should take payment, or remove it from your site.')
 const selectedIds = computed(() => [...selected.value])
 const allSelected = computed(() => queue.value.listings.length > 0 && selected.value.size === queue.value.listings.length)
 
 // Only offered when every selected listing can actually take it. A button that
 // half-works reads as a failure the owner caused.
-const canApply = method => canApplyAtAll.value && selectedIds.value.length > 0 && !busy.value
+const canApply = method => allowedMethods.value.includes(method) && selectedIds.value.length > 0 && !busy.value
   && queue.value.listings.filter(l => selected.value.has(l.id)).every(l => l.available[method])
 
 function toggle(id) {
@@ -74,6 +86,20 @@ async function load() {
 
 async function apply(method) {
   if (!canApply(method)) return
+
+  // Acting for somebody else's business is worth confirming, and the scope of
+  // one click is not obvious from a row of checkboxes.
+  if (isPlatform.value) {
+    const venues = selectedBusinesses.value
+    const where = venues.length === 1 ? venues[0] : `${venues.length} venues`
+    const ok = await askConfirm({
+      title: RESOLUTION_LABELS[method] + '?',
+      message: `This changes ${selectedIds.value.length} ${selectedIds.value.length === 1 ? 'listing' : 'listings'} at ${where}, on their behalf. It is recorded against your account and the business can change it afterwards.`,
+      confirmText: RESOLUTION_LABELS[method],
+    })
+    if (!ok) return
+  }
+
   busy.value = method
   const result = await applyOwnSiteMethod(method, selectedIds.value)
   busy.value = ''
@@ -128,9 +154,12 @@ defineExpose({ reload: load })
           <input type="checkbox" :checked="allSelected" aria-label="Select every listing" @change="toggleAll" />
           Select all {{ queue.listings.length }}
         </label>
-        <span class="osr-count">{{ selectedIds.length }} selected</span>
+        <span class="osr-count">
+          {{ selectedIds.length }} selected
+          <template v-if="isPlatform"> · acting for the business</template>
+        </span>
         <button
-          v-for="method in queue.resolutions" :key="method" type="button"
+          v-for="method in offeredMethods" :key="method" type="button"
           class="btn" :class="method === 'hide' ? 'btn-secondary' : 'btn-primary'"
           :disabled="!canApply(method)"
           :title="canApply(method) ? RESOLUTION_LABELS[method] : 'Not available for every selected listing'"

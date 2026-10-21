@@ -225,45 +225,60 @@ test('the panel states its own text colours instead of inheriting the page', () 
   assert.match(css, /\.osr-head p \{[^}]*color: var\(--text\)/)
 })
 
-test('platform staff are shown the scale but never offered the buttons', async () => {
-  // A super admin sees every business's listings here, because AccessScope
-  // leaves them unscoped. Applying a method would decide, for dozens of
-  // businesses at once, to start charging their customers a deposit.
+test('platform staff may restore a channel but not reroute money', async () => {
+  // The deposit IS Bookboll's commission, so the venue is paid the same on
+  // arrival. Full online payment settles into that business's own wallet, so
+  // the server withholds it and the dashboard never offers it.
   const { loadOwnSiteReview } = load(async () => queueBody([queueRow()], {
-    viewer: { scope: 'platform', can_apply: false },
+    viewer: { scope: 'platform', allowed_methods: ['deposit', 'hide'] },
   }))
 
   const { queue } = await loadOwnSiteReview()
   assert.equal(queue.scope, 'platform')
-  assert.equal(queue.canApply, false)
+  assert.deepEqual(queue.allowedMethods, ['deposit', 'hide'])
 })
 
-test('a business owner keeps the buttons', async () => {
+test('a business keeps all three', async () => {
   const { loadOwnSiteReview } = load(async () => queueBody([queueRow()], {
-    viewer: { scope: 'business', can_apply: true },
+    viewer: { scope: 'business', allowed_methods: ['deposit', 'online', 'hide'] },
   }))
 
   const { queue } = await loadOwnSiteReview()
-  assert.equal(queue.scope, 'business')
-  assert.equal(queue.canApply, true)
+  assert.deepEqual(queue.allowedMethods, ['deposit', 'online', 'hide'])
 })
 
-test('a server that says nothing about the viewer is treated as platform', async () => {
-  // Hiding an action the server would refuse is better than offering one that
-  // fails; silence must not be read as permission.
+test('a server that names no methods offers none', async () => {
+  // Showing a button for an action the server would refuse is worse than
+  // showing nothing; silence is never read as permission.
   const { loadOwnSiteReview } = load(async () => queueBody([queueRow()]))
 
   const { queue } = await loadOwnSiteReview()
-  assert.equal(queue.scope, 'platform')
-  assert.equal(queue.canApply, false)
+  assert.deepEqual(queue.allowedMethods, [])
 })
 
-test('the component gates both the buttons and the checkboxes on that flag', () => {
+test('a method the server did not name is dropped, not trusted', async () => {
+  const { loadOwnSiteReview } = load(async () => queueBody([queueRow()], {
+    viewer: { scope: 'platform', allowed_methods: ['deposit', 'transfer_ownership'] },
+  }))
+
+  const { queue } = await loadOwnSiteReview()
+  assert.deepEqual(queue.allowedMethods, ['deposit'])
+})
+
+test('the panel only renders the methods the server allowed, and confirms when acting for others', () => {
   const source = readFileSync(new URL('../src/components/OwnSiteReviewPanel.vue', import.meta.url), 'utf8')
-  // The action row and the per-row checkbox are both behind it, so there is
-  // nothing to select and nothing to click.
-  assert.match(source, /v-if="canApplyAtAll" class="osr-actions"/)
-  assert.match(source, /<input v-if="canApplyAtAll" type="checkbox"/)
-  // And the copy does not call another business's site "your website".
-  assert.match(source, /their provider’s website/)
+
+  // Buttons come from the allowed list, not from every resolution.
+  assert.match(source, /v-for="method in offeredMethods"/)
+  assert.match(source, /allowedMethods\.value\.includes\(method\)/)
+  // One click can span several businesses, so its scope is stated first.
+  assert.match(source, /if \(isPlatform\.value\) \{[\s\S]{0,400}askConfirm\(/)
+  assert.match(source, /on their behalf/)
+  // And no shortcut that picks for anyone.
+  const code = source
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  assert.equal(/fix ?all/i.test(code), false)
+  assert.equal(/site_deposit_enabled/.test(code), false)
 })
