@@ -54,26 +54,53 @@ class BusinessAssignmentService
             'contract_version' => self::CONTRACT_VERSION,
             'can_assign'       => true,
             'roles'            => array_values($roles),
-            'candidates'       => $this->candidates($actor),
+            'candidates'       => $this->candidates($actor, trim((string) $request->input('search', ''))),
             'venues'           => $this->assignableVenues($business),
         ]);
     }
 
     /**
-     * Accounts this actor may move.
+     * Accounts this actor may move — the PLATFORM TEAM, not every user.
      *
-     * Deliberately not a user directory: only id, name and email, only active
-     * accounts, never anyone already in a business, and never the actor. A
-     * country admin sees only their own jurisdiction.
+     * This filtered on "active, not already in a business" alone, which on real
+     * data is 16,074 people: the entire customer base. Only 8 of them held a
+     * platform role, and a 200-row cap sorted by name meant the admins the
+     * screen exists to move were not in the list at all. So the picker offered
+     * thousands of customers and none of the colleagues.
+     *
+     * The definition here is the same one the Team page's "Platform Team" tab
+     * uses (UserService::list, scope=platform): a platform role, or a
+     * provider-team / legacy role held with no owner — someone on Bookboll's own
+     * side rather than inside a business.
+     *
+     * `search` is applied in SQL so a large team is narrowed by the server
+     * rather than by whatever happened to fit in the first page.
+     *
+     * @return array<int, array<string, mixed>>
      */
-    protected function candidates(User $actor): array
+    protected function candidates(User $actor, string $search = ''): array
     {
+        $platformRoles = config('roles.platform_team_roles', ['super_admin', 'country_admin', 'platform_staff', 'admin']);
+        $teamRoles     = config('roles.provider_team_roles', []);
+
         $query = User::query()
+            ->with('roles:id,name')
             ->where('status', User::ACTIVE)
             ->where('id', '!=', $actor->id)
             ->whereDoesntHave('businessMemberships', function ($q) {
                 $q->where('status', BusinessMembership::STATUS_ACTIVE);
+            })
+            ->where(function ($q) use ($platformRoles, $teamRoles) {
+                $q->whereHas('roles', fn ($r) => $r->whereIn('name', $platformRoles))
+                    ->orWhere(fn ($o) => $o
+                        ->whereNull('owner_user_id')
+                        ->whereHas('roles', fn ($r) => $r->whereIn('name', $teamRoles)));
             });
+
+        if ($search !== '') {
+            $like = '%'.$search.'%';
+            $query->where(fn ($q) => $q->where('name', 'LIKE', $like)->orWhere('email', 'LIKE', $like));
+        }
 
         if (! AccessScope::isGlobal($actor)) {
             $countries = AccessScope::jurisdictionCountryIds($actor);
@@ -83,12 +110,23 @@ class BusinessAssignmentService
         }
 
         return $query->orderBy('name')->limit(200)
-            ->get(['id', 'name', 'email'])
-            ->map(fn (User $u) => [
-                'id'    => (string) $u->id,
-                'name'  => $u->name ?: '',
-                'email' => $u->email ?: '',
-            ])->all();
+            ->get(['id', 'name', 'email', 'country_id', 'last_login_at'])
+            ->map(function (User $u) {
+                $roles = $u->roles->pluck('name')->all();
+
+                return [
+                    'id'    => (string) $u->id,
+                    'name'  => $u->name ?: '',
+                    'email' => $u->email ?: '',
+                    // Enough for the picker to show WHO this is — the old list
+                    // was name and email only, which on similar-looking test
+                    // accounts told the admin nothing about who they were moving.
+                    'role'       => $roles[0] ?? null,
+                    'roles'      => $roles,
+                    'venues'     => count(AccessScope::pinnedVenueIds($u)),
+                    'last_login' => $u->last_login_at?->toIso8601String(),
+                ];
+            })->all();
     }
 
     /** @return array<int, array{id:string,name:string}> */
@@ -465,7 +503,7 @@ class BusinessAssignmentService
         return sendSuccess('Assignment candidates', [
             'contract_version' => self::CONTRACT_VERSION,
             'roles'            => array_values(BusinessMembership::ASSIGNABLE_ROLES),
-            'candidates'       => $this->candidates($actor),
+            'candidates'       => $this->candidates($actor, trim((string) $request->input('search', ''))),
         ]);
     }
 

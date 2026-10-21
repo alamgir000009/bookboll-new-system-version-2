@@ -23,7 +23,7 @@ use Spatie\Permission\Models\Role;
 uses(RefreshDatabase::class);
 
 beforeEach(function () {
-    foreach (['super_admin', 'admin', 'provider_admin', 'platform_staff'] as $r) {
+    foreach (['super_admin', 'admin', 'provider_admin', 'platform_staff', 'customer'] as $r) {
         Role::findOrCreate($r, 'web');
     }
 });
@@ -56,7 +56,9 @@ function previewMove(User $actor, Business $b, User $target, array $over = []): 
 it('lists assignable roles, candidates and venues without exposing a directory', function () {
     $actor = admin();
     $b = ownedBusiness();
+    // A candidate must be on the platform team — that is what this list is for.
     $free = User::factory()->create(['status' => User::ACTIVE, 'name' => 'Free Agent']);
+    $free->assignRole('platform_staff');
 
     $res = $this->actingAs($actor)->getJson("/api/admin/businesses/{$b->id}/assignment-options")->assertOk();
 
@@ -70,8 +72,10 @@ it('lists assignable roles, candidates and venues without exposing a directory',
         // The actor is not a candidate for their own move.
         ->and($ids)->not->toContain((string) $actor->id);
 
-    // Only these three fields — never a user directory.
-    expect(array_keys($res->json('data.candidates.0')))->toBe(['id', 'name', 'email']);
+    // Only what the picker needs to show WHO is being moved — never a user
+    // directory: no phone, no address, nothing a move does not depend on.
+    expect(array_keys($res->json('data.candidates.0')))
+        ->toBe(['id', 'name', 'email', 'role', 'roles', 'venues', 'last_login']);
 });
 
 it('warns about every inherited permission the move will remove', function () {
@@ -254,6 +258,7 @@ it('refuses venues that do not belong to the business', function () {
 it('offers the same candidates for a business that does not exist yet', function () {
     $actor = admin();
     $free  = User::factory()->create(['status' => User::ACTIVE, 'name' => 'Free Agent']);
+    $free->assignRole('platform_staff');
 
     $res = $this->actingAs($actor)->getJson('/api/admin/businesses/assignment-candidates')->assertOk();
 
@@ -264,7 +269,8 @@ it('offers the same candidates for a business that does not exist yet', function
     $ids = collect($res->json('data.candidates'))->pluck('id')->all();
     expect($ids)->toContain((string) $free->id)
         ->and($ids)->not->toContain((string) $actor->id)
-        ->and(array_keys($res->json('data.candidates.0')))->toBe(['id', 'name', 'email']);
+        ->and(array_keys($res->json('data.candidates.0')))
+            ->toBe(['id', 'name', 'email', 'role', 'roles', 'venues', 'last_login']);
 });
 
 it('leaves out accounts that already belong to a business', function () {
@@ -383,4 +389,61 @@ it('counts a legacy owner_user_id team and a membership team without double coun
     expect($row['staff_count'])->toBe(2)
         // owner_id still resolves the owner when there is no managing membership.
         ->and($row['owner_user_id'])->toBe($legacyOwner->id);
+});
+
+/*
+ * The picker offers colleagues, not customers.
+ *
+ * `candidates()` filtered on "active and not already in a business" alone,
+ * which on live data is 16,074 accounts — the entire customer base — of which
+ * 8 held a platform role. Capped at 200 and sorted by name, the admins the
+ * screen exists to move were not even in the list, so an admin could not find
+ * a colleague to assign. The set is now the Platform Team, the same definition
+ * that tab uses.
+ */
+it('offers platform team accounts and leaves customers out', function () {
+    $actor = admin();
+
+    $colleague = User::factory()->create(['status' => User::ACTIVE, 'name' => 'Zoe Colleague']);
+    $colleague->assignRole('platform_staff');
+    $customer = User::factory()->create(['status' => User::ACTIVE, 'name' => 'Aaa Customer']);
+    $customer->assignRole('customer');
+    $noRole = User::factory()->create(['status' => User::ACTIVE, 'name' => 'Aab Nobody']);
+
+    $ids = collect($this->actingAs($actor)->getJson('/api/admin/businesses/assignment-candidates')
+        ->assertOk()->json('data.candidates'))->pluck('id')->all();
+
+    expect($ids)->toContain((string) $colleague->id)
+        ->and($ids)->not->toContain((string) $customer->id)
+        ->and($ids)->not->toContain((string) $noRole->id);
+});
+
+it('describes each candidate well enough to tell them apart', function () {
+    $actor = admin();
+    $person = User::factory()->create([
+        'status' => User::ACTIVE, 'name' => 'Ali Nawaz', 'last_login_at' => now()->subDays(6),
+    ]);
+    $person->assignRole('platform_staff');
+
+    $row = collect($this->actingAs($actor)->getJson('/api/admin/businesses/assignment-candidates')
+        ->assertOk()->json('data.candidates'))->firstWhere('id', (string) $person->id);
+
+    expect($row['name'])->toBe('Ali Nawaz')
+        ->and($row['email'])->toBe($person->email)
+        ->and($row['role'])->toBe('platform_staff')
+        ->and($row)->toHaveKeys(['venues', 'last_login']);
+});
+
+it('narrows the list on the server so a big team is still searchable', function () {
+    $actor = admin();
+    foreach (['Needle Person', 'Haystack One', 'Haystack Two'] as $name) {
+        User::factory()->create(['status' => User::ACTIVE, 'name' => $name])->assignRole('platform_staff');
+    }
+
+    $names = collect($this->actingAs($actor)
+        ->getJson('/api/admin/businesses/assignment-candidates?search=Needle')
+        ->assertOk()->json('data.candidates'))->pluck('name')->all();
+
+    expect($names)->toContain('Needle Person')
+        ->and($names)->not->toContain('Haystack One');
 });
