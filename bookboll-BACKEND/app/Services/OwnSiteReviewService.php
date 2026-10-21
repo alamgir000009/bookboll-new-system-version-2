@@ -57,8 +57,10 @@ class OwnSiteReviewService
             // which is useful to know about and NOT theirs to decide on — the
             // dashboard changes its wording and drops the buttons on this.
             'viewer'   => [
-                'scope'     => $this->actorScope($user),
-                'can_apply' => $this->mayApply($user),
+                'scope'           => $this->actorScope($user),
+                'allowed_methods' => $this->allowedMethods($user),
+                // Kept for an older dashboard: true when anything may be applied.
+                'can_apply'       => $this->allowedMethods($user) !== [],
             ],
             // Named here so the dashboard offers exactly these and nothing else.
             'resolutions' => OwnSiteReview::RESOLUTIONS,
@@ -82,19 +84,6 @@ class OwnSiteReviewService
     {
         $user = $request->user();
 
-        if (! $this->mayApply($user)) {
-            // The whole point of this path is that the OWNER chooses. A platform
-            // admin applying a method here would be deciding, for dozens of
-            // businesses at once, to start charging their customers a deposit —
-            // which is the thing the document forbids, just with a human
-            // clicking it. Support can still fix one listing in its editor.
-            return sendError(
-                'Only the business can choose how its own website takes payment. Open the listing to change one.',
-                [],
-                403
-            );
-        }
-
         $data = $request->validate([
             'method'       => 'required|string|in:'.implode(',', OwnSiteReview::RESOLUTIONS),
             'listing_ids'  => 'required|array|min:1|max:200',
@@ -102,6 +91,18 @@ class OwnSiteReviewService
         ]);
 
         $method = $data['method'];
+
+        if (! in_array($method, $this->allowedMethods($user), true)) {
+            // A platform admin may restore a broken channel, but not reroute a
+            // business's money. Full online payment settles into that
+            // business's wallet, so only the business chooses it.
+            return sendError(
+                'Only the business can switch its own website to full online payment. Open the listing to change one.',
+                [],
+                403
+            );
+        }
+
         $ids = array_values(array_unique(array_map('intval', $data['listing_ids'])));
 
         // Scoped to the venues this user may touch. An id from elsewhere is not
@@ -144,6 +145,10 @@ class OwnSiteReviewService
             $applied[] = ['listing_id' => $id, 'name' => $listing->name, 'method' => $method];
         }
 
+        if ($applied && $this->actorScope($user) === 'platform') {
+            $this->recordPlatformAction($user, $method, $applied);
+        }
+
         return sendSuccess(
             $applied ? 'Own-site booking updated' : 'Nothing was changed',
             [
@@ -170,10 +175,57 @@ class OwnSiteReviewService
         return AccessScope::isProviderScoped($user) ? 'business' : 'platform';
     }
 
-    /** Only the business that owns the listings may change how they charge. */
-    protected function mayApply(?\App\Models\User $user): bool
+    /**
+     * Which resolutions this actor may apply in bulk.
+     *
+     * The business gets all three. A platform admin gets the two that cannot
+     * move anyone's money:
+     *
+     *  deposit  the deposit IS Bookboll's commission, so the venue is paid
+     *           exactly the same on arrival — and without it the channel takes
+     *           nothing at all, so the business is strictly better off.
+     *  hide     removes a broken channel; the marketplace listing is untouched.
+     *
+     * `online` is withheld because it settles the venue's share into that
+     * business's wallet. Where that money lands is the business's decision, not
+     * a platform account's — and they can still choose it per listing.
+     *
+     * @return array<int, string>
+     */
+    protected function allowedMethods(?\App\Models\User $user): array
     {
-        return $this->actorScope($user) === 'business';
+        return $this->actorScope($user) === 'business'
+            ? OwnSiteReview::RESOLUTIONS
+            : ['deposit', 'hide'];
+    }
+
+    /**
+     * A platform admin acting for a business leaves a record.
+     *
+     * If a provider later asks who switched this on, the answer exists.
+     */
+    protected function recordPlatformAction(?\App\Models\User $user, string $method, array $applied): void
+    {
+        try {
+            \App\Models\AuditLog::create([
+                'action'      => 'listing.own_site_review',
+                'resource'    => 'listing',
+                'resource_id' => (string) ($applied[0]['listing_id'] ?? ''),
+                'actor_id'    => $user?->id,
+                'actor_email' => $user?->email,
+                'timestamp'   => now(),
+                // `details` is a plain string column, not a cast array.
+                'details'     => mb_substr((string) json_encode([
+                    'method'      => $method,
+                    'applied_to'  => array_column($applied, 'listing_id'),
+                    'count'       => count($applied),
+                    'acting_as'   => 'platform',
+                ]), 0, 2000),
+            ]);
+        } catch (\Throwable $e) {
+            // An audit failure must never roll back a change already made.
+            \Illuminate\Support\Facades\Log::error('own-site review audit failed: '.$e->getMessage());
+        }
     }
 
     /**

@@ -482,29 +482,71 @@ function platformAdmin(): User
     return $u->fresh();
 }
 
-it('shows a platform admin every business, and says it is not theirs to decide', function () {
+it('shows a platform admin every business, and which actions they may take', function () {
     legacyCashOnly($this->venue, ['name' => 'Mine']);
     $other = reviewOwner('South Club');
     legacyCashOnly(reviewVenue($other, $this->country), ['name' => 'Theirs']);
 
     $data = reviewQueue(platformAdmin())->assertOk()->json('data');
 
-    // Unscoped, which is useful to know about as an operational signal.
     expect(collect($data['listings'])->pluck('name')->sort()->values()->all())->toBe(['Mine', 'Theirs']);
     expect($data['viewer']['scope'])->toBe('platform');
-    expect($data['viewer']['can_apply'])->toBeFalse();
+    // Deposit and hide, but not online: that one settles money into the
+    // business's own wallet.
+    expect($data['viewer']['allowed_methods'])->toBe(['deposit', 'hide']);
 });
 
-it('refuses a platform admin applying a method to a business they do not own', function () {
-    // This would decide, for dozens of businesses at once, to start charging
-    // their customers a deposit — the exact thing the review path exists to
-    // prevent, only with a person clicking it.
+it('lets a platform admin restore a broken channel with a deposit', function () {
+    // The deposit IS Bookboll's commission, so the venue is paid exactly the
+    // same on arrival — and without it the channel takes nothing at all.
     $listing = legacyCashOnly($this->venue);
 
-    applyReview(platformAdmin(), ['method' => 'deposit', 'listing_ids' => [$listing->id]])
+    applyReview(platformAdmin(), ['method' => 'deposit', 'listing_ids' => [$listing->id]])->assertOk();
+
+    expect($listing->fresh()->payment_options['site_deposit_enabled'])->toBeTrue();
+});
+
+it('lets a platform admin remove a broken channel', function () {
+    $listing = legacyCashOnly($this->venue);
+
+    applyReview(platformAdmin(), ['method' => 'hide', 'listing_ids' => [$listing->id]])->assertOk();
+
+    expect($listing->fresh()->show_on_provider_site)->toBeFalsy();
+    // The marketplace listing is untouched.
+    expect($listing->fresh()->show_on_marketplace)->not->toBeFalse();
+});
+
+it('does not let a platform admin reroute a business\'s money', function () {
+    // Full online payment settles the venue's share into THAT business's
+    // wallet. Where the money lands is their decision.
+    payoutsFor($this->owner, $this->country);
+    $listing = legacyCashOnly($this->venue);
+
+    applyReview(platformAdmin(), ['method' => 'online', 'listing_ids' => [$listing->id]])
         ->assertStatus(403);
 
-    expect($listing->fresh()->payment_options['site_deposit_enabled'])->toBeFalse();
+    expect($listing->fresh()->payment_options['site_online_enabled'])->toBeFalse();
+});
+
+it('records who acted for a business, so the question can be answered later', function () {
+    $admin = platformAdmin();
+    $listing = legacyCashOnly($this->venue);
+
+    applyReview($admin, ['method' => 'deposit', 'listing_ids' => [$listing->id]])->assertOk();
+
+    $entry = \App\Models\AuditLog::where('action', 'listing.own_site_review')->first();
+    expect($entry)->not->toBeNull();
+    expect($entry->actor_id)->toBe($admin->id);
+    expect($entry->details)->toContain('deposit');
+    expect($entry->details)->toContain('platform');
+});
+
+it('writes no audit entry when the business acts for itself', function () {
+    $listing = legacyCashOnly($this->venue);
+
+    applyReview($this->owner, ['method' => 'deposit', 'listing_ids' => [$listing->id]])->assertOk();
+
+    expect(\App\Models\AuditLog::where('action', 'listing.own_site_review')->count())->toBe(0);
 });
 
 it('still lets the business that owns the listing decide', function () {
@@ -512,7 +554,7 @@ it('still lets the business that owns the listing decide', function () {
 
     $data = reviewQueue($this->owner)->assertOk()->json('data');
     expect($data['viewer']['scope'])->toBe('business');
-    expect($data['viewer']['can_apply'])->toBeTrue();
+    expect($data['viewer']['allowed_methods'])->toBe(['deposit', 'online', 'hide']);
 
     applyReview($this->owner, ['method' => 'deposit', 'listing_ids' => [$listing->id]])->assertOk();
     expect($listing->fresh()->payment_options['site_deposit_enabled'])->toBeTrue();
