@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Listing;
+use App\Models\Venue;
 
 /**
  * Listings whose own-site channel stopped working, and what the owner may do.
@@ -38,9 +39,35 @@ class OwnSiteReview
      */
     public const TRUTHY_JSON = ['true', '1'];
 
+    /**
+     * Is this venue Bookboll's own?
+     *
+     * Then there is no provider and no provider website: its site bookings run
+     * on the MARKETPLACE payment methods, which the listing editor has always
+     * said in as many words. The own-site flags are meaningless on these, so
+     * reading them as "no method configured" flags listings that work.
+     */
+    public static function isBookbollVenue(?Venue $venue): bool
+    {
+        if (! $venue) {
+            return false;
+        }
+
+        if ($venue->operator_type) {
+            return $venue->operator_type === 'bookboll' && ! $venue->business_id;
+        }
+
+        return ! $venue->owner_user_id && ! $venue->business_id;
+    }
+
     /** Is this listing's own-site channel offered but unusable? */
     public static function needsReview(Listing $listing): bool
     {
+        // A Bookboll-run venue has no provider site of its own to fix.
+        if (self::isBookbollVenue($listing->venue ?: Venue::find($listing->venue_id))) {
+            return false;
+        }
+
         // A listing hidden from the provider's own site has no own-site channel
         // to fix. Null means never set, which is offered.
         if ($listing->show_on_provider_site === false) {
@@ -64,6 +91,12 @@ class OwnSiteReview
         $truthy = self::TRUTHY_JSON;
 
         return $query
+            // Bookboll's own venues are excluded: they have no provider site,
+            // and their website bookings use the marketplace methods.
+            ->whereExists(fn ($q) => $q->selectRaw('1')->from('venues')
+                ->whereColumn('venues.id', 'listings.venue_id')
+                ->where(fn ($w) => $w->whereNotNull('venues.owner_user_id')
+                    ->orWhereNotNull('venues.business_id')))
             ->where(fn ($q) => $q->where('show_on_provider_site', '!=', false)
                 ->orWhereNull('show_on_provider_site'))
             ->whereNotIn(self::jsonFlagSql('site_deposit_enabled'), $truthy)

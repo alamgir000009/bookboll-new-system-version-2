@@ -517,3 +517,56 @@ it('still lets the business that owns the listing decide', function () {
     applyReview($this->owner, ['method' => 'deposit', 'listing_ids' => [$listing->id]])->assertOk();
     expect($listing->fresh()->payment_options['site_deposit_enabled'])->toBeTrue();
 });
+
+// ── Bookboll's own venues are not a provider's website ──────────────────────
+
+it('never flags a venue Bookboll runs itself', function () {
+    // These have no provider and no provider website: their site bookings use
+    // the MARKETPLACE payment methods, which the listing editor says in as
+    // many words. Reading the own-site flags on them called 46 working
+    // listings broken.
+    $bookboll = Venue::create([
+        'name' => 'Abu Hamor', 'status' => Venue::ACTIVE,
+        'owner_user_id' => null, 'business_id' => null,
+        'maps_url' => 'https://maps.google.com/?q=0,0',
+        'min_advance_booking' => 0, 'max_bookings_per_slot' => 1,
+    ]);
+    $listing = legacyCashOnly($bookboll, ['name' => 'Bookboll Court']);
+
+    expect(OwnSiteReview::needsReview($listing->fresh('venue')))->toBeFalse();
+    expect(OwnSiteReview::scopeNeedsReview(Listing::whereKey($listing->id))->count())->toBe(0);
+
+    // And it is not offered to a platform admin to "fix" either.
+    expect(collect(reviewQueue(platformAdmin())->assertOk()->json('data.listings'))
+        ->pluck('name'))->not->toContain('Bookboll Court');
+});
+
+it('still flags a venue that belongs to a business', function () {
+    // The guard must not swallow the real cases it exists for.
+    $listing = legacyCashOnly($this->venue, ['name' => 'Provider Court']);
+
+    expect(OwnSiteReview::needsReview($listing->fresh('venue')))->toBeTrue();
+    expect(OwnSiteReview::scopeNeedsReview(Listing::whereKey($listing->id))->count())->toBe(1);
+});
+
+it('agrees with itself about Bookboll venues in SQL and in PHP', function () {
+    $bookboll = Venue::create([
+        'name' => 'Bookboll Run', 'status' => Venue::ACTIVE,
+        'owner_user_id' => null, 'business_id' => null,
+        'maps_url' => 'https://maps.google.com/?q=0,0',
+        'min_advance_booking' => 0, 'max_bookings_per_slot' => 1,
+    ]);
+    $ids = [
+        legacyCashOnly($bookboll)->id,
+        legacyCashOnly($this->venue)->id,
+    ];
+
+    $fromSql = OwnSiteReview::scopeNeedsReview(Listing::whereIn('listings.id', $ids))
+        ->pluck('listings.id')->sort()->values()->all();
+    $fromPhp = Listing::with('venue')->whereIn('id', $ids)->get()
+        ->filter(fn (Listing $l) => OwnSiteReview::needsReview($l))
+        ->pluck('id')->sort()->values()->all();
+
+    expect($fromSql)->toBe($fromPhp);
+    expect($fromSql)->toHaveCount(1);
+});
