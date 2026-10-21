@@ -55,10 +55,23 @@ class AppServiceProvider extends ServiceProvider
      * "allowed to be sent a session" cannot drift apart. Failure is swallowed on
      * purpose: a cache or database hiccup must not take down every CORS preflight, and
      * the configured origins still work.
+     *
+     * Only consulted for an Origin config/cors.php does not already answer. This runs
+     * in boot(), before routing, so an unconditional lookup made every request — a
+     * preflight, a webhook, a health check, a 404 — read the cache, and on shared
+     * hosting that meant opening a MySQL connection and holding it for the life of
+     * the request. Thirty of those is the whole connection allowance.
      */
     private function allowCorsFromProviderDomains(): void
     {
         if ($this->app->runningInConsole()) {
+            return;
+        }
+
+        $origin = trim((string) request()->headers->get('Origin'));
+
+        // No Origin header is not a cross-origin call, so CORS answers nothing here.
+        if ($origin === '' || $this->corsAlreadyAllows($origin)) {
             return;
         }
 
@@ -73,5 +86,34 @@ class AppServiceProvider extends ServiceProvider
         } catch (\Throwable $e) {
             report($e);
         }
+    }
+
+    /**
+     * Whether the statically configured CORS rules already cover this origin —
+     * the marketplace, the dashboards, localhost, and every white-label
+     * <slug>.bookboll.com storefront. Same two tests the CORS handler itself
+     * applies, so an origin that passes here needs no custom-domain lookup.
+     */
+    private function corsAlreadyAllows(string $origin): bool
+    {
+        $allowed = config('cors.allowed_origins', []);
+
+        if (in_array('*', $allowed, true)) {
+            return true;
+        }
+
+        foreach ($allowed as $candidate) {
+            if (strcasecmp($origin, (string) $candidate) === 0) {
+                return true;
+            }
+        }
+
+        foreach (config('cors.allowed_origins_patterns', []) as $pattern) {
+            if (preg_match($pattern, $origin)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

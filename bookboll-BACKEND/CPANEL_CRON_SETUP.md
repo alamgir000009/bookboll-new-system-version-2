@@ -17,10 +17,62 @@ This guide will help you set up cron jobs in cPanel to run Laravel's scheduled t
 **Frequency:** Every Minute (`* * * * *`)
 **Command:**
 ```bash
-/usr/local/bin/php /home/osamwgct/backend.osamasafdar.com/artisan queue:work --stop-when-empty >> /dev/null 2>&1
+flock -n /home/osamwgct/backend.bookboll.com/storage/queue-worker.lock /usr/local/bin/php /home/osamwgct/backend.bookboll.com/artisan queue:work --stop-when-empty --max-time=55 --tries=3 --sleep=1 >> /dev/null 2>&1
 ```
 
+**`flock` is not optional.** A worker started every minute that takes longer than a
+minute to drain leaves the previous one running, and each live worker holds a MySQL
+connection. Shared hosting allows this account 30 connections in total, shared with
+every web request, so a handful of stacked workers is enough to take the site down
+with `max_user_connections`. `flock -n` makes the minute's cron exit immediately if a
+worker is already running, and `--max-time=55` guarantees one never outlives its slot.
+
 **⚠️ Important:** If your Laravel project is inside a subdirectory (e.g., `backend.osamasafdar.com/bookboll-BACKEND`), add that subdirectory to the path above.
+
+## The 30-connection budget
+
+Namecheap shared hosting caps this account at `max_user_connections: 30`. That is not
+30 per worker or per site — it is 30 open MySQL connections for everything the account
+does at once: every in-flight PHP request, every cron, every queue worker. Exceed it
+and MySQL refuses the next connection outright:
+
+```
+SQLSTATE[HY000] [1226] User '..._production_user' has exceeded the
+'max_user_connections' resource (current value: 30)
+```
+
+A connection is held for the **whole** request, from the first query to the response,
+so the number that matters is concurrent requests that touch the database — not
+queries per second. Keeping inside the budget means two things:
+
+**1. Do not make every request a database request.** `CACHE_STORE` and `SESSION_DRIVER`
+must be `file`, never `database`. With the database drivers, the cache read that
+resolves CORS origins, the API rate limiter, and the session all open a connection on
+requests that would otherwise need none — preflights, webhooks, health checks, 404s.
+Thirty concurrent visitors is then the ceiling for the entire site.
+
+**2. Do not let background work stack up.** Both crons run every minute; if a run
+outlasts its minute, the next one starts alongside it and each holds its own
+connection. The queue worker is wrapped in `flock -n` and `--max-time=55` above for
+exactly this reason. Never use `queue:work --daemon` here.
+
+After changing `.env`, clear the compiled config or the old driver stays live:
+
+```bash
+php artisan config:clear && php artisan cache:clear && php artisan config:cache && php artisan route:cache
+```
+
+Switching `SESSION_DRIVER` to `file` logs everyone out once — existing rows in the
+`sessions` table are no longer read. That is the only visible effect.
+
+To confirm what is actually holding connections, from cPanel Terminal:
+
+```bash
+mysqladmin -u USER -p processlist | wc -l
+```
+
+If that sits near 30 while traffic is light, something is leaking — look for stacked
+`queue:work` processes first (`ps aux | grep artisan`).
 
 ## Prerequisites
 
@@ -101,21 +153,19 @@ cd /home/osamwgct/backend.osamasafdar.com && /usr/local/bin/php artisan schedule
 - **Month:** `*`
 - **Weekday:** `*`
 
-**Command (Option A - Recommended for low traffic):**
+**Command:**
 ```bash
-/usr/local/bin/php /home/osamwgct/backend.osamasafdar.com/artisan queue:work --stop-when-empty >> /dev/null 2>&1
+flock -n /home/osamwgct/backend.bookboll.com/storage/queue-worker.lock /usr/local/bin/php /home/osamwgct/backend.bookboll.com/artisan queue:work --stop-when-empty --max-time=55 --tries=3 --sleep=1 >> /dev/null 2>&1
 ```
 
-**Command (Option B - For continuous processing):**
-```bash
-/usr/local/bin/php /home/osamwgct/backend.osamasafdar.com/artisan queue:work --daemon --tries=3 --timeout=90 >> /dev/null 2>&1
-```
-
-**Note:** Option A processes all pending jobs and stops. Option B runs continuously (but may be killed by cPanel after a timeout).
+**Note:** this drains the pending jobs and stops, and `flock -n` means a minute whose
+predecessor is still working is skipped rather than doubled up. Do **not** use
+`queue:work --daemon` on shared hosting: a long-lived worker holds a MySQL connection
+for as long as it runs, and cPanel killing it mid-job leaves the job reserved.
 
 **Alternative command format:**
 ```bash
-cd /home/osamwgct/backend.osamasafdar.com && /usr/local/bin/php artisan queue:work --stop-when-empty >> /dev/null 2>&1
+cd /home/osamwgct/backend.bookboll.com && flock -n storage/queue-worker.lock /usr/local/bin/php artisan queue:work --stop-when-empty --max-time=55 --tries=3 --sleep=1 >> /dev/null 2>&1
 ```
 
 ## Step 4: Testing Your Cron Jobs
@@ -193,7 +243,7 @@ PHP_PATH PROJECT_PATH/artisan schedule:run >> /dev/null 2>&1
 
 **Queue Worker (every minute):**
 ```bash
-PHP_PATH PROJECT_PATH/artisan queue:work --stop-when-empty >> /dev/null 2>&1
+flock -n PROJECT_PATH/storage/queue-worker.lock PHP_PATH PROJECT_PATH/artisan queue:work --stop-when-empty --max-time=55 --tries=3 --sleep=1 >> /dev/null 2>&1
 ```
 
 ## Example with Real Values
@@ -207,7 +257,7 @@ Based on your setup (username: `osamwgct`, project in `backend.osamasafdar.com`)
 
 **Queue Worker:**
 ```bash
-/usr/local/bin/php /home/osamwgct/backend.osamasafdar.com/artisan queue:work --stop-when-empty >> /dev/null 2>&1
+flock -n /home/osamwgct/backend.bookboll.com/storage/queue-worker.lock /usr/local/bin/php /home/osamwgct/backend.bookboll.com/artisan queue:work --stop-when-empty --max-time=55 --tries=3 --sleep=1 >> /dev/null 2>&1
 ```
 
 **Note:** If your Laravel project is inside a subdirectory within `backend.osamasafdar.com`, add that subdirectory to the path. For example:
