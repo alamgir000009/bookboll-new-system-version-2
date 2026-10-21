@@ -28,6 +28,12 @@ class BusinessController extends Controller
 
     /* Moving an account into a business: options, reviewed preview, commit. */
 
+    /** Assignable accounts for a business that does not exist yet (Add business form). */
+    public function assignmentCandidates(Request $request)
+    {
+        return $this->assignments->newBusinessCandidates($request);
+    }
+
     public function assignmentOptions(Request $request, $id)
     {
         return $this->assignments->options($request, (int) $id);

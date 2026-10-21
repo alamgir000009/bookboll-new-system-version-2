@@ -422,15 +422,58 @@ class BusinessAssignmentService
     /* ─────────────────────────────── shared ──────────────────────────────── */
 
     /** @return array{0: ?Business, 1: ?User, 2: mixed} */
-    protected function resolve(Request $request, int $businessId): array
+    /**
+     * The actor half of resolve(), on its own.
+     *
+     * `candidates()` is scoped by the ACTOR, not the business, so the Add
+     * business form can offer the same list before a business exists. Sharing
+     * this check is the point: a second copy would be a second answer to "who
+     * may move accounts", and the two would drift.
+     *
+     * @return array{0: ?User, 1: ?\Illuminate\Http\JsonResponse}
+     */
+    protected function resolveActor(Request $request): array
     {
         $actor = $request->user();
 
         if (! $actor || AccessScope::isProviderScoped($actor)) {
-            return [null, null, sendError('You do not have access to business administration.', [], 403)];
+            return [null, sendError('You do not have access to business administration.', [], 403)];
         }
         if (! AccessScope::isGlobal($actor) && ! $actor->hasAnyCapability(['manage_team'])) {
-            return [null, null, sendError('You do not have access to business administration.', [], 403)];
+            return [null, sendError('You do not have access to business administration.', [], 403)];
+        }
+
+        return [$actor, null];
+    }
+
+    /**
+     * Accounts assignable to a business that does not exist yet.
+     *
+     * The Add business form offers an owner at creation time, but creation
+     * itself still refuses one (BusinessIdentityService::store) — the account is
+     * attached straight afterwards through preview + assign, so the move is
+     * audited, reviewable and reversible in exactly one place. This endpoint
+     * only fills the picker.
+     */
+    public function newBusinessCandidates(Request $request)
+    {
+        [$actor, $error] = $this->resolveActor($request);
+        if ($error) {
+            return $error;
+        }
+
+        return sendSuccess('Assignment candidates', [
+            'contract_version' => self::CONTRACT_VERSION,
+            'roles'            => array_values(BusinessMembership::ASSIGNABLE_ROLES),
+            'candidates'       => $this->candidates($actor),
+        ]);
+    }
+
+    protected function resolve(Request $request, int $businessId): array
+    {
+        [$actor, $error] = $this->resolveActor($request);
+        if ($error) {
+            return [null, null, $error];
         }
 
         $business = Business::find($businessId);

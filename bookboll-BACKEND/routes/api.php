@@ -474,6 +474,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
             // Moving an account into a business is reviewed, not a single click:
             // the move strips the account's platform access, so an admin sees
             // exactly what goes before anything happens.
+            // Literal path, declared before the {id} routes so "assignment-candidates"
+            // is never read as a business id.
+            Route::get('businesses/assignment-candidates', [BusinessController::class, 'assignmentCandidates'])->name('businesses.assignment-candidates');
             Route::get('businesses/{id}/assignment-options', [BusinessController::class, 'assignmentOptions'])->name('businesses.assignment-options');
             Route::post('businesses/{id}/assignment-preview', [BusinessController::class, 'assignmentPreview'])->name('businesses.assignment-preview');
             Route::post('businesses/{id}/assignments', [BusinessController::class, 'assignmentStore'])->name('businesses.assignments');

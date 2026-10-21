@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Support\AdminAlerts;
 
 use App\Models\Business;
+use App\Models\BusinessMembership;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -324,7 +325,9 @@ class BusinessService
         $countryId        = $request->country_id;
         $recordsPerPage   = (int) ($request->query('records_per_page') ?? 50);
 
-        $query = $this->business::with(['owner'])->latest()
+        // Memberships are the authoritative team record (Business::ownerMembership
+        // says so), so they are loaded with the page rather than read per row.
+        $query = $this->business::with(['owner', 'activeMemberships.user'])->latest()
             ->when($search, function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'LIKE', "%{$search}%")
@@ -356,10 +359,29 @@ class BusinessService
         $paginated = $query->paginate($recordsPerPage);
 
         $paginated->getCollection()->transform(function (Business $b) {
-            $owner = $b->owner;
-            $staffCount = $owner
-                ? $this->user::where('owner_user_id', $owner->id)->count()
-                : 0;
+            /*
+             * Who runs this business, and how many people are in it.
+             *
+             * Both were read from `businesses.owner_id` alone, which the
+             * assignment flow never sets — it creates a BusinessMembership and
+             * clears the account's platform role. So a business whose owner had
+             * just been assigned still reported "Owner not assigned" and "0 team
+             * members", and the person who had been moved into it vanished from
+             * the page entirely. Resolve from the membership first, and keep
+             * owner_id as the fallback for businesses that predate memberships.
+             */
+            $managing = $b->activeMemberships
+                ->first(fn (BusinessMembership $m) => in_array($m->role, BusinessMembership::MANAGING_ROLES, true));
+            $owner = $managing?->user ?: $b->owner;
+
+            // Union, not either/or: a legacy business counts staff by
+            // users.owner_user_id, a current one by its memberships, and one
+            // that has been through both must not count anybody twice.
+            $memberIds = $b->activeMemberships->pluck('user_id');
+            $legacyIds = $b->owner_id
+                ? $this->user::where('owner_user_id', $b->owner_id)->pluck('id')
+                : collect();
+            $staffCount = $memberIds->merge($legacyIds)->unique()->count();
 
             return [
                 'id'              => $b->id,
@@ -370,7 +392,7 @@ class BusinessService
                 'status'          => $b->status,
                 'business_status' => $b->status,
                 'country_id'      => $b->country_id,
-                'owner_user_id'   => $b->owner_id,
+                'owner_user_id'   => $owner?->id,
                 'email'           => $owner?->email,
                 'full_name'       => $owner?->name,
                 'phone'           => $owner?->phone,

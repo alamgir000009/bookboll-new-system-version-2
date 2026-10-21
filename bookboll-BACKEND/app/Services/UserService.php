@@ -827,10 +827,24 @@ class UserService
         $legacyStaff       = ['senior_employee', 'junior_employee', 'guard'];
 
         $users = $this->userModel->latest()
-            ->with(['venues:id,name', 'ownedBusiness'])
+            ->with(['venues:id,name', 'ownedBusiness', 'activeBusinessMembership.business'])
             ->when($scope === 'provider_staff', function ($query) use ($providerTeamRoles, $ownerUserId) {
-                $query->whereNotNull('owner_user_id')
-                    ->whereHas('roles', fn ($q) => $q->whereIn('name', $providerTeamRoles));
+                /*
+                 * Two ways to belong to a business, and an account moved by the
+                 * assignment flow has only the second.
+                 *
+                 * That move clears every platform role and leaves owner_user_id
+                 * null, so requiring BOTH a role and an owner put the account in
+                 * no scope at all: absent from provider_staff, and excluded from
+                 * `platform` too, which needs a role. The person an admin had
+                 * just assigned simply vanished from the Team page.
+                 */
+                $query->where(function ($q) use ($providerTeamRoles) {
+                    $q->where(fn ($legacy) => $legacy
+                        ->whereNotNull('owner_user_id')
+                        ->whereHas('roles', fn ($r) => $r->whereIn('name', $providerTeamRoles)))
+                        ->orWhereHas('businessMemberships', fn ($m) => $m->where('status', \App\Models\BusinessMembership::STATUS_ACTIVE));
+                });
                 if ($ownerUserId) {
                     $query->where('owner_user_id', $ownerUserId);
                 }
@@ -910,7 +924,7 @@ class UserService
     /** Shape expected by the Vue Team page (maps Laravel user → admin_users-like row). */
     public function formatTeamUser(User $user): array
     {
-        $user->loadMissing(['ownedBusiness', 'venues']);
+        $user->loadMissing(['ownedBusiness', 'venues', 'activeBusinessMembership.business']);
         $roles = $user->getRoleNames()->values()->all();
         $role  = $roles[0] ?? null;
 
@@ -921,7 +935,16 @@ class UserService
             }
         }
 
-        $business = $user->ownedBusiness;
+        /*
+         * An assigned account belongs to its business through a membership, not
+         * through `businesses.owner_id` — and the move clears every platform
+         * role, so `$role` above is null for them. Read both here, or the person
+         * the admin just moved into a business shows up with no role and no
+         * business and the page cannot group them.
+         */
+        $membership = $user->activeBusinessMembership;
+        $business   = $user->ownedBusiness ?: $membership?->business;
+        $role       = $role ?: $membership?->role;
 
         return [
             'id'                    => $user->id,

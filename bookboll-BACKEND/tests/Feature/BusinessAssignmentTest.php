@@ -241,3 +241,146 @@ it('refuses venues that do not belong to the business', function () {
 
     expect(implode(' ', $data['blockers']))->toContain('do not belong to this business');
 });
+
+/*
+ * Choosing an owner on the Add business form.
+ *
+ * The form offers an existing account at creation time, but creation itself
+ * still refuses one — BusinessIdentityService::store accepts `owner_user_id`
+ * only as null. The account is attached immediately afterwards through the
+ * reviewed flow above, so there is exactly one audited way into a business.
+ * This endpoint only fills the picker, before any business exists.
+ */
+it('offers the same candidates for a business that does not exist yet', function () {
+    $actor = admin();
+    $free  = User::factory()->create(['status' => User::ACTIVE, 'name' => 'Free Agent']);
+
+    $res = $this->actingAs($actor)->getJson('/api/admin/businesses/assignment-candidates')->assertOk();
+
+    expect($res->json('data.contract_version'))->toBe(1)
+        ->and($res->json('data.roles'))->not->toContain('owner')
+        ->and($res->json('data.roles'))->toContain('provider_admin');
+
+    $ids = collect($res->json('data.candidates'))->pluck('id')->all();
+    expect($ids)->toContain((string) $free->id)
+        ->and($ids)->not->toContain((string) $actor->id)
+        ->and(array_keys($res->json('data.candidates.0')))->toBe(['id', 'name', 'email']);
+});
+
+it('leaves out accounts that already belong to a business', function () {
+    $actor = admin();
+    $b     = ownedBusiness();
+    $taken = User::factory()->create(['status' => User::ACTIVE]);
+    BusinessMembership::create([
+        'business_id' => $b->id, 'user_id' => $taken->id,
+        'role' => 'staff', 'status' => BusinessMembership::STATUS_ACTIVE,
+    ]);
+    $inactive = User::factory()->create(['status' => User::INACTIVE]);
+
+    $ids = collect($this->actingAs($actor)->getJson('/api/admin/businesses/assignment-candidates')
+        ->assertOk()->json('data.candidates'))->pluck('id')->all();
+
+    expect($ids)->not->toContain((string) $taken->id)
+        ->and($ids)->not->toContain((string) $inactive->id);
+});
+
+it('refuses the candidate list to a provider-scoped account', function () {
+    $provider = User::factory()->create(['status' => User::ACTIVE]);
+    $provider->assignRole('provider_admin');
+
+    $this->actingAs($provider)->getJson('/api/admin/businesses/assignment-candidates')->assertStatus(403);
+});
+
+it('still refuses an owner at creation, so the move stays audited', function () {
+    $actor = admin();
+    $free  = User::factory()->create(['status' => User::ACTIVE]);
+
+    $this->actingAs($actor)->postJson('/api/admin/businesses', [
+        'business_name'   => 'Owned At Birth',
+        'username'        => 'owned-at-birth',
+        'owner_user_id'   => $free->id,
+        'idempotency_key' => 'test-'.uniqid(),
+    ])->assertStatus(422)->assertJsonValidationErrors(['owner_user_id']);
+
+    expect(Business::where('username', 'owned-at-birth')->exists())->toBeFalse();
+});
+
+/*
+ * An assigned owner has to be VISIBLE.
+ *
+ * The move writes a BusinessMembership and clears the account's platform role;
+ * it deliberately does not touch `businesses.owner_id`, because the owner
+ * membership is the authoritative record. But the Team page read owner and
+ * staff count from `owner_id` alone, so a business whose owner had just been
+ * assigned still said "Owner not assigned · 0 team members", and the person
+ * moved into it disappeared from the page — making a successful move look like
+ * a failed one, twice over.
+ */
+it('shows an assigned manager as the owner of the business', function () {
+    $actor  = admin();
+    $b      = ownedBusiness();
+    $target = User::factory()->create(['status' => User::ACTIVE, 'name' => 'New Owner']);
+
+    $preview = previewMove($actor, $b, $target, ['role' => 'provider_admin']);
+    $this->actingAs($actor)->postJson("/api/admin/businesses/{$b->id}/assignments", [
+        'preview_token' => $preview['preview_token'], 'idempotency_key' => 'vis-'.uniqid(),
+    ])->assertOk();
+
+    // owner_id is still null — the membership is what makes them the owner.
+    expect(Business::find($b->id)->owner_id)->toBeNull();
+
+    $row = collect($this->actingAs($actor)->getJson('/api/admin/businesses')->assertOk()
+        ->json('data.businesses.data'))->firstWhere('id', $b->id);
+
+    expect($row['owner_user_id'])->toBe($target->id)
+        ->and($row['full_name'])->toBe('New Owner')
+        ->and($row['email'])->toBe($target->email)
+        ->and($row['staff_count'])->toBe(1);
+});
+
+it('lists the moved account with its business and business role', function () {
+    $actor  = admin();
+    $b      = ownedBusiness();
+    $target = User::factory()->create(['status' => User::ACTIVE]);
+    $target->assignRole('platform_staff');
+
+    $preview = previewMove($actor, $b, $target->fresh(), ['role' => 'staff']);
+    $this->actingAs($actor)->postJson("/api/admin/businesses/{$b->id}/assignments", [
+        'preview_token' => $preview['preview_token'], 'idempotency_key' => 'vis2-'.uniqid(),
+    ])->assertOk();
+
+    $users = collect($this->actingAs($actor)->getJson('/api/admin/users?scope=provider_staff&records_per_page=200')
+        ->assertOk()->json('data.users.data') ?? []);
+    $row = $users->firstWhere('id', $target->id);
+
+    // The platform role is gone, so without reading the membership this row had
+    // no role and no business and could not be grouped under anything.
+    expect($row)->not->toBeNull()
+        ->and($row['business_id'])->toBe($b->id)
+        ->and($row['role'])->toBe('staff');
+});
+
+it('counts a legacy owner_user_id team and a membership team without double counting', function () {
+    $actor = admin();
+    $legacyOwner = User::factory()->create(['status' => User::ACTIVE]);
+    $legacyOwner->assignRole('provider_admin');
+    $b = Business::create([
+        'owner_id' => $legacyOwner->id, 'name' => 'Legacy Co', 'username' => 'legacy-'.uniqid(),
+        'status' => Business::STATUS_ACTIVE, 'plan' => 'free',
+    ]);
+    // One staff member the old way…
+    User::factory()->create(['status' => User::ACTIVE, 'owner_user_id' => $legacyOwner->id]);
+    // …and the same person also holding a membership must count once.
+    $both = User::factory()->create(['status' => User::ACTIVE, 'owner_user_id' => $legacyOwner->id]);
+    BusinessMembership::create([
+        'business_id' => $b->id, 'user_id' => $both->id,
+        'role' => 'staff', 'status' => BusinessMembership::STATUS_ACTIVE,
+    ]);
+
+    $row = collect($this->actingAs($actor)->getJson('/api/admin/businesses')->assertOk()
+        ->json('data.businesses.data'))->firstWhere('id', $b->id);
+
+    expect($row['staff_count'])->toBe(2)
+        // owner_id still resolves the owner when there is no managing membership.
+        ->and($row['owner_user_id'])->toBe($legacyOwner->id);
+});
