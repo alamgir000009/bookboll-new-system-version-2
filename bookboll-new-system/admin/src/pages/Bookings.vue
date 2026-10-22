@@ -465,7 +465,6 @@ async function exportCSV(useFilters) {
               placeholder="All statuses"
               :options="[
                 { value: 'confirmed',    label: 'Confirmed' },
-                { value: 'completed',    label: 'Completed' },
                 { value: 'cancelled',    label: 'Cancelled' },
                 { value: 'no_show',      label: 'No Show' },
                 { value: 'pending',      label: 'Pending' },
