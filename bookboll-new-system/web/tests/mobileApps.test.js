@@ -27,13 +27,30 @@ test('Android, iPhone, iPad desktop mode and real desktops select the right stor
   assert.equal(mobilePlatform({}), 'desktop')
 })
 
+// A window whose matchMedia answers only the queries listed, like a browser.
+const mediaWin = (...matching) => ({ matchMedia: q => ({ matches: matching.includes(q) }) })
+
 test('installed web apps and recognized native app shells do not get installation prompts', () => {
   assert.equal(insideInstalledApp({}, { standalone: true }), true)
-  assert.equal(insideInstalledApp({ matchMedia: () => ({ matches: true }) }), true)
+  assert.equal(insideInstalledApp(mediaWin('(display-mode: standalone)')), true)
   assert.equal(insideInstalledApp({ ReactNativeWebView: {} }), true)
   assert.equal(insideInstalledApp({ Capacitor: { isNativePlatform: () => true } }), true)
   assert.equal(insideInstalledApp({}, { userAgent: 'BookbollAdminApp/1.0' }), true)
   assert.equal(insideInstalledApp({}, {}), false)
+})
+
+test('an ordinary browser in fullscreen is not an installed app', () => {
+  // `(display-mode: fullscreen)` matches when the USER presses F11 or
+  // ctrl-cmd-F, not only when a PWA was launched that way. Reading it as an
+  // installed shell hid the card from anyone working fullscreen — with no
+  // visible reason, since every other condition looked correct.
+  assert.equal(insideInstalledApp(mediaWin('(display-mode: fullscreen)')), false)
+
+  // A PWA genuinely launched fullscreen still reports standalone alongside it.
+  assert.equal(
+    insideInstalledApp(mediaWin('(display-mode: fullscreen)', '(display-mode: standalone)')),
+    true
+  )
 })
 
 test('customer prompts only appear at signed-in marketplace booking moments', () => {

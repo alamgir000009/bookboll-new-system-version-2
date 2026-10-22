@@ -19,8 +19,13 @@ export function mobilePlatform(nav = {}) {
 }
 
 export function insideInstalledApp(win = {}, nav = {}) {
+  // Deliberately NOT `(display-mode: fullscreen)`. That media query also matches
+  // an ordinary browser the user put into fullscreen (F11 / ctrl-cmd-F), which
+  // is not an installed app — and suppressing the card there hides it from
+  // anyone working fullscreen, with no way to tell why. An installed PWA
+  // registers `standalone`; a native wrapper announces itself below.
   return !!(nav.standalone || win.matchMedia?.('(display-mode: standalone)').matches ||
-    win.matchMedia?.('(display-mode: fullscreen)').matches || win.ReactNativeWebView ||
+    win.ReactNativeWebView ||
     win.Capacitor?.isNativePlatform?.() || /BookbollApp|BookbollAdminApp/i.test(nav.userAgent || ''))
 }
 
