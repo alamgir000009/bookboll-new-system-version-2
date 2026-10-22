@@ -700,7 +700,7 @@ async function applyScheduleToSelected() {
 
 <template>
   <teleport to="body">
-  <VenueTransfer v-if="open && transferOpen" :venue-id="editingId" :venue-name="form.name" @close="transferOpen=false" @transferred="transferred"/>
+  <VenueTransfer v-if="open && transferOpen" :venue-id="editingId" :venue-name="form.name" :current-owner="ownerLabel" @close="transferOpen=false" @transferred="transferred"/>
   <div v-if="open" class="bb-drawer-backdrop" style="z-index:3200" @click.self="close">
     <div ref="dialogEl" class="bb-drawer creation-drawer" :style="adminBrandVars" role="dialog" aria-modal="true" aria-labelledby="venue-editor-title" @keydown="editorKeydown" @keydown.esc.stop="close" @input="markDirty" @change="markDirty">
       <div class="bb-drawer-header">
