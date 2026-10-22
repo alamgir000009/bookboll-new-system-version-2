@@ -44,7 +44,17 @@ onUnmounted(() => { document.removeEventListener('pointerdown', outside); docume
       <span class="ms-label">{{ displayLabel }}</span><ChevronDown :size="16" />
     </button>
     <Teleport to="body">
-      <div v-if="open" :id="uid" ref="panel" v-dialog="close" aria-label="Filter options" class="ms-dropdown" :style="[adminBrandVars, dropdownStyle]" @click.stop @mousedown.stop @keydown.esc.stop.prevent="close()">
+      <!--
+        Deliberately NOT v-dialog. That directive is for modals: it sets
+        `document.body.style.overflow = 'hidden'`, marks the element
+        aria-modal and traps Tab inside it. On a filter dropdown that locked
+        the whole page while the menu was open — the page could not be
+        scrolled, and releasing the lock jumped it back to the top. A dropdown
+        is a disclosure, not a modal. Everything it actually needs is already
+        here: Escape below, outside pointerdown/focusin above, and close()
+        returning focus to the trigger.
+      -->
+      <div v-if="open" :id="uid" ref="panel" role="group" aria-label="Filter options" class="ms-dropdown" :style="[adminBrandVars, dropdownStyle]" @click.stop @mousedown.stop @keydown.esc.stop.prevent="close()">
         <div class="ms-search"><Search :size="16" /><input ref="searchInput" v-model="query" type="search" :aria-label="'Search ' + placeholder.toLowerCase()" placeholder="Search options…" /></div>
         <div class="ms-options">
           <label v-for="opt in matches" :key="opt.value" class="ms-option" :class="{ checked: selected.includes(opt.value) }"><input type="checkbox" :checked="selected.includes(opt.value)" @change="toggle(opt.value)" /><span>{{ opt.label }}</span></label>

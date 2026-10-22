@@ -33,13 +33,14 @@ html.adm-shell :is(.nbm-customer-avatar, .bdm-avatar) { background: var(--primar
 html.adm-shell :is(.bb-drawer-subtitle, .nbm-subtitle) { color: var(--text-muted); }
 
 /* Filters stay recognizable across tables, with a readable two-column layout. */
-html.adm-shell .lf-panel { padding: 18px; width: min(600px, calc(100vw - 48px)); max-height: min(680px, calc(100dvh - 170px)); overflow-y: auto; overscroll-behavior: contain; }
-html.adm-shell .lf-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-html.adm-shell .lf-panel-head strong { font-size: 16px; }
+/* The panel is in flow now: it has no width of its own, does not scroll
+   inside itself, and is padded per-section by FilterBar.vue. */
+html.adm-shell .lf-panel-head { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+
 html.adm-shell .lf-panel-head .btn-icon { display: grid; place-items: center; min-width: 36px; min-height: 36px; background: var(--bg); border-radius: 8px; }
 html.adm-shell .lf-panel :is(label, .lf-label) { text-transform: none; letter-spacing: 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
 html.adm-shell .lf-panel :is(.bk-filter-grid,.pay-filter-grid,.dash-filter-grid,.cu-filter-grid,.aq-filter-grid) { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
-html.adm-shell .lf-panel-foot { position: sticky; bottom: -18px; background: var(--surface); margin: 0 -18px -18px; padding: 14px 18px; z-index: 2; }
+/* Nothing to stick to: the footer scrolls with the page like the rest of it. */
 html.adm-shell .lf-panel .filter-row-chips { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
 html.adm-shell .lf-panel .filter-group { min-width: 0; width: 100%; }
 html.adm-shell .lf-panel .filter-row-range { display: grid; grid-template-columns: minmax(0,1fr); gap: 16px; }
@@ -94,8 +95,8 @@ html.adm-shell .pg-section-sub { line-height: 1.6; }
   html.adm-shell :is(.modal-body,.nbm-body) { padding: 18px; }
   html.adm-shell :is(.modal-footer,.modal-foot,.nbm-footer) { padding: 14px 18px max(14px,env(safe-area-inset-bottom)); }
   html.adm-shell :is(.modal-title,.bb-drawer-title,.nbm-title) { font-size: 18px; }
-  html.adm-shell .lf-panel { position: fixed; inset: auto 12px 12px; width: auto; height: auto; max-height: calc(100dvh - 92px); padding: 18px; z-index: 1050; }
-  html.adm-shell .lf-panel > * { flex-shrink: 0; }
+  /* No bottom sheet: on a phone the panel is the same in-flow block, which is
+     one fewer layer to dismiss and cannot be clipped by the shell's overflow. */
   html.adm-shell .lf-panel .lf-selects { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
   html.adm-shell .lf-panel select { min-height: 44px; font-size: 16px; padding: 10px 12px; }
   html.adm-shell .lf-panel-head .btn-icon, html.adm-shell .lf-panel-foot .btn { min-width: 44px; min-height: 44px; }
