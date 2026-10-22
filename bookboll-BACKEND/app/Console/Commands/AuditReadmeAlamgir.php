@@ -370,6 +370,58 @@ class AuditReadmeAlamgir extends Command
             ),
             'it was never Bookboll\'s money'
         );
+        $this->check(
+            'Reconciliation: provider cash is NAMED as the provider\'s',
+            (function () {
+                // The payments dashboard reports `recipient IS NULL` as money
+                // Bookboll received — right while the venue was Bookboll's,
+                // wrong the moment it is a provider's. Leaving the label blank
+                // would report the provider's arrival cash as platform revenue
+                // on the stats card for every venue that ever transfers.
+                $src = $this->code('Services/VenueTransferService.php');
+
+                return str_contains($src, "'recipient'               => PaymentRecipient::forBusiness(\$destination)")
+                    && \App\Support\PaymentRecipient::forBusiness(null) === '@provider'
+                    && \App\Support\PaymentRecipient::forBusiness(
+                        new \App\Models\Business(['username' => 'riverside'])
+                    ) === '@riverside'
+                    // Never null, or the row reports as Bookboll's again.
+                    && \App\Support\PaymentRecipient::forBusiness(
+                        new \App\Models\Business(['username' => '', 'name' => ''])
+                    ) !== '';
+            })(),
+            'a blank recipient is counted as Bookboll revenue, not as neutral'
+        );
+        $this->check(
+            'Transfer: the ownership change leaves an activity trail',
+            (function () {
+                // Venue logged owner_user_id but not business_id. A transfer to
+                // an OWNERLESS business leaves owner_user_id null on both sides,
+                // so nothing logged was dirty and logOnlyDirty() +
+                // dontSubmitEmptyLogs() wrote no row at all for the move.
+                $venue = new \App\Models\Venue;
+                $payment = new \App\Models\Payment;
+                $logged = function ($model) {
+                    $m = new \ReflectionMethod($model, 'activityLogAttributes');
+                    $m->setAccessible(true);
+
+                    return $m->invoke($model);
+                };
+
+                $v = $logged($venue);
+                $p = $logged($payment);
+
+                return config('activitylog.enabled')
+                    && in_array('business_id', $v, true)
+                    && in_array('operator_type', $v, true)
+                    // And the reconciliation's own columns, so a payment's
+                    // history does not stop at "it became paid somehow".
+                    && in_array('collected_by_business_id', $p, true)
+                    && in_array('collection_method', $p, true)
+                    && in_array('reconciliation_batch_id', $p, true);
+            })(),
+            'an ownerless destination used to produce no activity row at all'
+        );
 
         // 12. Analytics aggregates (readmeAlamgir "Activity dashboard")
         $this->check(
@@ -912,19 +964,26 @@ class AuditReadmeAlamgir extends Command
             'one definition, asked two ways, pinned by a test'
         );
         $this->check(
-            'Only the business may change how its own site charges',
+            'Full online payment stays the business\'s own choice',
             (function () {
                 $src = $this->code('Services/OwnSiteReviewService.php');
 
                 // Platform staff see every business's listings here, because
-                // AccessScope leaves them unscoped. Applying a method would
-                // decide, for dozens of businesses at once, to start charging
-                // their customers a deposit.
-                return str_contains($src, 'protected function mayApply(')
-                    && str_contains($src, 'if (! $this->mayApply($user)) {')
-                    && str_contains($src, "'can_apply' => \$this->mayApply(\$user)");
+                // AccessScope leaves them unscoped — so the permission is per
+                // METHOD, not all-or-nothing. A platform admin may restore a
+                // dead channel (a deposit IS Bookboll's own fee, and the venue
+                // still collects the same amount on arrival) or take the
+                // listing off the provider's site. It may NOT switch one to
+                // full online payment, which settles into that business's own
+                // wallet and is theirs to opt into.
+                return str_contains($src, 'protected function allowedMethods(')
+                    && str_contains($src, "? OwnSiteReview::RESOLUTIONS")
+                    && str_contains($src, ": ['deposit', 'hide']")
+                    // Enforced on the write path, not only advertised on read.
+                    && str_contains($src, 'if (! in_array($method, $this->allowedMethods($user), true)) {')
+                    && str_contains($src, "'allowed_methods' => \$this->allowedMethods(\$user)");
             })(),
-            'a platform admin is not the owner of those listings'
+            'a platform admin must not move another business onto its own wallet'
         );
         $this->check(
             'A bulk apply reports what it refused',

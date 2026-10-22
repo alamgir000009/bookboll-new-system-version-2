@@ -10,6 +10,7 @@ use App\Models\VenueOperatingAgreement;
 use App\Support\AccessScope;
 use App\Support\LegacyReconciliation as Legacy;
 use App\Support\Money;
+use App\Support\PaymentRecipient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -447,9 +448,16 @@ class VenueTransferService
                     'status' => \PaymentStatus::PAID,
                     'method' => \PaymentMethod::CASH,
                     // Who actually took it, said explicitly rather than implied
-                    // by a recipient label.
+                    // by a recipient label. This id — not the label below — is
+                    // what stops a second reconciliation claiming the same row.
                     'collection_method'       => Legacy::KIND_PROVIDER_CASH,
                     'collected_by_business_id' => $destination->id,
+                    // And said in the label too, because the payments dashboard
+                    // reads `recipient IS NULL` as Bookboll's own money. Correct
+                    // while the venue was Bookboll's; wrong from this moment on,
+                    // so leaving it blank would report the provider's cash as
+                    // platform revenue for every venue that ever transfers.
+                    'recipient'               => PaymentRecipient::forBusiness($destination),
                     'reconciliation_batch_id' => $batch,
                     'paid_at'                 => $p->paid_at ?: now(),
                 ])->save();

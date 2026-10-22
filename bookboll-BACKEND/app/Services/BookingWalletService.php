@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\Venue;
 use App\Models\WalletTransaction;
 use App\Models\WithdrawalRequest;
+use App\Support\PaymentRecipient;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Nnjeim\World\Models\City;
@@ -332,9 +333,9 @@ class BookingWalletService
 
         $owner = User::find($ownerUserId);
         $business = $owner?->ownedBusiness;
-        $providerRecipient = $business?->username
-            ? '@' . $business->username
-            : ($business?->name ?: ($owner?->name ?: '@provider'));
+        // One authority for the label, shared with the venue-transfer
+        // reconciliation so the same business is not spelled two ways.
+        $providerRecipient = PaymentRecipient::forBusiness($business, $owner);
 
         $countryId = ($args['countryId'] ?? null) ?: $owner?->country_id;
 

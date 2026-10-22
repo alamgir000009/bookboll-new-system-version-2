@@ -198,6 +198,12 @@ it('reconciles without creating any receipt, payable, wallet credit or payout', 
         ->and((int) $arrival->collected_by_business_id)->toBe($d->id)
         ->and($arrival->reconciliation_batch_id)->not->toBeNull();
 
+    // And NAMED as theirs. PaymentService reports `recipient IS NULL` as money
+    // Bookboll received, so a blank label here would count the provider's cash
+    // as platform revenue on the payments stats card — for every transfer.
+    expect($arrival->recipient)->toBe('@'.$d->username)
+        ->and($arrival->recipient)->not->toBe('@bookboll');
+
     // THE point of the whole exercise: no new money anywhere.
     expect(Payment::count())->toBe($paymentsBefore)
         ->and(Payment::where('type', 'booking_earning')->count())->toBe(0)
@@ -310,4 +316,68 @@ it('keeps providers out of venue transfers entirely', function () {
 
     $this->actingAs($p->fresh())
         ->getJson('/api/admin/venues/'.legacyVenue()->id.'/transfer-options')->assertStatus(403);
+});
+
+// ── The trail a later investigation reads ──────────────────────────────────
+
+it('logs the ownership change even when the destination has no owner user', function () {
+    // The hole this closes: Venue logged owner_user_id but not business_id. An
+    // ownerless destination leaves owner_user_id null on BOTH sides, so nothing
+    // logged was dirty — and logOnlyDirty() + dontSubmitEmptyLogs() wrote no
+    // activity row at all for the one change that matters most.
+    $a = transferAdmin();
+    $v = legacyVenue();
+    $d = destinationBusiness();
+    expect($d->owner_id)->toBeNull();
+    legacyBooking($v);
+
+    $token = previewTransfer($a, $v, $d)->json('data.preview_token');
+    $this->actingAs($a)->postJson("/api/admin/venues/{$v->id}/transfers", [
+        'preview_token' => $token, 'idempotency_key' => 'audit-1',
+        'acknowledge_legacy_cash' => true,
+    ])->assertOk();
+
+    $log = DB::table('activity_log')
+        ->where('subject_type', Venue::class)->where('subject_id', $v->id)
+        ->latest('id')->first();
+
+    expect($log)->not->toBeNull('a venue transfer must leave an activity row');
+
+    $props = json_decode($log->properties, true);
+    expect($props['attributes']['business_id'])->toBe($d->id)
+        ->and($props['old']['business_id'])->toBeNull()
+        ->and($props['attributes']['operator_type'])->toBe('provider')
+        // Who did it, not just what changed.
+        ->and((int) $log->causer_id)->toBe($a->id);
+});
+
+it('logs each reconciled payment with who collected it', function () {
+    // These writes go through Eloquent precisely so this happens. A bulk
+    // DB::table(...)->update() would change the same columns and record none
+    // of it — the trail would stop at "the balance became paid somehow".
+    $a = transferAdmin();
+    $v = legacyVenue();
+    $d = destinationBusiness();
+    legacyBooking($v);
+
+    $token = previewTransfer($a, $v, $d)->json('data.preview_token');
+    $this->actingAs($a)->postJson("/api/admin/venues/{$v->id}/transfers", [
+        'preview_token' => $token, 'idempotency_key' => 'audit-2',
+        'acknowledge_legacy_cash' => true,
+    ])->assertOk();
+
+    $arrival = Payment::where('type', 'remaining')->first();
+    $log = DB::table('activity_log')
+        ->where('subject_type', Payment::class)->where('subject_id', $arrival->id)
+        ->latest('id')->first();
+
+    expect($log)->not->toBeNull('a reconciled payment must leave an activity row');
+
+    $props = json_decode($log->properties, true);
+    expect($props['attributes']['collected_by_business_id'])->toBe($d->id)
+        ->and($props['attributes']['collection_method'])->toBe('provider_direct_cash')
+        ->and($props['attributes']['recipient'])->toBe('@'.$d->username)
+        ->and($props['attributes']['status'])->toBe('paid')
+        ->and($props['old']['status'])->toBe('pending')
+        ->and($props['attributes']['reconciliation_batch_id'])->not->toBeNull();
 });

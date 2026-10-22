@@ -169,6 +169,8 @@ class Venue extends Model
             'eligibility_status',
             'admin_note',
             'owner_user_id',
+            'business_id',
+            'operator_type',
             'latitude',
             'longitude',
             'timezone_override',

@@ -95,6 +95,9 @@ class Payment extends Model
             'paid_at',
             'marked_paid_by',
             'payment_intent_id',
+            'collection_method',
+            'collected_by_business_id',
+            'reconciliation_batch_id',
         ];
     }
 
