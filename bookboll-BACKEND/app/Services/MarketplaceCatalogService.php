@@ -27,6 +27,12 @@ use Nnjeim\World\Models\Country;
  */
 class MarketplaceCatalogService
 {
+    /** Resolved country currency codes, keyed by country id — see venueCurrency(). */
+    protected array $countryCurrencies = [];
+
+    /** The platform default, read at most once per request. */
+    protected ?string $platformCurrency = null;
+
     public function listings(Request $request)
     {
         $scope = $this->resolveScope($request);
@@ -484,7 +490,47 @@ class MarketplaceCatalogService
             'whiteLabel' => $whiteLabel,
             'ownerId'    => $ownerId,
             'cityIds'    => $cityIds,
+            'countryId'  => $this->resolveCountryId($request),
         ];
+    }
+
+    /**
+     * The country the visitor is browsing from, as a `countries.id`.
+     *
+     * The storefront sends this on every catalogue call (`country_iso`, and
+     * `country_id` once its picker has resolved one), but nothing used to read
+     * it for filtering — only the city did any narrowing. A visitor whose city
+     * did not resolve (nothing picked yet, a stale city_id, GPS landing on a
+     * town the world table does not carry) therefore got the ENTIRE catalogue:
+     * someone browsing from Lahore was shown Qatar venues, priced in PKR
+     * because the storefront labels prices with the visitor's own currency.
+     *
+     * Only a value that resolves to a real row narrows anything. An ISO the
+     * world table does not carry is treated as no geography at all — the same
+     * answer a crawler gets — rather than as an empty market, because a visitor
+     * is better served by the full catalogue than by a blank page.
+     */
+    protected function resolveCountryId(Request $request): ?int
+    {
+        $raw = $request->input('country_id');
+
+        if ($raw !== null && $raw !== '' && ctype_digit((string) $raw)) {
+            $id = (int) $raw;
+            if (Country::where('id', $id)->exists()) {
+                return $id;
+            }
+        }
+
+        $iso = strtoupper(trim((string) $request->input('country_iso', '')));
+
+        if ($iso !== '') {
+            $id = Country::where('iso2', $iso)->value('id');
+            if ($id) {
+                return (int) $id;
+            }
+        }
+
+        return null;
     }
 
     protected function resolveCityIds(Request $request): ?array
@@ -569,6 +615,16 @@ class MarketplaceCatalogService
             } else {
                 QatarMarketGeo::constrainVenues($query, $scope['cityIds']);
             }
+        } elseif (! empty($scope['countryId'])) {
+            // No city resolved, so the visitor's country is the only thing left
+            // to narrow by. Without this the catalogue answered with every
+            // country it has — Qatar venues on a Pakistani visitor's page.
+            //
+            // Deliberately the weaker of the two: a city that DID resolve wins
+            // outright and this never runs, because `country_*` follows the
+            // visitor's location picker rather than the place they asked for
+            // (opening /venues/lahore from Doha sends country_iso=QA).
+            $query->where('country_id', $scope['countryId']);
         }
 
         if ($scope['ownerId']) {
@@ -661,6 +717,48 @@ class MarketplaceCatalogService
 
     // ── Cards / payloads ─────────────────────────────────────────────────────
 
+    /**
+     * The currency a card's price is quoted in — the VENUE's, which is the only
+     * one that is true of the price next to it.
+     *
+     * Every card used to ship a bare number and let the storefront label it from
+     * the visitor's location picker. That is only ever right by coincidence: the
+     * picker says where the visitor is, not what the venue charges in, so a
+     * Qatari venue on a Pakistani visitor's screen read as PKR.
+     *
+     * Same ladder as Booking::currencyForVenue() — override, then the country's,
+     * then the platform default — so a card and the booking made from it can
+     * never disagree. Memoised per country because a catalogue response spans
+     * one or two, not one per venue.
+     */
+    protected function venueCurrency(Venue $venue): string
+    {
+        if (! blank($venue->currency_override)) {
+            return (string) $venue->currency_override;
+        }
+
+        $countryId = $venue->country_id
+            ?: ($venue->city_id ? City::whereKey($venue->city_id)->value('country_id') : null);
+
+        if ($countryId) {
+            if (! array_key_exists($countryId, $this->countryCurrencies)) {
+                $this->countryCurrencies[$countryId] = Country::with('currency')
+                    ->find($countryId)?->currency?->code ?: null;
+            }
+
+            if (! blank($this->countryCurrencies[$countryId])) {
+                return (string) $this->countryCurrencies[$countryId];
+            }
+        }
+
+        if ($this->platformCurrency === null) {
+            $this->platformCurrency = (string) (Setting::where('key', 'platform_default_currency')
+                ->value('value') ?: 'QAR');
+        }
+
+        return $this->platformCurrency;
+    }
+
     protected function listingCard(Listing $listing, Venue $venue): array
     {
         $photos = $this->photos($listing);
@@ -672,6 +770,7 @@ class MarketplaceCatalogService
             'name'       => $listing->name,
             'photo'      => $photos[0] ?? ($venuePhotos[0] ?? ''),
             'price'      => $this->startingPrice($listing),
+            'currency'   => $this->venueCurrency($venue),
             'slotMins'   => $this->slotMinutes($listing),
             'pinText'    => $venue->name ?: '',
             'mapsUrl'    => $this->mapsUrl($venue),
@@ -696,6 +795,7 @@ class MarketplaceCatalogService
             'name'       => $venue->name,
             'photo'      => $photos[0] ?? '',
             'price'      => $prices->isNotEmpty() ? $prices->min() : null,
+            'currency'   => $this->venueCurrency($venue),
             'sportsText' => $sports->implode(' · '),
             'mapsUrl'    => $this->mapsUrl($venue),
             'lat'        => $venue->latitude !== null ? (float) $venue->latitude : null,
@@ -726,6 +826,9 @@ class MarketplaceCatalogService
             'latitude'           => $venue->latitude !== null ? (float) $venue->latitude : null,
             'longitude'          => $venue->longitude !== null ? (float) $venue->longitude : null,
             'currency_override'  => $venue->currency_override,
+            // The override is nullable, so it alone left the detail pages
+            // guessing from the visitor's picker. This is the resolved answer.
+            'currency'           => $this->venueCurrency($venue),
             'timezone_override'  => $venue->timezone_override,
             'google_maps_url'    => $venue->maps_url,
             'maps_url'           => $venue->maps_url,
