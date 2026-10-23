@@ -24,14 +24,32 @@ class OneSignalService
             return false;
         }
 
-        $onesignalIds = OnesignalSubscription::whereIn('user_id', $userIds)
+        $subscriptions = OnesignalSubscription::whereIn('user_id', $userIds)
             ->active()
-            ->pluck('onesignal_id')
-            ->toArray();
+            ->get(['user_id', 'onesignal_id']);
+
+        $onesignalIds = $subscriptions->pluck('onesignal_id')->all();
 
         if (empty($onesignalIds)) {
             Log::info('OneSignal: No active subscriptions found for users', ['user_ids' => $userIds]);
             return false;
+        }
+
+        // A recipient with no registered device used to vanish without a trace:
+        // this only warned when EVERY recipient was missing, so one admin with a
+        // device was enough to make a send look completely healthy while the
+        // business owner silently received nothing. Name them instead.
+        $missing = array_values(array_diff(
+            array_map('intval', $userIds),
+            $subscriptions->pluck('user_id')->map(fn ($id) => (int) $id)->unique()->all()
+        ));
+
+        if ($missing) {
+            Log::warning('OneSignal: recipients have no active subscription — they will not be notified', [
+                'user_ids_without_subscription' => $missing,
+                'notified_user_count'           => count($userIds) - count($missing),
+                'title'                         => $title,
+            ]);
         }
 
         return $this->sendToPlayerIds($onesignalIds, $title, $message, $data);

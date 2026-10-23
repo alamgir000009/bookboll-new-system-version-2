@@ -1332,6 +1332,41 @@ if (! function_exists('applyVenueFilterToPayments')) {
     }
 }
 
+if (! function_exists('schemaHas')) {
+    /**
+     * Does this table (or column) exist on the current connection?
+     *
+     * Cached per process: these answers cannot change inside a request, and the
+     * notification helpers ask on every booking.
+     *
+     * This exists because production runs migrations on its own schedule, so the
+     * SaaS business tables (`venues.business_id`, `business_memberships`) are not
+     * guaranteed to be there yet. Selecting a column that does not exist throws,
+     * and a throw inside a notification lookup means nobody gets told anything —
+     * so every optional SaaS column is probed through here first.
+     */
+    function schemaHas(string $table, ?string $column = null): bool
+    {
+        static $cache = [];
+
+        $key = $table . ':' . ($column ?? '*');
+
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        try {
+            $cache[$key] = $column === null
+                ? \Illuminate\Support\Facades\Schema::hasTable($table)
+                : \Illuminate\Support\Facades\Schema::hasColumn($table, $column);
+        } catch (\Throwable $e) {
+            $cache[$key] = false;
+        }
+
+        return $cache[$key];
+    }
+}
+
 if (! function_exists('venueNotificationRecipientIds')) {
     /**
      * Resolve the user IDs that should receive notifications/broadcasts for
@@ -1350,7 +1385,8 @@ if (! function_exists('venueNotificationRecipientIds')) {
      *   PROVIDER  the business operating the venue — its owner plus their team.
      *             An owner is NEVER pinned (AccessScope::pinsApply excludes
      *             provider_admin), so they are reached through
-     *             venues.owner_user_id / venues.business_id rather than the
+     *             venues.owner_user_id — and, where the schema has them,
+     *             venues.business_id / business_memberships — rather than the
      *             user_venue pivot. Team members carrying pins hear only about
      *             venues they are pinned to; unpinned ones hear about the whole
      *             business.
@@ -1358,6 +1394,11 @@ if (! function_exists('venueNotificationRecipientIds')) {
      * Anyone explicitly pinned to the venue is always included, from either pin
      * source (user_venue pivot or users.assigned_location_ids). That is what
      * keeps the legacy senior_employee / junior_employee assignments working.
+     *
+     * Degrades rather than falls silent: the global admins are resolved first and
+     * returned even if the venue-specific lookup fails, because the failure mode
+     * that hid this bug for months was an empty recipient list that looked
+     * exactly like "nothing to send".
      *
      * Use this helper for ANY delivery channel — OneSignal push, Pusher
      * broadcasting, email, in-app notifications, etc. It returns only
@@ -1370,55 +1411,80 @@ if (! function_exists('venueNotificationRecipientIds')) {
      */
     function venueNotificationRecipientIds(?int $venueId): array
     {
-        try {
-            $finalise = fn (array $ids): array => array_values(array_unique(array_map('intval', $ids)));
+        $finalise = fn (array $ids): array => array_values(array_unique(array_map('intval', $ids)));
 
-            // ── GLOBAL ─────────────────────────────────────────────────────
-            $recipientIds = \App\Models\User::whereHas('roles', function ($q) {
+        // ── GLOBAL ─────────────────────────────────────────────────────────
+        // Resolved outside the try below so a failure in the venue-specific
+        // work still reaches the platform admins.
+        $globalIds = [];
+
+        try {
+            $globalIds = \App\Models\User::whereHas('roles', function ($q) {
                 $q->whereIn('name', \App\Support\Capabilities::globalRoles());
             })
                 ->active()
                 ->pluck('id')
                 ->all();
+        } catch (\Throwable $e) {
+            Log::error('venueNotificationRecipientIds: global admin lookup failed: ' . $e->getMessage(), [
+                'exception' => $e,
+            ]);
+        }
 
-            if (! $venueId) {
-                return $finalise($recipientIds);
+        if (! $venueId) {
+            return $finalise($globalIds);
+        }
+
+        try {
+            $recipientIds = $globalIds;
+
+            // The SaaS business columns are not on every deployed schema yet.
+            $hasBusinessId   = schemaHas('venues', 'business_id');
+            $hasMemberships  = schemaHas('business_memberships');
+            $hasBusinesses   = schemaHas('businesses');
+
+            $venueColumns = ['id', 'country_id', 'city_id', 'owner_user_id'];
+            if ($hasBusinessId) {
+                $venueColumns[] = 'business_id';
             }
 
-            $venue = \App\Models\Venue::query()
-                ->select(['id', 'country_id', 'city_id', 'owner_user_id', 'business_id'])
-                ->find($venueId);
+            $venue = \App\Models\Venue::query()->select($venueColumns)->find($venueId);
 
             if (! $venue) {
                 Log::info('venueNotificationRecipientIds: venue not found.', ['venue_id' => $venueId]);
                 return $finalise($recipientIds);
             }
 
+            $businessId = $hasBusinessId ? $venue->business_id : null;
+
             $platformRoles = \App\Support\Capabilities::platformRoles();
             $providerRoles = \App\Support\Capabilities::providerRoles();
             $staffRoles    = array_values(array_unique(array_merge($platformRoles, $providerRoles)));
 
             // ── PINNED to this venue, from either pin source ───────────────
-            $recipientIds = array_merge($recipientIds, \App\Models\User::query()
+            $pinnedQuery = \App\Models\User::query()
                 ->whereHas('roles', fn ($q) => $q->whereIn('name', $staffRoles))
                 ->where(function ($q) use ($venueId) {
-                    $q->whereHas('venues', fn ($v) => $v->where('venues.id', $venueId))
+                    $q->whereHas('venues', fn ($v) => $v->where('venues.id', $venueId));
+
+                    if (schemaHas('users', 'assigned_location_ids')) {
                         // JSON_CONTAINS raises on malformed JSON, and a single
                         // bad legacy row would throw the whole lookup into the
-                        // catch below — i.e. silently nobody gets notified. The
-                        // JSON_VALID guard keeps one bad row from muting everyone.
-                        // Both forms are checked: ids were written as numbers,
-                        // but older rows hold them as strings.
-                        ->orWhereRaw(
+                        // catch below — i.e. nobody gets notified. The
+                        // JSON_VALID guard keeps one bad row from muting
+                        // everyone. Both forms are checked: ids were written as
+                        // numbers, but older rows hold them as strings.
+                        $q->orWhereRaw(
                             'JSON_VALID(`assigned_location_ids`)'
                             . ' AND (JSON_CONTAINS(`assigned_location_ids`, ?)'
                             . ' OR JSON_CONTAINS(`assigned_location_ids`, ?))',
                             [(string) $venueId, '"' . $venueId . '"']
                         );
+                    }
                 })
-                ->active()
-                ->pluck('id')
-                ->all());
+                ->active();
+
+            $recipientIds = array_merge($recipientIds, $pinnedQuery->pluck('id')->all());
 
             // ── PROVIDER: the business operating this venue ────────────────
             $ownerIds = [];
@@ -1427,10 +1493,10 @@ if (! function_exists('venueNotificationRecipientIds')) {
                 $ownerIds[] = (int) $venue->owner_user_id;
             }
 
-            if ($venue->business_id) {
+            if ($businessId && $hasBusinesses) {
                 // A business whose owner account is gone still has members, so
-                // resolve the owner separately from the membership table below.
-                $businessOwnerId = DB::table('businesses')->where('id', $venue->business_id)->value('owner_id');
+                // the owner is resolved separately from the membership table.
+                $businessOwnerId = DB::table('businesses')->where('id', $businessId)->value('owner_id');
                 if ($businessOwnerId) {
                     $ownerIds[] = (int) $businessOwnerId;
                 }
@@ -1438,18 +1504,18 @@ if (! function_exists('venueNotificationRecipientIds')) {
 
             $ownerIds = array_values(array_unique($ownerIds));
 
-            if ($ownerIds || $venue->business_id) {
+            if ($ownerIds || ($businessId && $hasMemberships)) {
                 $team = \App\Models\User::query()
                     ->whereHas('roles', fn ($q) => $q->whereIn('name', $providerRoles))
-                    ->where(function ($q) use ($ownerIds, $venue) {
+                    ->where(function ($q) use ($ownerIds, $businessId, $hasMemberships) {
                         if ($ownerIds) {
                             $q->whereIn('id', $ownerIds)
                                 ->orWhereIn('owner_user_id', $ownerIds);
                         }
 
-                        if ($venue->business_id) {
+                        if ($businessId && $hasMemberships) {
                             $q->orWhereIn('id', \App\Models\BusinessMembership::query()
-                                ->where('business_id', $venue->business_id)
+                                ->where('business_id', $businessId)
                                 ->where('status', \App\Models\BusinessMembership::STATUS_ACTIVE)
                                 ->select('user_id'));
                         }
@@ -1496,11 +1562,18 @@ if (! function_exists('venueNotificationRecipientIds')) {
 
             $jurisdictionRoles = array_values(array_diff($platformRoles, \App\Support\Capabilities::globalRoles()));
 
+            $platformColumns = ['id', 'country_id'];
+            foreach (['assigned_country_ids', 'assigned_location_ids'] as $optional) {
+                if (schemaHas('users', $optional)) {
+                    $platformColumns[] = $optional;
+                }
+            }
+
             $platformUsers = \App\Models\User::query()
                 ->whereHas('roles', fn ($q) => $q->whereIn('name', $jurisdictionRoles))
                 ->active()
                 ->with('roles:id,name')
-                ->get(['id', 'country_id', 'assigned_country_ids', 'assigned_location_ids']);
+                ->get($platformColumns);
 
             foreach ($platformUsers as $platformUser) {
                 // Pinned platform_staff are scoped to their pins, and were
@@ -1532,11 +1605,12 @@ if (! function_exists('venueNotificationRecipientIds')) {
                 'venue_id'  => $venueId,
                 'exception' => $e,
             ]);
-            return [];
+
+            // Degrade to the platform admins rather than muting everyone.
+            return $finalise($globalIds);
         }
     }
 }
-
 if (! function_exists('notifyUserRefresh')) {
     /**
      * Broadcast a private "refresh" event to a single user.
