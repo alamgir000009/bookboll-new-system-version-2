@@ -1337,11 +1337,27 @@ if (! function_exists('venueNotificationRecipientIds')) {
      * Resolve the user IDs that should receive notifications/broadcasts for
      * activity tied to a specific venue.
      *
-     * The result includes:
-     *   - All ACTIVE super_admin and admin users (they manage everything,
-     *     not scoped to any single venue).
-     *   - All ACTIVE senior_employee and junior_employee users assigned to
-     *     the given venue via the `user_venue` pivot.
+     * Recipients mirror AccessScope: if someone cannot see the venue, they are
+     * never told about it. Three groups, each scoped the way that role family is
+     * scoped everywhere else —
+     *
+     *   GLOBAL    super_admin / admin — the whole platform, every venue.
+     *
+     *   PLATFORM  country_admin / platform_staff — scoped by JURISDICTION, so
+     *             only when the venue sits in a country they administer.
+     *             platform_staff carrying venue pins are narrowed to those pins.
+     *
+     *   PROVIDER  the business operating the venue — its owner plus their team.
+     *             An owner is NEVER pinned (AccessScope::pinsApply excludes
+     *             provider_admin), so they are reached through
+     *             venues.owner_user_id / venues.business_id rather than the
+     *             user_venue pivot. Team members carrying pins hear only about
+     *             venues they are pinned to; unpinned ones hear about the whole
+     *             business.
+     *
+     * Anyone explicitly pinned to the venue is always included, from either pin
+     * source (user_venue pivot or users.assigned_location_ids). That is what
+     * keeps the legacy senior_employee / junior_employee assignments working.
      *
      * Use this helper for ANY delivery channel — OneSignal push, Pusher
      * broadcasting, email, in-app notifications, etc. It returns only
@@ -1355,28 +1371,162 @@ if (! function_exists('venueNotificationRecipientIds')) {
     function venueNotificationRecipientIds(?int $venueId): array
     {
         try {
-            $globalAdminIds = \App\Models\User::whereHas('roles', function ($q) {
-                $q->whereIn('name', ['super_admin', 'admin']);
+            $finalise = fn (array $ids): array => array_values(array_unique(array_map('intval', $ids)));
+
+            // ── GLOBAL ─────────────────────────────────────────────────────
+            $recipientIds = \App\Models\User::whereHas('roles', function ($q) {
+                $q->whereIn('name', \App\Support\Capabilities::globalRoles());
             })
                 ->active()
                 ->pluck('id')
-                ->toArray();
+                ->all();
 
-            $venueStaffIds = [];
-
-            if ($venueId) {
-                $venueStaffIds = \App\Models\User::whereHas('roles', function ($q) {
-                    $q->whereIn('name', ['senior_employee', 'junior_employee']);
-                })
-                    ->whereHas('venues', function ($q) use ($venueId) {
-                        $q->where('venues.id', $venueId);
-                    })
-                    ->active()
-                    ->pluck('id')
-                    ->toArray();
+            if (! $venueId) {
+                return $finalise($recipientIds);
             }
 
-            return array_values(array_unique(array_map('intval', array_merge($globalAdminIds, $venueStaffIds))));
+            $venue = \App\Models\Venue::query()
+                ->select(['id', 'country_id', 'city_id', 'owner_user_id', 'business_id'])
+                ->find($venueId);
+
+            if (! $venue) {
+                Log::info('venueNotificationRecipientIds: venue not found.', ['venue_id' => $venueId]);
+                return $finalise($recipientIds);
+            }
+
+            $platformRoles = \App\Support\Capabilities::platformRoles();
+            $providerRoles = \App\Support\Capabilities::providerRoles();
+            $staffRoles    = array_values(array_unique(array_merge($platformRoles, $providerRoles)));
+
+            // ── PINNED to this venue, from either pin source ───────────────
+            $recipientIds = array_merge($recipientIds, \App\Models\User::query()
+                ->whereHas('roles', fn ($q) => $q->whereIn('name', $staffRoles))
+                ->where(function ($q) use ($venueId) {
+                    $q->whereHas('venues', fn ($v) => $v->where('venues.id', $venueId))
+                        // JSON_CONTAINS raises on malformed JSON, and a single
+                        // bad legacy row would throw the whole lookup into the
+                        // catch below — i.e. silently nobody gets notified. The
+                        // JSON_VALID guard keeps one bad row from muting everyone.
+                        // Both forms are checked: ids were written as numbers,
+                        // but older rows hold them as strings.
+                        ->orWhereRaw(
+                            'JSON_VALID(`assigned_location_ids`)'
+                            . ' AND (JSON_CONTAINS(`assigned_location_ids`, ?)'
+                            . ' OR JSON_CONTAINS(`assigned_location_ids`, ?))',
+                            [(string) $venueId, '"' . $venueId . '"']
+                        );
+                })
+                ->active()
+                ->pluck('id')
+                ->all());
+
+            // ── PROVIDER: the business operating this venue ────────────────
+            $ownerIds = [];
+
+            if ($venue->owner_user_id) {
+                $ownerIds[] = (int) $venue->owner_user_id;
+            }
+
+            if ($venue->business_id) {
+                // A business whose owner account is gone still has members, so
+                // resolve the owner separately from the membership table below.
+                $businessOwnerId = DB::table('businesses')->where('id', $venue->business_id)->value('owner_id');
+                if ($businessOwnerId) {
+                    $ownerIds[] = (int) $businessOwnerId;
+                }
+            }
+
+            $ownerIds = array_values(array_unique($ownerIds));
+
+            if ($ownerIds || $venue->business_id) {
+                $team = \App\Models\User::query()
+                    ->whereHas('roles', fn ($q) => $q->whereIn('name', $providerRoles))
+                    ->where(function ($q) use ($ownerIds, $venue) {
+                        if ($ownerIds) {
+                            $q->whereIn('id', $ownerIds)
+                                ->orWhereIn('owner_user_id', $ownerIds);
+                        }
+
+                        if ($venue->business_id) {
+                            $q->orWhereIn('id', \App\Models\BusinessMembership::query()
+                                ->where('business_id', $venue->business_id)
+                                ->where('status', \App\Models\BusinessMembership::STATUS_ACTIVE)
+                                ->select('user_id'));
+                        }
+                    })
+                    ->active()
+                    ->with('roles:id,name')
+                    ->get(['id', 'assigned_location_ids']);
+
+                // One query for the pivot instead of one per member.
+                $pivotPinnedIds = $team->isEmpty() ? [] : DB::table('user_venue')
+                    ->whereIn('user_id', $team->pluck('id'))
+                    ->distinct()
+                    ->pluck('user_id')
+                    ->map(fn ($i) => (int) $i)
+                    ->all();
+
+                foreach ($team as $member) {
+                    $hasPins = in_array((int) $member->id, $pivotPinnedIds, true)
+                        || (bool) array_filter((array) ($member->assigned_location_ids ?? []));
+
+                    // Narrowed to their pins — if this venue is one of them they
+                    // were already collected above, so skip them here.
+                    if ($hasPins && \App\Support\AccessScope::pinsApply($member)) {
+                        continue;
+                    }
+
+                    $recipientIds[] = (int) $member->id;
+                }
+            }
+
+            // ── PLATFORM: jurisdiction over the venue's country ────────────
+            $venueCountryIds = [];
+
+            if ($venue->country_id) {
+                $venueCountryIds[] = (int) $venue->country_id;
+            }
+
+            if ($venue->city_id) {
+                $cityCountryId = \Nnjeim\World\Models\City::where('id', $venue->city_id)->value('country_id');
+                if ($cityCountryId) {
+                    $venueCountryIds[] = (int) $cityCountryId;
+                }
+            }
+
+            $jurisdictionRoles = array_values(array_diff($platformRoles, \App\Support\Capabilities::globalRoles()));
+
+            $platformUsers = \App\Models\User::query()
+                ->whereHas('roles', fn ($q) => $q->whereIn('name', $jurisdictionRoles))
+                ->active()
+                ->with('roles:id,name')
+                ->get(['id', 'country_id', 'assigned_country_ids', 'assigned_location_ids']);
+
+            foreach ($platformUsers as $platformUser) {
+                // Pinned platform_staff are scoped to their pins, and were
+                // already collected above if this venue is one of them.
+                if ($platformUser->hasRole('platform_staff')
+                    && \App\Support\AccessScope::pinnedVenueIds($platformUser)) {
+                    continue;
+                }
+
+                $countryIds = \App\Support\AccessScope::jurisdictionCountryIds($platformUser);
+
+                if ($countryIds === null) {
+                    $recipientIds[] = (int) $platformUser->id;
+                    continue;
+                }
+
+                if (! $countryIds || ! $venueCountryIds) {
+                    continue;
+                }
+
+                if (array_intersect($countryIds, $venueCountryIds)) {
+                    $recipientIds[] = (int) $platformUser->id;
+                }
+            }
+
+            return $finalise($recipientIds);
         } catch (\Throwable $e) {
             Log::error('venueNotificationRecipientIds failed: ' . $e->getMessage(), [
                 'venue_id'  => $venueId,

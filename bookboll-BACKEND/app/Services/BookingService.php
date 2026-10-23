@@ -4219,7 +4219,17 @@ class BookingService
             });
         }
 
-        if ($f['status'])         { $query->whereIn('status', $f['status']); }
+        // "Confirmed" covers completed too. A completed booking is a confirmed
+        // one whose date has passed — nobody confirms and completes separately
+        // — so the dashboard stopped offering Completed as its own filter and
+        // the widening happens here, for the table and the export alike.
+        if ($f['status']) {
+            $statuses = $f['status'];
+            if (in_array(BookingStatus::CONFIRMED, $statuses, true)) {
+                $statuses[] = BookingStatus::COMPLETED;
+            }
+            $query->whereIn('status', array_values(array_unique($statuses)));
+        }
         if ($f['payment_method']) { $query->whereIn('payment_method', $f['payment_method']); }
         if ($f['listing_id'])     { $query->whereIn('listing_id', $f['listing_id']); }
         if ($f['venue_id'])       { $query->whereIn('venue_id', $f['venue_id']); }
