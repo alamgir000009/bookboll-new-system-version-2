@@ -55,55 +55,114 @@ class OneSignalService
         return $this->sendToPlayerIds($onesignalIds, $title, $message, $data);
     }
 
+    /**
+     * Push to a set of device ids.
+     *
+     * `onesignal_subscriptions.onesignal_id` holds whatever the mobile SDK
+     * handed us, and the current app builds hand us the push SUBSCRIPTION id
+     * (`OneSignal.User.pushSubscription.id`) — not the OneSignal USER id.
+     *
+     * Those are different values, and `include_aliases.onesignal_id` resolves
+     * USER ids only. Sending subscription ids that way matches nobody, and
+     * OneSignal reports it as HTTP 200 with an empty `id` and
+     * "All included players are not subscribed" — which the old success check
+     * read as a successful send. A business owner whose only rows were
+     * subscription ids therefore never received anything, while an older
+     * account that still had a few genuine user ids among its rows kept
+     * receiving and made the send look healthy.
+     *
+     * So target subscription ids first, which is what we actually store, and
+     * fall back to aliases for legacy rows written by older app builds.
+     */
     public function sendToPlayerIds(array $playerIds, string $title, string $message, array $data = []): bool
     {
+        $playerIds = array_values(array_unique(array_filter(
+            is_array($playerIds) ? $playerIds : [$playerIds]
+        )));
+
         if (empty($playerIds) || ! $this->appId || ! $this->restApiKey) {
             return false;
         }
 
+        if ($this->dispatch(['include_subscription_ids' => $playerIds], $title, $message, $data)) {
+            return true;
+        }
+
+        // Nothing resolved as a subscription — the rows may predate the current
+        // app build and hold OneSignal user ids instead.
+        return $this->dispatch(
+            ['include_aliases' => ['onesignal_id' => $playerIds]],
+            $title,
+            $message,
+            $data,
+            true
+        );
+    }
+
+    /**
+     * One attempt at the notifications endpoint.
+     *
+     * @param  array  $targeting  the recipient selector to merge into the payload
+     * @param  bool   $isFallback whether this is the retry, so the log says which
+     */
+    protected function dispatch(array $targeting, string $title, string $message, array $data, bool $isFallback = false): bool
+    {
+        $strategy = $isFallback ? 'include_aliases.onesignal_id' : 'include_subscription_ids';
+
         try {
-
-            $payload = [
-                'app_id'          => $this->appId,
-                'headings'        => ['en' => config('app.name', 'Bookboll')],
-                'subtitle'        => ['en' => $title],
-                'contents'        => ['en' => $message],
-
-                'target_channel'  => 'push',
-
-                'include_aliases' => [
-                    'onesignal_id' => is_array($playerIds) ? $playerIds : [$playerIds],
-                ],
-                'data'            => $data,
-            ];
+            $payload = array_merge([
+                'app_id'         => $this->appId,
+                'headings'       => ['en' => config('app.name', 'Bookboll')],
+                'subtitle'       => ['en' => $title],
+                'contents'       => ['en' => $message],
+                'target_channel' => 'push',
+                'data'           => $data,
+            ], $targeting);
 
             $response = Http::withHeaders([
                 'Authorization' => 'Basic ' . $this->restApiKey,
                 'Content-Type'  => 'application/json',
             ])->post('https://api.onesignal.com/notifications', $payload);
 
-            if ($response->successful() && isset($response['id'])) {
-                Log::info('OneSignal notification sent successfully', [
-                    'player_ids_count' => count($playerIds),
-                    'title'            => $title,
+            $body = $response->json();
+
+            // OneSignal answers 200 even when it reached nobody: the giveaway is
+            // an empty `id` plus an `errors` entry. `isset($body['id'])` is true
+            // for an empty string, which is how a silent total failure used to
+            // log as a success.
+            $notificationId = is_array($body) ? ($body['id'] ?? null) : null;
+            $delivered      = $response->successful() && is_string($notificationId) && $notificationId !== '';
+
+            if ($delivered) {
+                Log::info('OneSignal notification sent', [
+                    'strategy'        => $strategy,
+                    'notification_id' => $notificationId,
+                    'recipients'      => $body['recipients'] ?? null,
+                    'device_count'    => count($targeting['include_subscription_ids'] ?? $targeting['include_aliases']['onesignal_id'] ?? []),
+                    'title'           => $title,
                 ]);
+
                 return true;
-            } else {
-                Log::error('[PushNotificationService] Failed to send notification', [
-                    'player_ids' => $playerIds,
-                    'title'      => $title,
-                    'message'    => $message,
-                    'status'     => $response->status(),
-                    'response'   => $response->json(),
-                ]);
-                return false;
             }
 
+            $log = $isFallback ? 'error' : 'info';
+
+            Log::{$log}('OneSignal notification reached nobody', [
+                'strategy' => $strategy,
+                'status'   => $response->status(),
+                'errors'   => is_array($body) ? ($body['errors'] ?? null) : null,
+                'title'    => $title,
+                'message'  => $message,
+            ]);
+
+            return false;
         } catch (\Exception $e) {
             Log::error('OneSignal notification exception', [
-                'message' => $e->getMessage(),
-                'trace'   => $e->getTraceAsString(),
+                'strategy' => $strategy,
+                'message'  => $e->getMessage(),
+                'trace'    => $e->getTraceAsString(),
             ]);
+
             return false;
         }
     }
