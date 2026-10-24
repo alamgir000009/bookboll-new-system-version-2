@@ -208,7 +208,7 @@ function openForgot() {
             <label class="ag-crow"><input type="checkbox" v-model="acceptOffers" /> <span>Keep me posted with offers &amp; news <span class="ag-opt">optional</span></span></label>
           </div>
           <div class="ag-consent">
-            <label class="ag-crow"><input type="checkbox" v-model="acceptTerms" /> <span>I agree to the <a href="/terms" target="_blank" rel="noopener" @click.stop>Terms &amp; Conditions</a> <span class="ag-req">required</span></span></label>
+            <label class="ag-crow"><input type="checkbox" v-model="acceptTerms" /> <span>I agree to the <a href="/terms" target="_blank" rel="noopener" @click.stop>Terms &amp; Conditions</a> and <a href="/privacy-policy" target="_blank" rel="noopener" @click.stop>Privacy Policy</a> <span class="ag-req">required</span></span></label>
           </div>
           <div v-if="err" class="ag-err">{{ err }}</div>
           <button type="button" class="ag-go" :disabled="busy" @click="submitSignup">

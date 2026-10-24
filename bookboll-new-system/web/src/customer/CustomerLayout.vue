@@ -74,7 +74,15 @@ const bookbollCityUrl = computed(() => marketplaceUrl(selectedCity.value ? `/ven
 // so the visitor can confirm/correct the auto-picked city. It's a non-blocking overlay (content
 // stays behind it) and dismissible; we persist that we've prompted so it never re-opens for
 // returning users or SEO crawlers. The location chip still opens it on demand any time.
-onMounted(() => { if (!isWhiteLabel.value && !locationPrompted.value) showGate.value = true })
+// ...except on the legal pages: /terms and /privacy-policy are opened directly
+// from app-store listings and consent links, and the visitor came to READ them —
+// a city picker over the text helps nobody (and app-store reviewers open the
+// privacy policy cold). City selection is irrelevant to both pages anyway.
+const LEGAL_PATHS = ['/terms', '/privacy-policy']
+const onLegalPage = computed(() => LEGAL_PATHS.includes(route.path.replace(/^\/ar(?=\/|$)/, '')))
+onMounted(() => router.isReady().then(() => {
+  if (!isWhiteLabel.value && !locationPrompted.value && !onLegalPage.value) showGate.value = true
+}))
 
 // Unread DM badge — poll lightly while signed in on the apex marketplace (social = apex only).
 let unreadTimer = null
@@ -225,6 +233,10 @@ function signOut() { customerSignOut(); menuOpen.value = false; router.push('/')
           </a>
         </span>
         <span v-else>© {{ platformBrand.name || 'Bookboll' }}</span>
+        <span v-if="!embedded" class="cust-foot-legal">
+          <router-link to="/terms">Terms &amp; Conditions</router-link>
+          <router-link to="/privacy-policy">Privacy Policy</router-link>
+        </span>
         <a v-if="!embedded" :href="adminLoginUrl()" class="cust-admin-link"><Shield :size="13" /> {{ $t('footer.adminLogin') }}</a>
       </div>
     </footer>
@@ -420,6 +432,9 @@ function signOut() { customerSignOut(); menuOpen.value = false; router.push('/')
 .cust-footer { border-top: 1px solid var(--border, #e2e8f0); background: var(--surface, #ffffff); }
 .cust-footer-inner { max-width: 1100px; margin: 0 auto; padding: 18px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-light, #94a3b8); }
 .cust-admin-link { display: flex; align-items: center; gap: 5px; color: var(--text-muted, #64748b); text-decoration: none; font-weight: 600; }
+.cust-foot-legal { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.cust-foot-legal a { color: var(--text-muted, #64748b); text-decoration: none; font-weight: 600; }
+.cust-foot-legal a:hover { color: var(--brand-ink, var(--brand)); text-decoration: underline; }
 .cust-admin-link:hover { color: var(--brand-ink, var(--brand)); }
 .cust-foot-brand { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 /* Footer credit — logo + clickable, present on every white-label site */

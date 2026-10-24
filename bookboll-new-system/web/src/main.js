@@ -47,6 +47,7 @@ import CityPrograms from './customer/pages/CityPrograms.vue'
 import MembershipDirectory from './customer/pages/MembershipDirectory.vue'
 import Unsubscribe from './customer/pages/Unsubscribe.vue'
 import Terms from './customer/pages/Terms.vue'
+import Privacy from './customer/pages/Privacy.vue'
 import AboutSite from './customer/pages/AboutSite.vue'
 import ContactSite from './customer/pages/ContactSite.vue'
 import PayBooking from './customer/pages/PayBooking.vue'
@@ -108,6 +109,15 @@ const router = createRouter({
     customer('/u/:id', PublicProfile),
     customer('/unsubscribe', Unsubscribe),
     customer('/terms', Terms),
+    // /privacy-policy is the URL registered in the Google Play & App Store
+    // listings — the path must not change or store review breaks.
+    customer('/privacy-policy', Privacy),
+    // Legacy legal paths from the previous frontend; keep them resolving so
+    // indexed links and older app builds don't land on a blank page.
+    { path: '/privacy', redirect: '/privacy-policy' },
+    { path: '/ar/privacy', redirect: '/ar/privacy-policy' },
+    { path: '/terms-conditions', redirect: '/terms' },
+    { path: '/ar/terms-conditions', redirect: '/ar/terms' },
     customer('/about', AboutSite),
     customer('/contact', ContactSite),
     { path: '/pass', redirect: '/my-memberships' },
@@ -160,6 +170,13 @@ const router = createRouter({
         window.location.replace(adminDashboardUrl(suffix ? `/admin/${suffix}` : '/admin'))
       },
     },
+
+    // Unknown paths used to match nothing, which rendered an EMPTY <router-view>
+    // under the header — a blank 200 page rather than a visible miss. Send them
+    // home like the previous frontend did, so a mistyped or retired link
+    // (including one in an app-store listing) always lands somewhere real.
+    { path: '/ar/:pathMatch(.*)*', redirect: '/ar' },
+    { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 

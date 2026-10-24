@@ -45,7 +45,7 @@ const slug = (s) => String(s || '').toLowerCase().trim()
   .replace(/['"]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80)
 
 // Static marketing routes.
-;['/', '/facilities', '/programs', '/games', '/host-game', '/blog', '/venues', '/memberships', '/terms'].forEach(p => add(p))
+;['/', '/facilities', '/programs', '/games', '/host-game', '/blog', '/venues', '/memberships', '/terms', '/privacy-policy'].forEach(p => add(p))
 
 async function collect() {
   let data

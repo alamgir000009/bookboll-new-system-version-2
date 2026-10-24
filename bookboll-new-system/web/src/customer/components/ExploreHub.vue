@@ -23,6 +23,7 @@ onMounted(async () => { if (!isWhiteLabel.value) groups.value = await loadDirect
           <router-link to="/venues" class="xh-all">All venues</router-link>
           <router-link to="/memberships" class="xh-all">All memberships</router-link>
           <router-link to="/terms" class="xh-all">Terms</router-link>
+          <router-link to="/privacy-policy" class="xh-all">Privacy</router-link>
           <a :href="businessHomeUrl('/')" class="xh-all xh-biz">For business →</a>
         </span>
       </div>
