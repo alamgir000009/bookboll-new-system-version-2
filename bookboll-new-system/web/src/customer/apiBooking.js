@@ -5,6 +5,7 @@
  */
 import { apiFetch, getCustomerToken, setCustomerToken } from '../lib/api.js'
 import { redemptionFields } from '../lib/checkoutRewards.js'
+import { createdBookingCurrency } from '../lib/bookingCurrency.js'
 
 /** UI payment method → the API's payment_method enum. */
 export const PAY_MAP = {
@@ -228,11 +229,11 @@ export async function createCustomerBookingsMulti({
     if (!res.success) return { error: res.message || 'Could not start payment.' }
     if (res.data?.free_booking && res.data?.bookings) {
       await releaseHolds(listing)
-      return { bookings: (res.data.bookings || []).map(b => b.id || b), currency: location?.currency_override || 'AED' }
+      return { bookings: (res.data.bookings || []).map(b => b.id || b), currency: createdBookingCurrency(res.data.bookings, location) }
     }
     if (res.data?.url) {
       window.location.href = res.data.url
-      return { redirect: true, bookings: [], currency: location?.currency_override || 'AED' }
+      return { redirect: true, bookings: [], currency: createdBookingCurrency(null, location) }
     }
     return { error: res.message || 'Failed to create checkout session.' }
   }
@@ -241,7 +242,7 @@ export async function createCustomerBookingsMulti({
   if (!res.success) return { error: res.message || 'Could not create the booking.' }
   await releaseHolds(listing)
   const bookings = (res.data?.bookings || []).map(b => b.id || b)
-  return { bookings, currency: location?.currency_override || 'AED' }
+  return { bookings, currency: createdBookingCurrency(res.data?.bookings, location) }
 }
 
 const PAY_STATUS = {
@@ -270,6 +271,7 @@ export function mapCustomerBooking(row) {
     bookingRef: row.booking_id || String(row.id),
     listingName: row.listing?.name || 'Court',
     locationName: row.venue?.name || '',
+    currency: row.currency || '',
     booking_date: date,
     start_time: row.start_time,
     end_time: row.end_time,

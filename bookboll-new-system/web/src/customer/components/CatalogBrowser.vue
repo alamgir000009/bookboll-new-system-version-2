@@ -15,7 +15,8 @@ const props = defineProps({
   listings: { type: Array, default: () => [] },
   venues: { type: Array, default: () => [] },
   loading: Boolean,
-  currency: { type: String, default: 'AED' },
+  // Fallback only — each card carries its own currency from the API.
+  currency: { type: String, default: '' },
   cityName: { type: String, default: '' },
   categoryBase: { type: String, default: '' },
   segmentCategory: { type: String, default: '' },
@@ -147,7 +148,7 @@ const returnTo = computed(() => router.resolve({ path: route.path, query: queryW
     </div>
     <div v-if="loading" class="catalog-grid" aria-label="Loading results"><div v-for="n in 6" :key="n" class="catalog-skeleton"></div></div>
     <div v-else-if="results.length" class="catalog-grid">
-      <FacilityCard v-for="item in results" :key="item.id" :variant="state.view === 'venues' ? 'location' : 'listing'" :filtered-matches="!!(search || category || type)" :return-to="returnTo" :facility="{ ...item, currency, cityName: item.cityName || cityName }" />
+      <FacilityCard v-for="item in results" :key="item.id" :variant="state.view === 'venues' ? 'location' : 'listing'" :filtered-matches="!!(search || category || type)" :return-to="returnTo" :facility="{ ...item, currency: item.currency || currency, cityName: item.cityName || cityName }" />
     </div>
     <div v-else class="catalog-empty"><Search :size="30" /><h3>No {{ noun }}s found</h3><p>{{ hasFilters ? 'Try another activity or a shorter search.' : 'There are no bookable listings here yet. Try a different city using the location selector.' }}</p><button v-if="hasFilters" type="button" @click="reset">Show all listings and venues</button></div>
   </section>

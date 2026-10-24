@@ -191,7 +191,7 @@ useSeo({ title: 'Search Bookboll', description: 'Find listings, communities, mem
           <div class="search-section-heading"><h2 :id="`results-${section.key}`">{{ section.label }} <span>{{ matches[section.key].length }}</span></h2><button v-if="activeType === 'all' && matches[section.key].length > 4" @click="commit(section.key)">See all {{ matches[section.key].length }} <ArrowRight :size="16" /></button></div>
           <div class="search-grid" :class="'search-grid-' + section.key">
             <template v-for="result in matches[section.key].slice(0, activeType === 'all' ? 4 : limit)" :key="result.id">
-              <FacilityCard v-if="section.key === 'listings'" :facility="{ ...result, currency: result.currency || selectedCountry?.currency_code || 'AED' }" :return-to="route.fullPath" />
+              <FacilityCard v-if="section.key === 'listings'" :facility="{ ...result, currency: result.currency || selectedCountry?.currency_code || '' }" :return-to="route.fullPath" />
               <ProgramCard v-else-if="section.key === 'memberships'" :program="result" />
               <GameCard v-else-if="section.key === 'events'" :game="result" />
               <router-link v-else class="search-community" :to="`/communities/${result.id}`">

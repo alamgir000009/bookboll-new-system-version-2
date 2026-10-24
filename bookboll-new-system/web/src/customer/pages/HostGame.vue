@@ -48,7 +48,7 @@ const listPublic = ref(false)   // community event → also list in public Event
 function ymd(d) { const z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}` }
 const today = ymd(new Date())
 function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '' }
-const currency = computed(() => selectedCountry.value?.currency_code || 'AED')
+const currency = computed(() => selectedCountry.value?.currency_code || '')
 
 const type = ref('')        // '' (chooser) | 'game' | 'tournament'
 const step = ref(1)

@@ -18,7 +18,10 @@ const router = useRouter()
 const data = ref(null)
 const loading = ref(true)
 const cityInfo = ref(null)   // { name, slug } for "more {sport} in {city}" backlinks
-const cur = computed(() => data.value?.location?.currency_override || selectedCountry.value?.currency_code || 'AED')
+const cur = computed(() => data.value?.location?.currency
+  || data.value?.location?.currency_override
+  || selectedCountry.value?.currency_code
+  || '')
 
 // Venue photo gallery (first = cover). activePhoto drives the hero; thumbnails switch it.
 const activePhoto = ref(0)

@@ -19,7 +19,7 @@ const loading = ref(true)
 const openId = ref(null)
 const q = ref('')
 
-const currency = computed(() => selectedCountry.value?.currency_code || 'AED')
+const currency = computed(() => selectedCountry.value?.currency_code || '')
 const filtered = computed(() => {
   const s = q.value.trim().toLowerCase()
   if (!s) return locations.value

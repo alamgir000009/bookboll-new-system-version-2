@@ -14,7 +14,7 @@ import { VENUE_CATEGORIES } from '../../lib/venueCategories.js'
 const props = defineProps({
   courts: { type: Array, default: () => [] },   // loadFacilities() shape
   selectedId: { type: String, default: '' },
-  currency: { type: String, default: 'AED' },
+  currency: { type: String, default: '' },
   cityName: { type: String, default: '' },
 })
 const emit = defineEmits(['select'])
@@ -108,7 +108,7 @@ const filtered = computed(() => {
     <div v-if="!courts.length" class="vb-msg">No bookable venues in {{ cityName || 'your city' }} yet.</div>
     <div v-else-if="!filtered.length" class="vb-msg">No venues match — try another search or category.</div>
     <div v-else class="vb-grid">
-      <FacilityCard v-for="c in filtered" :key="c.id" :facility="{ ...c, currency }" selectable :selected="c.id === selectedId" @select="emit('select', c)" />
+      <FacilityCard v-for="c in filtered" :key="c.id" :facility="{ ...c, currency: c.currency || currency }" selectable :selected="c.id === selectedId" @select="emit('select', c)" />
     </div>
   </div>
 </template>

@@ -30,7 +30,9 @@ const loading = ref(true)
 const appContext = computed(() => !loading.value && bookings.value.some(b => ['confirmed', 'completed'].includes(b.booking_status))
   ? appPromptContext({ audience: 'customer', signedIn: isCustomer.value, completed: true, whiteLabel: isWhiteLabel.value, embedded: isEmbedded() }) : null)
 
-const cur = computed(() => selectedCountry.value?.currency_code || 'AED')
+const cur = computed(() => bookings.value.find(b => b.currency)?.currency
+  || selectedCountry.value?.currency_code
+  || '')
 const total = computed(() => bookings.value.reduce((n, b) => n + (Number(b.total) || 0), 0))
 const due = computed(() => bookings.value.reduce((n, b) => n + (Number(b.due) || 0), 0))
 

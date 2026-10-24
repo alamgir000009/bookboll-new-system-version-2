@@ -16,7 +16,7 @@ const loadError = ref('')
 const cancelling = ref('')
 const view = ref('upcoming')
 const search = ref('')
-const cur = computed(() => selectedCountry.value?.currency_code || 'AED')
+const cur = computed(() => selectedCountry.value?.currency_code || '')
 const signedIn = computed(() => isCustomer.value && !!getCustomerToken())
 
 function canCancel(b) {

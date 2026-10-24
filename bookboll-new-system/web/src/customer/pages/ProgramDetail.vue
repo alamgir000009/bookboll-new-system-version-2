@@ -83,7 +83,7 @@ const discountMonths = computed(() => Number(p.value.discount_months) || 0)
 const listPrice = computed(() => Number(p.value.monthly_price) || 0)
 // What the customer actually pays (discount plans charge the reduced amount).
 const payPrice = computed(() => offerMode.value === 'discount' ? discountedPrice(listPrice.value, p.value.billing_interval, discountMonths.value) : listPrice.value)
-const cur = computed(() => p.value.currency || 'AED')
+const cur = computed(() => p.value.currency || '')
 // Social proof: live active-member count (from loadProgram). Only surfaced once it clears
 // the shared threshold so a brand-new program never brags "1 member".
 const memberCount = computed(() => Number(data.value?.memberCount) || 0)

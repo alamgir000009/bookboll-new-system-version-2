@@ -146,7 +146,11 @@ const adapterSource = readFileSync(new URL('../src/customer/apiBooking.js', impo
    const getCustomerToken = () => 'test-token';
    const setCustomerToken = () => {};
    const apiFetch = async (path, options) => { requests.push({ path, ...options }); return { success: false, message: 'Stopped by test adapter' } };`,
-).replace("'../lib/checkoutRewards.js'", JSON.stringify(new URL('../src/lib/checkoutRewards.js',import.meta.url).href))
+// The adapter is loaded as a data: URL, which has no base to resolve relative
+// specifiers against — so every remaining ../lib/ import has to become absolute.
+// Rewritten by pattern rather than by name: listing them one by one meant the
+// next helper the adapter imported broke this file instead of its own.
+).replace(/'\.\.\/lib\/([A-Za-z0-9_.-]+\.js)'/g, (_, file) => JSON.stringify(new URL(`../src/lib/${file}`, import.meta.url).href))
 const adapter = await import('data:text/javascript;base64,' + Buffer.from(adapterSource).toString('base64'))
 const request = { listing: { id: 'fixture' }, location: { id: 1 }, selectionByDate: { '2026-10-13': [{ start_time: '10:00', end_time: '11:00' }] } }
 

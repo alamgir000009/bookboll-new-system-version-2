@@ -217,9 +217,10 @@ const loc = computed(() => data.value?.location || null)
    stays as the fallback for the first paint, before any day has loaded. */
 const serverCurrency = ref('')
 const cur = computed(() => serverCurrency.value
+  || loc.value?.currency
   || loc.value?.currency_override
   || selectedCountry.value?.currency_code
-  || 'AED')
+  || '')
 const slotMins = computed(() => l.value.slot_duration || 60)
 const perPerson = computed(() => isPerPerson(l.value))
 const maxPlayers = computed(() => Math.max(1, l.value.capacity || 1))

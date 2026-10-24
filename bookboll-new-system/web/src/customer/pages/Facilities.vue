@@ -75,7 +75,7 @@ watch(() => selectedCity.value?.id, load)
       <p v-if="isWhiteLabel">Browse by category, compare listings and book with {{ activeBrand.name }}.</p>
       <p v-else>Book courts, studios and spaces{{ selectedCity?.name ? ` in ${selectedCity.name}` : ' near you' }}.</p>
     </header>
-    <CatalogBrowser :listings="facilityList" :venues="locationList" :loading="loading" :currency="selectedCountry?.currency_code || 'AED'" :city-name="selectedCity?.name || ''" />
+    <CatalogBrowser :listings="facilityList" :venues="locationList" :loading="loading" :currency="selectedCountry?.currency_code || ''" :city-name="selectedCity?.name || ''" />
     <RecruitBanner :city-name="selectedCity?.name" />
     <section v-if="faqs.length" class="browse-faq">
       <h2>Questions about booking</h2>

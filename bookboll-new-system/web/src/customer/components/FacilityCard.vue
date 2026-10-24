@@ -15,7 +15,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['select'])
 const img = computed(() => props.facility.photo || '')
-const cur = computed(() => props.facility.currency || 'AED')
+const cur = computed(() => props.facility.currency || '')
 const hasPrice = computed(() => props.facility.price != null && props.facility.price >= 0)
 const pinLabel = computed(() => props.facility.pinText || props.facility.cityName || props.facility.name)
 const isLocation = computed(() => props.variant === 'location')

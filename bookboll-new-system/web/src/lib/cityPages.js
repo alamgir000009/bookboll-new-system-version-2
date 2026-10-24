@@ -56,7 +56,7 @@ export async function resolveCity(slug) {
       countryId: city.country_id,
       countryName: country.name || '',
       countryIso: country.iso_code || '',
-      currencyCode: country.currency_code || 'AED',
+      currencyCode: country.currency_code || '',
     }
   } catch { return null }
 }
@@ -71,7 +71,7 @@ export async function resolveCountry(slug) {
       id: country.id,
       name: country.name,
       slug: slugify(country.name),
-      currencyCode: country.currency_code || 'AED',
+      currencyCode: country.currency_code || '',
       iso: country.iso_code || '',
     }
   } catch { return null }
@@ -126,7 +126,7 @@ export async function loadCityVenues(citySlug, segment = null) {
   return { ...r, city: r.place }
 }
 
-export function priceRange(venues, currency = 'AED') {
+export function priceRange(venues, currency = '') {
   const prices = (venues || []).map(v => Number(v.price)).filter(p => p > 0)
   if (!prices.length) return null
   return { from: Math.min(...prices), currency }

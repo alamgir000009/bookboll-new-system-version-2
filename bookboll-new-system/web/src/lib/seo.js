@@ -140,7 +140,7 @@ export function eventLd({ name, description, image, startDate, endDate, location
       if (city) ld.location.address.addressLocality = city
     }
   }
-  if (price != null) ld.offers = { '@type': 'Offer', price: String(price), priceCurrency: currency || 'AED' }
+  if (price != null && currency) ld.offers = { '@type': 'Offer', price: String(price), priceCurrency: currency }
   return ld
 }
 
@@ -149,7 +149,7 @@ export function productLd({ name, description, image, price, currency, url }) {
   if (description) ld.description = description
   if (image) ld.image = image
   if (url) ld.url = url
-  if (price != null) ld.offers = { '@type': 'Offer', price: String(price), priceCurrency: currency || 'AED', availability: 'https://schema.org/InStock' }
+  if (price != null && currency) ld.offers = { '@type': 'Offer', price: String(price), priceCurrency: currency, availability: 'https://schema.org/InStock' }
   return ld
 }
 

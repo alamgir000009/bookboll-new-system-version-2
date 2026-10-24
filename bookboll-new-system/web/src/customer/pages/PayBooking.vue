@@ -28,7 +28,7 @@ const bill = ref(null)
 const due = computed(() => Number(bill.value?.due) || 0)
 const total = computed(() => Number(bill.value?.total) || 0)
 const paidSoFar = computed(() => Number(bill.value?.paidSoFar) || 0)
-const currency = computed(() => bill.value?.currency || 'AED')
+const currency = computed(() => bill.value?.currency || '')
 const bookingRef = computed(() => bill.value?.reference ? '#' + bill.value.reference : '')
 const fmtMoney = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtDate = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : ''
