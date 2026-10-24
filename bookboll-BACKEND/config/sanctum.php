@@ -51,6 +51,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Active Session Window
+    |--------------------------------------------------------------------------
+    |
+    | How many minutes a token may go unused before the admin panel's session
+    | list calls it idle rather than active. Tokens here never expire, so this
+    | only changes how a session is labelled and filtered — never whether it
+    | still works. One day by default.
+    |
+    */
+
+    'active_session_window' => (int) env('SANCTUM_ACTIVE_SESSION_WINDOW', 1440),
+
+    /*
+    |--------------------------------------------------------------------------
     | Token Prefix
     |--------------------------------------------------------------------------
     |

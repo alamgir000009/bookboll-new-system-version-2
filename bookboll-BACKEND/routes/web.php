@@ -10,6 +10,7 @@ use App\Livewire\Admin\Activities\Index as ActivitiesIndex;
 use App\Livewire\Admin\Activities\Show as ActivitiesShow;
 use App\Livewire\Admin\Backups\Index as BackupsIndex;
 use App\Livewire\Admin\Dashboard;
+use App\Livewire\Admin\Sessions\Index as SessionsIndex;
 use App\Livewire\Admin\Profile\Edit as ProfileEdit;
 use Illuminate\Support\Facades\Route;
 
@@ -28,6 +29,8 @@ Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin'])->group(fu
 
     Route::get('activities-000009', ActivitiesIndex::class)->name('activities.index');
     Route::get('activities-000009/{activity}', ActivitiesShow::class)->name('activities.show');
+
+    Route::get('sessions-000009', SessionsIndex::class)->name('sessions.index');
 
     Route::get('backups-000009', BackupsIndex::class)->name('backups.index');
     Route::get('backups-000009/{filename}/download', [BackupController::class, 'download'])->name('backups.download')->where('filename', '[\w\-\.]+');

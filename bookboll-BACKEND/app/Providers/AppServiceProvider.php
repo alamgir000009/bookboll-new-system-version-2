@@ -9,7 +9,9 @@ use App\Observers\BookingObserver;
 use App\Models\ClassSubscription;
 use App\Models\Payment;
 use App\Models\Booking;
+use App\Models\PersonalAccessToken;
 use Illuminate\Pagination\Paginator;
+use Laravel\Sanctum\Sanctum;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 
@@ -18,6 +20,11 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Paginator::useTailwind();
+
+        // Carries the client address and device on every API session, which the
+        // admin panel's session list reads and Sanctum's own model has no room
+        // for. Must be registered before the first token is issued or read.
+        Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
 
         Booking::observe(BookingObserver::class);
         ClassSubscription::observe(ClassSubscriptionObserver::class);
