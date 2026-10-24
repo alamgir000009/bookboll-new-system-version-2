@@ -66,14 +66,19 @@ use App\Http\Controllers\WhatsappController;
 use App\Http\Controllers\WhatsappWebhookController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('login', [UserController::class, 'login'])->name('api.login');
-Route::post('register', [UserController::class, 'register'])->name('api.register');
+// Public, password-based entry points — keyed by IP. Unlimited attempts here are a
+// credential-stuffing and reset-spam surface; the budgets below stop automated abuse
+// while leaving room for a human fat-fingering a password or retrying a slow send.
+// (A whole office or a carrier-NAT may share one IP, so these are deliberately not
+// as tight as a single user's real need — tune down if you add username-keyed limits.)
+Route::post('login', [UserController::class, 'login'])->middleware('throttle:10,1')->name('api.login');
+Route::post('register', [UserController::class, 'register'])->middleware('throttle:10,10')->name('api.register');
 Route::post('update-profile', [UserController::class, 'updateProfile'])->middleware('auth:sanctum')->name('update-profile');
 Route::post('change-password', [UserController::class, 'changePassword'])->middleware('auth:sanctum')->name('change-password');
-Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail'])->name('forgot-password');
-Route::post('reset-password', [UserController::class, 'reset'])->name('reset-password');
+Route::post('forgot-password', [UserController::class, 'sendResetLinkEmail'])->middleware('throttle:8,10')->name('forgot-password');
+Route::post('reset-password', [UserController::class, 'reset'])->middleware('throttle:10,10')->name('reset-password');
 
-Route::post('admin-app/register', [UserController::class, 'registerAdminAppUser'])->name('admin-app.register');
+Route::post('admin-app/register', [UserController::class, 'registerAdminAppUser'])->middleware('throttle:10,10')->name('admin-app.register');
 // Admin DASHBOARD password reset (apps/admin). A six-digit code by email, so there
 // is no reset page to route to and no link whose host could be tampered with.
 //
@@ -88,12 +93,14 @@ Route::post('admin/forgot-password', [UserController::class, 'adminForgotPasswor
 Route::post('admin/reset-password', [UserController::class, 'adminResetPassword'])
     ->middleware('throttle:10,10')->name('admin.reset-password');
 
-Route::post('admin-app/forgot-password', [UserController::class, 'adminAppForgotPassword'])->name('admin-app.forgot-password');
-Route::post('admin-app/reset-password', [UserController::class, 'adminAppResetPassword'])->name('admin-app.reset-password');
+Route::post('admin-app/forgot-password', [UserController::class, 'adminAppForgotPassword'])
+    ->middleware('throttle:8,10')->name('admin-app.forgot-password');
+Route::post('admin-app/reset-password', [UserController::class, 'adminAppResetPassword'])
+    ->middleware('throttle:10,10')->name('admin-app.reset-password');
 
 // Bookboll for Business — public provider signup
 Route::prefix('business')->name('business.')->group(function () {
-    Route::post('register', [BusinessController::class, 'register'])->name('register');
+    Route::post('register', [BusinessController::class, 'register'])->middleware('throttle:10,10')->name('register');
     Route::get('username-available', [BusinessController::class, 'usernameAvailable'])->name('username-available');
 
     // Email ownership proof, taken BEFORE the account is written (see
@@ -729,14 +736,17 @@ Route::prefix('customer')->group(function () {
 
     Route::get('reviews', [ReviewController::class, 'index'])->name('customer.reviews.index');
     Route::get('reviews/my', [ReviewController::class, 'myReviews'])->name('customer.reviews.my');
-    Route::post('login', [UserController::class, 'customerLogin'])->name('customer.login');
+    // Same reasoning as the public password routes above: IP-keyed limits that stop
+    // brute force / reset-spam without locking out a shared-IP user. The social logins
+    // verify a provider token rather than a password, so they are left untouched.
+    Route::post('login', [UserController::class, 'customerLogin'])->middleware('throttle:10,1')->name('customer.login');
     Route::post('google-login', [UserController::class, 'googleLogin'])->name('customer.google-login');
     // Collects a session finished by the OAuth broker. google-login above stays for
     // the mobile apps, which get their id_token from the native Google SDK.
     Route::post('auth/exchange', [OAuthBrokerController::class, 'exchange'])->name('customer.auth.exchange');
     Route::post('apple-login', [UserController::class, 'appleLogin'])->name('customer.apple-login');
-    Route::post('forgot-password', [UserController::class, 'customerForgotPassword'])->name('customer.forgot-password');
-    Route::post('reset-password', [UserController::class, 'customerResetPassword'])->name('customer.reset-password');
+    Route::post('forgot-password', [UserController::class, 'customerForgotPassword'])->middleware('throttle:8,10')->name('customer.forgot-password');
+    Route::post('reset-password', [UserController::class, 'customerResetPassword'])->middleware('throttle:10,10')->name('customer.reset-password');
 
     Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('preferences', [UserController::class, 'customerPreferences'])->name('customer.preferences');
