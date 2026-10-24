@@ -15,23 +15,26 @@ namespace App\Support;
 final class ApiSessionClients
 {
     /**
-     * Token name => [label, the surface it was issued from].
+     * Token name => the entry point that issued it.
      *
-     * @var array<string, array{label: string, surface: string}>
+     * This says how the session was CREATED. Which app is holding it is a
+     * separate question, answered by the `from` header — see ApiClientSurfaces.
+     *
+     * @var array<string, string>
      */
     private const CLIENTS = [
-        'bookboll-admin-web-api-token' => ['label' => 'Admin Dashboard', 'surface' => 'web'],
-        'bookboll-admin-mobile-app-api-token' => ['label' => 'Admin Mobile App', 'surface' => 'mobile'],
-        'bookboll-customer-login-api-token' => ['label' => 'Customer App', 'surface' => 'mobile'],
-        'bookboll-business-api-token' => ['label' => 'Provider Sign-up', 'surface' => 'web'],
-        'bookboll-api-token' => ['label' => 'Account Registration', 'surface' => 'web'],
-        'auth-token' => ['label' => 'Social Sign-in', 'surface' => 'mobile'],
+        'bookboll-admin-web-api-token' => 'Admin Dashboard',
+        'bookboll-admin-mobile-app-api-token' => 'Admin Mobile App',
+        'bookboll-customer-login-api-token' => 'Customer Login',
+        'bookboll-business-api-token' => 'Provider Sign-up',
+        'bookboll-api-token' => 'Account Registration',
+        'auth-token' => 'Social Sign-in',
     ];
 
     /** @return array<string, string> token name => label, for a filter dropdown */
     public static function options(): array
     {
-        return array_map(fn (array $client) => $client['label'], self::CLIENTS);
+        return self::CLIENTS;
     }
 
     public static function label(?string $tokenName): string
@@ -42,13 +45,7 @@ final class ApiSessionClients
             return 'Unknown client';
         }
 
-        return self::CLIENTS[$name]['label'] ?? $name;
-    }
-
-    /** 'web', 'mobile', or 'unknown' for a token name this class does not know. */
-    public static function surface(?string $tokenName): string
-    {
-        return self::CLIENTS[trim((string) $tokenName)]['surface'] ?? 'unknown';
+        return self::CLIENTS[$name] ?? $name;
     }
 
     public static function isKnown(?string $tokenName): bool

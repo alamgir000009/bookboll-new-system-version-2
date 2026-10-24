@@ -4,6 +4,7 @@ namespace App\Livewire\Admin\Sessions;
 
 use App\Models\PersonalAccessToken;
 use App\Models\User;
+use App\Support\ApiClientSurfaces;
 use App\Support\ApiSessionClients;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
@@ -63,6 +64,10 @@ class Index extends Component
     #[Url(except: '')]
     public string $platform = '';
 
+    /** The app's own `from` header: which front-end the session is on. */
+    #[Url(except: '')]
+    public string $surface = '';
+
     #[Url(except: '')]
     public string $user_id = '';
 
@@ -94,7 +99,7 @@ class Index extends Component
 
     public function updated(string $property): void
     {
-        if (in_array($property, ['q', 'client', 'status', 'platform', 'user_id', 'records_per_page', 'sort', 'direction'], true)) {
+        if (in_array($property, ['q', 'client', 'status', 'platform', 'surface', 'user_id', 'records_per_page', 'sort', 'direction'], true)) {
             $this->selected = [];
             $this->resetPage();
         }
@@ -102,7 +107,7 @@ class Index extends Component
 
     public function clearFilters(): void
     {
-        $this->reset(['q', 'client', 'status', 'platform', 'user_id']);
+        $this->reset(['q', 'client', 'status', 'platform', 'surface', 'user_id']);
         $this->records_per_page = 25;
         $this->sort = 'last_used_at';
         $this->direction = 'desc';
@@ -323,6 +328,8 @@ class Index extends Component
                     ->orWhere('user_agent', 'like', $term)
                     ->orWhere('last_used_user_agent', 'like', $term)
                     ->orWhere('name', 'like', $term)
+                    ->orWhere('client_surface', 'like', $term)
+                    ->orWhere('last_used_surface', 'like', $term)
                     ->orWhereHas('user', function (Builder $user) use ($term) {
                         $user->where('name', 'like', $term)
                             ->orWhere('email', 'like', $term)
@@ -349,6 +356,10 @@ class Index extends Component
             });
         }
 
+        if ($this->surface !== '' && array_key_exists($this->surface, ApiClientSurfaces::options())) {
+            $query->fromSurface($this->surface);
+        }
+
         if ($this->user_id !== '' && ctype_digit($this->user_id)) {
             $query->where('tokenable_id', (int) $this->user_id);
         }
@@ -369,6 +380,7 @@ class Index extends Component
             'client' => $this->client,
             'status' => $this->status,
             'platform' => $this->platform,
+            'surface' => $this->surface,
             'user_id' => $this->user_id,
         ], fn (string $value) => $value !== '');
     }
@@ -432,6 +444,7 @@ class Index extends Component
             'clientOptions' => ApiSessionClients::options(),
             'statusOptions' => PersonalAccessToken::statusOptions(),
             'platformOptions' => array_map(fn (array $p) => $p['label'], self::PLATFORMS),
+            'surfaceOptions' => ApiClientSurfaces::options(),
             'recordsPerPage' => $recordsPerPage,
             'activeFilters' => $this->activeFilters(),
             'activeWindowLabel' => PersonalAccessToken::activeWindowLabel(),

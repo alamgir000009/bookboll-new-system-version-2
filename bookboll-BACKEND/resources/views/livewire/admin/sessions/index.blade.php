@@ -106,7 +106,7 @@
 
             <div class="content-card">
                 <div class="space-y-4">
-                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
                         <div class="lg:col-span-2">
                             <label for="q" class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Search</label>
                             <input type="text"
@@ -120,6 +120,15 @@
                             <select id="client" wire:model.live="client" class="input-brand">
                                 <option value="">All apps</option>
                                 @foreach ($clientOptions as $value => $label)
+                                    <option value="{{ $value }}">{{ $label }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div>
+                            <label for="surface" class="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Logged in from</label>
+                            <select id="surface" wire:model.live="surface" class="input-brand">
+                                <option value="">Anywhere</option>
+                                @foreach ($surfaceOptions as $value => $label)
                                     <option value="{{ $value }}">{{ $label }}</option>
                                 @endforeach
                             </select>
@@ -182,6 +191,8 @@
                                     {{ $clientOptions[$value] ?? $value }}
                                 @elseif ($name === 'platform')
                                     {{ $platformOptions[$value] ?? $value }}
+                                @elseif ($name === 'surface')
+                                    {{ $surfaceOptions[$value] ?? $value }}
                                 @elseif ($name === 'status')
                                     {{ ucfirst($value) }}
                                 @else
@@ -223,7 +234,7 @@
                                     <span class="sr-only">Select</span>
                                 </th>
                                 <th class="min-w-[200px]">User</th>
-                                <th class="min-w-[140px]">App</th>
+                                <th class="min-w-[170px]">App / logged in from</th>
                                 <th class="min-w-[200px]">Device</th>
                                 <th class="min-w-[170px]">IP address</th>
                                 <th>
@@ -287,6 +298,14 @@
 
                                     <td>
                                         <span class="sessions-app-badge">{{ $session->clientLabel() }}</span>
+                                        <p class="mt-1 text-[11px] text-gray-500" title="Reported by the app's own &quot;from&quot; header">
+                                            {{ $session->surfaceLabel() }}
+                                        </p>
+                                        @if ($session->hasChangedSurface())
+                                            <p class="text-[11px] font-medium text-amber-600">
+                                                Signed in on {{ $session->issuedSurfaceLabel() }}
+                                            </p>
+                                        @endif
                                     </td>
 
                                     <td>
@@ -471,16 +490,23 @@
                             <p class="mt-1 font-mono text-[12px] text-gray-800">{{ $issuedAddress->label() }}</p>
                             <p class="text-xs text-gray-500">{{ $issuedAddress->locationLabel() }}</p>
                             <p class="mt-1 text-sm text-gray-800">{{ $issuedDevice->summary() }}</p>
+                            <p class="text-xs text-gray-500">App reported: {{ $inspected->issuedSurfaceLabel() }}</p>
                         </div>
                         <div>
                             <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Last used from</p>
                             <p class="mt-1 font-mono text-[12px] text-gray-800">{{ $inspectedAddress->label() }}</p>
                             <p class="text-xs text-gray-500">{{ $inspectedAddress->locationLabel() }}</p>
                             <p class="mt-1 text-sm text-gray-800">{{ $inspectedDevice->summary() }}</p>
+                            <p class="text-xs text-gray-500">App reported: {{ $inspected->surfaceLabel() }}</p>
                         </div>
                     </div>
 
-                    @if ($inspected->hasMovedAddress() || $inspected->hasChangedDevice())
+                    <p class="text-[11px] text-gray-400">
+                        &ldquo;App reported&rdquo; is the <span class="font-mono">from</span> header the client sends about itself.
+                        Nothing verifies it — treat it as a label, not as proof. The IP address cannot be forged.
+                    </p>
+
+                    @if ($inspected->hasMovedAddress() || $inspected->hasChangedDevice() || $inspected->hasChangedSurface())
                         <div class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
                             <p class="font-semibold">Worth a look</p>
                             <ul class="mt-1 list-inside list-disc space-y-0.5">
@@ -489,6 +515,9 @@
                                 @endif
                                 @if ($inspected->hasChangedDevice())
                                     <li>The user agent changed since sign-in. An app update explains this; a different device does not.</li>
+                                @endif
+                                @if ($inspected->hasChangedSurface())
+                                    <li>This token signed in on <strong>{{ $inspected->issuedSurfaceLabel() }}</strong> but is being used from <strong>{{ $inspected->surfaceLabel() }}</strong>. A token belongs to the app it was issued to, so this one has been moved.</li>
                                 @endif
                             </ul>
                         </div>

@@ -14,6 +14,7 @@
 use App\Livewire\Admin\Sessions\Index;
 use App\Models\PersonalAccessToken;
 use App\Models\User;
+use App\Support\ApiClientSurfaces;
 use App\Support\UserAgentDetails;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -129,14 +130,16 @@ it('lists sessions with the user, role, app, device and address', function () {
         'status' => User::ACTIVE,
     ]);
     $customer->assignRole('customer');
-    sessionFor($customer);
+    sessionFor($customer, ['client_surface' => MobileApps::CUSTOMER]);
 
     Livewire::actingAs(superAdmin())
         ->test(Index::class)
         ->assertSee('Dana Ruiz')
         ->assertSee('dana@example.test')
         ->assertSee('customer')
-        ->assertSee('Customer App')
+        // How the session was created, then which app is holding it.
+        ->assertSee('Customer Login')
+        ->assertSee('Customer Mobile App')
         ->assertSee('203.0.113.10')
         ->assertSee('iPhone');
 });
@@ -198,6 +201,114 @@ it('searches by email and by address', function () {
 
     $component->set('q', 'dana@example.test')->assertViewHas('filteredTotal', 1);
     $component->set('q', '203.0.113.99')->assertViewHas('filteredTotal', 1);
+});
+
+/* ---------------------------------------------------------------------------
+ | The reported surface — the app's own `from` header
+ ---------------------------------------------------------------------------*/
+
+it('records the surface an admin signed in from, and names the right token', function () {
+    $user = User::factory()->create([
+        'email' => 'staff@bookboll.test',
+        'password' => 'correct-horse-battery',
+        'status' => User::ACTIVE,
+    ]);
+    $user->assignRole('super_admin');
+
+    $this->withHeaders(['from' => MobileApps::ADMIN])
+        ->postJson('/api/login', [
+            'email' => 'staff@bookboll.test',
+            'password' => 'correct-horse-battery',
+        ])
+        ->assertOk();
+
+    $token = PersonalAccessToken::query()->where('tokenable_id', $user->id)->latest('id')->first();
+
+    expect($token->client_surface)->toBe(MobileApps::ADMIN)
+        ->and($token->surfaceLabel())->toBe('Admin Mobile App')
+        // UserService branches on the same header for the token name.
+        ->and($token->name)->toBe('bookboll-admin-mobile-app-api-token');
+});
+
+it('separates a customer on the website from one on the phone, which the token name cannot', function () {
+    $web = User::factory()->create(['status' => User::ACTIVE]);
+    $phone = User::factory()->create(['status' => User::ACTIVE]);
+
+    // Both are issued the SAME token name by customerLogin().
+    $webToken = sessionFor($web, ['client_surface' => 'frontend-web']);
+    $phoneToken = sessionFor($phone, ['client_surface' => MobileApps::CUSTOMER]);
+
+    expect($webToken->name)->toBe($phoneToken->name);
+
+    $component = Livewire::actingAs(superAdmin())->test(Index::class);
+
+    $component->set('surface', 'frontend-web')->assertViewHas('filteredTotal', 1);
+    $component->set('surface', MobileApps::CUSTOMER)->assertViewHas('filteredTotal', 1);
+});
+
+it('prefers the surface last reported over the one signed in on', function () {
+    $customer = User::factory()->create(['status' => User::ACTIVE]);
+    $token = sessionFor($customer, [
+        'client_surface' => 'frontend-web',
+        'last_used_surface' => MobileApps::CUSTOMER,
+    ]);
+
+    expect($token->surfaceLabel())->toBe('Customer Mobile App')
+        ->and($token->issuedSurfaceLabel())->toBe('Customer Website')
+        ->and($token->hasChangedSurface())->toBeTrue();
+
+    // Filtering follows the same rule: the session is on the phone now.
+    Livewire::actingAs(superAdmin())
+        ->test(Index::class)
+        ->set('surface', MobileApps::CUSTOMER)
+        ->assertViewHas('filteredTotal', 1)
+        ->set('surface', 'frontend-web')
+        ->assertViewHas('filteredTotal', 0);
+});
+
+it('can single out the sessions that reported no surface at all', function () {
+    $customer = User::factory()->create(['status' => User::ACTIVE]);
+
+    sessionFor($customer, ['client_surface' => null, 'last_used_surface' => null]);
+    sessionFor($customer, ['client_surface' => 'admin-web']);
+
+    Livewire::actingAs(superAdmin())
+        ->test(Index::class)
+        ->set('surface', ApiClientSurfaces::NOT_SENT)
+        ->assertViewHas('filteredTotal', 1);
+});
+
+it('shows an unrecognised surface as sent rather than hiding it', function () {
+    expect(ApiClientSurfaces::label('some-new-kiosk'))->toBe('Unrecognised (some-new-kiosk)')
+        ->and(ApiClientSurfaces::label(null))->toBe('Not reported')
+        ->and(ApiClientSurfaces::label('  '))->toBe('Not reported')
+        ->and(ApiClientSurfaces::isKnown('admin-web'))->toBeTrue()
+        ->and(ApiClientSurfaces::isKnown('some-new-kiosk'))->toBeFalse();
+});
+
+it('caps what an unrecognised client can store in the surface column', function () {
+    $long = str_repeat('x', 200);
+
+    expect(strlen((string) ApiClientSurfaces::normalise($long)))->toBe(ApiClientSurfaces::MAX_LENGTH);
+});
+
+it('updates the reported surface on each authenticated request', function () {
+    $user = User::factory()->create(['status' => User::ACTIVE]);
+    $plain = $user->createToken('bookboll-customer-login-api-token')->plainTextToken;
+
+    PersonalAccessToken::query()->latest('id')->first()
+        ->forceFill(['client_surface' => 'frontend-web'])->save();
+
+    $this->withHeaders(['from' => MobileApps::CUSTOMER])
+        ->withToken($plain)
+        ->getJson('/api/me')
+        ->assertOk();
+
+    $token = PersonalAccessToken::query()->latest('id')->first();
+
+    expect($token->last_used_surface)->toBe(MobileApps::CUSTOMER)
+        ->and($token->client_surface)->toBe('frontend-web')
+        ->and($token->hasChangedSurface())->toBeTrue();
 });
 
 /* ---------------------------------------------------------------------------

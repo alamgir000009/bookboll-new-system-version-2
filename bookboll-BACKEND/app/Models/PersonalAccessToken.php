@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\ApiClientSurfaces;
 use App\Support\ApiSessionClients;
 use App\Support\IpAddressDetails;
 use App\Support\UserAgentDetails;
@@ -35,9 +36,9 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
 
     public const STATUS_IDLE = 'idle';
 
-    public const STATUS_EXPIRED = 'expired';
-
     public const STATUS_UNUSED = 'unused';
+
+    public const STATUS_EXPIRED = 'expired';
 
     protected $fillable = [
         'name',
@@ -47,6 +48,8 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
         'ip_address',
         'user_agent',
         'last_used_ip',
+        'client_surface',
+        'last_used_surface',
         'last_used_user_agent',
     ];
 
@@ -57,6 +60,7 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
         static::creating(function (self $token) {
             $token->ip_address ??= self::currentIp();
             $token->user_agent ??= self::currentUserAgent();
+            $token->client_surface ??= self::currentSurface();
         });
 
         // Sanctum's guard calls forceFill(['last_used_at' => now()])->save() on
@@ -75,6 +79,10 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
 
             if ($agent = self::currentUserAgent()) {
                 $token->last_used_user_agent = $agent;
+            }
+
+            if ($surface = self::currentSurface()) {
+                $token->last_used_surface = $surface;
             }
         });
     }
@@ -95,6 +103,32 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
     public function clientLabel(): string
     {
         return ApiSessionClients::label($this->name);
+    }
+
+    /**
+     * Which app is holding this session, per its own `from` header. Falls back
+     * to the surface it signed in on when the latest request sent no header.
+     */
+    public function surfaceLabel(): string
+    {
+        return ApiClientSurfaces::label($this->last_used_surface ?? $this->client_surface);
+    }
+
+    public function issuedSurfaceLabel(): string
+    {
+        return ApiClientSurfaces::label($this->client_surface);
+    }
+
+    /**
+     * The session is being used from a different app than it signed in on.
+     * A token is issued to one app and should stay there, so unlike a changed
+     * address this has no innocent explanation worth assuming.
+     */
+    public function hasChangedSurface(): bool
+    {
+        return $this->client_surface !== null
+            && $this->last_used_surface !== null
+            && $this->client_surface !== $this->last_used_surface;
     }
 
     /** The device that last presented this token, falling back to the one it was issued to. */
@@ -206,6 +240,21 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
         return $query->notExpired()->whereNull('last_used_at');
     }
 
+    /**
+     * Filter on the reported surface. ApiClientSurfaces::NOT_SENT selects the
+     * rows that reported nothing, which is every token issued before this was
+     * recorded — so it is a real choice, not an absence of one.
+     */
+    public function scopeFromSurface(Builder $query, string $surface): Builder
+    {
+        if ($surface === ApiClientSurfaces::NOT_SENT) {
+            return $query->whereNull('client_surface')->whereNull('last_used_surface');
+        }
+
+        return $query->where(fn (Builder $q) => $q->where('last_used_surface', $surface)
+            ->orWhere(fn (Builder $inner) => $inner->whereNull('last_used_surface')->where('client_surface', $surface)));
+    }
+
     public function scopeWithStatus(Builder $query, string $status): Builder
     {
         return match ($status) {
@@ -264,6 +313,12 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
         $ip = Request::ip();
 
         return is_string($ip) && filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : null;
+    }
+
+    /** The app's own `from` header — client-supplied, so stored as given and capped. */
+    private static function currentSurface(): ?string
+    {
+        return ApiClientSurfaces::normalise(Request::header('from'));
     }
 
     private static function currentUserAgent(): ?string
