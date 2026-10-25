@@ -1,16 +1,16 @@
 <?php
+
 namespace App\Services;
 
-use Exception;
 use App\Models\Setting;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class SettingService
 {
-    public function __construct(protected Setting $settingModel)
-    {}
+    public function __construct(protected Setting $settingModel) {}
 
     /**
      * Reading settings is open to every dashboard role — the brand/theme loader
@@ -36,7 +36,7 @@ class SettingService
     {
         try {
             $formData = $request->validate([
-                '*.key'   => 'required|string|max:255',
+                '*.key' => 'required|string|max:255',
                 '*.value' => 'nullable',
             ]);
 
@@ -44,65 +44,77 @@ class SettingService
 
             $updated = [];
             foreach ($formData as $item) {
-                $value = $item['value'];
-                if (is_bool($value)) {
-                    $value = $value ? '1' : '0';
-                } elseif (is_array($value) || is_object($value)) {
-                    $value = json_encode($value);
-                } else {
-                    $value = $value === null ? null : (string) $value;
-                }
-
-                $setting = $this->settingModel::updateOrCreate(
-                    ['key' => $item['key']],
-                    ['value' => $value, 'updated_at' => now()]
-                );
-
-                $updated[$item['key']] = $setting->value;
-
-                // Keep Laravel booking lock duration in sync with admin hold timer.
-                if ($item['key'] === 'booking_hold_minutes') {
-                    $this->settingModel::updateOrCreate(
-                        ['key' => 'default_bookings_slot_lock_time'],
-                        ['value' => (string) max(1, (int) $value), 'updated_at' => now()]
-                    );
-                    $updated['default_bookings_slot_lock_time'] = (string) max(1, (int) $value);
-                }
+                $updated += $this->put($item['key'], $item['value']);
             }
             DB::commit();
 
             return sendSuccess('Settings updated successfully', ['settings' => $updated]);
         } catch (Exception $e) {
             DB::rollBack();
-            Log::error('Settings update failed: ' . $e->getMessage());
-            return sendError('Settings update failed: ' . $e->getMessage());
+            Log::error('Settings update failed: '.$e->getMessage());
+
+            return sendError('Settings update failed: '.$e->getMessage());
         }
     }
 
     public function updateSingle(Request $request, string $key)
     {
         $request->validate(['value' => 'nullable']);
-        $value = $request->value;
-        if (is_bool($value)) {
-            $value = $value ? '1' : '0';
-        } elseif (is_array($value) || is_object($value)) {
-            $value = json_encode($value);
-        } else {
-            $value = $value === null ? null : (string) $value;
-        }
 
-        $setting = $this->settingModel::updateOrCreate(
-            ['key' => $key],
-            ['value' => $value]
-        );
+        $written = $this->put($key, $request->value);
 
+        return sendSuccess('Setting updated successfully', ['key' => $key, 'value' => $written[$key]]);
+    }
+
+    /**
+     * Write one setting and whatever else that key implies.
+     *
+     * The single write path for every caller — this API, and the admin panel's
+     * Settings page — so a linked key like the slot lock below cannot be kept in
+     * step by one of them and left stale by the other.
+     *
+     * @return array<string, string|null> every key actually written, with its stored value
+     */
+    public function put(string $key, mixed $value): array
+    {
+        $value = self::normaliseValue($value);
+
+        $setting = $this->settingModel::updateOrCreate(['key' => $key], ['value' => $value]);
+
+        $written = [$key => $setting->value];
+
+        // The booking lock duration is not independently meaningful: it is the
+        // checkout hold, expressed for the slot locker. Kept in step here rather
+        // than trusted to whoever edits the two separately.
         if ($key === 'booking_hold_minutes') {
+            $linked = (string) max(1, (int) $value);
+
             $this->settingModel::updateOrCreate(
                 ['key' => 'default_bookings_slot_lock_time'],
-                ['value' => (string) max(1, (int) $value)]
+                ['value' => $linked]
             );
+
+            $written['default_bookings_slot_lock_time'] = $linked;
         }
 
-        return sendSuccess('Setting updated successfully', ['key' => $key, 'value' => $setting->value]);
+        return $written;
+    }
+
+    /**
+     * The settings table stores everything as text, so booleans become '1'/'0'
+     * and structures become JSON. Null stays null — it is how a setting is
+     * cleared, and Setting::scopeActive() treats it as unset.
+     */
+    public static function normaliseValue(mixed $value): ?string
+    {
+        if (is_bool($value)) {
+            return $value ? '1' : '0';
+        }
+
+        if (is_array($value) || is_object($value)) {
+            return json_encode($value);
+        }
+
+        return $value === null ? null : (string) $value;
     }
 }
