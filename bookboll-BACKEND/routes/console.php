@@ -12,7 +12,10 @@ Schedule::command('slot-locks:clear')->everyFiveMinutes();
 
 Schedule::command('send-booking-reminders')->daily();
 
-Schedule::command('bookings:auto-cancel-unpaid-deposit')->everyMinute();
+// withoutOverlapping() for the same reason its sibling below has it: a run that
+// outlasts its minute would otherwise have the next one start alongside it, and
+// every concurrent run holds its own MySQL connection out of the account's 30.
+Schedule::command('bookings:auto-cancel-unpaid-deposit')->everyMinute()->withoutOverlapping();
 
 // The same timeout, for hosted events whose host walked away from Stripe: their
 // courts have to go back on sale like any other unpaid booking's would.
