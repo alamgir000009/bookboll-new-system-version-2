@@ -13,6 +13,7 @@ use App\Livewire\Admin\Dashboard;
 use App\Livewire\Admin\Profile\Edit as ProfileEdit;
 use App\Livewire\Admin\Sessions\Index as SessionsIndex;
 use App\Livewire\Admin\Settings\Index as SettingsIndex;
+use App\Livewire\Admin\SlotLocks\Index as SlotLocksIndex;
 use Illuminate\Support\Facades\Route;
 
 Route::get('newsletter/unsubscribe/{email}', [NewsletterController::class, 'unsubscribe'])->name('newsletter.unsubscribe');
@@ -34,6 +35,8 @@ Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin'])->group(fu
     // NOT 'settings.index' — routes/api.php already owns that name, and the
     // later registration wins, so this link would resolve to the JSON endpoint.
     Route::get('settings-000009', SettingsIndex::class)->name('platform-settings.index');
+
+    Route::get('slot-locks-000009', SlotLocksIndex::class)->name('slot-locks.index');
 
     Route::get('sessions-000009', SessionsIndex::class)->name('sessions.index');
 
