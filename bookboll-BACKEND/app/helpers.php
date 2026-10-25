@@ -1685,6 +1685,27 @@ if (! function_exists('notifyVenueStaffRefresh')) {
     }
 }
 
+if (! function_exists('nextMonthBookingsOpenDays')) {
+    /**
+     * How many days of the current month must REMAIN (counting today) before
+     * next month's slots open. Admin-configurable; falls back to 7.
+     *
+     * Exists so the three readers can't drift, and because the inline version
+     * they shared was silently broken: `(int) $x ?? 7` parses as
+     * `((int) $x) ?? 7`, and `(int) null` is 0 — never null — so the ?? branch
+     * was unreachable. A missing row yielded 0, and `$daysRemaining <= 0` is
+     * never true, which shut next month off entirely instead of defaulting to 7.
+     */
+    function nextMonthBookingsOpenDays(): int
+    {
+        $configured = \App\Models\Setting::where('key', 'days_until_next_month_bookings_open')->value('value');
+
+        // Cast only AFTER the fallback, and treat '' / non-numeric as unset —
+        // a blank settings row must not mean "never open next month".
+        return is_numeric($configured) ? (int) $configured : 7;
+    }
+}
+
 if (! function_exists('isDateAvailableForBooking')) {
     function isDateAvailableForBooking($date)
     {
@@ -1702,10 +1723,15 @@ if (! function_exists('isDateAvailableForBooking')) {
         $nextMonth = $today->copy()->addMonthNoOverflow();
 
         if ($dateCarbon->month === $nextMonth->month && $dateCarbon->year === $nextMonth->year) {
-            $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
+            $daysBeforeNextMonth = nextMonthBookingsOpenDays();
 
-            $endOfCurrentMonth = $today->copy()->endOfMonth();
-            $daysRemaining     = $today->diffInDays($endOfCurrentMonth) + 1;
+            // Plain subtraction, NOT a Carbon diff. endOfMonth() is 23:59:59 and
+            // Carbon 3 returns diffInDays() as a float, so Oct 25 -> Oct 31 came
+            // back as 6.9999... not 6; the +1 (written when diffInDays truncated
+            // to an int) then made daysRemaining 7.9999, and `7.9999 <= 7` is
+            // false — the window opened a full day late for every threshold.
+            // Both dates are in the same month, so the day numbers are the answer.
+            $daysRemaining = $today->daysInMonth - $today->day + 1;
 
             return $daysRemaining <= $daysBeforeNextMonth;
         }

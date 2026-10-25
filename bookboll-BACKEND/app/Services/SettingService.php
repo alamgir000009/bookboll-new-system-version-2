@@ -12,9 +12,20 @@ class SettingService
     public function __construct(protected Setting $settingModel)
     {}
 
+    /**
+     * Reading settings is open to every dashboard role — the brand/theme loader
+     * needs it on every page — so anything flagged `encrypted` is withheld here.
+     *
+     * That flag is only a label: nothing on the model encrypts the column, so a
+     * secret stored in this table sits in plaintext and used to be handed to all
+     * twelve roles that can reach this endpoint. Secrets belong in .env, not in
+     * `settings`; this filter is the backstop for the day someone adds one anyway.
+     */
     public function all()
     {
-        $settings = $this->settingModel::all(['key', 'value'])
+        $settings = $this->settingModel::query()
+            ->where('encrypted', false)
+            ->get(['key', 'value'])
             ->pluck('value', 'key')
             ->toArray();
 

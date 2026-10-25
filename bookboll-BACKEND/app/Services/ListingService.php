@@ -1228,7 +1228,7 @@ class ListingService
 
         // Skip date availability check for admins from admin_mobile_app
         if ($requestFrom === 'frontend-web' && ! $isAdminFromMobileApp && ! isDateAvailableForBooking($date)) {
-            $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
+            $daysBeforeNextMonth = nextMonthBookingsOpenDays();
             return sendError("Slots for this date are not yet available. Next month slots become available when there are {$daysBeforeNextMonth} or fewer days remaining in the current month.");
         }
 
@@ -2148,7 +2148,7 @@ class ListingService
 
             $requestFrom = $request->header('from');
             if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
-                $daysBeforeNextMonth = (int) Setting::where('key', 'days_until_next_month_bookings_open')->value('value') ?? 7;
+                $daysBeforeNextMonth = nextMonthBookingsOpenDays();
                 return sendError("Slots for this date are not yet available. Next month slots become available when there are {$daysBeforeNextMonth} or fewer days remaining in the current month.");
             }
 
