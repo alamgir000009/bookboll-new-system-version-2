@@ -472,8 +472,12 @@ function signOut() { customerSignOut(); menuOpen.value = false; router.push('/')
 .cust-marketplace .cust-main { max-width: 1200px; padding: 28px 24px 56px; }
 .cust-marketplace .cust-header-inner { max-width: 1200px; padding: 16px 24px; }
 .cust-marketplace .cust-logo-name { letter-spacing: -.4px; }
+/* The city chip and the account button carry TEXT, so they read better unbordered
+   next to the logo. The theme toggle is an icon button like Messages, the bell and
+   the language switcher — all of which keep their ring — so it was flattened here
+   by association and ended up the only bare icon in the row. The mobile rule above
+   still mutes it, together with .cust-msgs, which is where flattening is deliberate. */
 .cust-marketplace .cust-city { border: 0; background: transparent; border-inline-start: 1px solid var(--border); border-radius: 0; padding-inline: 18px 8px; margin-inline-start: 5px; }
-.cust-marketplace .cust-theme { border-color: transparent; }
 .cust-marketplace .cust-signin { border-radius: 10px; padding: 11px 17px; font-weight: 600; }
 .cust-marketplace .cust-acct { border: 0; background: transparent; font-family: inherit; }
 .cust-marketplace .cust-sidenav-link:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }

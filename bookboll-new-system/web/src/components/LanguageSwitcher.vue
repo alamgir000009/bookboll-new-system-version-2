@@ -66,7 +66,10 @@ onUnmounted(() => { document.removeEventListener('click', onDoc, true); document
   font-size: 13.5px; font-weight: 600; cursor: pointer;
 }
 .lang-trigger:hover { border-color: var(--brand-accent, #14b8a6); color: var(--brand, #0f766e); }
-.lang-trigger.compact { width: 38px; height: 38px; padding: 0; justify-content: center; border-radius: 50%; }
+/* 40px to sit level with the other icon buttons in the customer header — the
+   theme toggle, Messages and the bell are all 40px rings. `compact` is used
+   only there, so this cannot shrink the wide pill the mobile menu renders. */
+.lang-trigger.compact { width: 40px; height: 40px; padding: 0; justify-content: center; border-radius: 50%; }
 .lang-current { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .lang-menu {
