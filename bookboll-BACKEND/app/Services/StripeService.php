@@ -470,6 +470,9 @@ class StripeService
                 $paymentIntentId,
                 $hostedGameUuid
             ) {
+                $settled   = [];
+                $unsettled = [];
+
                 $stripeSession = StripeSession::where('session_id', $sessionId)
                     ->lockForUpdate()
                     ->first();
@@ -489,6 +492,8 @@ class StripeService
                         'processed'         => true,
                         'already_processed' => true,
                         'booking_ids'       => $bookingIds,
+                        'settled'           => [],
+                        'unsettled'         => [],
                         'source'            => $source,
                         'error'             => null,
                     ];
@@ -513,35 +518,13 @@ class StripeService
                         $paymentIntentId
                     );
                 } else {
-                    foreach ($bookingIds as $bookingId) {
-                        $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
-
-                        if (! $booking) {
-                            throw new Exception("Booking #{$bookingId} not found during Stripe fulfillment.");
-                        }
-
-                        if ($booking->status === BookingStatus::CANCELLED) {
-                            throw new Exception(
-                                "Booking #{$booking->booking_id} is cancelled; refusing Stripe payment fulfillment."
-                            );
-                        }
-
-                        $this->applyPaymentToBooking(
-                            (int) $bookingId,
-                            (int) $userId,
-                            $paymentType,
-                            $chargeId,
-                            $paymentIntentId
-                        );
-                    }
-
-                    foreach ($bookingIds as $bookingId) {
-                        $booking = Booking::find($bookingId);
-                        if ($booking) {
-                            autoConfirmBookingIfPaid($booking);
-                            regenerateBookingInvoice($booking);
-                        }
-                    }
+                    [$settled, $unsettled] = $this->settleBookingsForCharge(
+                        $bookingIds,
+                        (int) $userId,
+                        $paymentType,
+                        $chargeId,
+                        $paymentIntentId
+                    );
                 }
 
                 $stripeSession->update([
@@ -555,17 +538,34 @@ class StripeService
                     'processed'         => true,
                     'already_processed' => false,
                     'booking_ids'       => $bookingIds,
+                    'settled'           => $settled,
+                    'unsettled'         => $unsettled,
                     'source'            => $source,
                     'error'             => null,
                 ];
             });
 
             if ($result['processed'] && ! $result['already_processed']) {
+                // Only the bookings that actually took the money get told about it.
                 $this->dispatchPaymentReceivedNotifications(
-                    $result['booking_ids'],
+                    $result['settled'] ?: $result['booking_ids'],
                     $paymentType,
                     $sessionId
                 );
+            }
+
+            if (! empty($result['unsettled'])) {
+                // Real money arrived that no live booking could absorb. Nothing
+                // automatic can put this right — a refund is a decision — so say
+                // so once, loudly, with everything needed to action it.
+                Log::error('Stripe payment could not be applied to every booking in its checkout', [
+                    'session_id'        => $sessionId,
+                    'payment_intent_id' => $paymentIntentId,
+                    'charge_id'         => $chargeId,
+                    'settled'           => $result['settled'],
+                    'unsettled'         => $result['unsettled'],
+                    'refund_required'   => empty($result['settled']),
+                ]);
             }
 
             return $result;
@@ -579,6 +579,8 @@ class StripeService
                 'processed'         => false,
                 'already_processed' => false,
                 'booking_ids'       => $bookingIds,
+                'settled'           => [],
+                'unsettled'         => [],
                 'source'            => $source,
                 'error'             => $e->getMessage(),
             ];
@@ -770,6 +772,73 @@ class StripeService
                 'reason'      => $reason,
             ]);
         }
+    }
+
+    /**
+     * Apply one Stripe charge across every booking its checkout covered.
+     *
+     * A single checkout routinely covers SEVERAL bookings — two consecutive
+     * slots are two rows sharing one charge. This loop used to THROW the moment
+     * any one of them was missing or cancelled, and because the caller runs it
+     * inside a DB transaction, the throw unwound everything: a customer who
+     * cancelled one slot while the other was still live had the money taken and
+     * NOTHING marked paid. `stripe_sessions.processed` then stayed false, the
+     * surviving booking still read as unpaid, and AutoCancelUnpaidDepositBookings
+     * — which exists to protect exactly this customer — cancelled that one too.
+     *
+     * So settle what can be settled and report what could not. Paying into a
+     * cancelled booking is still refused; only that booking is skipped, never
+     * its siblings.
+     *
+     * @return array{0: list<int>, 1: list<array{booking_id:int, booking_ref?:string, reason:string}>}
+     */
+    protected function settleBookingsForCharge(
+        array $bookingIds,
+        int $userId,
+        string $paymentType,
+        string $chargeId,
+        string $paymentIntentId
+    ): array {
+        $settled   = [];
+        $unsettled = [];
+
+        foreach ($bookingIds as $bookingId) {
+            $booking = Booking::whereKey($bookingId)->lockForUpdate()->first();
+
+            if (! $booking) {
+                $unsettled[] = ['booking_id' => (int) $bookingId, 'reason' => 'not_found'];
+                continue;
+            }
+
+            if ($booking->status === BookingStatus::CANCELLED) {
+                $unsettled[] = [
+                    'booking_id'  => (int) $bookingId,
+                    'booking_ref' => $booking->booking_id,
+                    'reason'      => 'cancelled',
+                ];
+                continue;
+            }
+
+            $this->applyPaymentToBooking(
+                (int) $bookingId,
+                $userId,
+                $paymentType,
+                $chargeId,
+                $paymentIntentId
+            );
+
+            $settled[] = (int) $bookingId;
+        }
+
+        foreach ($settled as $bookingId) {
+            $booking = Booking::find($bookingId);
+            if ($booking) {
+                autoConfirmBookingIfPaid($booking);
+                regenerateBookingInvoice($booking);
+            }
+        }
+
+        return [$settled, $unsettled];
     }
 
     protected function applyPaymentToBooking(
