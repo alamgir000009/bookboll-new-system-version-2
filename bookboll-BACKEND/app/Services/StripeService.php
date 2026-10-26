@@ -886,10 +886,15 @@ class StripeService
                     'payment_method' => BookingPaymentMethod::DEPOSIT_REMAINING_ON_ARRIVAL,
                 ]);
 
+                // Led with our internal row id, which means nothing to the person
+                // reading it, and omitted the one number they want: the amount.
+                // The payment reference is the id staff can actually search by,
+                // and the charge id is what reconciles against Stripe.
                 $booking->history()->create([
                     'user_id'     => $userId,
                     'action'      => 'payment_received',
-                    'description' => "Deposit payment #{$depositPayment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
+                    'description' => 'Deposit of ' . bookingMoney($depositPayment->amount, $booking)
+                        . " received online via Stripe. Payment {$depositPayment->payment_id}, Stripe charge {$chargeId}.",
                 ]);
             }
 
@@ -924,7 +929,8 @@ class StripeService
             $booking->history()->create([
                 'user_id'     => $userId,
                 'action'      => 'payment_received',
-                'description' => "Payment #{$payment->id} marked as PAID via Stripe. Charge ID: {$chargeId}",
+                'description' => 'Payment of ' . bookingMoney($payment->amount, $booking)
+                    . " received online via Stripe. Payment {$payment->payment_id}, Stripe charge {$chargeId}.",
             ]);
         }
 

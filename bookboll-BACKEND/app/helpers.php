@@ -1706,6 +1706,48 @@ if (! function_exists('nextMonthBookingsOpenDays')) {
     }
 }
 
+if (! function_exists('paymentStateInPlainWords')) {
+    /**
+     * A booking's payment state, written for the person reading the history.
+     *
+     * Staff open a booking's history to answer one question above all others —
+     * "has this customer been charged?" — and the raw column says `deposit_paid`,
+     * which is a database value, not an answer. Worse, it tells them nothing
+     * about what to DO: a cancelled booking that took a deposit needs a refund
+     * decision, and a cancelled booking that took nothing needs no action at all.
+     */
+    function paymentStateInPlainWords(?string $paymentStatus): string
+    {
+        return match ($paymentStatus) {
+            BookingPaymentStatus::PENDING         => 'nothing had been paid',
+            BookingPaymentStatus::DEPOSIT_PAID    => 'the deposit had been paid',
+            BookingPaymentStatus::FULLY_PAID      => 'it had been paid in full',
+            BookingPaymentStatus::PAYMENT_SKIPPED => 'payment had been skipped',
+            BookingPaymentStatus::CANCELLED       => 'the payment was already cancelled',
+            default                               => 'the payment state was not recorded',
+        };
+    }
+}
+
+if (! function_exists('bookingMoney')) {
+    /**
+     * An amount as staff should read it: with the currency the booking is in.
+     *
+     * History lines carried bare numbers, and a bare number is not money — a
+     * reader cannot tell 45 riyals from 45 rupees on a platform that now runs
+     * in several countries.
+     */
+    function bookingMoney($amount, $booking = null): string
+    {
+        $currency = $booking?->currency
+            ?: ($booking?->venue_id ? \App\Models\Booking::currencyForVenue($booking->venue_id) : '');
+
+        $formatted = number_format((float) $amount, 2);
+
+        return trim($currency . ' ' . $formatted);
+    }
+}
+
 if (! function_exists('nextMonthBookingsOpenOn')) {
     /**
      * The day NEXT month's calendar opens for booking.
@@ -1937,16 +1979,34 @@ if (! function_exists('processBookingCancellation')) {
             ? 'System'
             : (($cancelledByUserId && ($actor = \App\Models\User::find($cancelledByUserId))) ? $actor->name : 'Unknown');
 
-        // 'Booking cancelled from %s to %s by %s. Payment status unchanged (%s). %d payment record(s) left as-is. %s',
-        $description = sprintf(
-            'Booking cancelled from %s to %s by %s.',
-            $previousStatus,
-            BookingStatus::CANCELLED,
-            $actorName,
-            $previousPaymentStatus ?? 'n/a',
-            $paymentCount,
-            $cancelReason ? "Reason: {$cancelReason}" : ''
+        // This read "Booking cancelled from pending to cancelled by X." — it told
+        // the reader the new status twice (the row is already a cancellation) and
+        // dropped everything that matters. The sprintf was handed the reason, the
+        // payment status and the payment count, but the format string had only
+        // three placeholders, so all three were silently thrown away: the reason a
+        // booking was cancelled NEVER reached the history anyone reads.
+        //
+        // Lead with who and why, then the one thing staff act on — whether money
+        // was taken and is now sitting against a cancelled booking.
+        $parts = ["Cancelled by {$actorName}."];
+
+        if ($cancelReason) {
+            $parts[] = "Reason: {$cancelReason}.";
+        }
+
+        $parts[] = sprintf(
+            'Was %s, and %s.',
+            $previousStatus ?? 'in an unknown state',
+            paymentStateInPlainWords($previousPaymentStatus)
         );
+
+        if (in_array($previousPaymentStatus, [BookingPaymentStatus::DEPOSIT_PAID, BookingPaymentStatus::FULLY_PAID], true)) {
+            $parts[] = $paymentCount === 1
+                ? 'A refund may be owed — 1 payment record is kept against this booking.'
+                : "A refund may be owed — {$paymentCount} payment records are kept against this booking.";
+        }
+
+        $description = implode(' ', $parts);
 
         $booking->history()->create([
             'user_id'     => $cancelledByUserId ?? $booking->user_id,

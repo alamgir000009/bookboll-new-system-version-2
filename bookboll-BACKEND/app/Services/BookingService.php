@@ -795,7 +795,9 @@ class BookingService
                         $booking->history()->create([
                             'user_id'     => auth()->id(),
                             'action'      => $request->payment_method,
-                            'description' => 'Payment ' . str_replace('_', ' ', $request->payment_method),
+                            'description' => 'Paid in full by '
+                                . str_replace('_', ' ', $request->payment_method)
+                                . ' — ' . bookingMoney($booking->total_price, $booking) . '.',
                         ]);
                     }
                 }
@@ -806,7 +808,8 @@ class BookingService
                     $booking->history()->create([
                         'user_id'     => auth()->id(),
                         'action'      => 'booking_created',
-                        'description' => 'This booking is created with payment skipped by ' . auth()->user()->name . ' it marked as payment skipped',
+                        'description' => 'Payment skipped by ' . auth()->user()->name
+                            . ' — no charge is due for this booking.',
                     ]);
                 }
 
@@ -3030,7 +3033,12 @@ class BookingService
                 $booking->history()->create([
                     'user_id'     => $actor->id,
                     'action'      => 'user_changed',
-                    'description' => "Booking transferred from user #{$oldUserId} to user #{$updateData['user_id']}",
+                    // Names, not row ids — nobody reading a history knows who #4812 is.
+                    'description' => 'Booking transferred from '
+                        . (User::find($oldUserId)?->name ?? "user #{$oldUserId}")
+                        . ' to '
+                        . (User::find($updateData['user_id'])?->name ?? "user #{$updateData['user_id']}")
+                        . ' by ' . $actor->name . '.',
                 ]);
             }
 
@@ -3961,25 +3969,31 @@ class BookingService
                 ]);
             }
 
+            // ONE line for the creation, not two. This wrote "Booking created by X"
+            // and then, for a deposit booking, a second `booking_created` row
+            // saying "Booking created with deposit payment pending." — two
+            // entries at the same second, neither carrying an amount, which is
+            // what made the history look like it was repeating itself.
+            $createdBy = auth()->user() ? auth()->user()->name : $user->name;
+            $total     = bookingMoney($booking->total_price, $booking);
+
+            $plan = match (true) {
+                $paymentStatus == BookingPaymentStatus::DEPOSIT_PAID => 'deposit paid, balance due at the venue',
+                $paymentStatus == BookingPaymentStatus::PENDING
+                    && $formData['payment_method'] === 'deposit_remaining_on_arrival' => 'awaiting the online deposit',
+                $paymentStatus == BookingPaymentStatus::PENDING => 'awaiting payment',
+                $paymentStatus == BookingPaymentStatus::FULLY_PAID => 'paid in full',
+                default => null,
+            };
+
             $booking->history()->create([
                 'user_id'     => $user->id,
                 'action'      => 'booking_created',
-                'description' => 'Booking created by ' . (auth()->user() ? auth()->user()->name : $user->name),
+                'description' => "Booking created by {$createdBy} for {$total}"
+                    . ($plan ? " — {$plan}." : '.'),
             ]);
 
-            if ($paymentStatus == BookingPaymentStatus::DEPOSIT_PAID) {
-                $booking->history()->create([
-                    'user_id'     => $user->id,
-                    'description' => 'Deposit payment processed.',
-                    'action'      => BookingPaymentStatus::DEPOSIT_PAID,
-                ]);
-            } elseif ($paymentStatus == BookingPaymentStatus::PENDING && $formData['payment_method'] === 'deposit_remaining_on_arrival') {
-                $booking->history()->create([
-                    'user_id'     => $user->id,
-                    'description' => 'Booking created with deposit payment pending.',
-                    'action'      => 'booking_created',
-                ]);
-            } elseif ($paymentStatus == BookingPaymentStatus::FULLY_PAID && in_array($formData['payment_method'], ['paid_cash', 'paid_cheque', 'paid_credit_card', 'paid_wire', 'paid_wire_transfer'])) {
+            if ($paymentStatus == BookingPaymentStatus::FULLY_PAID && in_array($formData['payment_method'], ['paid_cash', 'paid_cheque', 'paid_credit_card', 'paid_wire', 'paid_wire_transfer'])) {
                 $paymentMethodName = match (trim($formData['payment_method'])) {
                     'paid_cash'          => 'Cash',
                     'paid_cheque'        => 'Cheque',
