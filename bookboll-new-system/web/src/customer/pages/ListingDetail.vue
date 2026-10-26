@@ -805,7 +805,10 @@ onBeforeRouteLeave(() => { stopHoldTimer(); teardownRealtime() })
             <div v-if="selectMode" class="ld-select-hint"><Info :size="13" /> Pick one or more times on this day — your {{ selectKind }}'s length is set by what you book (same day only).</div>
             <div v-if="loadingSlots" class="ld-slots-msg"><Loader :size="16" class="ld-spin" /> Loading times…</div>
             <div v-else-if="daySched?.closed" class="ld-slots-msg ld-closed-msg">
-              Closed on this date<template v-if="daySched.name && daySched.name !== 'Closed'"> — {{ daySched.name }}</template>. Pick another day above.
+              <!-- A calendar that is not out yet gets the server's own sentence;
+                   only a genuinely closed day reads as closed. -->
+              <template v-if="daySched.notice">{{ daySched.notice }}</template>
+              <template v-else>Closed on this date<template v-if="daySched.name && daySched.name !== 'Closed'"> — {{ daySched.name }}</template>. Pick another day above.</template>
             </div>
             <div v-else-if="!visibleSlots.length" class="ld-slots-msg">No open times left for this date — pick another day above.</div>
             <!-- Normal booking AND host select (game/hangout/tournament match): free multi-slot picking -->

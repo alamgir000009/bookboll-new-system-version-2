@@ -58,10 +58,19 @@ export async function loadDayAvailability(listing, date) {
   const holiday = /holiday/i.test(msg)
   const none = !slots.length
   if (listing?.holdMinutes) _holdMinutes = Math.max(1, Number(listing.holdMinutes) || 10)
+  // A calendar that has not been RELEASED yet is not a closed day. The server
+  // says which it is; the old code collapsed every failed reply into the flat
+  // word "Closed", which reads as "this venue never opens then" rather than
+  // "not out yet, check back".
+  const notOpenYet = res.errors?.reason === 'not_open_yet'
+
   return {
     slots,
     closed: none && (holiday || /no available/i.test(msg) || !res.success),
     closedName: holiday ? 'Holiday' : (none ? 'Closed' : ''),
+    // Shown verbatim when present — the server already phrased it for a reader.
+    notice: notOpenYet ? msg : '',
+    opensOn: notOpenYet ? (res.errors?.opens_on || '') : '',
     special: false,
     // The venue's own currency, resolved server-side the same way the booking is
     // charged. Carried even on a closed day, so an empty state can still label itself.
@@ -70,7 +79,7 @@ export async function loadDayAvailability(listing, date) {
 }
 
 export function dayScheduleInfo(_listing, _date, avail) {
-  if (avail?.closed) return { closed: true, name: avail.closedName || 'Closed', windows: [] }
+  if (avail?.closed) return { closed: true, name: avail.closedName || 'Closed', notice: avail.notice || '', windows: [] }
   if (avail?.special) return { closed: false, special: true, name: avail.closedName || 'Special schedule', windows: [{}] }
   return { closed: false, windows: [{}] }
 }
