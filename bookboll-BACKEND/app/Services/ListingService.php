@@ -1228,8 +1228,13 @@ class ListingService
 
         // Skip date availability check for admins from admin_mobile_app
         if ($requestFrom === 'frontend-web' && ! $isAdminFromMobileApp && ! isDateAvailableForBooking($date)) {
-            $daysBeforeNextMonth = nextMonthBookingsOpenDays();
-            return sendError("Slots for this date are not yet available. Next month slots become available when there are {$daysBeforeNextMonth} or fewer days remaining in the current month.");
+            // Not an outage and not a closed day — the calendar simply has not
+            // been released yet. The structured fields let a client say so
+            // without parsing the sentence.
+            return sendError(slotsNotOpenYetMessage($date), [
+                'reason'   => 'not_open_yet',
+                'opens_on' => nextMonthBookingsOpenOn()->toDateString(),
+            ]);
         }
 
         $listing = $this->listingModel::with([
@@ -2148,8 +2153,10 @@ class ListingService
 
             $requestFrom = $request->header('from');
             if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
-                $daysBeforeNextMonth = nextMonthBookingsOpenDays();
-                return sendError("Slots for this date are not yet available. Next month slots become available when there are {$daysBeforeNextMonth} or fewer days remaining in the current month.");
+                return sendError(slotsNotOpenYetMessage($date), [
+                    'reason'   => 'not_open_yet',
+                    'opens_on' => nextMonthBookingsOpenOn()->toDateString(),
+                ]);
             }
 
             $listing = $this->listingModel->with('venue')->findOrFail($listingId);
@@ -2469,7 +2476,8 @@ class ListingService
             if ($requestFrom === 'frontend-web' && ! isDateAvailableForBooking($date)) {
                 return sendSuccess('Slot availability checked', [
                     'available' => false,
-                    'reason'    => 'This date is not yet available for booking',
+                    'reason'    => slotsNotOpenYetMessage($date),
+                    'opens_on'  => nextMonthBookingsOpenOn()->toDateString(),
                 ]);
             }
 

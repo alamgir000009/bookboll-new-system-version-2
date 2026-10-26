@@ -1706,6 +1706,65 @@ if (! function_exists('nextMonthBookingsOpenDays')) {
     }
 }
 
+if (! function_exists('nextMonthBookingsOpenOn')) {
+    /**
+     * The day NEXT month's calendar opens for booking.
+     *
+     * isDateAvailableForBooking() opens it once `daysInMonth - day + 1 <= N`,
+     * which is the same as saying "from day `daysInMonth - N + 1` onwards".
+     * Derived from that one inequality rather than restated, so the date a
+     * customer is promised cannot drift from the date the gate actually lifts.
+     */
+    function nextMonthBookingsOpenOn($today = null): \Carbon\Carbon
+    {
+        $today = $today instanceof \Carbon\Carbon
+            ? $today->copy()->startOfDay()
+            : \Carbon\Carbon::today();
+
+        $openingDay = max(1, $today->daysInMonth - nextMonthBookingsOpenDays() + 1);
+
+        return $today->copy()->day($openingDay);
+    }
+}
+
+if (! function_exists('slotsNotOpenYetMessage')) {
+    /**
+     * Why a date has no slots, said the way a customer would say it.
+     *
+     * The gate used to answer with its own rule — "Next month slots become
+     * available when there are 7 or fewer days remaining in the current month"
+     * — which asks the reader to do the arithmetic the server already did. And
+     * the storefront never showed even that: a failed response became the flat
+     * word "Closed", which reads as "this venue does not open that day" rather
+     * than "not released yet, come back".
+     *
+     * Three different situations reach this, and only one of them is about next
+     * month, so each gets its own sentence.
+     */
+    function slotsNotOpenYetMessage($date): string
+    {
+        $dateCarbon = $date instanceof \Carbon\Carbon ? $date->copy() : \Carbon\Carbon::parse($date);
+        $today      = \Carbon\Carbon::today();
+
+        if ($dateCarbon->lt($today)) {
+            return 'That date has already passed. Please pick an upcoming day.';
+        }
+
+        $nextMonth = $today->copy()->addMonthNoOverflow();
+
+        if ($dateCarbon->month === $nextMonth->month && $dateCarbon->year === $nextMonth->year) {
+            $opensOn = nextMonthBookingsOpenOn($today);
+
+            return $nextMonth->format('F') . " slots are not open yet — they go live on "
+                . $opensOn->format('j M') . '. Keep an eye on this listing.';
+        }
+
+        return 'Bookings open one month at a time, so ' . $dateCarbon->format('F Y')
+            . ' is too far ahead. Please pick a day in ' . $today->format('F')
+            . ' or ' . $nextMonth->format('F') . '.';
+    }
+}
+
 if (! function_exists('isDateAvailableForBooking')) {
     function isDateAvailableForBooking($date)
     {
