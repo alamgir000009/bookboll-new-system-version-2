@@ -17,6 +17,7 @@ use App\Support\StripeDocumentLink;
 use App\Models\Promocode;
 use App\Models\Resource;
 use App\Models\Schedule;
+use App\Models\SlotLock;
 use App\Models\SpecialDay;
 use App\Models\SportsCategory;
 use App\Models\Transaction;
@@ -2269,10 +2270,7 @@ class BookingService
         $user = $request->user_id ? User::find($request->user_id) : auth()->user();
 
         if ($preparedCheckout === null) {
-            $hasSlots  = $request->filled('slots') && is_array($request->slots) && count($request->slots) > 0;
-            $hasBlocks = $request->filled('blocks') && is_array($request->blocks) && count($request->blocks) > 0;
-
-            if (! $hasSlots && ! $hasBlocks) {
+            if (! $this->hasSlotSelection($request)) {
                 return sendError('Please pick at least one time slot.', [], 422);
             }
 
@@ -2307,7 +2305,11 @@ class BookingService
                     DB::rollBack();
                     Log::error('Customer slot booking validation errors', ['Errors' => $preparedCheckout['errors']]);
 
-                    return sendError('Validation failed', $preparedCheckout['errors'], 422);
+                    return sendError(
+                        $this->customerCheckoutErrorMessage($preparedCheckout['errors']),
+                        $preparedCheckout['errors'],
+                        422
+                    );
                 }
             }
 
@@ -2419,9 +2421,158 @@ class BookingService
         return $discounts;
     }
 
+    /**
+     * Did this request carry a time selection at all?
+     *
+     * Both customer checkout entry points need this BEFORE Laravel's rules run.
+     * `slots` and `blocks` are required_without each other, so an empty selection
+     * trips both rules at once and the customer is handed
+     * "The slots field is required when blocks is not present. The blocks field
+     * is required when slots is not present." — which is what the mobile app
+     * showed a shopper whose hold had simply lapsed.
+     *
+     * Lives here, public, because the online-payment route validates in its own
+     * controller: keeping one copy is what stops the two paths drifting apart
+     * again.
+     */
+    public function hasSlotSelection($request): bool
+    {
+        foreach (['slots', 'blocks'] as $key) {
+            if ($request->filled($key) && is_array($request->{$key}) && count($request->{$key}) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * May this actor book straight over a hold somebody else is sitting on?
+     *
+     * Staff can: the console and the admin app book walk-ins at the desk, and a
+     * shopper's five-minute hold must not stand in the way of the person in
+     * front of them. Everyone else queues like any other customer.
+     *
+     * Decided by ROLE rather than the `from` header, because a header is the one
+     * part of this a stranger can choose for themselves.
+     */
+    private function actorBypassesSlotHolds(): bool
+    {
+        $actor = auth()->user();
+
+        if (! $actor) {
+            return false;
+        }
+
+        return $actor->hasAnyRole(array_values(array_unique(array_merge(
+            Capabilities::platformRoles(),
+            Capabilities::providerRoles()
+        ))));
+    }
+
+    /**
+     * What the slot_locks table says about one requested slot.
+     *
+     * Two separate things used to go unsaid here, both of which a customer reads
+     * as "the site is broken":
+     *
+     *   SOMEONE ELSE IS HOLDING IT. lockSlot() refuses to hand out a second hold
+     *   on a slot another session holds, but the BOOKING path never looked at
+     *   slot_locks at all — so a request sent straight to /bookings/create took
+     *   the slot out from under whoever was mid-checkout on it.
+     *
+     *   THIS SHOPPER'S OWN HOLD LAPSED. Holds expire after a few minutes. Once
+     *   one lapses the slot is fair game, and if it has since been taken the
+     *   only thing the customer saw was a capacity count that reads as jargon.
+     *   An expired row of their own is proof of exactly that, and is worth
+     *   saying plainly: pick it again.
+     *
+     * @param  bool  $alreadyFull  whether capacity validation already failed,
+     *                             which is what turns a lapsed hold into the
+     *                             REASON rather than a harmless detail
+     * @return string|null         the message, or null when nothing is wrong
+     */
+    private function slotHoldError($listingId, array $slot, string $sessionId, bool $alreadyFull): ?string
+    {
+        if (! $listingId) {
+            return null;
+        }
+
+        $overlapping = fn ($query) => applyBookingOverlapWhere(
+            $query,
+            $slot['date'],
+            $slot['start_time'],
+            $slot['end_time']
+        );
+
+        $heldByAnother = SlotLock::where('listing_id', $listingId)
+            ->where('session_id', '!=', $sessionId)
+            ->active()
+            ->where($overlapping)
+            ->exists();
+
+        if ($heldByAnother) {
+            return 'Someone else is checking out with this time right now. Please pick another slot.';
+        }
+
+        if (! $alreadyFull) {
+            return null;
+        }
+
+        $ownHoldLapsed = SlotLock::where('listing_id', $listingId)
+            ->where('session_id', $sessionId)
+            ->expired()
+            ->where($overlapping)
+            ->exists();
+
+        return $ownHoldLapsed
+            ? 'Your hold on this time expired and the slot has since been taken. Please pick your time again.'
+            : 'This time is no longer available. Please pick another slot.';
+    }
+
+    /**
+     * One sentence a customer can act on, from the per-slot error bag.
+     *
+     * Both customer checkout entry points answered every one of these with the
+     * literal string "Validation failed" — which is what the storefront shows,
+     * because it reads `message`. The real reason sat in `errors.slots.0.*`
+     * where nothing displayed it.
+     */
+    public function customerCheckoutErrorMessage(array $errors): string
+    {
+        foreach (['slots', 'blocks'] as $group) {
+            foreach ($errors[$group] ?? [] as $slotErrors) {
+                // The hold speaks to what the customer must DO, so it is
+                // preferred over the schedule/capacity reasons beside it.
+                foreach (['slot', 'capacity', 'start_time', 'date'] as $key) {
+                    if (! empty($slotErrors[$key]) && is_string($slotErrors[$key])) {
+                        return $slotErrors[$key];
+                    }
+                }
+            }
+        }
+
+        foreach ($errors as $value) {
+            if (is_string($value)) {
+                return $value;
+            }
+            if (is_array($value) && isset($value[0]) && is_string($value[0])) {
+                return $value[0];
+            }
+        }
+
+        return 'Your selected times are no longer available. Please pick them again.';
+    }
+
     private function collectCustomerSlotsValidationErrors(array $formData): array
     {
         $errors = [];
+
+        // Holds guard the shopper queue, not the front desk — see
+        // actorBypassesSlotHolds().
+        $sessionId  = getSessionId();
+        $listingId  = $formData['listing_id'] ?? null;
+        $holdsApply = ! $this->actorBypassesSlotHolds();
 
         foreach ($formData['slots'] ?? [] as $index => $slot) {
             $slotData = array_merge($formData, [
@@ -2433,6 +2584,15 @@ class BookingService
             unset($slotData['slots'], $slotData['blocks']);
 
             $validationErrors = $this->validateBooking($slotData);
+
+            if ($holdsApply
+                && ($holdError = $this->slotHoldError($listingId, $slot, $sessionId, isset($validationErrors['capacity'])))) {
+                // The hold explains the slot better than a raw capacity count,
+                // so it replaces it rather than piling up beside it.
+                unset($validationErrors['capacity']);
+                $validationErrors['slot'] = $holdError;
+            }
+
             if (! empty($validationErrors)) {
                 $errors['slots'][$index] = $validationErrors;
             }

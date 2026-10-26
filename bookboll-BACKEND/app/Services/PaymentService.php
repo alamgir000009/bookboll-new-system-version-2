@@ -1813,7 +1813,13 @@ class PaymentService
             if (! empty($prepared['errors'])) {
                 DB::rollBack();
 
-                return sendError('Validation failed', $prepared['errors'], 422);
+                // Same wording the cash path gives: paying online must not be the
+                // reason a shopper is told only "Validation failed".
+                return sendError(
+                    $bookingService->customerCheckoutErrorMessage($prepared['errors']),
+                    $prepared['errors'],
+                    422
+                );
             }
 
             $combinedSubtotal    = $prepared['combinedSubtotal'];

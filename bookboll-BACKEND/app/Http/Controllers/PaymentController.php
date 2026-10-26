@@ -278,6 +278,16 @@ class PaymentController extends Controller
             return sendError('Unauthorized', [], 401);
         }
 
+        // `slots` and `blocks` are required_without each other, so an empty
+        // selection fails BOTH rules and Laravel answers with
+        // "The slots field is required when blocks is not present. The blocks
+        // field is required when slots is not present." That is what a customer
+        // whose hold had merely lapsed saw on the mobile app. The cash route has
+        // always checked this first; this one never did.
+        if (! $this->bookingService->hasSlotSelection($request)) {
+            return sendError('Please pick at least one time slot.', [], 422);
+        }
+
         $validated = $request->validate(
             $this->bookingService->customerBookingValidationRules([
                 'online_payment',
