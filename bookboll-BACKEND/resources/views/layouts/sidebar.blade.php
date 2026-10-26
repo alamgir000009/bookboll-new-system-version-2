@@ -86,15 +86,30 @@
      class="fixed inset-0 z-40 bg-black/50 lg:hidden"
      style="display: none;"></div>
 
-<aside :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
+<aside id="admin-sidebar"
+       :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
        class="sidebar-panel fixed inset-y-0 left-0 z-50 flex w-64 flex-col transition-transform duration-200 ease-in-out lg:translate-x-0">
 
-    <div class="flex items-center gap-3 border-b border-white/10 px-5 py-5">
+    <div class="sidebar-brand flex items-center gap-3 border-b border-white/10 px-5 py-5">
         <x-brand-logo class="h-10 w-10 shrink-0 rounded-lg ring-1 ring-white/20" />
-        <div class="min-w-0 leading-tight">
+        <div class="sidebar-brand-text min-w-0 leading-tight">
             <span class="block text-base font-bold text-white tracking-tight">{{ config('app.name', 'Bookboll') }}</span>
             <span class="block text-xs font-medium text-white/70">Admin</span>
         </div>
+
+        {{-- Desktop only: the mobile drawer is opened and closed by its own
+             hamburger, and a rail makes no sense at that width. --}}
+        <button type="button"
+                @click="toggleSidebar()"
+                class="sidebar-collapse-btn ml-auto hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white lg:flex"
+                :aria-expanded="collapsed ? 'false' : 'true'"
+                aria-controls="admin-sidebar"
+                :title="collapsed ? 'Expand sidebar' : 'Collapse sidebar'">
+            <svg class="sidebar-collapse-icon h-5 w-5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+            <span class="sr-only">Toggle sidebar</span>
+        </button>
     </div>
 
     <nav class="flex-1 overflow-y-auto py-2">
@@ -105,9 +120,10 @@
                     <a href="{{ $item['href'] }}"
                        @if ($item['navigate'] ?? true) wire:navigate @endif
                        wire:current.exact="sidebar-link-active"
+                       title="{{ $item['label'] }}"
                        @class(['sidebar-link', 'sidebar-link-active' => $item['active']])>
                         <svg class="h-5 w-5 shrink-0 opacity-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">{!! $item['icon'] !!}</svg>
-                        <span>{{ $item['label'] }}</span>
+                        <span class="sidebar-label">{{ $item['label'] }}</span>
                     </a>
                 </li>
             @endforeach
@@ -122,9 +138,10 @@
                     <a href="{{ $item['href'] }}"
                        @if ($item['navigate'] ?? true) wire:navigate @endif
                        wire:current.exact="sidebar-link-active"
+                       title="{{ $item['label'] }}"
                        @class(['sidebar-link', 'sidebar-link-active' => $item['active']])>
                         <svg class="h-5 w-5 shrink-0 opacity-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">{!! $item['icon'] !!}</svg>
-                        <span>{{ $item['label'] }}</span>
+                        <span class="sidebar-label">{{ $item['label'] }}</span>
                     </a>
                 </li>
             @endforeach
@@ -132,11 +149,11 @@
     </nav>
 
     <div class="border-t border-white/10 p-4">
-        <div class="flex items-center gap-3 rounded-lg bg-white/10 px-3 py-3">
+        <div class="sidebar-user-card flex items-center gap-3 rounded-lg bg-white/10 px-3 py-3">
             <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20 text-xs font-bold text-white">
                 {{ $initials }}
             </span>
-            <div class="min-w-0 flex-1">
+            <div class="sidebar-label min-w-0 flex-1">
                 <p class="truncate text-sm font-semibold text-white">{{ Auth::user()->name }}</p>
                 <p class="text-xs text-white/60">{{ $roleLabel }}</p>
             </div>
@@ -144,11 +161,11 @@
 
         <form method="POST" action="{{ route('logout') }}" class="mt-2">
             @csrf
-            <button type="submit" class="sidebar-link w-full text-left">
+            <button type="submit" class="sidebar-link w-full text-left" title="Log Out">
                 <svg class="h-5 w-5 shrink-0 opacity-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
                 </svg>
-                <span>Log Out</span>
+                <span class="sidebar-label">Log Out</span>
             </button>
         </form>
     </div>

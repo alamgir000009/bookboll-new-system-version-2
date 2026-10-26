@@ -141,6 +141,66 @@
         @apply text-sidebar-dark;
     }
 
+    /* ------------------------------------------------------------------
+       Collapsed sidebar — a 4rem icon rail.
+
+       Driven entirely by the data-sidebar attribute on <html>, which the
+       inline script in layouts/admin.blade.php sets before the first paint, so
+       the rail never flashes open on load. Alpine only flips the attribute.
+
+       Desktop only: below lg the sidebar is an overlay drawer opened by its own
+       hamburger, and a rail would leave no way to read the labels.
+
+       Selectors are attribute-qualified (0,2,1) so they beat the Tailwind
+       utilities they override — .w-64 and .lg\:pl-64 are both (0,1,0) and sit
+       in a later layer. */
+    @media (min-width: 1024px) {
+        html[data-sidebar='collapsed'] #admin-sidebar {
+            width: 4rem;
+        }
+
+        html[data-sidebar='collapsed'] .admin-content {
+            padding-left: 4rem;
+        }
+
+        /* Everything that is words rather than an icon. */
+        html[data-sidebar='collapsed'] .sidebar-label,
+        html[data-sidebar='collapsed'] .sidebar-brand-text,
+        html[data-sidebar='collapsed'] .sidebar-section {
+            display: none;
+        }
+
+        /* Centre the icons once their labels are gone. */
+        html[data-sidebar='collapsed'] .sidebar-link {
+            @apply justify-center gap-0 px-0;
+        }
+
+        /* The active marker is a 3px left border plus matching padding, which
+           knocks a centred icon off-axis. Swap it for a full-width tint. */
+        html[data-sidebar='collapsed'] .sidebar-link-active {
+            @apply border-l-0 pl-0;
+        }
+
+        html[data-sidebar='collapsed'] .sidebar-brand,
+        html[data-sidebar='collapsed'] .sidebar-user-card {
+            @apply justify-center gap-0 px-0;
+        }
+
+        /* The toggle sits under the logo rather than beside it at this width. */
+        html[data-sidebar='collapsed'] .sidebar-brand {
+            @apply flex-col gap-3;
+        }
+
+        html[data-sidebar='collapsed'] .sidebar-collapse-btn {
+            margin-left: 0;
+        }
+
+        /* Chevron points the other way: it now expands rather than collapses. */
+        html[data-sidebar='collapsed'] .sidebar-collapse-icon {
+            transform: rotate(180deg);
+        }
+    }
+
     .login-brand-panel {
         @apply relative overflow-hidden bg-gradient-to-br from-sidebar via-sidebar to-sidebar-dark;
     }
