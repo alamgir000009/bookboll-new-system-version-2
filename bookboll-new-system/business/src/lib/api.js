@@ -3,6 +3,7 @@
  * Expects { success, message, data, errors } JSON bodies.
  */
 import axios from 'axios'
+import { endExpiredSession, isSessionExpired } from './sessionExpiry.js'
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '')
 
@@ -45,6 +46,12 @@ export async function apiFetch(path, { method = 'GET', body = null, token = null
 
     const json = res.data && typeof res.data === 'object' ? res.data : null
     const ok = res.status >= 200 && res.status < 300
+
+    // The session was revoked while this tab was open. Callers still get their
+    // normal {success:false} answer — the reload is already on its way.
+    if (isSessionExpired(res.status, bearer)) {
+      endExpiredSession()
+    }
 
     // Laravel ValidationException default shape: { message, errors }
     if (json && typeof json.success !== 'boolean') {

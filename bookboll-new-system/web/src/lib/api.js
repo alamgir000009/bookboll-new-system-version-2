@@ -4,6 +4,7 @@
  * callers treat success:false as empty/null.
  */
 import axios from 'axios'
+import { endExpiredSession, isSessionExpired } from './sessionExpiry.js'
 
 export const CUSTOMER_TOKEN_KEY = 'bb_customer_token'
 
@@ -56,6 +57,13 @@ export async function apiFetch(path, { method = 'GET', body = null, token = null
 
     const json = res.data && typeof res.data === 'object' ? res.data : null
     const ok = res.status >= 200 && res.status < 300
+
+    // The session was revoked while this tab was open. Callers still get their
+    // normal {success:false} answer — the reload is already on its way, and a
+    // half-finished screen must not throw on top of it.
+    if (isSessionExpired(res.status, bearer)) {
+      endExpiredSession()
+    }
 
     if (json && typeof json.success !== 'boolean') {
       const hasErrors = json.errors && typeof json.errors === 'object'
