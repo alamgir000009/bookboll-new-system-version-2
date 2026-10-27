@@ -61,7 +61,7 @@ const venues = ref([])
 const f = ref({
   title: '', sport: '', skill_level: 'all', description: '', images: [],
   allow_waitlist: true,   // when full, queue joiners for freed spots
-  price_per_person: '', max_players: 10,
+  price_per_person: '', max_players: '',   // blank — the host types their own capacity
   ticket_mode: 'arrival',   // 'arrival' (cash to the host) | 'stripe' (online tickets, fee split per ticket)
   approval_mode: 'review',  // 'review' (host approves each request) | 'instant' (anyone joins until full)
   prize_on: false, prize_places: [{ amount: '' }],   // optional prize pot, split by place (1st, 2nd…)
@@ -1387,7 +1387,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           </div>
         </div>
         <div class="hg-row">
-          <div v-if="isGameLike"><label class="hg-l">{{ type === 'event' ? 'Max people' : 'Max players' }}</label><input ref="capacityInput" :aria-invalid="mediaAttempted && !!basicsErrors.max_players" :aria-describedby="mediaAttempted && basicsErrors.max_players ? 'host-capacity-error' : undefined" aria-label="Maximum attendees" v-model.number="f.max_players" type="number" min="2" class="hg-in" /><p v-if="mediaAttempted && basicsErrors.max_players" id="host-capacity-error" class="hg-field-error">{{ basicsErrors.max_players }}</p></div>
+          <div v-if="isGameLike"><label class="hg-l">{{ type === 'event' ? 'Max people' : 'Max players' }}</label><input ref="capacityInput" :aria-invalid="mediaAttempted && !!basicsErrors.max_players" :aria-describedby="mediaAttempted && basicsErrors.max_players ? 'host-capacity-error' : undefined" aria-label="Maximum attendees" v-model.number="f.max_players" type="number" min="2" class="hg-in" :placeholder="type === 'event' ? 'e.g. 20' : 'e.g. 10'" /><p v-if="mediaAttempted && basicsErrors.max_players" id="host-capacity-error" class="hg-field-error">{{ basicsErrors.max_players }}</p></div>
           <div v-if="isGameLike" class="hg-wl">
             <div class="hg-prize-tl">
               <div class="hg-prize-tt"><Hourglass :size="15" /> Waitlist when full?</div>
