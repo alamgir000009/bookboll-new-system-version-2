@@ -2974,7 +2974,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                   <div class="sl-cap-slot-time">6:00 PM<small>to 7:00 PM</small></div>
                   <div class="sl-cap-slot-price">{{ currencyForLocation(form.location_id) || 'QAR' }} {{ Number(form.base_price) || 100 }}</div>
                   <div v-if="form.show_slot_capacity !== false" class="sl-cap-slot-left">
-                    {{ Math.max(1, (Number(form.max_bookings_per_slot) || 1) - 1) }} left
+                    {{ Math.max(1, Number(form.max_bookings_per_slot) || 1) }} left
                   </div>
                 </div>
                 <p class="sl-cap-demo-note">
