@@ -225,6 +225,33 @@ function toggleExtension(on) {
   else { form.value.extension_pricing = 'none' }
 }
 
+// Worked example for the extension discount. A cap is hard to picture from a
+// number alone, so the preview runs one slot past it — the first full-price
+// slot is what the setting actually decides.
+const extensionPreview = computed(() => {
+  const base = Math.max(0, Number(form.value.base_price) || 100)
+  const dur = Number(form.value.slot_duration) || 60
+  const max = Math.min(12, Math.max(1, Number(form.value.extension_max_slots) || 1))
+  const val = Math.max(0, Number(form.value.extension_value) || 0)
+  const extra = form.value.extension_pricing === 'flat'
+    ? Math.max(0, base - val)
+    : Math.max(0, base * (1 - Math.min(100, val) / 100))
+  const round = n => Math.round(n * 100) / 100
+  const at = i => fmt12((18 * 60 + i * dur) % 1440)
+  const shown = Math.min(max, 3)
+  const rows = [{ time: at(0), price: round(base), tag: 'Slot they booked', kind: 'first' }]
+  for (let i = 1; i <= shown; i++) rows.push({ time: at(i), price: round(extra), tag: 'Extension — discounted', kind: 'disc' })
+  if (max > shown) rows.push({ time: '…', price: null, tag: `+${max - shown} more discounted`, kind: 'more' })
+  rows.push({ time: at(max + 1), price: round(base), tag: 'Beyond the cap — full price', kind: 'full' })
+  return {
+    rows, max,
+    currency: currencyForLocation(form.value.location_id) || '',
+    chainTotal: round(base + max * extra),
+    fullTotal: round(base * (max + 1)),
+    saving: round(max * (base - extra)),
+  }
+})
+
 const locAddItems = computed(() => {
   const items = []
   if (canManageListings.value) items.push({ key: 'listing', label: 'Booking Listing', desc: 'Any space people can book by the hour — court, studio, hall, room or desk', icon: Boxes })
@@ -3030,15 +3057,35 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                   <button type="button" :class="{ on: form.extension_pricing === 'percent' }" @click="form.extension_pricing = 'percent'">% discount</button>
                   <button type="button" :class="{ on: form.extension_pricing === 'flat' }" @click="form.extension_pricing = 'flat'">Flat discount</button>
                 </div>
-                <div class="ext-value-row">
-                  <input aria-label="Extension discount" type="number" min="0" v-model="form.extension_value" class="ext-value-input" />
-                  <span class="ext-value-unit">{{ form.extension_pricing === 'flat' ? currencyForLocation(form.location_id) + ' off each extra slot' : '% off each extra slot' }}</span>
+                <!-- Label first, field second, one row each — the setting reads as a sentence. -->
+                <label class="ext-field">
+                  <span class="ext-field-label">Discount on each extra slot</span>
+                  <span class="ext-field-control">
+                    <input type="number" min="0" v-model="form.extension_value" class="ext-value-input" />
+                    <span class="ext-field-unit">{{ form.extension_pricing === 'flat' ? currencyForLocation(form.location_id) + ' off' : '% off' }}</span>
+                  </span>
+                </label>
+                <label class="ext-field">
+                  <span class="ext-field-label">How many adjacent slots get the discount</span>
+                  <span class="ext-field-control">
+                    <input type="number" min="1" max="12" v-model.number="form.extension_max_slots" class="ext-value-input" />
+                    <span class="ext-field-unit">slot{{ Number(form.extension_max_slots) === 1 ? '' : 's' }} after the first</span>
+                  </span>
+                </label>
+                <div class="ext-preview">
+                  <div class="ext-preview-head">Example — a customer books {{ extensionPreview.rows[0].time }} and keeps extending</div>
+                  <ul class="ext-pv-rows">
+                    <li v-for="(r, i) in extensionPreview.rows" :key="i" class="ext-pv-row" :class="r.kind">
+                      <span class="ext-pv-time">{{ r.time }}</span>
+                      <span class="ext-pv-price">{{ r.price === null ? '' : extensionPreview.currency + ' ' + r.price }}</span>
+                      <span class="ext-pv-tag">{{ r.tag }}</span>
+                    </li>
+                  </ul>
+                  <p class="ext-preview-note">
+                    The next {{ extensionPreview.max }} slot{{ extensionPreview.max === 1 ? '' : 's' }} after the booked one {{ extensionPreview.max === 1 ? 'is' : 'are' }} discounted; anything beyond that is full price.
+                    A full chain costs {{ extensionPreview.currency }} {{ extensionPreview.chainTotal }} instead of {{ extensionPreview.currency }} {{ extensionPreview.fullTotal }} — the customer saves {{ extensionPreview.currency }} {{ extensionPreview.saving }}.
+                  </p>
                 </div>
-                <div class="ext-value-row">
-                  <input aria-label="Maximum discounted slots" type="number" min="1" max="12" v-model.number="form.extension_max_slots" class="ext-value-input" />
-                  <span class="ext-value-unit">discounted slot{{ Number(form.extension_max_slots) === 1 ? '' : 's' }} per chain (max)</span>
-                </div>
-                <div class="form-hint">Caps how many adjacent slots in one run get the discount. With <strong>{{ Math.max(1, Number(form.extension_max_slots) || 1) }}</strong>, picking 6pm discounts the next {{ Math.max(1, Number(form.extension_max_slots) || 1) }} slot{{ Math.max(1, Number(form.extension_max_slots) || 1) === 1 ? '' : 's' }}; anything beyond that is full price.</div>
               </div>
             </div>
 
@@ -3151,15 +3198,35 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                     <button type="button" :class="{ on: form.extension_pricing === 'percent' }" @click="form.extension_pricing = 'percent'">% discount</button>
                     <button type="button" :class="{ on: form.extension_pricing === 'flat' }" @click="form.extension_pricing = 'flat'">Flat discount</button>
                   </div>
-                  <div class="ext-value-row">
-                    <input aria-label="Extension discount" type="number" min="0" v-model="form.extension_value" class="ext-value-input" />
-                    <span class="ext-value-unit">{{ form.extension_pricing === 'flat' ? currencyForLocation(form.location_id) + ' off each extra slot' : '% off each extra slot' }}</span>
+                  <!-- Label first, field second, one row each — the setting reads as a sentence. -->
+                  <label class="ext-field">
+                    <span class="ext-field-label">Discount on each extra slot</span>
+                    <span class="ext-field-control">
+                      <input type="number" min="0" v-model="form.extension_value" class="ext-value-input" />
+                      <span class="ext-field-unit">{{ form.extension_pricing === 'flat' ? currencyForLocation(form.location_id) + ' off' : '% off' }}</span>
+                    </span>
+                  </label>
+                  <label class="ext-field">
+                    <span class="ext-field-label">How many adjacent slots get the discount</span>
+                    <span class="ext-field-control">
+                      <input type="number" min="1" max="12" v-model.number="form.extension_max_slots" class="ext-value-input" />
+                      <span class="ext-field-unit">slot{{ Number(form.extension_max_slots) === 1 ? '' : 's' }} after the first</span>
+                    </span>
+                  </label>
+                  <div class="ext-preview">
+                    <div class="ext-preview-head">Example — a customer books {{ extensionPreview.rows[0].time }} and keeps extending</div>
+                    <ul class="ext-pv-rows">
+                      <li v-for="(r, i) in extensionPreview.rows" :key="i" class="ext-pv-row" :class="r.kind">
+                        <span class="ext-pv-time">{{ r.time }}</span>
+                        <span class="ext-pv-price">{{ r.price === null ? '' : extensionPreview.currency + ' ' + r.price }}</span>
+                        <span class="ext-pv-tag">{{ r.tag }}</span>
+                      </li>
+                    </ul>
+                    <p class="ext-preview-note">
+                      The next {{ extensionPreview.max }} slot{{ extensionPreview.max === 1 ? '' : 's' }} after the booked one {{ extensionPreview.max === 1 ? 'is' : 'are' }} discounted; anything beyond that is full price.
+                      A full chain costs {{ extensionPreview.currency }} {{ extensionPreview.chainTotal }} instead of {{ extensionPreview.currency }} {{ extensionPreview.fullTotal }} — the customer saves {{ extensionPreview.currency }} {{ extensionPreview.saving }}.
+                    </p>
                   </div>
-                  <div class="ext-value-row">
-                    <input aria-label="Maximum discounted slots" type="number" min="1" max="12" v-model.number="form.extension_max_slots" class="ext-value-input" />
-                    <span class="ext-value-unit">discounted slot{{ Number(form.extension_max_slots) === 1 ? '' : 's' }} per chain (max)</span>
-                  </div>
-                  <div class="form-hint">Caps how many adjacent slots in one run get the discount. With <strong>{{ Math.max(1, Number(form.extension_max_slots) || 1) }}</strong>, picking 6pm discounts the next {{ Math.max(1, Number(form.extension_max_slots) || 1) }} slot{{ Math.max(1, Number(form.extension_max_slots) || 1) === 1 ? '' : 's' }}; anything beyond that is full price.</div>
                 </div>
               </div>
             </div>
@@ -4048,8 +4115,30 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
 .ext-type-toggle button { padding: 6px 14px; font-size: 13px; font-weight: 600; border: none; background: none; color: var(--text-muted); border-radius: 6px; cursor: pointer; transition: all .12s; }
 .ext-type-toggle button.on { background: var(--surface, #ffffff); color: var(--primary-ink); box-shadow: var(--shadow-sm); }
 .ext-value-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.ext-value-input { width: 110px; flex-shrink: 0; }
 .ext-value-unit { font-size: 13px; color: var(--text-muted); }
+/* Label leads, field follows on the same row. The element+class selector is
+   needed to beat the global `input:not(…)` width:100% rule. */
+.ext-field { display: flex; align-items: center; justify-content: space-between; gap: 12px 18px; flex-wrap: wrap; cursor: pointer; }
+.ext-field-label { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.5; }
+.ext-field-control { display: inline-flex; align-items: center; gap: 8px; }
+input.ext-value-input { width: 96px; flex: 0 0 96px; text-align: center; }
+.ext-field-unit { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.ext-preview { border: 1px solid var(--border); border-radius: 10px; background: var(--bg, #f1f5f9); padding: 13px 14px; }
+.ext-preview-head { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+.ext-pv-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ext-pv-row { display: grid; grid-template-columns: 78px 92px 1fr; align-items: center; gap: 10px; font-size: 13px; color: var(--text); }
+.ext-pv-time, .ext-pv-price { font-variant-numeric: tabular-nums; }
+.ext-pv-price { font-weight: 700; }
+.ext-pv-row.disc .ext-pv-price { color: var(--success, #16a34a); }
+.ext-pv-row.full { opacity: .72; }
+.ext-pv-row.more { color: var(--text-muted); font-size: 12px; }
+.ext-pv-tag { font-size: 11.5px; color: var(--text-muted); }
+.ext-preview-note { font-size: 12.5px; line-height: 1.7; color: var(--text-secondary); margin: 11px 0 0; }
+@media(max-width:640px) {
+  .ext-field { align-items: flex-start; }
+  .ext-pv-row { grid-template-columns: 70px 1fr; }
+  .ext-pv-tag { grid-column: 1 / -1; margin-top: -4px; }
+}
 .conn-add-btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; border: 1.5px dashed var(--primary); background: var(--primary-soft, #f0fdfa); color: var(--primary-ink); font-size: 13.5px; font-weight: 700; border-radius: 9px; cursor: pointer; transition: background .12s; }
 .conn-add-btn:hover { background: var(--primary-soft, #ccfbf1); }
 .conn-create-btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px; border: none; background: none; color: var(--text-muted); font-size: 13px; font-weight: 600; cursor: pointer; }
