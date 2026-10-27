@@ -1684,7 +1684,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
           </div>
 
           <!-- venue browse (games always · hangout "Book a Bookboll venue") -->
-          <VenueBrowse v-else :courts="cityCourts" :selected-id="gCourt" :currency="currency" :city-name="selectedCity?.name" @select="openCourtPage" />
+          <VenueBrowse v-else :courts="cityCourts" :venues="venues" :selected-id="gCourt" :currency="currency" :city-name="selectedCity?.name" @select="openCourtPage" />
         </template>
       </template>
 
@@ -1712,7 +1712,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
         <!-- (A) picking a court for ONE match → browse court cards (same as the game flow) -->
         <template v-if="schedulingMatch">
           <button type="button" class="hg-chart-back" @click="backToChart"><ArrowLeft :size="15" /> Back to bracket</button>
-          <VenueBrowse :courts="cityCourts" :currency="currency" :city-name="selectedCity?.name" @select="openMatchCourt" />
+          <VenueBrowse :courts="cityCourts" :venues="venues" :currency="currency" :city-name="selectedCity?.name" @select="openMatchCourt" />
         </template>
 
         <!-- (B) the bracket chart of game cards -->

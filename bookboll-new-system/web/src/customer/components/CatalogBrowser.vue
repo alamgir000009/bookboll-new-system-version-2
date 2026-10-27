@@ -89,7 +89,7 @@ function locate() {
   if (!navigator.geolocation) { locationError.value = 'Location is unavailable in this browser.'; return }
   locating.value = true; locationError.value = ''
   navigator.geolocation.getCurrentPosition(position => {
-    setUserCoords({ lat: position.coords.latitude, lng: position.coords.longitude }); locating.value = false
+    setUserCoords(position.coords.latitude, position.coords.longitude); locating.value = false
   }, () => { locating.value = false; locationError.value = 'Could not access your location. Allow location access and try again, or choose another order.' }, { timeout: 10000, maximumAge: 60000 })
 }
 const results = computed(() => {
