@@ -16,6 +16,7 @@ use App\Models\Venue;
 use App\Support\PremiumPlan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Admin dashboard (apps/admin Listings.vue) CRUD for listings.
@@ -1092,8 +1093,9 @@ class ListingDashboardService
             'base_price'              => (float) ($l->base_price ?? 0),
             'slot_duration'           => $l->slotDurationMinutes(),
             'buffer_time'             => (int) ($l->buffer_time ?? 0),
-            'start_time_mode'         => $l->start_time_mode ?? 'auto',
-            'fixed_start_times'       => $l->fixed_start_times ?? [],
+            'start_time_mode'         => $l->startTimeMode(),
+            'fixed_start_times'       => $l->fixedStartTimes(),
+            'custom_slots'            => $l->customSlots(),
             'capacity'                => (int) ($l->capacity ?? 0),
             'status'                  => $l->status ?? 'active',
             // Per-surface visibility. `status` stays in the payload and is still
@@ -1246,6 +1248,8 @@ class ListingDashboardService
             'buffer_time'           => $v['buffer_time'] ?? 0,
             'start_time_mode'       => $v['start_time_mode'] ?? 'auto',
             'fixed_start_times'     => $v['fixed_start_times'] ?? [],
+            // Absent on an update → left alone (filtered out below as null).
+            'custom_slots'          => array_key_exists('custom_slots', $v) ? $this->normalizeCustomSlots($v['custom_slots']) : null,
             'capacity'              => $v['capacity'] ?? 0,
             'status'                => $v['status'] ?? 'active',
             'loyalty_points'        => $v['loyalty_points'] ?? 0,
@@ -1314,6 +1318,72 @@ class ListingDashboardService
         $nameRule = $creating ? 'required|string|max:255' : 'sometimes|required|string|max:255';
         $locRule = $creating ? 'required' : 'sometimes|required';
 
+        $data = $this->validatePayloadShape($request, $nameRule, $locRule);
+
+        // Shape is not enough for custom slots: each needs a real length and
+        // two slots on the same day must not overlap, or the capacity count
+        // would double-sell the hour where they meet.
+        if ($problem = $this->customSlotsProblem($data)) {
+            throw ValidationException::withMessages(['custom_slots' => [$problem]]);
+        }
+
+        return $data;
+    }
+
+    /** Custom slots as the model stores them: 'HH:MM' times, integer days, start-sorted. */
+    protected function normalizeCustomSlots($raw): array
+    {
+        $model = new Listing(['custom_slots' => is_array($raw) ? $raw : []]);
+
+        return $model->customSlots();
+    }
+
+    /** Why the submitted custom slots cannot be sold, or null when they can. */
+    protected function customSlotsProblem(array $data): ?string
+    {
+        if (($data['start_time_mode'] ?? null) === Listing::START_TIME_CUSTOM && empty($data['custom_slots'])) {
+            return 'Add at least one custom time slot, or switch back to automatic slots.';
+        }
+        $rows = $data['custom_slots'] ?? [];
+        if (! is_array($rows) || ! $rows) {
+            return null;
+        }
+        $minutes = fn (string $t) => ((int) substr($t, 0, 2)) * 60 + (int) substr($t, 3, 2);
+        $byDay   = [];
+        foreach ($rows as $i => $row) {
+            $start = Listing::normalizeClock($row['start_time'] ?? null);
+            $end   = Listing::normalizeClock($row['end_time'] ?? null);
+            $days  = Listing::normalizeDays($row['days'] ?? []);
+            $n     = $i + 1;
+            if ($start === null || $end === null) {
+                return "Slot {$n}: enter a start and an end time.";
+            }
+            if ($start === $end) {
+                return "Slot {$n}: the end time must be after the start time.";
+            }
+            if (! $days) {
+                return "Slot {$n}: pick at least one day.";
+            }
+            $s = $minutes($start);
+            $e = $minutes($end);
+            if ($e <= $s) {
+                $e += 24 * 60;   // 00:00 or crosses midnight
+            }
+            foreach ($days as $d) {
+                foreach ($byDay[$d] ?? [] as [$os, $oe, $on]) {
+                    if ($s < $oe && $e > $os) {
+                        return "Slot {$n} overlaps slot {$on} on the same day. Slots on one day must not overlap.";
+                    }
+                }
+                $byDay[$d][] = [$s, $e, $n];
+            }
+        }
+
+        return null;
+    }
+
+    protected function validatePayloadShape($request, string $nameRule, string $locRule): array
+    {
         return $request->validate([
             'name'                    => $nameRule,
             'location_id'             => $locRule . '|integer|exists:venues,id',
@@ -1324,8 +1394,13 @@ class ListingDashboardService
             'base_price'              => 'nullable|numeric|min:0',
             'slot_duration'           => 'nullable|integer|min:5',
             'buffer_time'             => 'nullable|integer|min:0',
-            'start_time_mode'         => 'nullable|in:auto,fixed',
+            'start_time_mode'         => 'nullable|in:auto,fixed,custom',
             'fixed_start_times'       => 'nullable|array',
+            'custom_slots'            => 'nullable|array|max:200',
+            'custom_slots.*.start_time' => 'required|date_format:H:i',
+            'custom_slots.*.end_time'   => 'required|date_format:H:i',
+            'custom_slots.*.days'       => 'required|array|min:1',
+            'custom_slots.*.days.*'     => 'integer|between:0,6',
             'capacity'                => 'nullable|integer|min:0',
             'status'                  => 'nullable|in:active,inactive',
             // A listing is bookable per SURFACE now, not simply active/inactive.

@@ -1165,18 +1165,63 @@ class BookingService
                 $errors['start_time'] = 'Outside venue hours';
             }
 
-            $listingSchedulesForDay = $listing->schedules()->where('day', $dayOfWeek)->where('is_open', true)->get();
-            if ($listingSchedulesForDay->isEmpty()) {
-                $errors['date'] = "Listing closed on {$dayOfWeek}s";
-            } elseif (
-                ! isset($errors['start_time'])
-                && ! $this->bookingFitsInSchedules($listingSchedulesForDay, $bookingDate, $bookingStart, $bookingEnd)
-            ) {
-                $errors['start_time'] = 'Outside listing hours';
+            // A custom-slot listing's hours ARE its slots (checked below); its
+            // weekly rows do not apply.
+            if ($listing->startTimeMode() !== Listing::START_TIME_CUSTOM) {
+                $listingSchedulesForDay = $listing->schedules()->where('day', $dayOfWeek)->where('is_open', true)->get();
+                if ($listingSchedulesForDay->isEmpty()) {
+                    $errors['date'] = "Listing closed on {$dayOfWeek}s";
+                } elseif (
+                    ! isset($errors['start_time'])
+                    && ! $this->bookingFitsInSchedules($listingSchedulesForDay, $bookingDate, $bookingStart, $bookingEnd)
+                ) {
+                    $errors['start_time'] = 'Outside listing hours';
+                }
             }
         }
 
+        // Inside the hours is not enough for a custom-slot listing: the window
+        // must be one of the slots the provider actually sells.
+        if ($editingId === null && ! isset($errors['date']) && ! isset($errors['start_time'])
+            && ($slotError = $this->customSlotError($listing, $dayOfWeek, $bookingStart, $bookingEnd))) {
+            $errors['start_time'] = $slotError;
+        }
+
         return $errors + $this->physicalCapacityErrors($listing, $data, $editingId);
+    }
+
+    /**
+     * Does [$start, $end] match a custom slot on this weekday — or a contiguous
+     * run of them? The customer checkout merges adjacent picks into one booking,
+     * so 18:00–20:00 is valid when 18:00–19:00 and 19:00–20:00 are both sold.
+     * Null for automatic/fixed listings, whose grid is enforced by the hours.
+     */
+    private function customSlotError(Listing $listing, string $weekday, string $start, string $end): ?string
+    {
+        if ($listing->startTimeMode() !== Listing::START_TIME_CUSTOM) {
+            return null;
+        }
+
+        $slots  = $listing->customSlotsForWeekday($weekday);
+        $cursor = Listing::normalizeClock($start);
+        $target = Listing::normalizeClock($end);
+        $byStart = [];
+        foreach ($slots as $slot) {
+            $byStart[$slot['start_time']] = $slot['end_time'];
+        }
+
+        for ($hops = 0; $hops < 100 && $cursor !== null && isset($byStart[$cursor]); $hops++) {
+            $slotEnd = $byStart[$cursor];
+            if ($slotEnd === $target) {
+                return null;
+            }
+            if ($slotEnd === '00:00') {
+                break;   // nothing on this day follows midnight
+            }
+            $cursor = $slotEnd;
+        }
+
+        return 'This listing only offers its set time slots — please choose one of them.';
     }
 
     /**
@@ -5388,6 +5433,9 @@ class BookingService
             'capacity'       => (int) ($l->capacity ?? 99),
             'slot_duration'  => $mins,
             'buffer_time'    => 0,
+            'start_time_mode'   => $l->startTimeMode(),
+            'fixed_start_times' => $l->fixedStartTimes(),
+            'custom_slots'      => $l->customSlots(),
             'booking_color'  => $l->calendar_color ?: '#64748b',
             'listing_type'   => 'court',
             'sport_category' => $l->sportsCategory?->name,
@@ -5651,14 +5699,26 @@ class BookingService
         $dayNames = array_flip(Schedule::DAY_INDEX);
         $cells    = [];
 
-        foreach ($dayNames as $dow => $weekday) {
-            for ($t = 0; $t + $slotMins <= 24 * 60; $t += $slotMins) {
-                $slot = sprintf('%02d:%02d', intdiv($t, 60), $t % 60);
-                $end  = $t + $slotMins;
-                // Midnight as an END is end-of-day, and that is the spelling the
-                // range helpers expect.
-                $slotEnd = $end === 24 * 60 ? '00:00' : sprintf('%02d:%02d', intdiv($end, 60), $end % 60);
+        $custom = $listing->startTimeMode() === Listing::START_TIME_CUSTOM;
 
+        foreach ($dayNames as $dow => $weekday) {
+            if ($custom) {
+                // The provider's own slots, each priced over its own window.
+                $pairs = array_map(fn ($s) => [$s['start_time'], $s['end_time']], $listing->customSlotsForWeekday($weekday));
+            } else {
+                $pairs = [];
+                for ($t = 0; $t + $slotMins <= 24 * 60; $t += $slotMins) {
+                    $end = $t + $slotMins;
+                    // Midnight as an END is end-of-day, and that is the spelling the
+                    // range helpers expect.
+                    $pairs[] = [
+                        sprintf('%02d:%02d', intdiv($t, 60), $t % 60),
+                        $end === 24 * 60 ? '00:00' : sprintf('%02d:%02d', intdiv($end, 60), $end % 60),
+                    ];
+                }
+            }
+
+            foreach ($pairs as [$slot, $slotEnd]) {
                 $group = matchingPricingGroupForSlot($listing, $weekday, $slot, $slotEnd);
 
                 if ($group) {

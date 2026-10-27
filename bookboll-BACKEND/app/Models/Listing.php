@@ -54,6 +54,7 @@ class Listing extends Model
         'buffer_time',
         'start_time_mode',
         'fixed_start_times',
+        'custom_slots',
         'booking_hold_minutes',
         'extension_pricing',
         'extension_value',
@@ -72,6 +73,7 @@ class Listing extends Model
         'previous_snapshot'       => 'array',
         'pending_content'         => 'array',
         'fixed_start_times'       => 'array',
+        'custom_slots'            => 'array',
         'base_price'              => 'decimal:2',
         'extension_value'         => 'decimal:2',
         'commission_rate'         => 'decimal:2',
@@ -90,6 +92,11 @@ class Listing extends Model
     ];
 
     protected $appends = ['location_id', 'booking_color', 'visibility'];
+
+    // How a listing decides which slots it sells — see startTimeMode().
+    public const START_TIME_AUTO   = 'auto';
+    public const START_TIME_FIXED  = 'fixed';
+    public const START_TIME_CUSTOM = 'custom';
 
     public const APPROVAL_PENDING  = 'pending';
     public const APPROVAL_APPROVED = 'approved';
@@ -235,6 +242,143 @@ class Listing extends Model
         }
 
         return max(1, (int) round($n));
+    }
+
+    /**
+     * Which slots this listing sells.
+     *
+     *   auto   — the open hours cut into equal slot_duration pieces.
+     *   fixed  — those pieces, but only the starts in fixed_start_times.
+     *   custom — exactly the slots in custom_slots, each with its own length.
+     *
+     * A mode whose list is empty falls back to auto, so a half-saved listing
+     * never goes dark.
+     */
+    public function startTimeMode(): string
+    {
+        $mode = strtolower(trim((string) ($this->start_time_mode ?: self::START_TIME_AUTO)));
+        if ($mode === self::START_TIME_FIXED) {
+            return $this->fixedStartTimes() ? $mode : self::START_TIME_AUTO;
+        }
+        if ($mode === self::START_TIME_CUSTOM) {
+            return $this->customSlots() ? $mode : self::START_TIME_AUTO;
+        }
+
+        return self::START_TIME_AUTO;
+    }
+
+    /** The 'HH:MM' starts a fixed-mode listing offers, cleaned and sorted. */
+    public function fixedStartTimes(): array
+    {
+        $out = [];
+        foreach ((array) ($this->fixed_start_times ?? []) as $t) {
+            $t = self::normalizeClock($t);
+            if ($t !== null) {
+                $out[$t] = $t;
+            }
+        }
+        ksort($out);
+
+        return array_values($out);
+    }
+
+    /**
+     * The provider's own slots, normalised to
+     *   [['start_time' => 'HH:MM', 'end_time' => 'HH:MM', 'days' => [0..6]], …]
+     * with Sunday = 0. Rows that cannot be read (bad time, no days) are dropped
+     * rather than sold.
+     */
+    public function customSlots(): array
+    {
+        $out = [];
+        foreach ((array) ($this->custom_slots ?? []) as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $start = self::normalizeClock($row['start_time'] ?? null);
+            $end   = self::normalizeClock($row['end_time'] ?? null);
+            $days  = self::normalizeDays($row['days'] ?? []);
+            if ($start === null || $end === null || $start === $end || ! $days) {
+                continue;
+            }
+            $out[] = ['start_time' => $start, 'end_time' => $end, 'days' => $days];
+        }
+        usort($out, fn ($a, $b) => strcmp($a['start_time'], $b['start_time']) ?: strcmp($a['end_time'], $b['end_time']));
+
+        return $out;
+    }
+
+    /** The custom slots sold on one weekday ('monday' or 1), start-sorted. */
+    public function customSlotsForWeekday($weekday): array
+    {
+        $dow = is_numeric($weekday) ? (int) $weekday : (Schedule::DAY_INDEX[strtolower((string) $weekday)] ?? null);
+        if ($dow === null) {
+            return [];
+        }
+
+        return array_values(array_map(
+            fn ($s) => ['start_time' => $s['start_time'], 'end_time' => $s['end_time']],
+            array_filter($this->customSlots(), fn ($s) => in_array($dow, $s['days'], true))
+        ));
+    }
+
+    /** 'H:i', 'HH:MM:SS' or '7:5' → 'HH:MM'; anything else → null. */
+    public static function normalizeClock($value): ?string
+    {
+        if (! is_string($value) && ! is_numeric($value)) {
+            return null;
+        }
+        if (! preg_match('/^\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*$/', (string) $value, $m)) {
+            return null;
+        }
+        $h = (int) $m[1];
+        $i = (int) $m[2];
+        if ($h === 24 && $i === 0) {
+            $h = 0;   // 24:00 is midnight
+        }
+        if ($h > 23 || $i > 59) {
+            return null;
+        }
+
+        return sprintf('%02d:%02d', $h, $i);
+    }
+
+    /** Day indices from ints, numeric strings, names ('monday') or a CSV of those. */
+    public static function normalizeDays($value): array
+    {
+        if (is_string($value)) {
+            $value = explode(',', $value);
+        }
+        $out = [];
+        foreach ((array) $value as $d) {
+            $d = is_string($d) ? strtolower(trim($d)) : $d;
+            if ($d === '' || $d === null) {
+                continue;
+            }
+            $n = is_numeric($d) ? (int) $d : (self::dayIndexByName((string) $d));
+            if ($n !== null && $n >= 0 && $n <= 6) {
+                $out[$n] = $n;
+            }
+        }
+        ksort($out);
+
+        return array_values($out);
+    }
+
+    /** 'monday', 'Mon' or 'tues' → 1; unknown → null. */
+    protected static function dayIndexByName(string $name): ?int
+    {
+        $name = strtolower(trim($name));
+        if (isset(Schedule::DAY_INDEX[$name])) {
+            return Schedule::DAY_INDEX[$name];
+        }
+        foreach (Schedule::DAY_INDEX as $full => $index) {
+            if ($name !== '' && str_starts_with($full, substr($name, 0, 3))) {
+                return $index;
+            }
+        }
+
+        return null;
     }
 
     public function reviews()

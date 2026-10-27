@@ -1279,7 +1279,12 @@ class ListingService
             ->sortBy('start_time')
             ->values();
 
-        if ($venueSchedules->isEmpty() || $listingSchedules->isEmpty()) {
+        // A custom-slot listing is open exactly when its slots are: its weekly
+        // rows no longer gate anything. The venue's hours still do — a court
+        // cannot sell while the venue itself is shut.
+        $customSlots = $listing->startTimeMode() === Listing::START_TIME_CUSTOM;
+
+        if ($venueSchedules->isEmpty() || (! $customSlots && $listingSchedules->isEmpty())) {
             return sendSuccess('No available schedule for this day', ['timeSlots' => [], 'currency' => $currency]);
         }
 
@@ -1310,7 +1315,7 @@ class ListingService
                 ->values();
         } else {
             $availableBlocks = $this->findOverlappingScheduleBlocks(
-                $listingSchedules,
+                $customSlots ? $venueSchedules : $listingSchedules,
                 $venueSchedules
             );
         }
@@ -1471,7 +1476,9 @@ class ListingService
             ->sortBy('start_time')
             ->values();
 
-        if (! $prevVenueSchedules || $prevVenueSchedules->isEmpty() || $prevListingSchedules->isEmpty()) {
+        $customSlots = $listing->startTimeMode() === Listing::START_TIME_CUSTOM;
+
+        if (! $prevVenueSchedules || $prevVenueSchedules->isEmpty() || (! $customSlots && $prevListingSchedules->isEmpty())) {
             return 0;
         }
 
@@ -1496,7 +1503,11 @@ class ListingService
                 })
                 ->values();
         } else {
-            $prevBlocks = $this->findOverlappingScheduleBlocks($prevListingSchedules, $prevVenueSchedules);
+            $prevBlocks = $this->findOverlappingScheduleBlocks($customSlots ? $prevVenueSchedules : $prevListingSchedules, $prevVenueSchedules);
+        }
+
+        if ($listing->startTimeMode() === Listing::START_TIME_CUSTOM) {
+            return $this->computeCustomSpilloverMinutes($listing, $prevWeekday, $prevBlocks);
         }
 
         $max = 0;
@@ -1504,6 +1515,39 @@ class ListingService
             $spill = $this->computeBlockSpilloverMinutes($block, $slotMinutes);
             if ($spill > $max) {
                 $max = $spill;
+            }
+        }
+
+        return $max;
+    }
+
+    /**
+     * Custom slots have no uniform step to extrapolate from: the previous day
+     * spills exactly as far as its latest midnight-crossing slot runs, and only
+     * when that slot starts inside one of the day's open blocks.
+     */
+    protected function computeCustomSpilloverMinutes(Listing $listing, string $prevWeekday, $prevBlocks): int
+    {
+        $max = 0;
+        foreach ($listing->customSlotsForWeekday($prevWeekday) as $slot) {
+            if ($slot['end_time'] === '00:00') {
+                continue;   // ends exactly at midnight: nothing spills
+            }
+            $s = $this->timeToMinutes($slot['start_time']);
+            $e = $this->timeToMinutes($slot['end_time']);
+            if ($e > $s) {
+                continue;   // same-day slot
+            }
+            foreach ($prevBlocks as $block) {
+                $bs = $this->timeToMinutes($block['start_time']);
+                $be = $block['end_time'] === '00:00' ? 24 * 60 : $this->timeToMinutes($block['end_time']);
+                if ($be <= $bs) {
+                    $be += 24 * 60;
+                }
+                if ($s >= $bs && $s < $be) {
+                    $max = max($max, $e);
+                    break;
+                }
             }
         }
 
@@ -1705,15 +1749,13 @@ class ListingService
         $minAdvanceCutoff = $listing->minAdvanceCutoff();
         $loopOrigin       = $start->copy()->startOfDay();
 
-        while ($start->lt($end)) {
-            $slotStart     = $start->format('H:i');
-            $slotEndCarbon = $start->copy()->addMinutes($slotMinutes);
-
-            $slotEnd = $slotEndCarbon->format('H:i');
-
-            if ($endTime !== '00:00' && $slotEndCarbon->gt($end)) {
-                break;
-            }
+        // Which windows this block sells depends on the listing's slot mode —
+        // equal pieces, a subset of them, or the provider's own list. Everything
+        // after this point treats a candidate the same way whatever produced it.
+        foreach ($this->slotCandidates($start, $end, $endTime, $slotMinutes, $listing, $weekday) as [$slotStartCarbon, $slotEndCarbon, $slotLength]) {
+            $start     = $slotStartCarbon;
+            $slotStart = $start->format('H:i');
+            $slotEnd   = $slotEndCarbon->format('H:i');
 
             $activeBookings = $venueBookings->filter(fn($b) => $b->status !== BookingStatus::CANCELLED && $b->status !== BookingStatus::COMPLETED);
 
@@ -1790,7 +1832,6 @@ class ListingService
             }
 
             if ($isPastSlot) {
-                $start->addMinutes($slotMinutes);
                 continue;
             }
 
@@ -1802,7 +1843,7 @@ class ListingService
                 $pricing = resolveSlotPricing($listing, $weekday, $slotStart, $slotEnd, $specialDay);
                 $price   = $pricing['price'];
 
-                $duration = getFormattedDuration($slotMinutes);
+                $duration = getFormattedDuration($slotLength);
 
                 $slots->push([
                     'start_time'          => $slotStart,
@@ -1827,11 +1868,67 @@ class ListingService
                     'pricing'               => compactSlotPricing($pricing['breakdown']),
                 ]);
             }
-
-            $start->addMinutes($slotMinutes);
         }
 
         return $slots->values();
+    }
+
+    /**
+     * The [start, end, minutes] windows one open block offers, by slot mode.
+     *
+     *   auto   — step through the block in slot_duration pieces.
+     *   fixed  — the same pieces, keeping only the starts the provider ticked.
+     *   custom — the provider's own slots that begin inside the block. Each has
+     *            its own length, and like an automatic slot it may run past a
+     *            block that ends at midnight.
+     *
+     * $start/$end carry the block's day, so a custom slot that crosses midnight
+     * (23:00–01:00) ends on the following calendar day, as a booking would.
+     */
+    protected function slotCandidates(Carbon $start, Carbon $end, string $endTime, int $slotMinutes, Listing $listing, string $weekday): array
+    {
+        $mode = $listing->startTimeMode();
+        $out  = [];
+
+        if ($mode === Listing::START_TIME_CUSTOM) {
+            foreach ($listing->customSlotsForWeekday($weekday) as $slot) {
+                $s = $start->copy()->setTimeFromTimeString($slot['start_time']);
+                $e = $start->copy()->setTimeFromTimeString($slot['end_time']);
+                if ($e->lte($s)) {
+                    $e->addDay();   // 00:00 means midnight; an earlier end crosses it
+                }
+                if ($s->lt($start)) {
+                    // A block that itself crosses midnight (special-day style)
+                    // reaches the early hours of the next calendar day.
+                    $s->addDay();
+                    $e->addDay();
+                }
+                if ($s->lt($start) || $s->gte($end)) {
+                    continue;
+                }
+                if ($endTime !== '00:00' && $e->gt($end)) {
+                    continue;
+                }
+                $out[] = [$s, $e, (int) $s->diffInMinutes($e)];
+            }
+
+            return $out;
+        }
+
+        $fixed  = $mode === Listing::START_TIME_FIXED ? $listing->fixedStartTimes() : null;
+        $cursor = $start->copy();
+        while ($cursor->lt($end)) {
+            $slotEnd = $cursor->copy()->addMinutes($slotMinutes);
+            if ($endTime !== '00:00' && $slotEnd->gt($end)) {
+                break;
+            }
+            if ($fixed === null || in_array($cursor->format('H:i'), $fixed, true)) {
+                $out[] = [$cursor->copy(), $slotEnd, $slotMinutes];
+            }
+            $cursor->addMinutes($slotMinutes);
+        }
+
+        return $out;
     }
 
     public function fetchRecurringBookedSlots($request)
