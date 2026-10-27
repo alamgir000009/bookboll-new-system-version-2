@@ -142,8 +142,8 @@ const columns = computed(() => DAY_ORDER.map(d => {
   return cells
 }))
 const gridStyle = computed(() => ({
-  gridTemplateColumns: '64px repeat(7, minmax(64px, 1fr))',
-  gridTemplateRows: `auto repeat(${rowCount.value}, 30px)`,
+  gridTemplateColumns: '60px repeat(7, minmax(60px, 1fr))',
+  gridTemplateRows: `auto repeat(${rowCount.value}, var(--pg-row))`,
 }))
 const cellPlacement = (c) => ({ gridColumn: DAY_ORDER.indexOf(c.day) + 2, gridRow: `${c.row + 2} / span ${c.span}` })
 const isHourRow = (m) => m % 60 === 0
@@ -554,7 +554,6 @@ function removeGroup(id) {
           <div class="day-chips">
             <button v-for="d in DAY_ORDER" :key="d" type="button" class="day-chip"
                     :class="{selected: groupHasDay(g, d)}"
-                    :style="groupHasDay(g, d) ? { background: groupColor(g), borderColor: groupColor(g), color: '#fff' } : {}"
                     :aria-pressed="groupHasDay(g, d)"
                     @click="toggleGroupDay(g, d)">{{ DAY_NAME[d] }}</button>
           </div>
@@ -577,18 +576,14 @@ function removeGroup(id) {
                @input="priceInputError = false"
                style="width: 140px;" />
         <span v-if="priceInputError" class="price-err-msg">{{ priceErrorMsg }}</span>
-        <span v-else class="price-hint">Click or drag across the grid to apply it. Paint the base price ({{ basePrice }}) to erase.</span>
+        <span v-else class="price-hint">Paint the base price ({{ basePrice }}) to erase</span>
       </div>
     </div>
 
-    <div class="pg-legend">
-      <span class="lg lg-base">{{ basePrice }}</span> base price
-      <span v-for="(col, i) in PRICE_COLORS" :key="col" class="lg" :style="{ background: col + '26', borderLeft: `3px solid ${col}`, color: col }">{{ ['lowest', 'low', 'high', 'highest'][i] }}</span>
-      <span class="lg lg-closed">closed</span>
-    </div>
+    <p class="pg-scroll-hint">Swipe across for all days. Tap a time to apply the selected price.</p>
 
     <div class="grid-wrap" @pointerup="endPaint" @pointerleave="endPaint" @pointercancel="endPaint">
-      <div class="grid" :style="gridStyle">
+      <div class="pg-grid" :style="gridStyle">
         <div class="grid-corner"></div>
         <div v-for="d in DAY_ORDER" :key="'h' + d" class="grid-day" :style="{ gridColumn: DAY_ORDER.indexOf(d) + 2, gridRow: 1 }">
           {{ DAY_SHORT[d] }}
@@ -654,32 +649,29 @@ function removeGroup(id) {
 .day-chip:hover:not(.selected) { border-color: var(--primary); color: var(--primary-ink); }
 .empty-groups { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 14px; border: 1px dashed var(--border); border-radius: 8px; }
 
-.pg-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-muted); margin: 6px 0 8px; }
-.lg { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 11px; }
-.lg-base { color: var(--text-muted); background: var(--bg); opacity: .8; }
-.lg-closed { background: repeating-linear-gradient(135deg, var(--bg) 0 4px, var(--border) 4px 5px); color: var(--text-muted); }
+.pg-scroll-hint { color: var(--text-muted); font-size: 12px; line-height: 1.6; margin: 0 0 8px; }
 
-.grid-wrap { border: 1px solid var(--border); border-radius: 6px; overflow: auto; user-select: none; max-height: 560px; }
-.grid { display: grid; min-width: 620px; }
+.grid-wrap { border: 1px solid var(--border); border-radius: 6px; overflow: auto; user-select: none; max-height: 480px; }
+/* Not `.grid` — the global form-layout `.grid { gap:16px }` would gutter every cell. */
+.pg-grid { --pg-row: 30px; display: grid; min-width: 620px; }
 .grid-corner { position: sticky; top: 0; left: 0; z-index: 3; background: var(--bg); grid-column: 1; grid-row: 1; }
-.grid-day { padding: 8px 4px; font-size: 12px; font-weight: 600; text-align: center; color: var(--text-muted); border-left: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.grid-day { padding: 8px; font-size: 12px; font-weight: 600; text-align: center; color: var(--text-muted); border-left: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .fill-btn { font-size: 10px; color: var(--primary-ink); background: none; padding: 1px 4px; border-radius: 3px; }
 .fill-btn:hover { background: var(--primary-soft, #ccfbf1); }
 
-.grid-time { padding: 0 8px; font-size: 11px; font-family: 'SF Mono', Monaco, monospace; color: var(--text-muted); background: var(--bg); text-align: right; position: sticky; left: 0; z-index: 1; border-top: 1px solid transparent; display: flex; align-items: flex-start; justify-content: flex-end; line-height: 1.2; padding-top: 3px; }
-.grid-time.hour { border-top-color: var(--border); }
+.grid-time { padding: 4px 8px; font-size: 11px; font-family: 'SF Mono', Monaco, monospace; color: var(--text-muted); background: var(--bg); text-align: right; position: sticky; left: 0; z-index: 1; border-top: 1px solid var(--border); line-height: 1.3; }
 
-.grid-cell { border: 0; border-radius: 0; border-left: 1px solid var(--border); border-top: 1px solid var(--border); padding: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.1s; background: var(--surface, #ffffff); color: var(--text); }
-.grid-cell:hover { opacity: 0.8; }
+.grid-cell { border: 0; border-radius: 0; border-left: 1px solid var(--border); border-top: 1px solid var(--border); padding: 0; min-height: var(--pg-row); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; cursor: pointer; transition: opacity 0.1s; background: var(--surface, #ffffff); color: var(--text); }
+.grid-cell:hover { opacity: 0.75; }
 /* Base price: present, bookable, but nothing special — read it as a quiet number. */
-.grid-cell.faded { color: var(--text-muted); font-weight: 400; opacity: .55; }
-.grid-cell.faded:hover { opacity: 1; color: var(--primary-ink); background: var(--primary-soft, #f0fdfa); }
-/* Closed: hatched and unmistakably not a slot. Still clickable, so the click can
-   say WHICH schedule to open. */
-.grid-cell.closed { cursor: help; background: repeating-linear-gradient(135deg, var(--bg) 0 5px, var(--border) 5px 6px); opacity: .9; }
+.grid-cell.faded { color: var(--text-muted) !important; font-weight: 400; }
+.grid-cell.faded:hover { color: var(--primary-ink) !important; background: var(--primary-soft, #f0fdfa) !important; }
+/* Closed: flat grey, clearly not a slot. Still clickable, so the click can say
+   WHICH schedule to open. */
+.grid-cell.closed { cursor: not-allowed; background: var(--surface-hover, var(--bg)); }
 .grid-cell.closed:hover { opacity: 1; }
 .grid-cell:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; z-index: 1; }
-.day-chip.selected { color: #fff; }
+.day-chip.selected { color: var(--primary-ink); background: var(--primary-soft); border-color: var(--primary); }
 
 @media (max-width: 760px) {
   .pg { padding: 12px; }
@@ -688,6 +680,7 @@ function removeGroup(id) {
   .pg :is(.vt-btn,.day-chip,.icon-del,.fill-btn) { min-height: 44px; }
   .icon-del { min-width: 44px; flex-shrink: 0; }
   .price-hint, .price-err-msg { flex-basis: 100%; }
-  .grid-time { font-size: 10px; padding: 3px 4px 0; }
+  .pg-grid { --pg-row: 44px; }
+  .grid-time { display: flex; align-items: center; justify-content: flex-end; font-size: 10px; padding: 4px; }
 }
 </style>
