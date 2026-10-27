@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Store, Globe, Wallet, Check, ArrowRight, AlertCircle } from 'lucide-vue-next'
 import PaymentExample from './PaymentExample.vue'
+import { useToast } from '../lib/toast.js'
 
 const props = defineProps({
   form: Object, payment: Object, example: Object, currency: String,
@@ -39,6 +40,23 @@ const onlineOn = computed(() => props.payment[onlineKey.value])
 const cashOn = computed(() => props.payment[cashKey.value])
 const canChooseCash = computed(() => !isSite.value && props.role !== 'provider')
 const methodError = computed(() => props.showErrors && noMethod.value)
+
+// A disabled checkbox fires no click, so the reason it is disabled never reaches
+// the user. The card itself listens and says it out loud.
+const toast = useToast()
+const onlineBlockedReason = computed(() => props.role === 'provider'
+  ? 'Full payment online needs an active payout method. Use “Connect payouts” in this card to set one up.'
+  : 'This provider has no active payout method yet, so full payment online cannot be enabled.')
+const cashBlockedReason = 'Bookboll controls full payment on arrival for this listing. Contact Bookboll to change it.'
+function methodClick(kind, e) {
+  if (e.target.closest('button')) return   // the Connect payouts action
+  const reason = kind === 'online'
+    ? (props.onlineAllowed ? '' : onlineBlockedReason.value)
+    : (canChooseCash.value ? '' : cashBlockedReason)
+  if (!reason) return
+  e.preventDefault()
+  toast.info(reason)
+}
 </script>
 
 <template>
@@ -79,8 +97,8 @@ const methodError = computed(() => props.showErrors && noMethod.value)
             </div>
           </article>
 
-          <article class="lp-method" :class="{ selected: onlineOn, invalid: methodError }">
-            <label class="lp-method-choice"><input type="checkbox" :checked="onlineOn" :disabled="!onlineAllowed" @change="emit('method', onlineKey, $event.target.checked)" /><span><strong>Full payment online</strong><small>{{ onlineAllowed ? 'Customer pays the whole booking price now. Nothing to collect on arrival.' : 'Connect a payout method to receive your online payments.' }}</small></span><span v-if="!onlineAllowed" class="lp-tag">Needs payouts</span></label>
+          <article class="lp-method" :class="{ selected: onlineOn, invalid: methodError, blocked: !onlineAllowed }" @click="methodClick('online', $event)">
+            <label class="lp-method-choice" :title="onlineAllowed ? null : onlineBlockedReason"><input type="checkbox" :checked="onlineOn" :disabled="!onlineAllowed" @change="emit('method', onlineKey, $event.target.checked)" /><span><strong>Full payment online</strong><small>{{ onlineAllowed ? 'Customer pays the whole booking price now. Nothing to collect on arrival.' : 'Connect a payout method to receive your online payments.' }}</small></span><span v-if="!onlineAllowed" class="lp-tag">Needs payouts</span></label>
             <!-- Payout state belongs to this method: it is the only one that needs it. -->
             <div v-if="!bookbollOwned && !statusUncertain" class="lp-status lp-method-payout">
               <Wallet :size="18" /><span><strong>{{ onlineAllowed ? 'Payouts connected' : 'No active payout method' }}</strong><small>{{ onlineAllowed ? 'You can receive online payments in your Bookings wallet.' : 'Deposit + on arrival works without one. Full online payment needs connected payouts.' }}</small></span>
@@ -89,8 +107,8 @@ const methodError = computed(() => props.showErrors && noMethod.value)
             <div v-if="onlineOn && onlineAllowed" class="lp-method-details"><PaymentExample :currency="currency" :total="example.total" :rows="onlineRows" /></div>
           </article>
 
-          <article v-if="!isSite && (canChooseCash || cashOn)" class="lp-method" :class="{ selected: cashOn, invalid: methodError }">
-            <label class="lp-method-choice"><input type="checkbox" :checked="cashOn" :disabled="!canChooseCash" @change="emit('method', cashKey, $event.target.checked)" /><span><strong>Full payment on arrival</strong><small>{{ canChooseCash ? 'No online payment. You collect the whole amount in person.' : 'Enabled by Bookboll for this listing.' }}</small></span></label>
+          <article v-if="!isSite && (canChooseCash || cashOn)" class="lp-method" :class="{ selected: cashOn, invalid: methodError, blocked: !canChooseCash }" @click="methodClick('cash', $event)">
+            <label class="lp-method-choice" :title="canChooseCash ? null : cashBlockedReason"><input type="checkbox" :checked="cashOn" :disabled="!canChooseCash" @change="emit('method', cashKey, $event.target.checked)" /><span><strong>Full payment on arrival</strong><small>{{ canChooseCash ? 'No online payment. You collect the whole amount in person.' : 'Enabled by Bookboll for this listing.' }}</small></span></label>
             <div v-if="cashOn" class="lp-method-details"><p class="lp-explanation">No money is collected if the customer does not show up.</p><PaymentExample :currency="currency" :total="example.total" :rows="[money('You collect on arrival', 'The full booking price', example.total)]" /></div>
           </article>
           <p v-if="methodError" class="lp-error-text" role="alert">Enable at least one payment method for this channel.</p>
@@ -142,6 +160,7 @@ const methodError = computed(() => props.showErrors && noMethod.value)
 .lp-method.selected .lp-method-payout { border-top-color: var(--primary-border); }
 .lp-explanation { color: var(--text-secondary); font-size: 13px; line-height: 1.7; margin: 14px 0 0; max-width: 70ch; }
 .lp-tag { font-size: 11px; color: var(--text-muted); background: var(--bg); padding: 4px 7px; border-radius: 5px; white-space: nowrap; }
+.lp-method.blocked .lp-method-choice { cursor: help; }
 .lp-footnote { font-size: 11.5px; color: var(--text-muted); line-height: 1.6; margin-top: 16px; }
 .lp-admin { padding: 12px 0; font-size: 13px; }.lp-admin summary { cursor: pointer; }.lp-admin label { display: block; margin-top: 10px; }.lp-admin input { max-width: 150px; margin-left: 10px; }
 .lp-error-text, .lp-error { color: var(--danger-ink); font-size: 12px; line-height: 1.6; margin-top: 10px; }.invalid { border-color: var(--danger-border); }
