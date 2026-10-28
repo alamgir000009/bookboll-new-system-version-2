@@ -9,6 +9,7 @@ import { ensureSignedIn } from '../../lib/authGate.js'
 import { useSeo } from '../../lib/seo.js'
 useSeo({ title: 'Host a game, hangout or tournament', description: 'Set up your own pickup game, social hangout or tournament, pick a venue and invite players — host on Bookboll.', path: '/host-game' })
 import { loadLocations, loadFacility, loadFacilities, loadListing } from '../../customer/data.js'
+import { canModerateCommunity } from '../../lib/communityAccess.js'
 import { createGame, gamesEnabled, probeGames, tournamentsEnabled, probeTournaments, hangoutLocationEnabled, probeHangoutLocation, ownSpotMinFee, ownSpotMinFeeCurrency, seatFee, seatFeeAt, eventSeatFeePct, SEAT_FEE_PCT, courtCommissionPct, courtDeposit, createTournament, courtPaymentPlan, splitCourt, PAY_METHOD_LABEL } from '../../customer/apiGames.js'
 import { PLAY_FORMATS } from '../../customer/matchmaking.js'
 import { loadDayAvailability, buildDaySlots, holdSlots, holdMinutes } from '../../customer/apiBooking.js'
@@ -43,6 +44,7 @@ const route = useRoute()
 // Meetups tab). Survives the court-pick round trip via hostDraft.communityId; the
 // published event is stamped with community_id so it shows on the community page.
 const communityId = ref('')
+const communityBlocked = ref('')   // name of a community the viewer tried to host in but may not
 const communityName = ref('')
 const listPublic = ref(false)   // community event → also list in public Events (opt-in)
 function ymd(d) { const z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}` }
@@ -180,7 +182,17 @@ onMounted(async () => {
   const pendingHold = hostDraft.pickHoldExpiresAt || 0
   // Community context: fresh from the URL, or carried through the draft round trip.
   communityId.value = String(route.query.community || hostDraft.communityId || '')
-  if (communityId.value) loadCommunity(communityId.value).then(cm => { communityName.value = cm?.name || '' })
+  if (communityId.value) loadCommunity(communityId.value).then(cm => {
+    communityName.value = cm?.name || ''
+    // Hosting into a community is for its owner, admins and moderators — the
+    // API refuses anyone else at publish, so refuse here, where it can still be
+    // explained, and fall back to a public event.
+    if (cm && isCustomer.value && !canModerateCommunity(cm, customer.value?.id)) {
+      communityBlocked.value = cm.name || 'this community'
+      communityId.value = ''
+      communityName.value = ''
+    }
+  })
   // Fresh community intent → drop any unrelated stale draft so the chooser is clean.
   if (fromCommunity && hostDraft.active) clearHostDraft()
   // Leftover draft, no pending court pick → offer it on the chooser (don't clear).
@@ -269,9 +281,10 @@ const myManagedCommunities = ref([])
 async function loadMyManagedCommunities() {
   if (!isCustomer.value) return
   try {
-    const { myCommunities, canManage } = await import('../../customer/community.js')
+    const { myCommunities } = await import('../../customer/community.js')
     const rows = await myCommunities(customer.value.id)
-    myManagedCommunities.value = rows.filter(c => canManage(c.membership))
+    // Same rule as the API's canHostEvent: owner, admins and moderators.
+    myManagedCommunities.value = rows.filter(c => canModerateCommunity(c, customer.value.id))
   } catch { myManagedCommunities.value = [] }
 }
 function postAs(id, name) {
@@ -1261,6 +1274,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
     <!-- TYPE CHOOSER -->
     <template v-else-if="!type">
       <div v-if="communityId && communityName" class="hg-community-chip"><UsersRound :size="13" /> Posting to <b>{{ communityName }}</b></div>
+      <div v-if="communityBlocked" class="hg-community-blocked" role="status"><UsersRound :size="14" /> Only the owner, admins and moderators of <b>{{ communityBlocked }}</b> can host meetups there. You can still host this as a public event.</div>
       <h1>What are you hosting{{ communityId && communityName ? ' for ' + communityName : '' }}?</h1>
       <p class="hg-sub">Choose the kind of gathering you have in mind. We’ll guide you through the details, location and costs.</p>
 
@@ -1336,6 +1350,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 
       <div class="hg-stephead">
         <div v-if="communityId && communityName" class="hg-community-chip"><UsersRound :size="13" /> Posting to <b>{{ communityName }}</b></div>
+      <div v-if="communityBlocked" class="hg-community-blocked" role="status"><UsersRound :size="14" /> Only the owner, admins and moderators of <b>{{ communityBlocked }}</b> can host meetups there. You can still host this as a public event.</div>
         <div class="hg-badge" :class="type">
           <component :is="type === 'tournament' ? Trophy : type === 'event' ? Calendar : Gamepad2" :size="15" /> {{ type === 'tournament' ? 'Tournament' : type === 'event' ? 'Hangout' : 'Game' }}
         </div>
@@ -2090,6 +2105,8 @@ function goToPublished() { const p = publishedPath.value; published.value = null
 .hg-lock-chip { border: 1.5px solid var(--border, #e2e8f0); background: none; color: var(--text-secondary, #475569); font-weight: 700; font-size: 12.5px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
 .hg-lock-chip.on { background: #0f172a; border-color: #0f172a; color: #fff; }
 .hg-community-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: #0d9488; background: var(--success-bg, #f0fdfa); border: 1px solid var(--success-border, #99f6e4); padding: 5px 12px; border-radius: 999px; margin-bottom: 10px; }
+.hg-community-blocked { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: var(--text-secondary, #475569); background: var(--warning-bg, #fffbeb); border: 1px solid var(--warning-border, #fde68a); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
+.hg-community-blocked > svg { flex-shrink: 0; margin-top: 2px; }
 .hg-community-chip b { font-weight: 900; }
 .hg-cv { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .hg-cv-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; background: none; border: 1.5px solid var(--border, #e2e8f0); border-radius: 14px; padding: 13px 14px; cursor: pointer; font: inherit; color: var(--text-secondary, #475569); }

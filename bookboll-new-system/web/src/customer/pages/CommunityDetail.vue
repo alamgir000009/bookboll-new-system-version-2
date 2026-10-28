@@ -35,6 +35,10 @@ const editBusy = ref(false)
 const editError = ref('')
 const canPost = computed(() => canContribute(c.value, me.value, 'posts'))
 const amModerator = computed(() => canModerateCommunity(c.value, me.value))
+// Who may host a meetup here: owner, admins and moderators — the API's
+// CommunityPermissions::canHostEvent says the same, so a member never reaches
+// a publish button that would 403.
+const canHostHere = computed(() => amModerator.value)
 const visibleMembers = computed(() => acceptedMembers.value.filter(m => (m.name || '').toLowerCase().includes(memberQuery.value.trim().toLowerCase())))
 
 const me = computed(() => customer.value?.id || null)
@@ -414,11 +418,12 @@ const TABS = computed(() => [
         </article>
       </div>
 
-      <aside class="cd-context"><h2>About this community</h2><ExpandableDescription v-if="c.description" :text="c.description" id="community-introduction" /><p v-else>Connect with people who share your interest in {{ c.sport || 'playing together' }}.</p><dl><dt>Joining</dt><dd>{{ c.is_private ? 'Approval required' : 'Open to everyone' }}</dd><dt>Feed posts</dt><dd>{{ permissionLabel(permissionFor(c.settings,'posts')) }}</dd><dt>Group chat</dt><dd>{{ permissionLabel(permissionFor(c.settings,'chat')) }}</dd></dl><router-link v-if="amMember" :to="'/host-game?community='+c.id" class="cd-context-link"><CalendarDays :size="17" /> Plan a meetup</router-link></aside></div>
+      <aside class="cd-context"><h2>About this community</h2><ExpandableDescription v-if="c.description" :text="c.description" id="community-introduction" /><p v-else>Connect with people who share your interest in {{ c.sport || 'playing together' }}.</p><dl><dt>Joining</dt><dd>{{ c.is_private ? 'Approval required' : 'Open to everyone' }}</dd><dt>Feed posts</dt><dd>{{ permissionLabel(permissionFor(c.settings,'posts')) }}</dd><dt>Group chat</dt><dd>{{ permissionLabel(permissionFor(c.settings,'chat')) }}</dd></dl><router-link v-if="canHostHere" :to="'/host-game?community='+c.id" class="cd-context-link"><CalendarDays :size="17" /> Plan a meetup</router-link><p v-else-if="amMember" class="cd-context-note"><Shield :size="14" /> Meetups here are hosted by the owner, admins and moderators.</p></aside></div>
       <!-- MEETUPS -->
       <div v-else-if="tab === 'events'" class="cd-events">
-        <router-link v-if="amMember" :to="`/host-game?community=${c.id}`" class="cd-newmeet"><Plus :size="16" /> Host a meetup for this community</router-link>
-        <div v-if="!events.length" class="cempty"><CalendarDays :size="36" /><span>No meetups yet{{ amMember ? ' — host the first one!' : '.' }}</span></div>
+        <router-link v-if="canHostHere" :to="`/host-game?community=${c.id}`" class="cd-newmeet"><Plus :size="16" /> Host a meetup for this community</router-link>
+        <p v-else-if="amMember" class="cd-host-note"><Shield :size="15" /> Only the owner, admins and moderators can host meetups in this community. You'll see every meetup they post here, and can join them.</p>
+        <div v-if="!events.length" class="cempty"><CalendarDays :size="36" /><span>No meetups yet{{ canHostHere ? ' — host the first one!' : '.' }}</span></div>
         <div v-else class="cd-events-grid">
           <GameCard v-for="g in events" :key="g.id" :game="g" />
         </div>
@@ -518,6 +523,9 @@ const TABS = computed(() => [
 .cd-chatbtn { position: relative; display: inline-flex; align-items: center; gap: 6px; background: #0d9488; border: none; color: #fff; font: inherit; font-weight: 800; font-size: 13px; padding: 8px 15px; border-radius: 999px; cursor: pointer; }
 .cd-chatbtn-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 10.5px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; margin-left: 2px; }
 .cd-leave { margin-left: auto; }
+.cd-host-note, .cd-context-note { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.55; color: var(--text-muted, #64748b); background: var(--bg, #f1f5f9); border-radius: 10px; padding: 12px 14px; margin: 0 0 16px; }
+.cd-host-note > svg, .cd-context-note > svg { flex-shrink: 0; margin-top: 2px; }
+.cd-context-note { margin: 14px 0 0; font-size: 12.5px; }
 /* Invite / share */
 .cd-share { position: relative; }
 .cd-sharebtn { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1.5px solid var(--border, #e2e8f0); color: var(--text, #0f172a); font: inherit; font-weight: 700; font-size: 13px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
