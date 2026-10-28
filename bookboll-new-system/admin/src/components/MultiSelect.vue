@@ -24,9 +24,13 @@ function positionDropdown() {
 async function toggleOpen() {
   if (open.value) { close(); return }
   query.value = ''; open.value = true
-  await nextTick(); positionDropdown(); searchInput.value?.focus()
+  await nextTick(); positionDropdown()
+  // Focus only once the computed position has been flushed to the DOM. Focusing
+  // the panel while it still sat in normal flow at the end of <body> made the
+  // browser scroll the whole page to it — the "filters jump" users saw.
+  await nextTick(); searchInput.value?.focus({ preventScroll: true })
 }
-function close(focus = true) { open.value = false; if (focus) trigger.value?.focus() }
+function close(focus = true) { open.value = false; if (focus) trigger.value?.focus({ preventScroll: true }) }
 function toggle(value) {
   emit('update:modelValue', selected.value.includes(value) ? selected.value.filter(v => v !== value) : [...selected.value, value])
 }
@@ -79,7 +83,9 @@ onUnmounted(() => { document.removeEventListener('pointerdown', outside); docume
 @media(max-width:640px) { .ms-trigger { min-height:44px; font-size:16px; } }
 </style>
 <style>
-.ms-dropdown { display:flex; flex-direction:column; overflow:hidden; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 40px #0003; }
+/* Fixed from the first paint, so the panel is never in page flow — not even for
+   the frame before its measured position lands. */
+.ms-dropdown { position:fixed; z-index:10050; display:flex; flex-direction:column; overflow:hidden; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 40px #0003; }
 .ms-search { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--border); flex-shrink:0; }
 .ms-search input { width:100%; min-width:0; font-size:16px; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
 .ms-options { overflow:auto; overscroll-behavior:contain; padding:4px; min-height:0; }
