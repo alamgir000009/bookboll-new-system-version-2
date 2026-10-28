@@ -150,10 +150,22 @@ class BookingPayLinkService
             ->values();
     }
 
+    /**
+     * What this booking charges in — its own stamped currency.
+     *
+     * Booking::currencyForVenue() resolves override -> the venue's COUNTRY
+     * currency -> the platform default, and stamps the result on the row at
+     * creation. Reading currency_override alone skipped the country step, and
+     * config('services.stripe.currency') does not exist, so the expression
+     * collapsed to a hard-coded 'QAR': every venue relying on its country —
+     * Pakistan resolving to PKR — had its pay link billed in Qatari riyals at
+     * the right number. The stored value is also the correct authority on its
+     * own terms: it is what the customer was quoted.
+     */
     protected function currencyFor(Booking $booking): string
     {
-        return $booking->venue?->currency_override
-            ?: (config('services.stripe.currency') ?: 'QAR');
+        return $booking->currency
+            ?: Booking::currencyForVenue($booking->venue_id);
     }
 
     /**

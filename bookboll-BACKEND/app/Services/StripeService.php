@@ -1013,7 +1013,11 @@ class StripeService
                 'ownerUserId'   => $ownerUserId,
                 'countryId'     => $wallets->countryIdForVenue($venue),
                 'total'         => $collected,
-                'currency'      => $venue?->currency_override ?: (config('services.stripe.currency') ?: 'QAR'),
+                // The booking's stamped currency, not currency_override alone:
+                // that skipped the venue's country currency and fell through to
+                // a hard-coded 'QAR', crediting a Pakistani provider's wallet in
+                // riyals. See Booking::currencyForVenue().
+                'currency'      => $booking->currency ?: Booking::currencyForVenue($booking->venue_id),
                 // The rate this booking was QUOTED at, not today's. Resolving it
                 // live would let a later upgrade, cancellation or country-rate
                 // change rewrite what a confirmed booking charged, and would
