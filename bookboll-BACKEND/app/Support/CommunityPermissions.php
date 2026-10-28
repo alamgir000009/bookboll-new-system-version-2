@@ -156,6 +156,24 @@ class CommunityPermissions
         return in_array($role, ['owner', 'admin', 'moderator'], true);
     }
 
+    /**
+     * May this role host an event in the community?
+     *
+     * Hosting puts an event on the community's page and sells seats under its
+     * name, so it is a moderation-level act rather than a member one — the same
+     * bar as removing someone else's post. Until this existed there was no bar
+     * at all: any signed-in user could pass any community's uuid when creating
+     * an event, or attach an existing event to a community they had never
+     * joined, and nothing on the server objected.
+     *
+     * Deliberately its own predicate rather than a call to canModerate() at each
+     * site: if hosting is ever opened to members, there is one place to say so.
+     */
+    public static function canHostEvent(string $role): bool
+    {
+        return self::canModerate($role);
+    }
+
     /** May this role contribute to this channel? */
     public static function canContribute(string $role, array $settings, string $channel): bool
     {

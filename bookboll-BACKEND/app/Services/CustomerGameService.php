@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Booking;
 use App\Models\Community;
 use App\Models\CommunityMember;
+use App\Support\CommunityPermissions;
 use App\Models\GameJoinRequest;
 use App\Models\HostedGame;
 use App\Models\Listing;
@@ -231,6 +232,19 @@ class CustomerGameService
         $community = ! empty($data['community_id'])
             ? Community::where('uuid', $data['community_id'])->first()
             : null;
+
+        // Hosting in a community is a moderation-level act: the event appears on
+        // the community's page and sells seats under its name. Nothing checked
+        // this before, so any signed-in user could pass any community's uuid.
+        if (! empty($data['community_id'])) {
+            if (! $community) {
+                return sendError('Community not found.', [], 404);
+            }
+
+            if ($denied = $this->communityHostingDenial($host, $community)) {
+                return $denied;
+            }
+        }
 
         // Is there anything to collect? A free court or a bill fully covered by points
         // publishes straight away; anything else has to go through Stripe before the
@@ -571,6 +585,32 @@ class CustomerGameService
         return sendSuccess('Events', ['games' => $this->decorateGames($games)->all()]);
     }
 
+    /**
+     * Why this user may not host in this community, or null when they may.
+     *
+     * Returns the refusal itself rather than a boolean so both call sites give
+     * the same answer, and so a visitor is told to join while a plain member is
+     * told who may host — two different problems with two different fixes.
+     */
+    protected function communityHostingDenial(User $host, Community $community)
+    {
+        $membership = CommunityMember::where('community_id', $community->id)
+            ->where('customer_id', $host->uuid)
+            ->first();
+
+        $role = CommunityPermissions::role($community, $membership, $host->uuid);
+
+        if (! CommunityPermissions::isMember($role)) {
+            return sendError('Join this community before hosting an event in it.', [], 403);
+        }
+
+        if (! CommunityPermissions::canHostEvent($role)) {
+            return sendError('Only the community owner, admins and moderators can host events here.', [], 403);
+        }
+
+        return null;
+    }
+
     /** Events posted to a community — the community page's Meetups tab. */
     public function communityEvents(string $communityUuid)
     {
@@ -618,6 +658,13 @@ class CustomerGameService
 
             if (! $community) {
                 return sendError('Community not found.', [], 404);
+            }
+
+            // Being the event's host says nothing about the community it is
+            // being posted into. Without this, any host could put their event
+            // on the page of a community they had never joined.
+            if ($denied = $this->communityHostingDenial($host, $community)) {
+                return $denied;
             }
 
             $game->community_id = $community->id;
