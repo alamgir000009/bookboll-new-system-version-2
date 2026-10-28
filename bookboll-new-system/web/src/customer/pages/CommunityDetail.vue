@@ -18,7 +18,7 @@ import {
 import { loadCommunityEvents } from '../../customer/apiGames.js'
 import GameCard from '../components/GameCard.vue'
 import { useSeo } from '../../lib/seo.js'
-import { ArrowLeft, UsersRound, Lock, MapPin, Plus, MessageCircle, Send, Newspaper, CalendarDays, Info, Check, X, Shield, Trash2, ImagePlus, Loader, LogOut, Pencil, Search, Settings } from 'lucide-vue-next'
+import { ArrowLeft, UsersRound, Lock, MapPin, Plus, MessageCircle, Send, Newspaper, CalendarDays, Info, Check, X, Shield, Trash2, ImagePlus, Loader, LogOut, Pencil, Search, Settings, Share2, Link2, MoreHorizontal } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +38,37 @@ const amModerator = computed(() => canModerateCommunity(c.value, me.value))
 const visibleMembers = computed(() => acceptedMembers.value.filter(m => (m.name || '').toLowerCase().includes(memberQuery.value.trim().toLowerCase())))
 
 const me = computed(() => customer.value?.id || null)
+
+// ── Invite / share ───────────────────────────────────────────────────────────
+// Anyone may pass the link on — a community grows by members telling friends,
+// and a visitor who likes what they see should be able to forward it too.
+const shareOpen = ref(false)
+const linkCopied = ref(false)
+const shareUrl = computed(() => `${window.location.origin}/communities/${c.value?.id || route.params.id}`)
+const shareText = computed(() => `${c.value?.is_private ? 'Request to join' : 'Join'} "${c.value?.name || 'our community'}" on Bookboll${c.value?.sport ? ' — ' + c.value.sport : ''}`)
+const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
+async function copyInviteLink() {
+  try {
+    await navigator.clipboard.writeText(shareUrl.value)
+    linkCopied.value = true
+    setTimeout(() => { linkCopied.value = false }, 2000)
+    pushToast('Invite link copied — paste it anywhere to invite people.', 'success')
+  } catch {
+    window.prompt('Copy this invite link:', shareUrl.value)   // clipboard blocked (e.g. http, iframes)
+  }
+  shareOpen.value = false
+}
+function inviteWhatsApp() {
+  window.open(`https://wa.me/?text=${encodeURIComponent(shareText.value + '\n' + shareUrl.value)}`, '_blank', 'noopener')
+  shareOpen.value = false
+}
+async function nativeShare() {
+  shareOpen.value = false
+  try { await navigator.share({ title: c.value?.name || 'Bookboll community', text: shareText.value, url: shareUrl.value }) } catch { /* cancelled */ }
+}
+function onDocClick(e) { if (shareOpen.value && !e.target.closest('.cd-share')) shareOpen.value = false }
+onMounted(() => document.addEventListener('click', onDocClick))
+onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 const membership = computed(() => c.value?.membership || null)
 // The community's owner_customer_id is the source of truth for ownership — the
 // owner keeps full control even if their owner-membership row went missing.
@@ -312,8 +343,20 @@ const TABS = computed(() => [
           <span class="cd-memberchip"><Check :size="14" /> {{ isOwner ? 'Owner' : membership?.role === 'admin' ? 'Admin' : membership?.role === 'moderator' ? 'Moderator' : 'Member' }}</span>
           <button type="button" class="cd-chatbtn" @click="openChat"><MessageCircle :size="15" /> Group chat<span v-if="chatUnread" class="cd-chatbtn-badge">{{ chatUnread > 9 ? '9+' : chatUnread }}</span></button>
           <button v-if="amManager" type="button" class="cd-editbtn" @click="openEdit"><Settings :size="16" /> Settings</button>
-          <button v-if="!isOwner" type="button" class="cd-leave" @click="leave"><LogOut :size="14" /> Leave</button>
         </template>
+
+        <!-- Invite: copy the link, send it on WhatsApp, or hand it to the OS share sheet. -->
+        <div class="cd-share">
+          <button type="button" class="cd-sharebtn" :class="{ on: shareOpen }" :aria-expanded="shareOpen" aria-haspopup="menu" @click="shareOpen = !shareOpen"><Share2 :size="15" /> {{ amMember ? 'Invite' : 'Share' }}</button>
+          <div v-if="shareOpen" class="cd-share-menu" role="menu" :aria-label="`Invite people to ${c.name}`">
+            <div class="cd-share-link"><Link2 :size="14" /><span>{{ shareUrl }}</span></div>
+            <button type="button" role="menuitem" @click="copyInviteLink"><Link2 :size="15" /> {{ linkCopied ? 'Copied!' : 'Copy invite link' }}</button>
+            <button type="button" role="menuitem" @click="inviteWhatsApp"><MessageCircle :size="15" /> Share on WhatsApp</button>
+            <button v-if="canNativeShare" type="button" role="menuitem" @click="nativeShare"><MoreHorizontal :size="15" /> More ways to share…</button>
+            <p v-if="c.is_private">This community needs approval — people you invite will send a join request.</p>
+          </div>
+        </div>
+        <button v-if="amMember && !isOwner" type="button" class="cd-leave" @click="leave"><LogOut :size="14" /> Leave</button>
       </div>
 
       <!-- TABS -->
@@ -475,6 +518,16 @@ const TABS = computed(() => [
 .cd-chatbtn { position: relative; display: inline-flex; align-items: center; gap: 6px; background: #0d9488; border: none; color: #fff; font: inherit; font-weight: 800; font-size: 13px; padding: 8px 15px; border-radius: 999px; cursor: pointer; }
 .cd-chatbtn-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 10.5px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; margin-left: 2px; }
 .cd-leave { margin-left: auto; }
+/* Invite / share */
+.cd-share { position: relative; }
+.cd-sharebtn { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1.5px solid var(--border, #e2e8f0); color: var(--text, #0f172a); font: inherit; font-weight: 700; font-size: 13px; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+.cd-sharebtn:hover, .cd-sharebtn.on { border-color: var(--brand); color: var(--brand-ink, var(--brand)); }
+.cd-share-menu { position: absolute; top: calc(100% + 8px); inset-inline-start: 0; z-index: 30; min-width: 270px; max-width: min(360px, calc(100vw - 32px)); background: var(--surface, #fff); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 8px; box-shadow: 0 14px 36px rgba(15, 23, 42, .16); display: flex; flex-direction: column; gap: 2px; }
+.cd-share-link { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted, #64748b); padding: 8px 10px 10px; border-bottom: 1px solid var(--border, #e2e8f0); margin-bottom: 4px; }
+.cd-share-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cd-share-menu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; font: inherit; font-size: 14px; font-weight: 600; color: var(--text, #0f172a); padding: 10px 10px; border-radius: 8px; cursor: pointer; min-height: 44px; }
+.cd-share-menu button:hover { background: var(--bg, #f1f5f9); color: var(--brand-ink, var(--brand)); }
+.cd-share-menu p { margin: 4px 0 2px; padding: 0 10px; font-size: 12px; color: var(--text-muted, #64748b); line-height: 1.5; }
 .cd-leave:hover { color: var(--danger-ink, #dc2626); border-color: var(--danger-border, #fecaca); }
 
 /* Tabs */
