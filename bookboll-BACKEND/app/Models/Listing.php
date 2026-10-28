@@ -322,21 +322,46 @@ class Listing extends Model
         ));
     }
 
-    /** 'H:i', 'HH:MM:SS' or '7:5' → 'HH:MM'; anything else → null. */
+    /**
+     * Any unambiguous clock string → 'HH:MM'; anything else → null.
+     *
+     * Accepts 24-hour ('17:00', '17:00:00') and 12-hour with a meridiem
+     * ('5:00 PM', '5:00pm', '12:00 AM'). The meridiem form is accepted
+     * deliberately: a UI that sends it cannot be misread, whereas a bare '05:00'
+     * meaning five in the afternoon is indistinguishable from five in the
+     * morning and will be stored as the morning. A 12-hour picker must send
+     * either 24-hour or the meridiem — never a bare hour.
+     */
     public static function normalizeClock($value): ?string
     {
         if (! is_string($value) && ! is_numeric($value)) {
             return null;
         }
-        if (! preg_match('/^\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*$/', (string) $value, $m)) {
+        if (! preg_match('/^\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*(?:([ap])\.?m\.?)?\s*$/i', (string) $value, $m)) {
             return null;
         }
         $h = (int) $m[1];
         $i = (int) $m[2];
+        if ($i > 59) {
+            return null;
+        }
+        $meridiem = isset($m[3]) && $m[3] !== '' ? strtolower($m[3]) : null;
+        if ($meridiem !== null) {
+            // A 12-hour clock runs 1-12; '0:30 am' or '13:00 pm' is a mistake,
+            // not a time, and guessing at it is how 5 pm becomes 5 am.
+            if ($h < 1 || $h > 12) {
+                return null;
+            }
+            $h = $meridiem === 'a'
+                ? ($h === 12 ? 0 : $h)          // 12 am is midnight
+                : ($h === 12 ? 12 : $h + 12);   // 12 pm is noon
+
+            return sprintf('%02d:%02d', $h, $i);
+        }
         if ($h === 24 && $i === 0) {
             $h = 0;   // 24:00 is midnight
         }
-        if ($h > 23 || $i > 59) {
+        if ($h > 23) {
             return null;
         }
 

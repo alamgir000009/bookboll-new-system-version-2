@@ -1397,8 +1397,12 @@ class ListingDashboardService
             'start_time_mode'         => 'nullable|in:auto,fixed,custom',
             'fixed_start_times'       => 'nullable|array',
             'custom_slots'            => 'nullable|array|max:200',
-            'custom_slots.*.start_time' => 'required|date_format:H:i',
-            'custom_slots.*.end_time'   => 'required|date_format:H:i',
+            // Shape only - Listing::normalizeClock does the real parsing, and
+            // customSlotsProblem() rejects whatever it cannot read. date_format:H:i
+            // refused '5:00 PM' outright, which is the one form a 12-hour picker
+            // can send without its meaning going missing on the way here.
+            'custom_slots.*.start_time' => ['required', 'string', 'regex:/^\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?\s*$/i'],
+            'custom_slots.*.end_time'   => ['required', 'string', 'regex:/^\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?\s*$/i'],
             'custom_slots.*.days'       => 'required|array|min:1',
             'custom_slots.*.days.*'     => 'integer|between:0,6',
             'capacity'                => 'nullable|integer|min:0',
