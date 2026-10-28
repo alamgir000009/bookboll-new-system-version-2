@@ -976,7 +976,9 @@ class PaymentService
                 'metadata' => $metadata,
                 'line_items' => [[
                     'price_data' => [
-                        'currency' => 'qar',
+                        // What this booking was quoted in. Was hard-coded 'qar',
+                        // which charged a Pakistani booking of PKR 50 as QAR 50.
+                        'currency' => strtolower($booking->currency ?: Booking::currencyForVenue($booking->venue_id)),
                         'unit_amount' => $totalAmount * 100,
                         'product_data' => [
                             'name' => "Payment for Booking #{$booking->booking_id}",
@@ -1905,7 +1907,9 @@ class PaymentService
 
             $totalSlots = $totalBookings;
 
-            $allBookings = Booking::whereIn('id', $allBookingIds)->orderBy('id')->get(['id', 'booking_id', 'date', 'start_time', 'end_time']);
+            // `currency` is selected because the checkout below charges in it;
+            // without it the column is absent and the fallback silently decides.
+            $allBookings = Booking::whereIn('id', $allBookingIds)->orderBy('id')->get(['id', 'booking_id', 'date', 'start_time', 'end_time', 'currency']);
             $slotLines = [];
             foreach ($allBookings as $b) {
                 $d = \Carbon\Carbon::parse($b->date)->format('M j, Y');
@@ -1929,6 +1933,15 @@ class PaymentService
                 $paymentType === 'deposit' ? "Deposit due: QAR " . number_format($paymentAmount, 2) : null,
             ])));
             $productDescription = strlen($productDescription) > 500 ? substr($productDescription, 0, 497) . '...' : $productDescription;
+
+            // Every booking in one checkout belongs to the same listing, so they
+            // share a currency. Taken from the booking rather than guessed: it is
+            // stamped at creation by Booking::currencyForVenue() and is what the
+            // customer was actually quoted. This line was hard-coded 'qar'.
+            $checkoutCurrency = strtolower(
+                $allBookings->first()?->currency
+                    ?: Booking::currencyForVenue($listing->venue_id ?? null)
+            );
 
             $sessionData = [
                 'customer' => $user->stripe_id,
@@ -1964,7 +1977,7 @@ class PaymentService
                 ],
                 'line_items' => [[
                     'price_data' => [
-                        'currency' => 'qar',
+                        'currency' => $checkoutCurrency,
                         'unit_amount' => (int) round($paymentAmount * 100),
                         'product_data' => [
                             'name' => $productName,
