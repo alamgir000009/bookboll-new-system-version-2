@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Support\AccessScope;
+use App\Support\StripeMinimumCharge;
 use App\Support\TenantOrigins;
 use App\Models\Listing;
 use App\Services\BookingWalletService;
@@ -967,6 +968,12 @@ class PaymentService
 
             $returnUrls = $this->stripeService->checkoutReturnUrls();
 
+            $linkCurrency = strtolower($booking->currency ?: Booking::currencyForVenue($booking->venue_id));
+
+            if (StripeMinimumCharge::isBelowFloor((float) $totalAmount, $linkCurrency)) {
+                return sendError(StripeMinimumCharge::message((float) $totalAmount, $linkCurrency), [], 422);
+            }
+
             $session = \Stripe\Checkout\Session::create([
                 'customer' => $user->stripe_id,
                 'payment_method_types' => ['card'],
@@ -978,7 +985,7 @@ class PaymentService
                     'price_data' => [
                         // What this booking was quoted in. Was hard-coded 'qar',
                         // which charged a Pakistani booking of PKR 50 as QAR 50.
-                        'currency' => strtolower($booking->currency ?: Booking::currencyForVenue($booking->venue_id)),
+                        'currency' => $linkCurrency,
                         'unit_amount' => $totalAmount * 100,
                         'product_data' => [
                             'name' => "Payment for Booking #{$booking->booking_id}",
@@ -1942,6 +1949,15 @@ class PaymentService
                 $allBookings->first()?->currency
                     ?: Booking::currencyForVenue($listing->venue_id ?? null)
             );
+
+            // Refuse below Stripe's floor here rather than letting Stripe do it:
+            // its refusal talks about cent conversions and reaches the customer
+            // verbatim. Ours names the amount and the way out.
+            if (StripeMinimumCharge::isBelowFloor((float) $paymentAmount, $checkoutCurrency)) {
+                DB::rollBack();
+
+                return sendError(StripeMinimumCharge::message((float) $paymentAmount, $checkoutCurrency), [], 422);
+            }
 
             $sessionData = [
                 'customer' => $user->stripe_id,
