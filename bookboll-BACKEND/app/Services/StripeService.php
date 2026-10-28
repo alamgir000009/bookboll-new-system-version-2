@@ -6,6 +6,7 @@ use App\Models\Booking;
 use App\Models\Payment;
 use App\Models\StripeSession;
 use App\Support\PremiumPlan;
+use App\Support\StripeDocumentLink;
 use BookingPaymentMethod;
 use BookingPaymentStatus;
 use BookingStatus;
@@ -413,7 +414,9 @@ class StripeService
             ];
         }
 
-        $intent   = PaymentIntent::retrieve($paymentIntentId);
+        // The charge comes expanded so its hosted receipt is in hand without a
+        // second round trip; the id is read the same way whether or not it is.
+        $intent   = PaymentIntent::retrieve(['id' => $paymentIntentId, 'expand' => ['latest_charge']]);
         $chargeId = is_string($intent->latest_charge)
             ? $intent->latest_charge
             : ($intent->latest_charge->id ?? null);
@@ -427,6 +430,8 @@ class StripeService
                 'error'             => 'No charge found for payment.',
             ];
         }
+
+        $receiptUrl = $this->receiptUrlForCharge($intent->latest_charge, $chargeId);
 
         $userId = $session->metadata['user_id'] ?? null;
         if (! $userId) {
@@ -545,6 +550,14 @@ class StripeService
                 ];
             });
 
+            // Deposit, balance or full — every payment row this charge settled now
+            // carries Stripe's receipt, so the dashboard can open it at once
+            // instead of waiting for the hourly backfill. Outside the transaction
+            // and non-fatal: a receipt is never worth a failed fulfilment.
+            if ($result['processed']) {
+                $this->stampReceiptUrl($chargeId, $receiptUrl);
+            }
+
             if ($result['processed'] && ! $result['already_processed']) {
                 // Only the bookings that actually took the money get told about it.
                 $this->dispatchPaymentReceivedNotifications(
@@ -584,6 +597,55 @@ class StripeService
                 'source'            => $source,
                 'error'             => $e->getMessage(),
             ];
+        }
+    }
+
+    /**
+     * Stripe's hosted receipt for a charge, or null. Read off the expanded
+     * charge when the intent carried one, otherwise fetched; a failure here is
+     * logged and swallowed because the hourly backfill will try again.
+     */
+    protected function receiptUrlForCharge($charge, string $chargeId): ?string
+    {
+        try {
+            if (! is_object($charge) || ! isset($charge->receipt_url)) {
+                $charge = Charge::retrieve($chargeId);
+            }
+
+            return StripeDocumentLink::sanitize($charge->receipt_url ?? null);
+        } catch (Exception $e) {
+            Log::warning('Could not resolve Stripe receipt for charge', [
+                'charge_id' => $chargeId,
+                'error'     => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Put the receipt on every payment the charge settled — the deposit row,
+     * the balance row, a hosted event's court and seat rows — leaving any row
+     * that already has a link alone. One query, no model events, never throws.
+     */
+    protected function stampReceiptUrl(string $chargeId, ?string $receiptUrl): int
+    {
+        if ($chargeId === '' || ! $receiptUrl) {
+            return 0;
+        }
+
+        try {
+            return Payment::query()
+                ->where('charge_id', $chargeId)
+                ->whereNull('stripe_receipt_url')
+                ->update(['stripe_receipt_url' => $receiptUrl]);
+        } catch (Exception $e) {
+            Log::warning('Could not store Stripe receipt on payments', [
+                'charge_id' => $chargeId,
+                'error'     => $e->getMessage(),
+            ]);
+
+            return 0;
         }
     }
 
