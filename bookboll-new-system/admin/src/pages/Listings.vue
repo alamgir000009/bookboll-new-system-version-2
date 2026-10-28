@@ -1711,7 +1711,10 @@ function setPlacement(row, surface, value) {
   }
   applyPlacement(row, surface, value)
 }
-function closePopovers() { placementMenuKey.value = null; showFilters.value = false }
+// Only the floating placement menu dismisses on an outside click. The filter
+// panel expands in place and closes with its own Done / toggle, so a click
+// inside it (a chip, a dropdown) must never make it disappear.
+function closePopovers() { placementMenuKey.value = null }
 onMounted(() => document.addEventListener('click', closePopovers))
 onBeforeUnmount(() => document.removeEventListener('click', closePopovers))
 const placementComplete = computed(() =>
@@ -2517,14 +2520,31 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
           <div class="search lf-search">
             <Search :size="16" />
             <input v-model="search" placeholder="Search listings, activities or venues…" />
-            <button type="button" class="lf-filter-btn" :class="{ on: showFilters || activeFilterCount }" @click.stop="showFilters = !showFilters" title="Filters">
+            <button type="button" class="lf-filter-btn" :class="{ on: showFilters || activeFilterCount }" :aria-expanded="showFilters" aria-controls="listing-filters" @click="showFilters = !showFilters" title="Filters">
               <SlidersHorizontal :size="16" />
               <span v-if="activeFilterCount" class="lf-filter-n">{{ activeFilterCount }}</span>
             </button>
           </div>
 
-          <!-- All filters live in this dropdown -->
-          <div v-if="showFilters" class="lf-panel" v-dialog="() => showFilters = false" aria-label="Listing filters" @click.stop>
+        </div>
+
+        <div class="lf-spacer"></div>
+
+        <button v-if="canExport" class="btn btn-secondary btn-sm" @click="showExportModal = true">
+          <Download :size="14" />Export<span v-if="!isPremium" class="prem-lock">Premium</span>
+        </button>
+        <div class="layout-toggle">
+          <button :class="['layout-btn', { active: layout === 'grouped' }]" @click="layout='grouped'" title="View listings grouped by venue">
+            <Layers :size="16" /><span>Venue view</span>
+          </button>
+          <button :class="['layout-btn', { active: layout === 'flat' }]" @click="layout='flat'" title="View all listings">
+            <LayoutList :size="16" /><span>Listing view</span>
+          </button>
+        </div>
+      </div>
+      <!-- Filters expand in place below the toolbar (same pattern as Bookings),
+           so a dropdown opened inside them never closes or shifts the panel. -->
+      <section v-if="showFilters" id="listing-filters" class="lf-panel" aria-label="Listing filters">
             <div class="lf-panel-head"><strong>Listing filters</strong><button type="button" class="btn-icon" aria-label="Close filters" @click="showFilters = false"><X :size="18" /></button></div>
             <div class="lf-selects">
               <div class="lf-field">
@@ -2584,23 +2604,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               <span v-else></span>
               <button type="button" class="btn btn-primary btn-sm" @click="showFilters = false">Done</button>
             </div>
-          </div>
-        </div>
-
-        <div class="lf-spacer"></div>
-
-        <button v-if="canExport" class="btn btn-secondary btn-sm" @click="showExportModal = true">
-          <Download :size="14" />Export<span v-if="!isPremium" class="prem-lock">Premium</span>
-        </button>
-        <div class="layout-toggle">
-          <button :class="['layout-btn', { active: layout === 'grouped' }]" @click="layout='grouped'" title="View listings grouped by venue">
-            <Layers :size="16" /><span>Venue view</span>
-          </button>
-          <button :class="['layout-btn', { active: layout === 'flat' }]" @click="layout='flat'" title="View all listings">
-            <LayoutList :size="16" /><span>Listing view</span>
-          </button>
-        </div>
-      </div>
+      </section>
 
       <StorefrontOrderSettings v-if="isSuperAdmin || currentOwnerUserId" :marketplace="isSuperAdmin" />
       <p v-if="listLoading" role="status" class="catalog-load-message">Loading venues and listings…</p>
@@ -4398,7 +4402,10 @@ input.ext-value-input { width: 96px; flex: 0 0 96px; text-align: center; }
 .lf-filter-n { background: var(--primary); color: #fff; font-size: 10px; font-weight: 800; min-width: 16px; height: 16px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
 .lf-spacer { flex: 1 1 0; min-width: 0; }
 
-.lf-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 50; width: min(540px, 92vw); background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 32px rgba(0,0,0,.14); display: flex; flex-direction: column; gap: 14px; }
+.lf-panel { width: 100%; margin: 10px 0 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; animation: lfSlide .15s ease; }
+@keyframes lfSlide { from { opacity: 0; transform: translateY(-6px); } }
+.lf-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lf-panel-head strong { font-size: 14px; }
 .lf-selects { display: flex; gap: 10px; flex-wrap: wrap; }
 .lf-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 150px; min-width: 0; }
 .lf-field label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
