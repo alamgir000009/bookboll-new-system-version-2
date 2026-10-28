@@ -172,7 +172,7 @@ const editSlots = computed(() => {
   if (!editSelectedListing.value) return []
   const sched = editDaySched.value
   if (!sched || sched.closed) return []
-  return slotsForWindows(editSelectedListing.value, sched.windows)   // buffer baked into the slot step
+  return slotsForWindows(editSelectedListing.value, sched.windows, editDate.value)   // buffer baked into the slot step
 })
 
 function editIsBooked(slot) {

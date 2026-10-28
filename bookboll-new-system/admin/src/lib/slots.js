@@ -100,8 +100,28 @@ export function normalizeDuration(d) {
  * @param {number} closeMins- closing time in minutes from midnight (default 23:00)
  * @returns {Array<{start_time, end_time}>}
  */
-export function generateSlots(listing, openMins = 6 * 60, closeMins = 23 * 60) {
+export function generateSlots(listing, openMins = 6 * 60, closeMins = 23 * 60, dayOfWeek = null) {
   const duration = normalizeDuration(listing?.slot_duration)
+
+  // ── Custom slots: the provider's own list, each with its own length ──
+  // Without a weekday (a caller that predates custom slots) every day's slots
+  // are pooled, so the listing still shows SOMETHING rather than nothing.
+  if (listing?.start_time_mode === 'custom' && normalizeCustomSlots(listing?.custom_slots).length) {
+    const rows = dayOfWeek == null
+      ? normalizeCustomSlots(listing.custom_slots)
+      : customSlotsForDay(listing, dayOfWeek)
+    const seen = new Set()
+    return rows.filter(r => {
+      const a = toMinutes(r.start_time)
+      let b = endMinutes(r.end_time)
+      if (b <= a) b += 24 * 60                       // crosses midnight
+      if (a < openMins || a >= closeMins) return false
+      if (closeMins < 24 * 60 && b > closeMins) return false   // may spill only past a midnight close
+      if (seen.has(r.start_time)) return false
+      seen.add(r.start_time)
+      return true
+    }).map(r => ({ start_time: r.start_time, end_time: r.end_time }))
+  }
 
   // ── Fixed start times: provider defined an explicit list ──
   if (listing?.start_time_mode === 'fixed' && Array.isArray(listing?.fixed_start_times) && listing.fixed_start_times.length) {
@@ -123,6 +143,95 @@ export function generateSlots(listing, openMins = 6 * 60, closeMins = 23 * 60) {
     start += step
   }
   return slots
+}
+
+/** 'H:i', 'HH:MM:SS' → 'HH:MM'; anything unreadable → null. */
+export function normalizeClock(value) {
+  const m = /^\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*$/.exec(String(value ?? ''))
+  if (!m) return null
+  let h = Number(m[1]); const i = Number(m[2])
+  if (h === 24 && i === 0) h = 0
+  if (h > 23 || i > 59) return null
+  return `${String(h).padStart(2, '0')}:${String(i).padStart(2, '0')}`
+}
+
+/**
+ * A listing's custom slots as the server stores them:
+ *   [{ start_time: 'HH:MM', end_time: 'HH:MM', days: [0..6] }]  (Sunday = 0)
+ * Rows that cannot be read are dropped, never sold. Mirrors Listing::customSlots().
+ */
+export function normalizeCustomSlots(raw) {
+  const out = []
+  for (const row of Array.isArray(raw) ? raw : []) {
+    if (!row || typeof row !== 'object') continue
+    const start = normalizeClock(row.start_time), end = normalizeClock(row.end_time)
+    const days = [...new Set((Array.isArray(row.days) ? row.days : String(row.days ?? '').split(','))
+      .map(d => Number(d)).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b)
+    if (!start || !end || start === end || !days.length) continue
+    out.push({ start_time: start, end_time: end, days })
+  }
+  return out.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time) || toMinutes(a.end_time) - toMinutes(b.end_time))
+}
+
+/** The custom slots a listing sells on one weekday, start-sorted. */
+export function customSlotsForDay(listing, dayOfWeek) {
+  const dow = Number(dayOfWeek)
+  return normalizeCustomSlots(listing?.custom_slots)
+    .filter(r => r.days.includes(dow))
+    .map(r => ({ start_time: r.start_time, end_time: r.end_time }))
+}
+
+/** Minutes a slot lasts; an end at or before the start means it crosses midnight. */
+export function slotLength(start, end) {
+  const a = toMinutes(start)
+  let b = endMinutes(end)
+  if (b <= a) b += 24 * 60
+  return b - a
+}
+
+/**
+ * Why the custom slots cannot be saved as they are — one message per bad row,
+ * or [] when they are fine. The same rules the server applies on save, so the
+ * editor can say so before the request: a readable start and end, at least one
+ * day, inside the listing's hours (and the venue's, when known) on every day it
+ * runs, and no two slots overlapping on the same day.
+ *
+ * @returns {Array<{ index: number, message: string }>}
+ */
+export function validateCustomSlots(rows, hours = [], venueHours = null, { scope = "the listing's" } = {}) {
+  const errors = []
+  const checkHours = Array.isArray(hours) && hours.length > 0   // unknown hours: nothing to hold them to
+  const byDay = {}
+  const list = Array.isArray(rows) ? rows : []
+  list.forEach((row, index) => {
+    const n = index + 1
+    const fail = (message) => errors.push({ index, message })
+    const start = normalizeClock(row?.start_time), end = normalizeClock(row?.end_time)
+    if (!start || !end) return fail(`Slot ${n}: choose a start and an end time.`)
+    if (start === end) return fail(`Slot ${n}: the end time must be after the start time.`)
+    const days = [...new Set((Array.isArray(row?.days) ? row.days : []).map(Number).filter(d => d >= 0 && d <= 6))]
+    if (!days.length) return fail(`Slot ${n}: pick at least one day.`)
+    const a = toMinutes(start)
+    let b = endMinutes(end)
+    if (b <= a) b += 24 * 60
+    for (const d of days) {
+      const dayRow = (hours || []).find(h => Number(h?.day_of_week) === d)
+      const periods = dayRow?.is_open ? effectivePeriods(dayRow, venueHours) : []
+      const fits = periods.some(p => {
+        const open = toMinutes(p.open_time), close = endMinutes(p.close_time)
+        return a >= open && a < close && (b <= close || toMinutes(p.close_time) === 0)
+      })
+      if (checkHours && !fits) {
+        const when = periods.length ? periods.map(p => fmtRange12(p.open_time, p.close_time)).join(', ') : 'closed'
+        return fail(`Slot ${n}: ${fmtRange12(start, end)} is outside ${scope} opening hours on ${DAY_LABELS[d]} (${when}).`)
+      }
+      for (const other of byDay[d] || []) {
+        if (a < other.b && b > other.a) return fail(`Slot ${n} overlaps slot ${other.n} on ${DAY_LABELS[d]}. Slots on one day must not overlap.`)
+      }
+      ;(byDay[d] ||= []).push({ a, b, n })
+    }
+  })
+  return errors
 }
 
 /**

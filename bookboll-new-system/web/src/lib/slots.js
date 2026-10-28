@@ -100,8 +100,27 @@ export function normalizeDuration(d) {
  * @param {number} closeMins- closing time in minutes from midnight (default 23:00)
  * @returns {Array<{start_time, end_time}>}
  */
-export function generateSlots(listing, openMins = 6 * 60, closeMins = 23 * 60) {
+export function generateSlots(listing, openMins = 6 * 60, closeMins = 23 * 60, dayOfWeek = null) {
   const duration = normalizeDuration(listing?.slot_duration)
+
+  // ── Custom slots: the provider's own list, each with its own length ──
+  if (listing?.start_time_mode === 'custom' && Array.isArray(listing?.custom_slots) && listing.custom_slots.length) {
+    const seen = new Set()
+    return listing.custom_slots
+      .filter(r => r && r.start_time && r.end_time && (dayOfWeek == null || (r.days || []).map(Number).includes(Number(dayOfWeek))))
+      .map(r => ({ start_time: String(r.start_time).slice(0, 5), end_time: String(r.end_time).slice(0, 5) }))
+      .filter(r => {
+        const a = toMinutes(r.start_time)
+        let b = endMinutes(r.end_time)
+        if (b <= a) b += 24 * 60
+        if (a < openMins || a >= closeMins) return false
+        if (closeMins < 24 * 60 && b > closeMins) return false
+        if (seen.has(r.start_time)) return false
+        seen.add(r.start_time)
+        return true
+      })
+      .sort((x, y) => toMinutes(x.start_time) - toMinutes(y.start_time))
+  }
 
   // ── Fixed start times: provider defined an explicit list ──
   if (listing?.start_time_mode === 'fixed' && Array.isArray(listing?.fixed_start_times) && listing.fixed_start_times.length) {

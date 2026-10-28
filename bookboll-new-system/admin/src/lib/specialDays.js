@@ -21,7 +21,7 @@
  *   2. venue-wide row        (closed beats custom)
  */
 import { apiFetch } from './api.js'
-import { toMinutes, endMinutes, generateSlots } from './slots.js'
+import { toMinutes, endMinutes, generateSlots, customSlotsForDay } from './slots.js'
 
 // Regular-schedule fallback when a listing has no listing_hours rows at all —
 // the same 06:00–23:00 window generateSlots() defaults to.
@@ -163,6 +163,20 @@ export function dayWindows({ date, listing, hoursRows, specialRows }) {
     pricing: { customPrice: sd.customPrice ?? null, multiplier: sd.multiplier ?? 1 },
   }
 
+  // A custom-slot listing is open exactly when its slots are, whatever its
+  // weekly rows say (the venue's hours are enforced server-side on save).
+  if (listing?.start_time_mode === 'custom' && Array.isArray(listing.custom_slots) && listing.custom_slots.length) {
+    const dow = new Date(date + 'T00:00:00').getDay()
+    const windows = customSlotsForDay(listing, dow).map(s => {
+      const openMins = toMinutes(s.start_time)
+      let closeMins = endMinutes(s.end_time)
+      if (closeMins <= openMins) closeMins += 24 * 60
+      return { openMins, closeMins }
+    })
+    if (windows.length) return { closed: false, special: false, name: '', windows }
+    return { closed: true, special: false, name: '', windows: [] }
+  }
+
   if (hoursRows?.length) {
     const dow = new Date(date + 'T00:00:00').getDay()
     const windows = hoursRows
@@ -178,12 +192,14 @@ export function dayWindows({ date, listing, hoursRows, specialRows }) {
   return { closed: false, special: false, name: '', windows: [{ openMins: DEFAULT_OPEN, closeMins: DEFAULT_CLOSE }] }
 }
 
-/** generateSlots across multiple windows, deduped and time-sorted. */
-export function slotsForWindows(listing, windows) {
+/** generateSlots across multiple windows, deduped and time-sorted.
+ *  `date` ('YYYY-MM-DD') tells a custom-slot listing which weekday's slots apply. */
+export function slotsForWindows(listing, windows, date = null) {
   const seen = new Set()
   const out = []
+  const dow = date ? new Date(date + 'T00:00:00').getDay() : null
   for (const w of windows || []) {
-    for (const s of generateSlots(listing, w.openMins, w.closeMins)) {
+    for (const s of generateSlots(listing, w.openMins, w.closeMins, dow)) {
       if (!seen.has(s.start_time)) { seen.add(s.start_time); out.push(s) }
     }
   }

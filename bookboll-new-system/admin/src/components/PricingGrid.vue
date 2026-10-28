@@ -40,6 +40,10 @@ const props = defineProps({
   /** The venue's weekly hours, same shape. The server sells a slot only inside
    *  BOTH schedules, so the grid honours both too. Empty = not loaded. */
   venueHours: { type: Array, default: () => [] },
+  /** 'auto' | 'fixed' | 'custom' — with 'custom', the squares are customSlots, not the schedule cut up. */
+  startTimeMode: { type: String, default: 'auto' },
+  /** [{ start_time, end_time, days: [0..6] }] — each slot has its own length. */
+  customSlots: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['update:groups', 'update:pattern', 'below-base'])
 
@@ -62,6 +66,8 @@ const hm = (m) => (m >= 24 * 60 ? '00:00' : toTimeStr(m))
 // How long one bookable slot is. Guarded: a listing with no duration set would
 // otherwise make every loop below run forever.
 const slotMins = computed(() => (Number(props.slotDuration) > 0 ? Number(props.slotDuration) : 60))
+// Custom mode: the provider's own slots, so each square can be a different length.
+const customMode = computed(() => props.startTimeMode === 'custom' && props.customSlots.length > 0)
 
 // ── Which hours are open, and which schedule closes the rest ─────────────────
 function listingDay(dayIndex) {
@@ -70,8 +76,14 @@ function listingDay(dayIndex) {
 function venueDay(dayIndex) {
   return props.venueHours.find(h => Number(h.day_of_week) === dayIndex) || null
 }
-/** Open periods the server would actually sell: listing hours ∩ venue hours. */
+/** Open periods the server would actually sell: listing hours ∩ venue hours —
+ *  or, for custom slots, the venue's hours alone (the listing's schedule does
+ *  not apply; unknown venue hours mean the whole day). */
 function openPeriods(dayIndex) {
+  if (customMode.value) {
+    const v = venueDay(dayIndex)
+    return v ? periodsOf(v) : [{ open_time: '00:00', close_time: '00:00' }]
+  }
   return effectivePeriods(listingDay(dayIndex), props.venueHours)
 }
 function inPeriods(periods, m) {
@@ -83,6 +95,7 @@ function inPeriods(periods, m) {
  * null — it is open.
  */
 function closedReason(dayIndex, m) {
+  if (customMode.value) return inPeriods(openPeriods(dayIndex), m) ? null : 'venue'
   if (!inPeriods(periodsOf(listingDay(dayIndex)), m)) return 'listing'
   const v = venueDay(dayIndex)
   if (v && !inPeriods(periodsOf(v), m)) return 'venue'
@@ -90,8 +103,28 @@ function closedReason(dayIndex, m) {
 }
 
 // ── The slots that really exist, per day (mirrors ListingService) ────────────
+/** [start, end] minute pairs a day sells, by mode. A custom slot counts only
+ *  where it begins inside an open period and ends inside it (or the period
+ *  closes at midnight, which lets it spill like an automatic slot). */
+function slotPairsForDay(dayIndex) {
+  const periods = openPeriods(dayIndex)
+  if (!customMode.value) return periodSlotStarts(periods, slotMins.value).map(m => [m, m + slotMins.value])
+  const out = []
+  for (const cs of props.customSlots) {
+    if (!(cs.days || []).map(Number).includes(dayIndex)) continue
+    const a = minutesOf(cs.start_time)
+    let b = endMin(cs.end_time)
+    if (b <= a) b += 24 * 60
+    const fits = periods.some(p => {
+      const open = minutesOf(p.open_time), close = endMin(p.close_time)
+      return a >= open && a < close && (b <= close || minutesOf(p.close_time) === 0)
+    })
+    if (fits && !out.some(([x]) => x === a)) out.push([a, b])
+  }
+  return out.sort((x, y) => x[0] - y[0])
+}
 function slotsForDay(dayIndex) {
-  return periodSlotStarts(openPeriods(dayIndex), slotMins.value).map(toTimeStr)
+  return slotPairsForDay(dayIndex).map(([m]) => toTimeStr(m))
 }
 /** Per day, the slot starts that genuinely exist — the grid's source of truth. */
 const daySlots = computed(() => {
@@ -99,6 +132,13 @@ const daySlots = computed(() => {
   for (const d of DAY_ORDER) map[d] = new Set(slotsForDay(d))
   return map
 })
+/** How long the slot at (day, start) lasts — uniform unless the slots are custom. */
+const slotLengths = computed(() => {
+  const map = {}
+  for (const d of DAY_ORDER) for (const [a, b] of slotPairsForDay(d)) map[d + '|' + toTimeStr(a)] = b - a
+  return map
+})
+function slotLen(day, slot) { return slotLengths.value[day + '|' + slot] ?? slotMins.value }
 /** A square is paintable only where that day actually has a bookable slot. */
 function slotInOpen(dayIndex, slot) {
   return daySlots.value[dayIndex]?.has(slot) ?? false
@@ -114,12 +154,24 @@ function slotInOpen(dayIndex, slot) {
  * as it lasts — a 2-hour slot at 07:00 occupies the 07:00 and 08:00 rows.
  */
 const gcd = (a, b) => (b ? gcd(b, a % b) : a)
-const rowStep = computed(() => Math.max(15, gcd(60, slotMins.value)))
+const rowStep = computed(() => {
+  if (!customMode.value) return Math.max(15, gcd(60, slotMins.value))
+  // Custom slots can start and end anywhere; the row is the finest tick every
+  // start and length divides into, down to 5 minutes.
+  let g = 60
+  for (const cs of props.customSlots) {
+    const a = minutesOf(cs.start_time)
+    let b = endMin(cs.end_time)
+    if (b <= a) b += 24 * 60
+    g = gcd(gcd(g, a), b - a)
+  }
+  return Math.max(5, g)
+})
 const rowCount = computed(() => Math.floor((24 * 60) / rowStep.value))
 const rowTimes = computed(() => Array.from({ length: rowCount.value }, (_, i) => i * rowStep.value))
 /** Rows a slot spans; a slot that runs past midnight is clipped at the bottom. */
-function spanFor(startMin) {
-  const rows = Math.max(1, Math.round(slotMins.value / rowStep.value))
+function spanFor(day, startMin) {
+  const rows = Math.max(1, Math.round(slotLen(day, toTimeStr(startMin)) / rowStep.value))
   return Math.min(rows, rowCount.value - startMin / rowStep.value)
 }
 /**
@@ -132,7 +184,7 @@ const columns = computed(() => DAY_ORDER.map(d => {
   const covered = new Set()
   const cells = []
   for (const s of starts) {
-    const span = spanFor(s)
+    const span = spanFor(d, s)
     for (let r = 0; r < span; r++) covered.add(s + r * rowStep.value)
     cells.push({ kind: 'slot', day: d, slot: toTimeStr(s), row: s / rowStep.value, span })
   }
@@ -158,7 +210,9 @@ function explainClosed(c) {
     // Open on both schedules, but no slot of this length fits here — e.g. a
     // 1-hour window on a 2-hour listing. Nothing can be booked, so nothing can
     // be priced.
-    toast.error(`${when} is open, but no ${slotMins.value}-minute slot starts here, so nothing can be booked or priced at this time.`)
+    toast.error(customMode.value
+      ? `${when} is open, but none of this listing's custom slots starts here, so nothing can be booked or priced at this time.`
+      : `${when} is open, but no ${slotMins.value}-minute slot starts here, so nothing can be booked or priced at this time.`)
   }
 }
 
@@ -208,7 +262,7 @@ function groupEndMin(g) {
 function groupCoversSlot(g, day, slot) {
   if (!groupDays(g).includes(day)) return false
   const s = minutesOf(slot)
-  return s < groupEndMin(g) && s + slotMins.value > minutesOf(g.start_time || '00:00')
+  return s < groupEndMin(g) && s + slotLen(day, slot) > minutesOf(g.start_time || '00:00')
 }
 /*
  * Which group wins a square — resolved as matchingPricingGroupForSlot() does:
@@ -253,7 +307,7 @@ function cellTitle(c) {
   // The END of a slot that runs past midnight is a real clock time on the next
   // day (23:00 + 2h reads "1:00 AM"), unlike a group window's end, where 00:00
   // means end-of-day.
-  const end = toTimeStr((minutesOf(c.slot) + slotMins.value) % (24 * 60))
+  const end = toTimeStr((minutesOf(c.slot) + slotLen(c.day, c.slot)) % (24 * 60))
   return `${DAY_NAME[c.day]} ${fmt12(c.slot)} – ${fmt12(end)} · ${props.currency} ${price}${group ? ` · ${group.name}` : ' · base price'}`
 }
 
@@ -282,7 +336,6 @@ function squaresOf(g) {
 }
 /** Cut a square set back into the fewest rectangles that cover exactly it. */
 function rectanglesOf(squares) {
-  const step = slotMins.value
   const byDay = new Map()
   for (const key of squares) {
     const [d, slot] = key.split('|')
@@ -292,16 +345,17 @@ function rectanglesOf(squares) {
   const daysByRun = new Map()
   for (const [d, mins] of byDay) {
     mins.sort((a, b) => a - b)
-    let from = null, prev = null
+    let from = null, prevEnd = null
     const close = () => {
-      const key = from + '-' + (prev + step)
+      const key = from + '-' + prevEnd
       if (!daysByRun.has(key)) daysByRun.set(key, [])
       daysByRun.get(key).push(Number(d))
     }
     for (const m of mins) {
-      if (from === null) { from = prev = m; continue }
-      if (m === prev + step) { prev = m; continue }
-      close(); from = prev = m
+      const end = m + slotLen(Number(d), toTimeStr(m))
+      if (from === null) { from = m; prevEnd = end; continue }
+      if (m === prevEnd) { prevEnd = end; continue }
+      close(); from = m; prevEnd = end
     }
     if (from !== null) close()
   }

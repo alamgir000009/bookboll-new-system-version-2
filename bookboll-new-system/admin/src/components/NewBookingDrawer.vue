@@ -217,7 +217,7 @@ const slots = computed(() => {
   if (!sched) return []
   if (sched.closed) return []
   // buffer is baked into the slot step via the shared helper
-  return slotsForWindows(selectedListing.value, sched.windows)
+  return slotsForWindows(selectedListing.value, sched.windows, bookingDate.value)
 })
 
 // Auto-select the slot matching a calendar-preset start time once slots are ready.

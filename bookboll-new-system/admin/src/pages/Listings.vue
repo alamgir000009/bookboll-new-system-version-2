@@ -114,7 +114,7 @@ import { useCurrentUser } from '../lib/currentUser.js'
 import { logAudit } from '../lib/audit.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { downloadCSV } from '../lib/useExport.js'
-import { SLOT_DURATIONS, BUFFER_OPTIONS, previewSlots, durationLabel, toMinutes, toTimeStr, generateSlots, fmt12, fmtRange12, bookableSlots, daysLabel } from '../lib/slots.js'
+import { SLOT_DURATIONS, BUFFER_OPTIONS, previewSlots, durationLabel, toMinutes, toTimeStr, generateSlots, fmt12, fmtRange12, bookableSlots, daysLabel, DAY_LABELS, normalizeCustomSlots, validateCustomSlots, slotLength } from '../lib/slots.js'
 import { CAP } from '../lib/permissions.js'
 import { useConfirm } from '../lib/confirm.js'
 import { useToast } from '../lib/toast.js'
@@ -157,7 +157,7 @@ function applyListingDraft(d) {
   if (Array.isArray(d.connectedAddons)) connectedAddons.value = d.connectedAddons
   if (Array.isArray(d.connectedResources)) connectedResources.value = d.connectedResources
   if (d.openSection !== undefined) openSection.value = d.openSection
-  syncFixedFromTimes(form.value.fixed_start_times)
+  syncSlotModeFromForm()
   prevLocationId.value = form.value.location_id
 }
 async function offerListingDraft() {
@@ -873,7 +873,7 @@ const currentListingStep = computed(() => LISTING_STEPS[listingStepIndex.value] 
 const listingStepDescription = computed(() => ({ details: 'Show customers what they can book. Add the essentials first, then photos.', availability: 'Set when this listing is available and how long each booking lasts.', pricing: 'Set your base price. Add time-based prices, extras or shared resources if you need them.', payments: 'Choose where customers can book and how they can pay.', review: 'Check the details below. Nothing is published until you choose Create listing.' }[listingStep.value]))
 const listingVenueName = computed(() => locations.value.find(loc => cid(loc.id) === cid(form.value.location_id))?.name || 'No venue selected')
 const listingDayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-function listingIssue(step) { return listingStepIssue(step, { form: form.value, hours: hours.value, hoursOutOfBounds: listingHoursOutOfBounds.value, paymentError: payError.value }) }
+function listingIssue(step) { return listingStepIssue(step, { form: form.value, hours: hours.value, hoursOutOfBounds: listingHoursOutOfBounds.value, paymentError: payError.value, customSlotErrors: customSlotErrors.value.map(e => e.message) }) }
 const completedListingSteps = computed(() => LISTING_STEPS.filter(step => step.id !== 'review' && !listingIssue(step.id)).map(step => step.id))
 watch(openSection, section => {
   const step = listingStepFor(section)
@@ -947,12 +947,90 @@ function syncFixedFromTimes(times) {
   customStartTimes.value = Array.isArray(times) ? [...times] : []
 }
 
+// ── Custom slots: the provider's OWN start times instead of the schedule cut
+// into equal pieces. Only the START is chosen — every slot is one booking long
+// (the Slot Duration field), so changing the duration reshapes them all. Kept
+// on the form (drafts carry it) and normalised on the way in. ──
+const SLOT_TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => toTimeStr(i * 15))
+const slotMode = computed(() => form.value.start_time_mode === 'custom' ? 'custom' : 'auto')
+const slotStep = computed(() => (Number(form.value.slot_duration) > 0 ? Number(form.value.slot_duration) : 60))
+const customSlotRows = computed(() => Array.isArray(form.value.custom_slots) ? form.value.custom_slots : [])
+/** What is actually sold: each start with its end derived from the current duration, start-sorted. */
+const customSlotList = computed(() => normalizeCustomSlots(customSlotRows.value.map(r => ({
+  ...r, end_time: r?.start_time ? toTimeStr((toMinutes(r.start_time) + slotStep.value) % (24 * 60)) : '',
+}))))
+function syncSlotModeFromForm() {
+  syncFixedFromTimes(form.value.fixed_start_times)
+  form.value.custom_slots = normalizeCustomSlots(form.value.custom_slots)
+  if (form.value.start_time_mode !== 'custom') form.value.start_time_mode = customStartTimes.value.length ? 'fixed' : 'auto'
+}
+function setSlotMode(mode) {
+  if (slotMode.value === mode) return
+  form.value.start_time_mode = mode === 'custom' ? 'custom' : (customStartTimes.value.length ? 'fixed' : 'auto')
+  if (mode === 'custom' && !Array.isArray(form.value.custom_slots)) form.value.custom_slots = []
+  markDirty()
+}
+// Custom slots do not follow this listing's weekly schedule — only the venue's
+// hours limit them. So the days on offer are the venue's open days (all seven
+// when its hours are not loaded), and that is the default for a new slot.
+const openDayList = computed(() => {
+  const venue = locationHoursGrouped.value || []
+  if (!venue.length) return [0, 1, 2, 3, 4, 5, 6]
+  return venue.filter(d => d.is_open && d.periods?.length).map(d => Number(d.day_of_week)).sort((a, b) => a - b)
+})
+// The "add" row: one start (or a run of starts up to `until`) on a set of days.
+const newSlot = ref({ start_time: '', until: '', days: [] })
+function resetNewSlot() {
+  const last = customSlotList.value[customSlotList.value.length - 1]
+  const first = openDayList.value.length ? (locationHoursGrouped.value || []).find(d => Number(d.day_of_week) === openDayList.value[0])?.periods?.[0]?.open_time : null
+  const startMin = last ? (toMinutes(last.start_time) + slotStep.value) % (24 * 60) : (first ? toMinutes(first) : 9 * 60)
+  newSlot.value = { start_time: toTimeStr(startMin - (startMin % 15)), until: '', days: last ? [...last.days] : [...openDayList.value] }
+}
+function toggleNewSlotDay(d) {
+  const days = newSlot.value.days.includes(d) ? newSlot.value.days.filter(x => x !== d) : [...newSlot.value.days, d]
+  newSlot.value.days = days.sort((a, b) => a - b)
+}
+/** The starts the add row would create: one, or every `duration` up to `until`. */
+const pendingStarts = computed(() => {
+  const a = newSlot.value.start_time ? toMinutes(newSlot.value.start_time) : null
+  if (a == null) return []
+  const until = newSlot.value.until ? endMinutesOf(newSlot.value.until) : null
+  if (until == null || until <= a) return [toTimeStr(a)]
+  const out = []
+  for (let m = a; m + slotStep.value <= until && out.length < 48; m += slotStep.value) out.push(toTimeStr(m))
+  return out
+})
+const endMinutesOf = (t) => (toMinutes(t) === 0 ? 24 * 60 : toMinutes(t))
+const canAddSlots = computed(() => pendingStarts.value.length > 0 && newSlot.value.days.length > 0)
+function addCustomSlots() {
+  if (!canAddSlots.value) return
+  if (!Array.isArray(form.value.custom_slots)) form.value.custom_slots = []
+  const rows = form.value.custom_slots
+  for (const start of pendingStarts.value) {
+    // Same start again: widen its days rather than duplicate the chip.
+    const existing = rows.find(r => r.start_time === start)
+    if (existing) existing.days = [...new Set([...existing.days, ...newSlot.value.days])].sort((a, b) => a - b)
+    else rows.push({ start_time: start, end_time: toTimeStr((toMinutes(start) + slotStep.value) % (24 * 60)), days: [...newSlot.value.days] })
+  }
+  rows.sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time))
+  markDirty()
+  resetNewSlot()
+}
+function removeCustomSlot(start) {
+  form.value.custom_slots = customSlotRows.value.filter(r => r.start_time !== start)
+  markDirty()
+}
+const customSlotErrors = computed(() => slotMode.value === 'custom'
+  ? validateCustomSlots(customSlotList.value, locationHoursGrouped.value, null, { scope: "the venue's" })
+  : [])
+const customSlotErrorAt = (i) => customSlotErrors.value.find(e => e.index === i)?.message || ''
+
 function defaultForm() {
   return {
     // User-fillable fields start EMPTY so nothing is created with an assumed value.
     location_id: '', name: '', category: '', sport_category: '', description: '',
     base_price: null, slot_duration: 60, buffer_time: 0,
-    start_time_mode: 'auto', fixed_start_times: [],
+    start_time_mode: 'auto', fixed_start_times: [], custom_slots: [],
     capacity: 1, status: 'active',   // capacity is no longer a form field; kept non-null for the DB
     approval_status: 'pending', photo_url: '', photos: [],
     // Placement: both places ON by default (most providers want both); the payment
@@ -1081,7 +1159,7 @@ async function openNewListingForm(presetLocationId) {
   contentUnderReview.value = false
   form.value = { ...defaultForm(), location_id: initialLocationId }
   prevLocationId.value = form.value.location_id
-  syncFixedFromTimes(form.value.fixed_start_times)
+  syncSlotModeFromForm()
   hours.value = defaultHours()
   // Dynamic pricing is optional and can be enabled in Pricing & extras.
   groups.value = []; pattern.value = 'B'; dynamicPricing.value = false
@@ -1136,7 +1214,7 @@ async function openEditListingForm(l) {
     else if (pc.photo_url) form.value.photos = [pc.photo_url]
   }
   prevLocationId.value = form.value.location_id
-  syncFixedFromTimes(form.value.fixed_start_times)
+  syncSlotModeFromForm()
   await loadLocationHours(l.location_id)
 
   const dash = await fetchListingDashboard(l.id)
@@ -1168,7 +1246,7 @@ async function openEditListingForm(l) {
         if (Array.isArray(pc2.photos) && pc2.photos.length) form.value.photos = [...pc2.photos]
         else if (pc2.photo_url) form.value.photos = [pc2.photo_url]
       }
-      syncFixedFromTimes(form.value.fixed_start_times)
+      syncSlotModeFromForm()
     }
 
     const apiHours = dash.data.hours || []
@@ -1433,6 +1511,9 @@ const locationHoursGrouped = computed(() => {
   }
   return Array.from(map.values())
 })
+// Seeds the custom-slot "add" row. Lives below locationHoursGrouped because it
+// runs immediately and openDayList reads that computed.
+watch([slotMode, openDayList], () => { if (slotMode.value === 'custom' && !newSlot.value.start_time) resetNewSlot() }, { immediate: true })
 
 // Listings keep their own concrete hours, so the "merged" list is just the hours.
 const mergedHoursList = computed(() => hours.value)
@@ -1541,7 +1622,8 @@ function onAdminOnlineToggle() {
 }
 const scheduleComplete = computed(() => hours.value.some(h => h.is_open))
 const pricingComplete = computed(() => Number(form.value.base_price) > 0)
-const timeslotComplete = computed(() => Number(form.value.slot_duration) > 0)
+const timeslotComplete = computed(() => Number(form.value.slot_duration) > 0
+  && (slotMode.value !== 'custom' || (customSlotList.value.length > 0 && !customSlotErrors.value.length)))
 // True while the pricing grid is rejecting a price for being below the base price —
 // we flag the base-price field so the user knows that's what to change.
 const pricingBelowBase = ref(false)
@@ -1891,9 +1973,11 @@ async function save() {
     base_price: Number(form.value.base_price),
     slot_duration: Number(form.value.slot_duration),
     buffer_time: Number(form.value.buffer_time) || 0,
-    // 'fixed' only when the provider has deselected some slots; otherwise 'auto'.
-    start_time_mode: customStartTimes.value.length ? 'fixed' : 'auto',
-    fixed_start_times: fixedStartTimes.value,
+    // 'custom' when the provider wrote their own slots; else 'fixed' only when
+    // some automatic slots were deselected; otherwise 'auto'.
+    start_time_mode: slotMode.value === 'custom' ? 'custom' : (customStartTimes.value.length ? 'fixed' : 'auto'),
+    fixed_start_times: slotMode.value === 'custom' ? [] : fixedStartTimes.value,
+    custom_slots: slotMode.value === 'custom' ? customSlotList.value : [],
     capacity: Number(form.value.capacity),
     // `status` is derived server-side from the two flags below; it is still sent
     // so anything reading it keeps working.
@@ -3021,10 +3105,56 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
               </div>
             </div>
 
-            <!-- Bookable start times — always editable; tap a slot to include/exclude it. -->
+            <!-- Bookable start times — automatic (cut from the schedule; tap to exclude)
+                 or custom (the provider's own list of start / end / days). -->
             <div class="form-group" style="margin-top:4px">
-              <label class="form-label">Bookable start times<InfoTip text="Every slot your weekly schedule actually produces, with the days it runs on. Tap one to stop offering it — leave them all on to offer every slot." /></label>
-              <div class="ft-preview">
+              <label class="form-label">Bookable start times<InfoTip text="Automatic: every slot your weekly schedule produces, each one booking long — tap one to stop offering it. Custom: write your own slots, each with its own start, end and days; only those are offered." /></label>
+              <div class="slot-mode" role="group" aria-label="How time slots are created">
+                <button type="button" :class="{ on: slotMode === 'auto' }" :aria-pressed="slotMode === 'auto'" @click="setSlotMode('auto')"><strong>Automatic</strong><small>Cut from your opening hours, {{ durationLabel(form.slot_duration) }} each</small></button>
+                <button type="button" :class="{ on: slotMode === 'custom' }" :aria-pressed="slotMode === 'custom'" @click="setSlotMode('custom')"><strong>Custom slots</strong><small>You set each slot's start, end and days</small></button>
+              </div>
+
+              <div v-if="slotMode === 'custom'" class="ft-preview">
+                <div class="csl-note">
+                  <Info :size="14" />
+                  <div><strong>Custom slots don't follow the Weekly schedule above.</strong> A slot is offered on every day you tick, even on days the schedule says closed — these slots <em>are</em> this listing's hours. The only limits are the venue's own opening hours and its special days / holidays, because a court can't be booked while the venue is shut.</div>
+                </div>
+                <div class="csl-add">
+                  <div class="csl-add-head">Add a slot<small>Each slot is {{ durationLabel(form.slot_duration) }} long — change the Slot Duration above to change them all.</small></div>
+                  <div class="csl-add-row">
+                    <label class="csl-field"><span>Starts at</span><select aria-label="New slot start time" v-model="newSlot.start_time"><option v-for="t in SLOT_TIME_OPTIONS" :key="t" :value="t">{{ fmt12(t) }}</option></select></label>
+                    <label class="csl-field"><span>Repeat until <em>optional</em></span><select aria-label="Repeat slots until" v-model="newSlot.until"><option value="">Just this one</option><option v-for="t in SLOT_TIME_OPTIONS" :key="t" :value="t">{{ fmt12(t) }}</option></select></label>
+                    <div class="csl-field"><span>Days</span>
+                      <div class="csl-days" role="group" aria-label="Days the slot runs">
+                        <button v-for="d in [1, 2, 3, 4, 5, 6, 0]" :key="d" type="button" class="csl-day" :class="{ on: newSlot.days.includes(d), closed: !openDayList.includes(d) }" :aria-pressed="newSlot.days.includes(d)" :title="openDayList.includes(d) ? '' : 'The venue is closed this day'" @click="toggleNewSlotDay(d)">{{ DAY_LABELS[d] }}</button>
+                      </div>
+                    </div>
+                    <button type="button" class="btn btn-primary csl-add-btn" :disabled="!canAddSlots" @click="addCustomSlots"><Plus :size="15" />{{ pendingStarts.length > 1 ? `Add ${pendingStarts.length} slots` : 'Add slot' }}</button>
+                  </div>
+                  <div v-if="pendingStarts.length" class="csl-add-preview">
+                    <span>Will add:</span>
+                    <b v-for="t in pendingStarts.slice(0, 6)" :key="t">{{ fmtRange12(t, toTimeStr((toMinutes(t) + slotStep) % 1440)) }}</b>
+                    <span v-if="pendingStarts.length > 6">+{{ pendingStarts.length - 6 }} more</span>
+                    <span v-if="!newSlot.days.length" class="csl-add-warn">— pick at least one day</span>
+                  </div>
+                </div>
+
+                <div class="ft-preview-head"><Clock :size="13" /> Offered to customers<span class="ft-preview-count">{{ customSlotList.length }}</span></div>
+                <div v-if="!customSlotList.length" class="fixed-times-empty">No custom slots yet — add your first one above. The automatic slots are not offered while Custom is selected.</div>
+                <template v-else>
+                  <div class="cst-caption"><Info :size="13" /> These are exactly the slots customers can book, on the days shown — whatever the weekly schedule says. Tap × to remove one.</div>
+                  <div class="cst-chips">
+                    <div v-for="(cs, i) in customSlotList" :key="cs.start_time" class="cst-chip on csl-chip" :class="{ invalid: !!customSlotErrorAt(i) }" :title="customSlotErrorAt(i)">
+                      <span class="cst-chip-time">{{ fmtRange12(cs.start_time, cs.end_time) }}</span>
+                      <span class="cst-chip-days">{{ daysLabel(cs.days) }}</span>
+                      <button type="button" class="csl-chip-x" :aria-label="`Remove ${fmtRange12(cs.start_time, cs.end_time)}`" @click="removeCustomSlot(cs.start_time)"><X :size="13" /></button>
+                    </div>
+                  </div>
+                  <ul v-if="customSlotErrors.length" class="csl-errors" role="alert"><li v-for="e in customSlotErrors" :key="e.index">{{ e.message }}</li></ul>
+                </template>
+              </div>
+
+              <div v-else class="ft-preview">
                 <div class="ft-preview-head"><Clock :size="13" /> Offered to customers<span class="ft-preview-count">{{ displayedStartTimes.length }}</span></div>
                 <div v-if="!autoStartTimes.length" class="fixed-times-empty">No bookable times yet — set open hours in the <button type="button" class="link-btn" @click.stop="goToSchedule">Weekly schedule</button> above.</div>
                 <template v-else>
@@ -3125,6 +3255,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
             <PricingGrid v-if="dynamicPricing"
               :groups="groups" :base-price="Number(form.base_price)"
               :slot-duration="Number(form.slot_duration)" :pattern="pattern" :hours="mergedHoursList"
+              :start-time-mode="slotMode" :custom-slots="customSlotList"
               :venue-hours="locationHoursGrouped"
               :currency="currencyForLocation(form.location_id)"
               @update:groups="groups = $event" @update:pattern="pattern = $event"
@@ -3333,7 +3464,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
         <div class="cf-summary"><img v-if="form.photos?.[0]" :src="form.photos[0]" alt="Listing cover" /><div><h3>{{ form.name }}</h3><p>{{ listingVenueName }} · {{ form.sport_category }}</p><div class="cf-summary-price">{{ payCur }} {{ Number(form.base_price).toLocaleString() }} <small>/ {{ durationLabel(form.slot_duration) }}</small></div></div></div>
         <div class="cf-review">
           <section class="cf-review-card"><div class="cf-review-head"><h3>Customer details</h3><button @click="selectListingStep('details')">Edit details</button></div><p class="cf-review-text">{{ form.description }}</p><dl style="margin-top:14px"><dt>Photos</dt><dd>{{ form.photos?.length || 0 }} added</dd><dt>Who can book</dt><dd>{{ [form.show_on_customer && 'Customers', form.show_on_admin && 'Staff'].filter(Boolean).join(' & ') || 'Nobody — inactive' }}</dd></dl></section>
-          <section class="cf-review-card"><div class="cf-review-head"><h3>Availability</h3><button @click="selectListingStep('availability')">Edit availability</button></div><dl><dt>Booking length</dt><dd>{{ durationLabel(form.slot_duration) }}</dd><dt>Buffer</dt><dd>{{ Number(form.buffer_time) ? durationLabel(form.buffer_time) : 'No gap between bookings' }}</dd><dt>Start times</dt><dd>{{ customStartTimes.length ? customStartTimes.map(fmt12).join(', ') : 'Generated from opening hours' }}</dd><template v-for="day in hours" :key="day.day_of_week"><dt>{{ listingDayNames[day.day_of_week] }}</dt><dd>{{ day.is_open ? day.periods.map(p => p.open_time === p.close_time ? 'Open 24 hours' : fmtRange12(p.open_time, p.close_time)).join(', ') : 'Closed' }}</dd></template></dl></section>
+          <section class="cf-review-card"><div class="cf-review-head"><h3>Availability</h3><button @click="selectListingStep('availability')">Edit availability</button></div><dl><dt>Booking length</dt><dd>{{ durationLabel(form.slot_duration) }}</dd><dt>Buffer</dt><dd>{{ Number(form.buffer_time) ? durationLabel(form.buffer_time) : 'No gap between bookings' }}</dd><dt>Start times</dt><dd>{{ slotMode === 'custom' ? 'Custom: ' + customSlotList.map(cs => fmtRange12(cs.start_time, cs.end_time) + ' (' + daysLabel(cs.days) + ')').join('; ') : (customStartTimes.length ? customStartTimes.map(fmt12).join(', ') : 'Generated from opening hours') }}</dd><template v-for="day in hours" :key="day.day_of_week"><dt>{{ listingDayNames[day.day_of_week] }}</dt><dd>{{ day.is_open ? day.periods.map(p => p.open_time === p.close_time ? 'Open 24 hours' : fmtRange12(p.open_time, p.close_time)).join(', ') : 'Closed' }}</dd></template></dl></section>
           <section class="cf-review-card"><div class="cf-review-head"><h3>Pricing &amp; extras</h3><button @click="selectListingStep('pricing')">Edit pricing</button></div><dl><dt>Base price</dt><dd>{{ payCur }} {{ form.base_price }} per {{ durationLabel(form.slot_duration) }}</dd><dt>Time-based prices</dt><dd>{{ dynamicPricing ? 'Enabled — custom prices override the base price' : 'Off — same base price at all times' }}</dd><dt>Session extensions</dt><dd>{{ extensionEnabled ? 'Enabled' : 'Off' }}</dd><dt>Add-ons</dt><dd>{{ connectedAddons.filter(row => row.addon_id).length }} connected</dd><dt>Resources</dt><dd>{{ connectedResources.filter(row => row.resource_id).length }} connected</dd></dl></section>
           <section class="cf-review-card"><div class="cf-review-head"><h3>Where customers can book</h3><button @click="selectListingStep('payments')">Edit payments</button></div><dl><dt>Bookboll marketplace</dt><dd>{{ form.show_on_marketplace ? mktPaySummary.join(' · ') : 'Hidden' }}<br v-if="form.show_on_marketplace && userRole === 'provider'" /><small v-if="form.show_on_marketplace && userRole === 'provider'">New listings and content changes need Bookboll approval.</small></dd><dt>Your website</dt><dd>{{ form.show_on_provider_site ? sitePaySummary.join(' · ') : 'Hidden' }}</dd></dl></section>
         </div>
@@ -4348,6 +4479,39 @@ input.ext-value-input { width: 96px; flex: 0 0 96px; text-align: center; }
 .ft-preview-count { margin-left:2px; font-size:11px; font-weight:800; color:var(--primary-ink); background:var(--primary-soft, #ccfbf1); border-radius:999px; padding:1px 8px; }
 .ft-preview-grid { display:flex; flex-wrap:wrap; gap:6px; }
 .ft-preview-chip { font-family:'SF Mono',Monaco,monospace; font-size:12px; font-weight:700; color:var(--primary-ink); background:var(--primary-soft, #f0fdfa); border:1px solid var(--primary-border, #99f6e4); border-radius:6px; padding:2px 8px; }
+/* Slot mode: automatic (from the schedule) vs the provider's own custom slots */
+.slot-mode { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
+.slot-mode button { text-align:left; border:1.5px solid var(--border); border-radius:10px; padding:10px 12px; background:var(--surface, #ffffff); cursor:pointer; display:flex; flex-direction:column; gap:3px; }
+.slot-mode button strong { font-size:13.5px; color:var(--text); }
+.slot-mode button small { font-size:12px; color:var(--text-muted); line-height:1.4; }
+.slot-mode button.on { border-color:var(--primary); background:var(--primary-soft, #f0fdfa); box-shadow:0 0 0 2px rgba(15,118,110,.12); }
+/* Custom slots: the guidance note, the add row, then the same chips as the automatic list */
+.csl-note { display:flex; gap:10px; align-items:flex-start; border:1px solid var(--warning-border, #fde68a); border-inline-start:4px solid var(--warning-ink, #b45309); background:var(--warning-bg, #fffbeb); border-radius:10px; padding:12px 14px; margin-bottom:12px; font-size:12.5px; line-height:1.6; color:var(--text-secondary); }
+.csl-note > svg { flex-shrink:0; margin-top:3px; color:var(--warning-ink, #b45309); }
+.csl-note strong { color:var(--text); }
+.csl-add { border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:14px; background:var(--bg, #f8fafc); }
+.csl-add-head { font-size:13.5px; font-weight:700; color:var(--text); margin-bottom:10px; }
+.csl-add-head small { display:block; font-weight:400; font-size:12px; color:var(--text-muted); margin-top:2px; }
+.csl-add-row { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+.csl-field { display:flex; flex-direction:column; gap:5px; font-size:11.5px; font-weight:600; color:var(--text-muted); }
+.csl-field em { font-style:normal; font-weight:400; opacity:.8; }
+.csl-field select { width:auto; min-width:140px; }
+.csl-days { display:flex; gap:5px; flex-wrap:wrap; }
+.csl-day { padding:7px 10px; font-size:12.5px; font-weight:600; border:1px solid var(--border); border-radius:999px; background:var(--surface, #ffffff); color:var(--text-muted); transition:all .12s; }
+.csl-day.closed { opacity:.5; }
+.csl-day.on { color:var(--primary-ink); background:var(--primary-soft); border-color:var(--primary); opacity:1; }
+.csl-add-btn { min-height:40px; }
+.csl-add-preview { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:10px; font-size:12px; color:var(--text-muted); }
+.csl-add-preview b { font-family:'SF Mono',Monaco,monospace; font-size:12px; color:var(--text); background:var(--surface, #ffffff); border:1px solid var(--border); border-radius:6px; padding:2px 7px; }
+.csl-add-warn { color:var(--danger-ink, #b91c1c); }
+.csl-chip { position:relative; padding-right:32px; cursor:default; }
+.csl-chip:hover { border-color:var(--primary); color:#fff; }
+.csl-chip.invalid { background:var(--danger-bg, #fef2f2); border-color:var(--danger-border, #fca5a5); color:var(--danger-ink, #b91c1c); }
+.csl-chip-x { position:absolute; top:6px; right:6px; display:grid; place-items:center; width:22px; height:22px; border-radius:50%; color:inherit; opacity:.75; }
+.csl-chip-x:hover { opacity:1; background:rgba(255,255,255,.22); }
+.csl-chip.invalid .csl-chip-x:hover { background:var(--danger-border, #fca5a5); }
+.csl-errors { margin:10px 0 0; padding-left:18px; font-size:12.5px; color:var(--danger-ink, #b91c1c); line-height:1.6; }
+@media (max-width:760px) { .slot-mode { grid-template-columns:1fr; } .csl-day { min-height:40px; } .csl-field select { min-width:0; } .csl-chip-x { width:28px; height:28px; } }
 /* Custom start times: tappable slot toggles (on = offered to customers) */
 .cst-caption { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted); margin-bottom:10px; }
 .cst-caption svg { color:var(--primary-ink); flex-shrink:0; }

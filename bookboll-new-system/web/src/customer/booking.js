@@ -46,6 +46,14 @@ export function isExtensionIndex(listing, i, maxSlots = extensionMaxSlots(listin
  * available slot immediately after the end of their current selection. Returns
  * null if extensions are off, nothing's selected, or there's no free next slot.
  */
+/** Minutes one slot lasts, from its own times; the listing's slot_duration only when they are unreadable. */
+export function slotMinutes(slot, listing) {
+  const read = t => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null }
+  const a = read(slot?.start_time), b = read(slot?.end_time)
+  if (a == null || b == null) return Number(listing?.slot_duration) || 60
+  return b > a ? b - a : b + 24 * 60 - a   // 00:00 or an earlier end crosses midnight
+}
+
 function groupBlocks(sortedSlots) {
   const blocks = []
   for (const s of sortedSlots) {
@@ -173,11 +181,13 @@ export function quoteBooking(listing, selectedSlots, addonsSelected = [], player
   })
   const slotsTotal = blocks.reduce((n, b) => n + b.total, 0)
   const fullTotal = slots.reduce((n, s) => n + (Number(s.price) || 0), 0) * ppl   // price with no extension discount
-  const slotMins = Number(listing?.slot_duration) || 60
-  const totalHours = (slots.length * slotMins) / 60
+  // Each slot's own length: a custom-slot listing sells 60- and 90-minute
+  // slots side by side, so "slots × slot_duration" would misstate the time.
+  const totalMinutes = slots.reduce((n, s) => n + slotMinutes(s, listing), 0)
+  const totalHours = totalMinutes / 60
   const pricedAddons = (addonsSelected || []).map(a => ({ ...a, amount: addonAmount(a, a.qty, totalHours) }))
   const addonsTotal = pricedAddons.reduce((n, a) => n + a.amount, 0)
-  return { blocks, slotsTotal, addonsTotal, total: slotsTotal + addonsTotal, totalHours, totalSlots: slots.length, pricedAddons, savings: Math.max(0, fullTotal - slotsTotal) }
+  return { blocks, slotsTotal, addonsTotal, total: slotsTotal + addonsTotal, totalHours, totalMinutes, totalSlots: slots.length, pricedAddons, savings: Math.max(0, fullTotal - slotsTotal) }
 }
 
 /**

@@ -290,16 +290,17 @@ const selectedAddons = computed(() => (data.value?.addons || []).map(a => ({ ...
 // Aggregate across ALL selected days (the real checkout).
 const fullQuote = computed(() => {
   const dates = Object.keys(selectedByDate.value).filter(d => (selectedByDate.value[d] || []).length).sort()
-  let slotsTotal = 0, savings = 0, totalSlots = 0
+  let slotsTotal = 0, savings = 0, totalSlots = 0, totalMinutes = 0
   const perDay = dates.map(d => {
     const q = quoteBooking(l.value, selectedByDate.value[d], [], players.value)
-    slotsTotal += q.slotsTotal; savings += q.savings; totalSlots += q.totalSlots
+    slotsTotal += q.slotsTotal; savings += q.savings; totalSlots += q.totalSlots; totalMinutes += q.totalMinutes
     return { date: d, blocks: q.blocks }
   })
-  const totalHours = (totalSlots * (Number(l.value.slot_duration) || 60)) / 60
+  // Summed per slot: custom-slot listings mix lengths, so slots × slot_duration would be wrong.
+  const totalHours = totalMinutes / 60
   const pricedAddons = selectedAddons.value.map(a => ({ ...a, amount: addonAmount(a, a.qty, totalHours) }))
   const addonsTotal = pricedAddons.reduce((n, a) => n + a.amount, 0)
-  return { dates, perDay, slotsTotal, savings, totalSlots, addonsTotal, pricedAddons, total: slotsTotal + addonsTotal }
+  return { dates, perDay, slotsTotal, savings, totalSlots, totalMinutes, addonsTotal, pricedAddons, total: slotsTotal + addonsTotal }
 })
 
 // A restored checkout session or a bot deep-link arrives with slots already selected —
@@ -388,7 +389,7 @@ const rewardsCheckout = computed(() => ({listing_id:l.value?.id,venue_id:loc.val
 const rewardAmount = computed(() => rewardSelection.value?.amount || 0)
 const chargeNow = computed(() => Math.max(0,(paySplit.value?.online ?? 0) - rewardAmount.value))
 
-const hoursLabel = computed(() => durationLabel(fullQuote.value.totalSlots * (Number(l.value.slot_duration) || 60)))
+const hoursLabel = computed(() => durationLabel(fullQuote.value.totalMinutes))
 // Confirm button states the amount actually charged today.
 const confirmLabel = computed(() => {
   if (saving.value) return 'Booking…'
