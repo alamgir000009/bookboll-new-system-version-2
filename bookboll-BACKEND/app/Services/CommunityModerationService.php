@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Community;
+use App\Support\CommunityPlace;
 use App\Models\User;
 use App\Models\CommunityMember;
 use Illuminate\Http\Request;
@@ -120,6 +121,8 @@ class CommunityModerationService
             'sports'            => $c->sports ?? [],
             'city_id'           => $c->city_id ? (string) $c->city_id : null,
             'country_id'        => $c->country_id ? (string) $c->country_id : null,
+            // Names beside the ids: "Doha, Qatar" is what a reader needs.
+            ...CommunityPlace::names($c->city_id, $c->country_id),
             'cover_image'       => $c->cover_image ?? '',
             'images'            => $c->images ?? [],
             'is_private'        => (bool) $c->is_private,
