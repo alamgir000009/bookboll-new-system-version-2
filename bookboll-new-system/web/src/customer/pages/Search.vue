@@ -44,11 +44,28 @@ const activeType = computed(() => ['all', 'people', ...enabledKeys.value].includ
 const ready = computed(() => selection.value.q.length >= 2)
 const matches = computed(() => Object.fromEntries(sections.value.map(section => [section.key, searchCatalog(catalog.value[section.key], selection.value.q, section.key)])))
 const count = computed(() => sections.value.reduce((total, section) => total + matches.value[section.key].length, 0))
-const shownCount = computed(() => activeType.value === 'all' ? count.value : (matches.value[activeType.value]?.length || 0))
+const shownCount = computed(() => activeType.value === 'all' ? allCount.value : (matches.value[activeType.value]?.length || 0))
 const visibleSections = computed(() => sections.value.filter(section => (activeType.value === 'all' || activeType.value === section.key) && matches.value[section.key].length))
 const relevantFailures = computed(() => sections.value.filter(section => failed.value.includes(section.key) && (activeType.value === 'all' || activeType.value === section.key)))
 const peopleCount = computed(() => peopleResult.value?.coverage?.status === 'complete' ? peopleResult.value.coverage.total : null)
 const peopleSummaryText = computed(() => peopleSummary(peopleResult.value, people.value.length))
+// What the badges and the All summary can honestly add for people: the exact
+// total when the server counted everything, otherwise what has been fetched.
+const peopleSearched = computed(() => !!(peopleResult.value?.ok && peopleResult.value.searched))
+const peopleTally = computed(() => peopleSearched.value ? (peopleCount.value ?? people.value.length) : 0)
+const peopleBadge = computed(() => {
+  if (!peopleSearched.value) return null
+  const { status, total } = peopleResult.value.coverage
+  if (status === 'complete' && total !== null) return String(total)
+  if (status === 'at_least' && total !== null) return `${total}+`
+  return people.value.length ? `${people.value.length}+` : '0'
+})
+// The All tab is every section PLUS people, so the number it quotes is the sum.
+const allCount = computed(() => count.value + peopleTally.value)
+const PEOPLE_PREVIEW = 4
+const peoplePreview = computed(() => people.value.slice(0, PEOPLE_PREVIEW))
+const peopleHasMore = computed(() => people.value.length > PEOPLE_PREVIEW || !!peopleMore.value)
+const peopleFailed = computed(() => !!(peopleResult.value && !peopleResult.value.ok && !peopleResult.value.unsupported))
 const suggestions = computed(() => [...new Set(catalog.value.listings.map(listing => listing.sport).filter(Boolean))].slice(0, 5))
 
 watch(activeType, async () => {
@@ -82,10 +99,10 @@ async function loadPeople(cursor = null) {
   peopleLoading.value = false
 }
 
-// Searching people is a separate request, so it only runs while the tab is open
-// and only when the query changes — not on every city or catalogue change.
-watch([activeType, () => selection.value.q], ([type, q]) => {
-  if (type !== 'people') return
+// People are a separate request, so it runs once per query — never per city
+// or catalogue change — and for every tab: the All view lists people at the
+// bottom and counts them, so they cannot wait for the People tab to be opened.
+watch(() => selection.value.q, (q) => {
   peopleId++
   people.value = []
   peopleMore.value = null
@@ -126,12 +143,12 @@ useSeo({ title: 'Search Bookboll', description: 'Find listings, communities, mem
     </form>
 
     <div ref="typeTrack" class="search-types" role="group" aria-label="Search categories">
-      <button :aria-pressed="activeType === 'all'" @click="commit('all')">All<span v-if="ready && !loading">{{ count }}</span></button>
+      <button :aria-pressed="activeType === 'all'" @click="commit('all')">All<span v-if="ready && !loading && !peopleLoading">{{ allCount }}</span></button>
       <button v-for="section in sections" :key="section.key" :aria-pressed="activeType === section.key" @click="commit(section.key)"><component :is="section.icon" :size="16" />{{ section.label }}<span v-if="ready && !loading && !failed.includes(section.key)">{{ matches[section.key].length }}</span></button>
-      <button :aria-pressed="activeType === 'people'" @click="commit('people')"><UserRound :size="16" />People<span v-if="peopleCount !== null">{{ peopleCount }}</span></button>
+      <button :aria-pressed="activeType === 'people'" @click="commit('people')"><UserRound :size="16" />People<span v-if="peopleBadge !== null">{{ peopleBadge }}</span></button>
     </div>
 
-    <div id="search-results" :aria-busy="activeType === 'people' ? peopleLoading : (loading && ready)">
+    <div id="search-results" :aria-busy="activeType === 'people' ? peopleLoading : (ready && (loading || (activeType === 'all' && peopleLoading)))">
       <template v-if="activeType === 'people'">
         <p v-if="peopleLoading && !people.length" class="search-loading" role="status">Searching people…</p>
 
@@ -185,7 +202,7 @@ useSeo({ title: 'Search Bookboll', description: 'Find listings, communities, mem
       <template v-else>
         <p class="search-summary" role="status">{{ shownCount }} {{ shownCount === 1 ? 'result' : 'results' }} for <strong>“{{ selection.q }}”</strong><span v-if="relevantFailures.length"> · Some results are unavailable</span></p>
         <div v-if="relevantFailures.length" class="search-error" role="status"><p>We couldn’t load {{ relevantFailures.map(section => section.label.toLowerCase()).join(', ') }}. Please try again.</p><button @click="load">Retry</button></div>
-        <section v-if="!shownCount && !relevantFailures.length" class="search-empty"><Search :size="30" /><h2>No matches{{ activeType !== 'all' ? ' in ' + activeType : '' }}</h2><p>Try a different name or activity{{ selectedCity?.name ? ', or choose another city in the header' : '' }}.</p><button v-if="activeType !== 'all'" @click="commit('all')">Search all categories <ArrowRight :size="16" /></button><button v-else @click="clearSearch">Clear search <X :size="16" /></button></section>
+        <section v-if="!shownCount && !relevantFailures.length && !(activeType === 'all' && (peopleLoading || peopleFailed))" class="search-empty"><Search :size="30" /><h2>No matches{{ activeType !== 'all' ? ' in ' + activeType : '' }}</h2><p>Try a different name or activity{{ selectedCity?.name ? ', or choose another city in the header' : '' }}.</p><button v-if="activeType !== 'all'" @click="commit('all')">Search all categories <ArrowRight :size="16" /></button><button v-else @click="clearSearch">Clear search <X :size="16" /></button></section>
 
         <section v-for="section in visibleSections" :key="section.key" class="search-section" :aria-labelledby="`results-${section.key}`">
           <div class="search-section-heading"><h2 :id="`results-${section.key}`">{{ section.label }} <span>{{ matches[section.key].length }}</span></h2><button v-if="activeType === 'all' && matches[section.key].length > 4" @click="commit(section.key)">See all {{ matches[section.key].length }} <ArrowRight :size="16" /></button></div>
@@ -202,6 +219,27 @@ useSeo({ title: 'Search Bookboll', description: 'Find listings, communities, mem
           </div>
           <button v-if="activeType !== 'all' && matches[section.key].length > limit" class="search-more" @click="limit += 24">Show more {{ section.label.toLowerCase() }}</button>
         </section>
+
+        <!-- People close the All view: a name search that matched nobody's
+             venue or club still finds the person. The full, paged list lives
+             on the People tab. -->
+        <template v-if="activeType === 'all'">
+          <p v-if="peopleLoading && !people.length" class="search-loading search-loading-people" role="status">Searching people…</p>
+          <div v-else-if="peopleFailed" class="search-error" role="status"><p>We couldn’t search people just now.</p><button @click="loadPeople()">Retry</button></div>
+          <section v-else-if="people.length" class="search-section" aria-labelledby="results-people-all">
+            <div class="search-section-heading"><h2 id="results-people-all">People <span>{{ peopleBadge }}</span></h2><button v-if="peopleHasMore" @click="commit('people')">See all{{ peopleCount !== null ? ' ' + peopleCount : '' }} <ArrowRight :size="16" /></button></div>
+            <div class="search-grid search-grid-people">
+              <router-link v-for="person in peoplePreview" :key="person.id" class="search-person" :to="person.url">
+                <div class="search-person-photo"><img v-if="person.avatar" :src="person.avatar" alt="" loading="lazy" /><UserRound v-else :size="24" /></div>
+                <div class="search-person-body">
+                  <h3>{{ person.name }}<Lock v-if="person.isPrivate" :size="12" aria-label="Private profile" /></h3>
+                  <p>{{ person.hostedCount }} hosted · {{ person.joinedCount }} joined</p>
+                </div>
+                <ChevronRight :size="18" />
+              </router-link>
+            </div>
+          </section>
+        </template>
       </template>
     </div>
   </div>
@@ -277,6 +315,7 @@ useSeo({ title: 'Search Bookboll', description: 'Find listings, communities, mem
 .search-empty h2 { font-size: 22px; font-weight: 650; margin: 0 0 10px; }
 .search-empty p { color: var(--text-muted); font-size: 14px; line-height: 1.7; margin-bottom: 12px; }
 .search-loading { padding: 38px 0; color: var(--text-muted); }
+.search-loading-people { padding: 6px 0 30px; font-size: 13px; }
 .search-minimum { color: var(--text-muted); margin-bottom: 20px; font-size: 13px; }
 .search-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 18px; margin-bottom: 24px; border: 1px solid var(--warning-border, #fde68a); background: var(--warning-bg, #fffbeb); color: var(--warning-ink, #92400e); border-radius: 12px; font-size: 13px; }
 .search-error button { color: inherit; text-decoration: underline; font-weight: 600; min-height: 44px; padding-inline: 10px; }
