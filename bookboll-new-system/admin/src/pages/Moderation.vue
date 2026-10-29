@@ -13,6 +13,7 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { loadReferenceData } from '../lib/referenceData.js'
+import { apiFetch } from '../lib/api.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { useConfirm } from '../lib/confirm.js'
@@ -162,11 +163,13 @@ async function load() {
           return {
             ...x,
             moderation_status: x.moderation_status || 'active',
-            cityName: cities.value.find(c => cid(c.id) === cid(x.city_id))?.name || '',
+            cityName: x.city_name || cities.value.find(c => cid(c.id) === cid(x.city_id))?.name || '',
+            countryName: x.country_name || countries.value.find(k => cid(k.id) === cid(x.country_id || cities.value.find(c => cid(c.id) === cid(x.city_id))?.country_id))?.name || '',
             ownerName: x.owner_name || 'Player',
             memberCount: stats.accepted || 0,
           }
         })
+        fillMissingCities(commRows.value)
       }
     } catch {
       commRows.value = []
@@ -191,7 +194,7 @@ const commFiltered = computed(() => {
     if (tab.value !== 'all' && r.moderation_status !== tab.value) return false
     if ((filterCountry.value.length || filterCity.value.length) && !matchesCityGeo(r.city_id, cities.value, filterCountry.value, filterCity.value)) return false
     if (q) {
-      const hay = `${r.name || ''} ${r.sport || ''} ${r.ownerName || ''} ${r.cityName}`.toLowerCase()
+      const hay = `${r.name || ''} ${r.sport || ''} ${r.ownerName || ''} ${r.cityName} ${r.countryName || ''}`.toLowerCase()
       if (!hay.includes(q)) return false
     }
     return true
@@ -220,6 +223,26 @@ function imagesOf(g) {
 }
 const coverOf = g => imagesOf(g)[0] || ''
 const typeLabel = g => (g.game_type === 'tournament' ? 'Tournament' : 'Game')
+// Reference data carries only cities that have a venue, so a community based in
+// a city with none (a Lahore cricket club, say) resolves its country but not its
+// city. Fetch those few by id from the public catalogue and patch the rows —
+// once per id, in the background, never blocking the queue.
+const cityById = new Map()
+async function fillMissingCities(rows) {
+  const ids = [...new Set(rows.filter(r => !r.cityName && r.city_id).map(r => String(r.city_id)))]
+  await Promise.all(ids.map(async id => {
+    if (!cityById.has(id)) {
+      cityById.set(id, apiFetch(`/marketplace/cities/${encodeURIComponent(id)}`).then(res => (res.success ? res.data?.city || null : null)).catch(() => null))
+    }
+    const city = await cityById.get(id)
+    if (!city) return
+    for (const r of rows) {
+      if (String(r.city_id) !== id) continue
+      r.cityName = r.cityName || city.name || ''
+      r.countryName = r.countryName || city.country?.name || ''
+    }
+  }))
+}
 const titleOf = g => g.title || g.sport || (g.game_type === 'tournament' ? 'Tournament' : 'Pickup game')
 const firstName = g => (g.host_name || 'there').trim().split(' ')[0]
 
@@ -450,7 +473,8 @@ async function restoreCommunity(c) {
             <div class="mod-meta">
               <span v-if="c.sport"><Trophy :size="13" /> {{ c.sport }}</span>
               <span><Users :size="13" /> {{ c.memberCount }} member{{ c.memberCount === 1 ? '' : 's' }}</span>
-              <span v-if="c.cityName" class="mod-dim">{{ c.cityName }}</span>
+              <span v-if="c.cityName || c.countryName" class="mod-dim"><MapPin :size="13" /> {{ [c.cityName, c.countryName].filter(Boolean).join(', ') }}</span>
+              <span v-else class="mod-dim mod-warn">No location set</span>
               <span class="mod-dim">by {{ c.ownerName }}</span>
               <span class="mod-dim">{{ timeAgo(c.created_at) }}</span>
             </div>
@@ -791,4 +815,5 @@ async function restoreCommunity(c) {
 .mod-empty-title { font-size:18px; font-weight:600; color:var(--text); }
 .mod-empty-sub { color:var(--text-muted); font-size:14px; line-height:1.7; max-width:420px; }
 @media(max-width:600px) { .moderation-page .mod-stats { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } .moderation-page .mod-stat { padding:16px; } .mod-empty { min-height:260px; padding:32px 20px; } }
+.mod-warn { color: var(--warning-ink, #b45309); }
 </style>
