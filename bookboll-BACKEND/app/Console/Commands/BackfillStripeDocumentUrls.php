@@ -6,6 +6,8 @@ use App\Models\Payment;
 use App\Support\StripeDocumentLink;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Stripe\ApiRequestor;
+use Stripe\HttpClient\CurlClient;
 use Stripe\StripeClient;
 
 /**
@@ -38,6 +40,13 @@ class BackfillStripeDocumentUrls extends Command
 
             return self::FAILURE;
         }
+
+        // Stripe's client waits 80s per call by default. On a scheduled pass of
+        // many rows that is the difference between "slow" and "killed by the host".
+        $http = new CurlClient();
+        $http->setConnectTimeout(5);
+        $http->setTimeout(20);
+        ApiRequestor::setHttpClient($http);
 
         $stripe = new StripeClient($secret);
         $limit  = max(1, (int) $this->option('limit'));

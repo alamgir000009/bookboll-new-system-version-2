@@ -10,7 +10,12 @@ Artisan::command('inspire', function () {
 
 Schedule::command('slot-locks:clear')->everyFiveMinutes();
 
-Schedule::command('send-booking-reminders')->daily();
+// Not at 00:00: that minute already carries the five-minute, hourly and
+// every-minute tasks in one schedule:run, and on shared hosting the account's
+// memory limit is shared by all of them plus the queue worker. A pile-up there
+// got a task SIGKILLed by the host. The reminders only queue mail now, but they
+// still walk the customer base, so they get a quiet minute of their own.
+Schedule::command('send-booking-reminders')->dailyAt('00:20')->withoutOverlapping();
 
 // withoutOverlapping() for the same reason its sibling below has it: a run that
 // outlasts its minute would otherwise have the next one start alongside it, and
@@ -32,8 +37,10 @@ Schedule::command('backup:run --only-db')->daily()->at('01:30');
 // invoices store theirs straight from the webhook; one-off charges are resolved
 // here instead of during checkout, so a booking can never fail because a Stripe
 // lookup did. Hourly means a new charge has its receipt within the hour, and
-// the first run fills in history.
-Schedule::command('payments:backfill-stripe-urls')->hourly()->withoutOverlapping();
+// history fills in over the first passes. Off the hour, and capped at 100 rows
+// (up to two Stripe calls each), so a pass stays well under a minute and never
+// lands on top of the midnight tasks.
+Schedule::command('payments:backfill-stripe-urls --limit=100')->hourlyAt(17)->withoutOverlapping();
 
 // Upload records whose file is already gone. Deletes no files, so it is safe to
 // run unattended. The unreferenced-file sweep is deliberately NOT scheduled:

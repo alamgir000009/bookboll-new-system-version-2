@@ -2,12 +2,20 @@
 namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use Illuminate\Queue\SerializesModels;
 
-class BookingReminderNotification extends Notification
+/**
+ * Queued on purpose: the daily reminder command runs under the shared host's
+ * memory and process limits, and sending every email inline over SMTP kept it
+ * alive for minutes. The command only inserts the jobs; the queue worker sends.
+ * SerializesModels stores the promocode by id, so the job reloads it fresh.
+ */
+class BookingReminderNotification extends Notification implements ShouldQueue
 {
-    use Queueable;
+    use Queueable, SerializesModels;
 
     public function __construct(protected int $daysSinceLastBooking, protected $promocode = null)
     {}

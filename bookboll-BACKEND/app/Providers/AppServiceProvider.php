@@ -10,9 +10,12 @@ use App\Models\ClassSubscription;
 use App\Models\Payment;
 use App\Models\Booking;
 use App\Models\PersonalAccessToken;
+use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Pagination\Paginator;
 use Laravel\Sanctum\Sanctum;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -48,6 +51,22 @@ class AppServiceProvider extends ServiceProvider
         GeoSoftDeletes::register();
 
         $this->allowCorsFromProviderDomains();
+        $this->nameFailedScheduledTasks();
+    }
+
+    /**
+     * The scheduler reports a failed task as a bare exception — "signaled with
+     * signal 9" says nothing about which command died. This fires just before
+     * that report, so the log names the task next to the error.
+     */
+    private function nameFailedScheduledTasks(): void
+    {
+        Event::listen(ScheduledTaskFailed::class, function (ScheduledTaskFailed $event) {
+            Log::error('Scheduled task failed', [
+                'command' => $event->task->command,
+                'error'   => $event->exception->getMessage(),
+            ]);
+        });
     }
 
     /**
