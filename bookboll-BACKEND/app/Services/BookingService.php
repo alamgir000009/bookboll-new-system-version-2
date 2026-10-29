@@ -2300,6 +2300,10 @@ class BookingService
             'promocode'           => $promocode,
             'loyaltyQuote'        => $rewards['quote'],
             'loyaltyDiscount'     => $rewards['discount'],
+            // The reward rides inside `discounts` for the customer's total, and
+            // separately here so each booking knows how much of ITS discount is
+            // Bookboll's money — that part comes off the deposit, not the venue.
+            'loyaltyDiscounts'    => $this->splitAmountAcrossBookings($rewards['discount'], $totalBookings),
             'discounts'           => $this->splitAmountAcrossBookings($totalDiscount, $totalBookings),
             'giftCardAmounts'     => $this->splitAmountAcrossBookings($giftCardBalanceUsed, $totalBookings),
         ];
@@ -2366,8 +2370,9 @@ class BookingService
             $preparedCheckout['formData'] = $formData;
             $listing         = $preparedCheckout['listing'];
             $quotedItems     = $preparedCheckout['quotedItems'];
-            $discounts       = $preparedCheckout['discounts'];
-            $giftCardAmounts = $preparedCheckout['giftCardAmounts'];
+            $discounts        = $preparedCheckout['discounts'];
+            $giftCardAmounts  = $preparedCheckout['giftCardAmounts'];
+            $loyaltyDiscounts = $preparedCheckout['loyaltyDiscounts'] ?? [];
             $promocode       = $preparedCheckout['promocode'];
             $totalDiscount   = $preparedCheckout['totalDiscount'];
 
@@ -2387,6 +2392,7 @@ class BookingService
 
                 $bookingDiscount       = $discounts[$discountIndex] ?? 0;
                 $bookingGiftCardAmount = $giftCardAmounts[$discountIndex] ?? 0;
+                $bookingLoyalty        = $loyaltyDiscounts[$discountIndex] ?? 0;
                 $discountIndex++;
 
                 $booking = $this->createSingleBooking(
@@ -2402,7 +2408,8 @@ class BookingService
                     null,
                     null,
                     $listing,
-                    $request
+                    $request,
+                    (float) $bookingLoyalty
                 );
 
                 if (! $booking) {
@@ -3818,7 +3825,8 @@ class BookingService
         $paymentIntentId,
         $chargeId,
         $listing,
-        $request
+        $request,
+        float $loyaltyDiscount = 0.0
     ) {
         try {
             $startTimeCarbon = Carbon::parse($startTime);
@@ -3829,6 +3837,27 @@ class BookingService
             if ($totalPrice < 0) {
                 $totalPrice = 0;
             }
+
+            /*
+             * A rewards discount is Bookboll's money: the checkout quote caps it
+             * at Bookboll's commission, which on a deposit booking IS the
+             * deposit. So the deposit is worked out on the price BEFORE the
+             * reward and the reward is taken off that deposit — the remainder
+             * the venue collects on arrival does not move. Computing the deposit
+             * on the discounted price instead silently made the venue fund the
+             * non-commission share of every reward.
+             */
+            $loyaltyDiscount = max(0.0, min(round($loyaltyDiscount, 2), $totalPrice + max(0.0, $loyaltyDiscount)));
+            $preRewardTotal  = round($totalPrice + $loyaltyDiscount, 2);
+            // [deposit, remaining] with the reward taken off the deposit first; only
+            // what a (fixed, smaller) deposit cannot absorb comes off the remainder.
+            $netOfReward = function (float $deposit, float $remaining) use ($loyaltyDiscount): array {
+                $onDeposit = min($loyaltyDiscount, max(0.0, $deposit));
+                return [
+                    round($deposit - $onDeposit, 2),
+                    round(max(0.0, $remaining - ($loyaltyDiscount - $onDeposit)), 2),
+                ];
+            };
 
             // For online_payment, if no payment_intent_id, set status to PENDING (will be paid via Stripe checkout)
             $isOnlinePaymentPending = ($formData['payment_method'] === 'online_payment' && !$paymentIntentId);
@@ -3855,12 +3884,13 @@ class BookingService
                 if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
                     $depositAmount = $deposit['amount'];
                 } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
-                    $depositAmount = floor($totalPrice * ($deposit['percentage'] / 100));
+                    $depositAmount = floor($preRewardTotal * ($deposit['percentage'] / 100));
                 }
-                $depositAmount = min($depositAmount, max(0, $totalPrice));
+                $depositAmount = min($depositAmount, max(0, $preRewardTotal));
             }
 
-            $remainingAmount = max(0, $totalPrice - $depositAmount);
+            $remainingAmount = max(0, $preRewardTotal - $depositAmount);
+            [$depositAmount, $remainingAmount] = $netOfReward((float) $depositAmount, (float) $remainingAmount);
 
             $isPaymentSkipped = $paymentStatus == BookingPaymentStatus::PAYMENT_SKIPPED;
 
@@ -3894,6 +3924,7 @@ class BookingService
                 // can find the reservation to consume and a refund can find
                 // what to give back.
                 'loyalty_quote_id' => $formData['loyalty_quote_id'] ?? null,
+                'loyalty_discount' => $loyaltyDiscount > 0 ? $loyaltyDiscount : null,
             ]);
 
             $resources = $listing->resourceRequirements()->select('resources.id', 'listing_resource.quantity')->get();
@@ -3919,14 +3950,16 @@ class BookingService
                 if (! empty($deposit['amount']) && $deposit['amount'] > 0) {
                     $depositAmount = $deposit['amount'];
                 } elseif (! empty($deposit['percentage']) && $deposit['percentage'] > 0) {
-                    $depositAmount = round($totalPrice * ($deposit['percentage'] / 100), 2);
+                    $depositAmount = round($preRewardTotal * ($deposit['percentage'] / 100), 2);
                 } else {
                     throw new Exception('Invalid deposit configuration: must specify amount or percentage.');
                 }
 
-                if ($depositAmount > $totalPrice) {
-                    $depositAmount = $totalPrice;
+                if ($depositAmount > $preRewardTotal) {
+                    $depositAmount = $preRewardTotal;
                 }
+                // Same rule as the booking columns above: reward off the deposit.
+                [$depositAmount, $remainingRowAmount] = $netOfReward((float) $depositAmount, (float) ($preRewardTotal - $depositAmount));
 
                 // Create deposit payment - pending if no payment_intent_id (Stripe checkout), paid if payment_intent_id exists
                 $depositPaymentStatus = $paymentIntentId ? PaymentStatus::PAID : PaymentStatus::PENDING;
@@ -3961,7 +3994,7 @@ class BookingService
                     'method'     => PaymentMethod::CASH,
                     'type'       => PaymentType::REMAINING,
                     'status'     => PaymentStatus::PENDING,
-                    'amount'     => $totalPrice - $depositAmount,
+                    'amount'     => $remainingRowAmount,
                     'notes'      => 'Remaining payment pending for booking #' . $booking->booking_id,
                     'payment_id' => generatePaymentId($booking->id, PaymentType::REMAINING),
                 ]);

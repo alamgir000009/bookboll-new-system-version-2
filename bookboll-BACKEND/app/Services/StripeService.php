@@ -958,6 +958,11 @@ class StripeService
                     'description' => 'Deposit of ' . bookingMoney($depositPayment->amount, $booking)
                         . " received online via Stripe. Payment {$depositPayment->payment_id}, Stripe charge {$chargeId}.",
                 ]);
+
+                // The reward was taken off this deposit, so the points are spent
+                // now — exactly as a full payment spends them below. Without this
+                // a deposit booking kept the discount AND the points.
+                $this->consumeLoyaltyQuote($booking);
             }
 
             return;
@@ -1002,7 +1007,11 @@ class StripeService
             'payment_method'        => BookingPaymentMethod::ONLINE_PAYMENT,
         ]);
 
-        $this->creditProviderWallet($booking, $pendingPayments->sum('amount'), $depositAlreadyPaid);
+        // A balance after a deposit carries no reward (it was taken off the
+        // deposit); a full payment's reward is Bookboll's, so the venue is paid
+        // on the court price, not on what was left after the discount.
+        $loyaltyRedeem = $depositAlreadyPaid ? 0.0 : max(0.0, (float) ($booking->loyalty_discount ?? 0));
+        $this->creditProviderWallet($booking, (float) $pendingPayments->sum('amount'), $depositAlreadyPaid, $loyaltyRedeem);
 
         // The charge is confirmed, so the points reserved at checkout are now
         // genuinely spent. Idempotent: a duplicate webhook finds the quote
@@ -1058,12 +1067,12 @@ class StripeService
         return (float) app(BookingWalletService::class)->courtCommissionPct($listing);
     }
 
-    protected function creditProviderWallet($booking, float $collected, bool $depositAlreadyPaid): void
+    protected function creditProviderWallet($booking, float $collected, bool $depositAlreadyPaid, float $loyaltyRedeem = 0.0): void
     {
         try {
             $venue = $booking->venue;
             $ownerUserId = $venue?->owner_user_id;
-            if (! $ownerUserId || $collected <= 0) {
+            if (! $ownerUserId || $collected + $loyaltyRedeem <= 0) {
                 return;   // Bookboll-run venue — no provider to pay
             }
 
@@ -1074,7 +1083,12 @@ class StripeService
                 'bookingId'     => $booking->id,
                 'ownerUserId'   => $ownerUserId,
                 'countryId'     => $wallets->countryIdForVenue($venue),
-                'total'         => $collected,
+                // The gross the customer was quoted: what Stripe collected plus the
+                // reward Bookboll funded. The wallet takes its fee from that gross
+                // and the reward out of the fee, so the venue's share is the same
+                // whether points were used or not.
+                'total'         => round($collected + $loyaltyRedeem, 2),
+                'loyaltyRedeem' => $loyaltyRedeem,
                 // The booking's stamped currency, not currency_override alone:
                 // that skipped the venue's country currency and fell through to
                 // a hard-coded 'QAR', crediting a Pakistani provider's wallet in

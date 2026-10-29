@@ -1846,12 +1846,17 @@ class PaymentService
             $paymentType = 'full';
 
             if ($validated['payment_method'] === 'deposit_remaining_on_arrival') {
-                $paymentAmount = $this->depositToCharge(
+                // The deposit is Bookboll's share, so a rewards discount comes off
+                // it: work the deposit out on the pre-reward price, then reduce it.
+                // Mirrors BookingService::createSingleBooking, so the Stripe charge
+                // and the deposit row it settles are the same number.
+                $loyaltyDiscount = max(0.0, (float) ($prepared['loyaltyDiscount'] ?? 0));
+                $paymentAmount = max(0.0, round($this->depositToCharge(
                     $listing,
-                    $totalPrice,
+                    $totalPrice + $loyaltyDiscount,
                     $totalBookings,
                     (string) ($validated['surface'] ?? 'marketplace')
-                );
+                ) - $loyaltyDiscount, 2));
                 $paymentType = 'deposit';
             }
 
