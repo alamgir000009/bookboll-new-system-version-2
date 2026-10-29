@@ -1,6 +1,8 @@
 <script setup>
 import CommunityPermissions from '../components/CommunityPermissions.vue'
 import ExpandableDescription from '../components/ExpandableDescription.vue'
+import CommunityLocationPicker from '../components/CommunityLocationPicker.vue'
+import { useCommunityPlace } from '../../lib/communityPlace.js'
 import { communityRole, canContribute, canModerateCommunity, normalizedPermissions, permissionFor, permissionLabel } from '../../lib/communityAccess.js'
 import { communityMemberCount } from '../../lib/communityPresentation.js'
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
@@ -42,6 +44,9 @@ const canHostHere = computed(() => amModerator.value)
 const visibleMembers = computed(() => acceptedMembers.value.filter(m => (m.name || '').toLowerCase().includes(memberQuery.value.trim().toLowerCase())))
 
 const me = computed(() => customer.value?.id || null)
+// "Doha, Qatar" — from the names the API sends beside the ids, or looked up
+// from the ids when it does not.
+const placeLabel = useCommunityPlace(c)
 
 // ── Invite / share ───────────────────────────────────────────────────────────
 // Anyone may pass the link on — a community grows by members telling friends,
@@ -246,7 +251,7 @@ const coverUploading = ref(false)
 function openEdit() {
   if (!amManager.value) return
   editError.value = ''
-  edit.value = { name: c.value.name, description: c.value.description || '', sport: c.value.sport || '', is_private: !!c.value.is_private, settings: normalizedPermissions(c.value.settings) }
+  edit.value = { name: c.value.name, description: c.value.description || '', sport: c.value.sport || '', is_private: !!c.value.is_private, settings: normalizedPermissions(c.value.settings), country_id: c.value.country_id || null, city_id: c.value.city_id || null }
   editOpen.value = true
 }
 async function onCoverPick(e) {
@@ -279,6 +284,7 @@ async function onAvatarPick(e) {
 async function saveEdit() {
   if (!amManager.value || editBusy.value) return
   if (!edit.value.name.trim()) { editError.value = 'Enter a community name.'; return }
+  if (!edit.value.country_id || !edit.value.city_id) { editError.value = 'Choose the country and city your community is based in.'; return }
   editBusy.value = true; editError.value = ''
   const result = await updateCommunity(c.value.id, { ...edit.value, name: edit.value.name.trim() })
   editBusy.value = false
@@ -334,6 +340,7 @@ const TABS = computed(() => [
         <div class="cd-hero-meta">
           <span v-if="c.sport" class="cd-sport">{{ c.sport }}</span>
           <span class="cd-count"><UsersRound :size="13" /> {{ communityMemberCount(c).toLocaleString() }} member{{ communityMemberCount(c) === 1 ? '' : 's' }}</span>
+          <span v-if="placeLabel" class="cd-count cd-place"><MapPin :size="13" /> {{ placeLabel }}</span>
         </div>
       </div>
 
@@ -418,7 +425,7 @@ const TABS = computed(() => [
         </article>
       </div>
 
-      <aside class="cd-context"><h2>About this community</h2><ExpandableDescription v-if="c.description" :text="c.description" id="community-introduction" /><p v-else>Connect with people who share your interest in {{ c.sport || 'playing together' }}.</p><dl><dt>Joining</dt><dd>{{ c.is_private ? 'Approval required' : 'Open to everyone' }}</dd><dt>Feed posts</dt><dd>{{ permissionLabel(permissionFor(c.settings,'posts')) }}</dd><dt>Group chat</dt><dd>{{ permissionLabel(permissionFor(c.settings,'chat')) }}</dd></dl><router-link v-if="canHostHere" :to="'/host-game?community='+c.id" class="cd-context-link"><CalendarDays :size="17" /> Plan a meetup</router-link><p v-else-if="amMember" class="cd-context-note"><Shield :size="14" /> Meetups here are hosted by the owner, admins and moderators.</p></aside></div>
+      <aside class="cd-context"><h2>About this community</h2><ExpandableDescription v-if="c.description" :text="c.description" id="community-introduction" /><p v-else>Connect with people who share your interest in {{ c.sport || 'playing together' }}.</p><dl><dt>Based in</dt><dd>{{ placeLabel || 'Not set yet' }}</dd><dt>Joining</dt><dd>{{ c.is_private ? 'Approval required' : 'Open to everyone' }}</dd><dt>Feed posts</dt><dd>{{ permissionLabel(permissionFor(c.settings,'posts')) }}</dd><dt>Group chat</dt><dd>{{ permissionLabel(permissionFor(c.settings,'chat')) }}</dd></dl><router-link v-if="canHostHere" :to="'/host-game?community='+c.id" class="cd-context-link"><CalendarDays :size="17" /> Plan a meetup</router-link><p v-else-if="amMember" class="cd-context-note"><Shield :size="14" /> Meetups here are hosted by the owner, admins and moderators.</p></aside></div>
       <!-- MEETUPS -->
       <div v-else-if="tab === 'events'" class="cd-events">
         <router-link v-if="canHostHere" :to="`/host-game?community=${c.id}`" class="cd-newmeet"><Plus :size="16" /> Host a meetup for this community</router-link>
@@ -480,6 +487,7 @@ const TABS = computed(() => [
             <input id="edit-community-sport" v-model="edit.sport" type="text" class="cd-edit-in" placeholder="Football, Padel…" />
             <label class="cd-edit-l" for="edit-community-description">Description</label>
             <textarea id="edit-community-description" v-model="edit.description" rows="4" class="cd-edit-in"></textarea>
+            <div class="cd-edit-location"><span class="cd-edit-label">Where is it based?</span><CommunityLocationPicker :model-value="{ country_id: edit.country_id, city_id: edit.city_id }" id-prefix="edit-community-location" @update:model-value="v => { edit.country_id = v.country_id; edit.city_id = v.city_id }" /></div>
             <label class="cd-edit-switch">
               <input v-model="edit.is_private" type="checkbox" />
               <span><Lock :size="13" /> Private — approve every member</span>
@@ -523,6 +531,8 @@ const TABS = computed(() => [
 .cd-chatbtn { position: relative; display: inline-flex; align-items: center; gap: 6px; background: #0d9488; border: none; color: #fff; font: inherit; font-weight: 800; font-size: 13px; padding: 8px 15px; border-radius: 999px; cursor: pointer; }
 .cd-chatbtn-badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 10.5px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; margin-left: 2px; }
 .cd-leave { margin-left: auto; }
+.cd-edit-location { margin: 14px 0 4px; }
+.cd-edit-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .cd-host-note, .cd-context-note { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.55; color: var(--text-muted, #64748b); background: var(--bg, #f1f5f9); border-radius: 10px; padding: 12px 14px; margin: 0 0 16px; }
 .cd-host-note > svg, .cd-context-note > svg { flex-shrink: 0; margin-top: 2px; }
 .cd-context-note { margin: 14px 0 0; font-size: 12.5px; }

@@ -1,9 +1,11 @@
 <script setup>
 import { computed } from 'vue'
-import { UsersRound, ArrowUpRight, Lock, Check } from 'lucide-vue-next'
+import { UsersRound, ArrowUpRight, Lock, Check, MapPin } from 'lucide-vue-next'
 import { communityMemberCount } from '../../lib/communityPresentation.js'
+import { useCommunityPlace } from '../../lib/communityPlace.js'
 const props = defineProps({ community: { type: Object, required: true }, joined: Boolean, preview: Boolean })
 const count = computed(() => communityMemberCount(props.community))
+const place = useCommunityPlace(() => props.community)
 const initials = computed(() => (props.community.name || 'Your community').split(/\s+/).slice(0, 2).map(s => s[0]).join('').toUpperCase())
 </script>
 <template>
@@ -17,7 +19,7 @@ const initials = computed(() => (props.community.name || 'Your community').split
     <div class="community-card-body">
       <div class="community-card-identity"><span class="community-card-avatar"><img v-if="community.avatar_image" :src="community.avatar_image" alt="" loading="lazy" /><span v-else>{{ initials }}</span></span><span v-if="joined" class="community-card-joined"><Check :size="13" /> Joined</span></div>
       <h3>{{ community.name || 'Your community name' }}</h3>
-      <p class="community-card-count"><UsersRound :size="15" /> {{ count.toLocaleString() }} {{ count === 1 ? 'member' : 'members' }}</p>
+      <p class="community-card-count"><UsersRound :size="15" /> {{ count.toLocaleString() }} {{ count === 1 ? 'member' : 'members' }}<template v-if="place || preview"><span class="community-card-sep" aria-hidden="true">·</span><MapPin :size="14" /> {{ place || 'Choose a city' }}</template></p>
       <p class="community-card-description">{{ community.description || `A place to connect${community.sport ? ' over ' + community.sport.toLowerCase() : ''}, share updates and plan your next meetup.` }}</p>
       <span class="community-card-action">{{ joined ? 'Visit your community' : 'Explore community' }} <ArrowUpRight :size="17" /></span>
     </div>
@@ -25,7 +27,9 @@ const initials = computed(() => (props.community.name || 'Your community').split
 </template>
 <style scoped>
 .community-card { display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1px solid var(--border); background: var(--surface); border-radius: 16px; text-decoration: none; color: var(--text); }
-a.community-card:hover { border-color: var(--brand-ink); } .community-card:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
+a.community-card:hover { border-color: var(--brand-ink); }
+.community-card-count { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.community-card-sep { margin: 0 3px; opacity: .6; } .community-card:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
 .community-card-cover { position: relative; height: 120px; background: var(--brand-tint, var(--bg)); color: var(--brand-ink); overflow: hidden; }
 .community-card-cover > img { width: 100%; height: 100%; object-fit: cover; }
 .community-card-court { position: absolute; width: 180px; height: 150px; border: 2px solid currentColor; opacity: .18; transform: rotate(-22deg); right: -5px; top: -35px; }
