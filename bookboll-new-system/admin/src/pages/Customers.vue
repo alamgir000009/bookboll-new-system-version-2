@@ -564,6 +564,17 @@ function toggleSelect(id) {
   selectedIds.value = s
 }
 
+// Header checkbox: only the rows on screen. Ticked adds this page to whatever is
+// already selected; unticked removes just this page. Selecting EVERY matching
+// customer across pages is the banner's "Select all N" link (toggleSelectAll).
+function togglePage() {
+  const s = new Set(selectedIds.value)
+  const ids = paginatedCustomers.value.map(c => c.id)
+  if (allOnPageSelected.value) ids.forEach(id => s.delete(id))
+  else ids.forEach(id => s.add(id))
+  selectedIds.value = s
+}
+
 function toggleSelectAll() {
   if (allFilteredSelected.value) {
     selectedIds.value = new Set()
@@ -577,7 +588,15 @@ function toggleSelectAll() {
       pushToast(res.message || 'Could not select matching customers.', 'error')
       return
     }
-    selectedIds.value = new Set(res.data?.ids || [])
+    // A server without ids_only answers with a normal page and no `ids`. That
+    // used to become an EMPTY selection — the header box ticked nothing. Fall
+    // back to the rows on screen and say so, rather than silently doing nothing.
+    if (!Array.isArray(res.data?.ids)) {
+      selectedIds.value = new Set(paginatedCustomers.value.map(c => c.id))
+      if (matchingTotal.value > paginatedCustomers.value.length) pushToast('Selected the customers on this page. Update the API to select every matching customer at once.', 'warning')
+      return
+    }
+    selectedIds.value = new Set(res.data.ids.map(String))
   })
 }
 const allFilteredSelected = computed(() =>
@@ -1623,10 +1642,11 @@ function avatarColor(id) {
             <tr>
               <th class="th-check">
                 <input type="checkbox" class="row-checkbox"
-                  :checked="allFilteredSelected"
-                  :indeterminate.prop="selectedIds.size > 0 && !allFilteredSelected"
-                  title="Select all matching customers (all pages)"
-                  @change="toggleSelectAll" />
+                  :checked="allOnPageSelected"
+                  :indeterminate.prop="someOnPageSelected && !allOnPageSelected"
+                  title="Select the customers on this page"
+                  aria-label="Select all customers on this page"
+                  @change="togglePage" />
               </th>
               <th class="sortable" @click="setSort('full_name')">
                 Customer
