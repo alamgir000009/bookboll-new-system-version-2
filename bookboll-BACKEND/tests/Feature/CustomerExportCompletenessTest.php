@@ -147,3 +147,25 @@ it('applies customer type filters to an export the same way as to a page', funct
         // filter from an ignored one.
         ->and($res->json('data.customer_type_filter.types'))->toBe(['booking']);
 });
+
+it('answers ids_only with every matching customer id across all pages, and nothing else', function () {
+    collect(range(1, 60))->each(fn () => exportCustomer());
+    $needle = exportCustomer();
+    $needle->forceFill(['name' => 'Zed Needle'])->save();
+
+    $all = test()->actingAs(exportAdmin())
+        ->getJson('/api/admin/customers/dashboard?records_per_page=25&ids_only=1')->assertOk();
+
+    // The dashboard's "select all matching" header box needs the ids of EVERY
+    // page, not the 25 on screen — and this endpoint used to ignore ids_only
+    // entirely, which turned the box into "select nothing".
+    expect($all->json('data.ids'))->toHaveCount(61)
+        ->and($all->json('data.total'))->toBe(61)
+        ->and($all->json('data.ids'))->toContain((string) $needle->id)
+        ->and($all->json('data.customers'))->toBeNull();
+
+    // The filters still apply.
+    $filtered = test()->actingAs(exportAdmin())
+        ->getJson('/api/admin/customers/dashboard?ids_only=1&search=Needle')->assertOk();
+    expect($filtered->json('data.ids'))->toBe([(string) $needle->id]);
+});

@@ -609,6 +609,15 @@ class CustomerService
          */
         $isExport = $request->boolean('export');
 
+        // "Select all matching" on the dashboard: the ids of every customer the
+        // current filters reach, across every page. Ids only — the rows are
+        // already on screen, and a bulk action wants the set, not the detail.
+        if ($request->boolean('ids_only')) {
+            $ids = (clone $query)->limit(self::EXPORT_MAX)->pluck('id')->map(fn ($id) => (string) $id)->values()->all();
+
+            return sendSuccess('Customer ids fetched', ['ids' => $ids, 'total' => count($ids)]);
+        }
+
         if ($isExport) {
             $exportRows = (clone $query)->limit(self::EXPORT_MAX + 1)->get();
             // One row over the cap proves there are more; report it rather than
