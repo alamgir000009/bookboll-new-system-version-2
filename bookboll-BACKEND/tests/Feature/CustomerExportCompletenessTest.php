@@ -169,3 +169,32 @@ it('answers ids_only with every matching customer id across all pages, and nothi
         ->getJson('/api/admin/customers/dashboard?ids_only=1&search=Needle')->assertOk();
     expect($filtered->json('data.ids'))->toBe([(string) $needle->id]);
 });
+
+it('sorts the table by every sortable column, not just the name', function () {
+    $venue = exportVenue();
+    $a = exportCustomer(); $b = exportCustomer(); $c = exportCustomer();
+    $mk = fn (User $u, float $total, string $date, array $over = []) => \App\Models\Booking::create(array_merge([
+        'user_id' => $u->id, 'venue_id' => $venue->id, 'subtotal' => $total, 'total_price' => $total, 'date' => $date,
+    ], $over));
+    $mk($a, 10, '2026-01-05'); $mk($a, 30, '2026-02-01');          // 2 bookings, 40 spent, last 2026-02-01
+    $mk($b, 100, '2026-01-20');                                      // 1 booking, 100 spent
+    $mk($c, 999, '2026-03-01', ['status' => BookingStatus::CANCELLED]);   // does not count
+    $owner = \App\Models\CustomerLoyalty::ownerColumn();
+    \App\Models\CustomerLoyalty::create([$owner => $c->id, 'country_id' => 1, 'points' => 500, 'lifetime_points' => 9000]);
+    \App\Models\CustomerLoyalty::create([$owner => $a->id, 'country_id' => 1, 'points' => 50, 'lifetime_points' => 100]);
+
+    $order = function (string $sort, string $dir) use ($a, $b, $c) {
+        $rows = test()->actingAs(exportAdmin())
+            ->getJson("/api/admin/customers/dashboard?sort={$sort}&sort_dir={$dir}&records_per_page=50")
+            ->assertOk()->json('data.customers.data');
+        $names = ['a' => $a->id, 'b' => $b->id, 'c' => $c->id];
+        return array_values(array_filter(array_map(fn ($r) => array_search((int) $r['id'], $names, true) ?: null, $rows)));
+    };
+
+    expect($order('total_bookings', 'desc'))->toBe(['a', 'b', 'c'])
+        ->and($order('total_spent', 'desc'))->toBe(['b', 'a', 'c'])
+        ->and($order('total_spent', 'asc'))->toBe(['c', 'a', 'b'])
+        ->and($order('last_booking', 'desc'))->toBe(['a', 'b', 'c'])
+        ->and($order('loyalty_points', 'desc'))->toBe(['c', 'a', 'b'])
+        ->and($order('loyalty_tier', 'desc'))->toBe(['c', 'a', 'b']);
+});

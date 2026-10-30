@@ -20,6 +20,7 @@ use Nnjeim\World\Models\Country;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
@@ -593,11 +594,7 @@ class CustomerService
 
         $sort = (string) $request->input('sort', 'created_at');
         $dir  = strtolower((string) $request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
-        if ($sort === 'full_name') {
-            $query->orderBy('name', $dir);
-        } else {
-            $query->orderBy('users.created_at', $dir);
-        }
+        $this->applyDashboardSort($query, $sort, $dir, $venueIds);
 
         /*
          * Export asks for every matching row; the table asks for one page.
@@ -965,6 +962,74 @@ class CustomerService
 
     /** How many rows one export may pull, so a runaway export cannot exhaust memory. */
     private const EXPORT_MAX = 20000;
+
+    /**
+     * Order the customer table by the column whose header was clicked.
+     *
+     * Every column the table can sort by is sortable here, by the same figure the
+     * cell shows: bookings and spend count only COMMERCIAL bookings (not
+     * cancelled, not a membership session, not a provider's slot block, not a
+     * payment-skipped placeholder) at venues the caller may see; points are the
+     * customer's spendable balance across countries; tier follows lifetime
+     * points, which is what the tier ladder is read from. Previously only the
+     * name sorted and every other header silently fell back to newest-first.
+     */
+    protected function applyDashboardSort($query, string $sort, string $dir, $venueIds): void
+    {
+        $dir = $dir === 'asc' ? 'asc' : 'desc';
+
+        if ($sort === 'full_name') {
+            $query->orderBy('name', $dir)->orderBy('users.id', $dir);
+
+            return;
+        }
+
+        $owner = CustomerLoyalty::ownerColumn();
+        $loyalty = [
+            'loyalty_points' => "(SELECT COALESCE(SUM(cl.points), 0) FROM customer_loyalty cl WHERE cl.{$owner} = users.id)",
+            'loyalty_tier'   => "(SELECT COALESCE(MAX(cl.lifetime_points), 0) FROM customer_loyalty cl WHERE cl.{$owner} = users.id)",
+        ];
+        if (isset($loyalty[$sort])) {
+            $query->orderByRaw("{$loyalty[$sort]} {$dir}, users.id {$dir}");
+
+            return;
+        }
+
+        $bookingSorts = [
+            'total_bookings' => 'COUNT(*)',
+            'last_booking'   => 'MAX(b.date)',
+            'total_spent'    => 'COALESCE(SUM(b.total_price), 0)',
+        ];
+        if (! isset($bookingSorts[$sort])) {
+            $query->orderBy('users.created_at', $dir)->orderBy('users.id', $dir);
+
+            return;
+        }
+
+        static $columns = null;
+        $columns ??= [
+            'origin'         => Schema::hasColumn('bookings', 'origin'),
+            'record_purpose' => Schema::hasColumn('bookings', 'record_purpose'),
+        ];
+
+        // NULL-safe: a row with no status yet is a live booking, not a cancelled one.
+        $where    = ['b.user_id = users.id', "(b.status IS NULL OR b.status NOT IN ('cancelled', 'canceled'))", '(b.payment_status IS NULL OR b.payment_status <> ?)'];
+        $bindings = [BookingPaymentStatus::PAYMENT_SKIPPED];
+        if ($columns['origin']) {
+            $where[] = "b.origin <> 'class_program'";
+        }
+        if ($columns['record_purpose']) {
+            $where[] = "(b.record_purpose IS NULL OR b.record_purpose <> 'provider_slot_block')";
+        }
+        if ($venueIds !== null) {
+            $ids = array_values(array_map('intval', collect($venueIds)->all())) ?: [0];
+            $where[]  = 'b.venue_id IN ('.implode(', ', array_fill(0, count($ids), '?')).')';
+            $bindings = array_merge($bindings, $ids);
+        }
+
+        $sub = '(SELECT '.$bookingSorts[$sort].' FROM bookings b WHERE '.implode(' AND ', $where).')';
+        $query->orderByRaw("{$sub} {$dir}, users.id {$dir}", $bindings);
+    }
 
     protected function customerQuery()
     {
