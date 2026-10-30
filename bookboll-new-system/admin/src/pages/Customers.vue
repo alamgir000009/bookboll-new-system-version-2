@@ -809,6 +809,12 @@ const waPreviewBody = computed(() => {
 const waVarsMissing = computed(() =>
   !!waTemplate.value && waVariables.value.some(v => !String(v).trim())
 )
+// A template is chosen when one was picked from the list — or, when the list could
+// not be loaded, when a name has been typed. sendWaCampaign already sends the typed
+// name in that case; the button used to demand a picked one and stayed disabled.
+const waTemplateChosen = computed(() =>
+  !!waTemplate.value || (waMode.value === 'pick' && waTemplatesState.value === 'manual' && !!waManual.value.name.trim())
+)
 
 const WA_CAMPAIGN_CAP = 200   // must match the send-whatsapp function's per-run cap
 
@@ -2161,7 +2167,7 @@ function avatarColor(id) {
           <button class="btn btn-secondary" @click="showWaDialog=false">Close</button>
           <button
             class="btn btn-primary"
-            :disabled="!eligibleWaCustomers.length || waSending || !waConfigured || (waMode === 'pick' && waTemplatesState === 'loading') || !waTemplate || waVarsMissing || !!waResult"
+            :disabled="!eligibleWaCustomers.length || waSending || !waConfigured || (waMode === 'pick' && waTemplatesState === 'loading') || !waTemplateChosen || waVarsMissing || !!waResult"
             :title="!waConfigured ? 'Connect the WhatsApp channel first' : (waMode === 'new' && !waTemplate ? 'Submit your template to Meta first' : (waVarsMissing ? 'Fill in every template variable first' : ''))"
             @click="sendWaCampaign"
           >
