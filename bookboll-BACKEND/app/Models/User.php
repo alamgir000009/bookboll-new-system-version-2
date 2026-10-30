@@ -532,6 +532,11 @@ class User extends Authenticatable
             'date_of_birth',
             'blocking_reason',
             'loyalty_tier_id',
+            // Marketing consent is a record that matters: every flip — by the
+            // customer, by staff, or by a bulk opt-in run — leaves an entry.
+            'marketing_email',
+            'marketing_sms',
+            'marketing_whatsapp',
         ];
     }
 
