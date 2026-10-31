@@ -11,7 +11,7 @@ import { askConfirm } from '../lib/confirm.js'
 import { pushToast } from '../lib/toast.js'
 import { markDirty, clearDirty, confirmDiscardIfDirty } from '../lib/unsavedGuard.js'
 import { openCustomer, requestEditCustomerId, requestBlockCustomerId } from '../lib/customerModal.js'
-import { Search, Plus, Mail, Phone, Trash2, Pencil as Edit2, X, Award, History, ChevronUp, ChevronDown, ChevronsUpDown, SlidersHorizontal, GraduationCap, Users, TrendingUp, Ban, CheckCircle, Tag, Download, Info, Eye, MailCheck, ChevronRight, Loader, Send } from 'lucide-vue-next'
+import { Search, Plus, Mail, Phone, Trash2, Pencil as Edit2, X, Award, History, ChevronUp, ChevronDown, ChevronsUpDown, SlidersHorizontal, GraduationCap, Users, TrendingUp, Ban, CheckCircle, Tag, Download, Info, Eye, MailCheck, ChevronRight, Loader, Send, ImagePlus } from 'lucide-vue-next'
 import WhatsappIcon from '../components/WhatsappIcon.vue'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
@@ -19,6 +19,7 @@ import { CAP } from '../lib/permissions.js'
 import { marketingEmailHtml, recordCampaign, deleteCampaign, sendCampaignEmails, unsubscribeUrl } from '../lib/marketing.js'
 import { useProviderSmtp } from '../lib/emailSender.js'
 import { loadWhatsappConfig, isWhatsappConfigured, invokeWhatsapp, normalizeWaNumber, renderTemplateBody, personalizeVariable, queueWaCampaign, processWaQueue, createWaTemplate, slugifyTemplateName } from '../lib/whatsapp.js'
+import { uploadImage } from '../lib/imageUpload.js'
 import { fmt12 } from '../lib/slots.js'
 import { useRouter } from 'vue-router'
 import { downloadCSV } from '../lib/useExport.js'
@@ -703,7 +704,27 @@ const waSending = ref(false)
 const waResult = ref(null)                 // { sent, failed } after a campaign
 // Author a brand-new template inline (submit to Meta → auto-send on approval).
 const waMode = ref('pick')                 // 'pick' (existing template) | 'new' (author one)
-const waNew = ref({ name: '', category: 'MARKETING', language: 'en_US', body: '' })
+const waNew = ref({ name: '', category: 'MARKETING', language: 'en_US', body: '', headerImageUrl: '' })
+// The image sent with an IMAGE-header template. Starts as the template's own
+// sample; a campaign can swap it (Meta only checks the format at send time).
+const waHeaderImage = ref('')
+const waImageUploading = ref('')          // '' | 'new' | 'campaign'
+const waNeedsImage = computed(() => !!waTemplate.value && waTemplate.value.headerFormat === 'IMAGE')
+const waImageMissing = computed(() => waNeedsImage.value && !waHeaderImage.value)
+async function pickWaImage(event, target) {
+  const file = event.target.files?.[0]
+  if (!file || waImageUploading.value) return
+  if (!['image/jpeg', 'image/png'].includes(file.type)) { pushToast('WhatsApp header images must be JPEG or PNG.', 'error'); event.target.value = ''; return }
+  if (file.size > 5 * 1024 * 1024) { pushToast('WhatsApp header images must be 5 MB or smaller.', 'error'); event.target.value = ''; return }
+  waImageUploading.value = target
+  try {
+    const r = await uploadImage(file, 'whatsapp')
+    if (r.error) { pushToast(r.error, 'error'); return }
+    if (target === 'new') waNew.value.headerImageUrl = r.url
+    else waHeaderImage.value = r.url
+  } catch { pushToast('The image could not be uploaded. Please try again.', 'error') }
+  finally { waImageUploading.value = ''; event.target.value = '' }
+}
 const waCreating = ref(false)
 // Meta placeholders are numbered ({{1}}…) — kept out of the template markup as a bound
 // string so Vue's own {{ }} interpolation never sees them.
@@ -729,6 +750,7 @@ async function openWaDialog() {
   waResult.value = null
   waTemplate.value = null
   waVariables.value = []
+  waHeaderImage.value = ''
   waMode.value = 'pick'
   waNew.value = { name: '', category: 'MARKETING', language: 'en_US', body: '' }
   showWaDialog.value = true
@@ -767,6 +789,7 @@ function goToWhatsappSetup() { showWaDialog.value = false; router.push('/whatsap
 function pickWaTemplate(t) {
   waTemplate.value = t
   waVariables.value = Array.from({ length: t.varCount || 0 }, () => '')
+  waHeaderImage.value = t.headerFormat === 'IMAGE' ? (t.headerImage || '') : ''
 }
 
 // Author a new template → submit to Meta for review → select it so the SAME queue path
@@ -782,13 +805,14 @@ async function submitNewTemplate() {
     language: waNew.value.language.trim() || 'en_US',
     category: waNew.value.category,
     bodyText: body,
+    headerImageUrl: waNew.value.headerImageUrl || '',
     // Meta requires an example value per {{n}}; the real per-customer values are set at send.
     examples: Array.from({ length: waNewVarCount.value }, (_, i) => `Sample ${i + 1}`),
   })
   waCreating.value = false
   if (!res.ok) { pushToast(res.error || 'Meta rejected the template submission.', 'error'); return }
   // Submitted (PENDING). Select it — variables + preview + the queue/auto-send flow reuse this.
-  const tpl = { name: res.name || name, language: waNew.value.language.trim() || 'en_US', category: waNew.value.category, bodyText: body, varCount: waNewVarCount.value, status: 'PENDING' }
+  const tpl = { name: res.name || name, language: waNew.value.language.trim() || 'en_US', category: waNew.value.category, bodyText: body, varCount: waNewVarCount.value, status: 'PENDING', headerFormat: waNew.value.headerImageUrl ? 'IMAGE' : '', headerImage: waNew.value.headerImageUrl || '' }
   waTemplates.value = [tpl, ...waTemplates.value.filter(t => !(t.name === tpl.name && t.language === tpl.language))]
   waTemplatesState.value = 'ready'
   waMode.value = 'pick'
@@ -827,6 +851,8 @@ async function sendWaCampaign() {
     ? { name: waTemplate.value.name, language: waTemplate.value.language }
     : { name: waManual.value.name.trim(), language: waManual.value.language.trim() || 'en_US' }
   if (!tpl.name) { pushToast('Pick or enter a template.', 'error'); return }
+  if (waHeaderImage.value) tpl.headerImageUrl = waHeaderImage.value
+  if (waImageMissing.value) { pushToast('This template has an image header — add an image first.', 'error'); return }
 
   // One message per NUMBER (two customer rows sharing a phone would double-message),
   // capped to the function's per-run limit — with the overflow surfaced, never silent.
@@ -850,6 +876,7 @@ async function sendWaCampaign() {
       ownerId: waOwnerId.value, template: tpl,
       payload: {
         bodyText: waTemplate.value?.bodyText || '',
+        headerImageUrl: waHeaderImage.value || '',
         recipients: recipients.map(c => ({
           to: normalizeWaNumber(c.phone), customerId: c.id,
           variables: waVariables.value.map(v => personalizeVariable(v, c)),
@@ -2091,6 +2118,18 @@ function avatarColor(id) {
                       <input v-model="waNew.language" placeholder="en_US" spellcheck="false" />
                     </label>
                   </div>
+                  <div class="wa-newtpl-f"><span>Header image <em>optional</em></span>
+                    <div class="wa-img-pick">
+                      <img v-if="waNew.headerImageUrl" :src="waNew.headerImageUrl" alt="" />
+                      <label class="btn btn-secondary btn-sm wa-img-btn" :class="{ busy: waImageUploading === 'new' }">
+                        <component :is="waImageUploading === 'new' ? Loader : ImagePlus" :size="14" :class="{ 'spin-icon': waImageUploading === 'new' }" />
+                        {{ waImageUploading === 'new' ? 'Uploading…' : (waNew.headerImageUrl ? 'Change image' : 'Add image') }}
+                        <input type="file" accept="image/jpeg,image/png" :disabled="!!waImageUploading" @change="pickWaImage($event, 'new')" />
+                      </label>
+                      <button v-if="waNew.headerImageUrl" type="button" class="link-btn" @click="waNew.headerImageUrl = ''">Remove</button>
+                    </div>
+                    <div class="form-hint">JPEG or PNG, up to 5 MB. Meta reviews the image with the text; the campaign can swap in a different image later.</div>
+                  </div>
                   <label class="wa-newtpl-f"><span>Message</span>
                     <textarea v-model="waNew.body" rows="4" :placeholder="WA_TPL_PLACEHOLDER"></textarea>
                   </label>
@@ -2114,7 +2153,7 @@ function avatarColor(id) {
                     @click="pickWaTemplate(t)"
                   >
                     <span class="wa-tpl-name">{{ t.name }}<span v-if="t.status === 'PENDING'" class="wa-tpl-pending">In review — queues &amp; auto-sends on approval</span></span>
-                    <span class="wa-tpl-meta">{{ t.language }} · {{ String(t.category || '').toLowerCase() }}</span>
+                    <span class="wa-tpl-meta">{{ t.language }} · {{ String(t.category || '').toLowerCase() }}<template v-if="t.headerFormat === 'IMAGE'"> · <ImagePlus :size="11" /> image</template></span>
                   </button>
                 </div>
                 <div v-else class="wa-manual">
@@ -2130,6 +2169,21 @@ function avatarColor(id) {
                   </div>
                 </div>
                 </template>
+              </div>
+
+              <!-- Header image: required by an IMAGE template, swappable per campaign -->
+              <div v-if="waNeedsImage" class="form-group">
+                <label class="form-label">Header image <span class="req">*</span></label>
+                <div class="wa-img-pick">
+                  <img v-if="waHeaderImage" :src="waHeaderImage" alt="" />
+                  <label class="btn btn-secondary btn-sm wa-img-btn" :class="{ busy: waImageUploading === 'campaign' }">
+                    <component :is="waImageUploading === 'campaign' ? Loader : ImagePlus" :size="14" :class="{ 'spin-icon': waImageUploading === 'campaign' }" />
+                    {{ waImageUploading === 'campaign' ? 'Uploading…' : (waHeaderImage ? 'Use a different image' : 'Add image') }}
+                    <input type="file" accept="image/jpeg,image/png" :disabled="!!waImageUploading" @change="pickWaImage($event, 'campaign')" />
+                  </label>
+                  <button v-if="waHeaderImage && waTemplate.headerImage && waHeaderImage !== waTemplate.headerImage" type="button" class="link-btn" @click="waHeaderImage = waTemplate.headerImage">Use template's image</button>
+                </div>
+                <div class="form-hint">{{ waHeaderImage ? 'Sent at the top of every message in this campaign.' : 'This template was approved with an image header, so every message needs one.' }}</div>
               </div>
 
               <!-- Variables -->
@@ -2156,6 +2210,7 @@ function avatarColor(id) {
             <div class="mkt-preview-h"><Eye :size="13" /> Message preview</div>
             <div class="wa-chat">
               <div class="wa-bubble">
+                <img v-if="waHeaderImage" :src="waHeaderImage" alt="" class="wa-bubble-img" />
                 <div class="wa-bubble-body">{{ waPreviewBody || 'Pick a template to preview it.' }}</div>
                 <div class="wa-bubble-meta">{{ fmt12(new Date()) }} ✓✓</div>
               </div>
@@ -2167,7 +2222,7 @@ function avatarColor(id) {
           <button class="btn btn-secondary" @click="showWaDialog=false">Close</button>
           <button
             class="btn btn-primary"
-            :disabled="!eligibleWaCustomers.length || waSending || !waConfigured || (waMode === 'pick' && waTemplatesState === 'loading') || !waTemplateChosen || waVarsMissing || !!waResult"
+            :disabled="!eligibleWaCustomers.length || waSending || !waConfigured || (waMode === 'pick' && waTemplatesState === 'loading') || !waTemplateChosen || waVarsMissing || waImageMissing || !!waImageUploading || !!waResult"
             :title="!waConfigured ? 'Connect the WhatsApp channel first' : (waMode === 'new' && !waTemplate ? 'Submit your template to Meta first' : (waVarsMissing ? 'Fill in every template variable first' : ''))"
             @click="sendWaCampaign"
           >
@@ -2317,6 +2372,13 @@ function avatarColor(id) {
 .wa-chat { background: #e5ddd5 url('') center/cover; background-color: #e5ddd5; border-radius: 12px; padding: 18px 14px; min-height: 140px; }
 .wa-bubble { background: #dcf8c6; border-radius: 10px 10px 10px 2px; padding: 8px 10px 6px; max-width: 92%; box-shadow: 0 1px 1px rgba(0,0,0,.12); }
 .wa-bubble-body { font-size: 13px; line-height: 1.5; color: #111b21; white-space: pre-wrap; word-break: break-word; }
+.wa-bubble-img { display: block; width: 100%; max-height: 180px; object-fit: cover; border-radius: 8px; margin: -2px 0 8px; }
+.wa-img-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wa-img-pick img { width: 92px; height: 60px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+.wa-img-btn { position: relative; cursor: pointer; }
+.wa-img-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.wa-img-btn.busy { pointer-events: none; opacity: .7; }
+.wa-tpl-meta svg { vertical-align: -1px; }
 .wa-bubble-meta { font-size: 10.5px; color: #667781; text-align: right; margin-top: 3px; }
 .wa-chat-note { font-size: 11px; color: #54656f; text-align: center; margin-top: 10px; }
 .mkt-sender strong { color: var(--text); }
