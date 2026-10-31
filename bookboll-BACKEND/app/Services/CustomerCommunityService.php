@@ -26,6 +26,8 @@ class CustomerCommunityService
         'images', 'is_private', 'city_id', 'country_id', 'settings',
     ];
 
+    public function __construct(protected CommunityNotifier $notify) {}
+
     public function probe()
     {
         return sendSuccess('Communities available', ['enabled' => true]);
@@ -356,6 +358,13 @@ class CustomerCommunityService
             ]
         );
 
+        // A pending request is the managers' decision; a join is their news.
+        if ($status === 'pending') {
+            $this->notify->joinRequested($community, $user);
+        } else {
+            $this->notify->memberJoined($community, $user);
+        }
+
         return sendSuccess('Joined', ['membership' => $this->mapMembership($member->fresh())]);
     }
 
@@ -371,7 +380,11 @@ class CustomerCommunityService
             return sendError("You own this community — you can't leave it.");
         }
         if ($m) {
+            $wasMember = $m->status === 'accepted';
             $m->delete();
+            if ($wasMember) {
+                $this->notify->memberLeft($community, $user);
+            }
         }
 
         return sendSuccess('Left community', ['ok' => true]);
@@ -449,8 +462,10 @@ class CustomerCommunityService
         if ($accept) {
             $member->status = 'accepted';
             $member->save();
+            $this->notify->requestAccepted($community, $member);
         } else {
             $member->delete();
+            $this->notify->requestDeclined($community, $member);
         }
 
         return sendSuccess('Member updated', ['ok' => true]);
@@ -504,6 +519,7 @@ class CustomerCommunityService
         }
 
         $member->delete();
+        $this->notify->memberRemoved($community, $member, $user);
 
         return sendSuccess('Member removed', ['ok' => true]);
     }
@@ -552,6 +568,7 @@ class CustomerCommunityService
 
         $member->role = $role;
         $member->save();
+        $this->notify->roleChanged($community, $member, $role, $user);
 
         // The role is read back from the row, because the client only reports
         // success when the role it asked for is the role that came back.
@@ -667,6 +684,8 @@ class CustomerCommunityService
             'moderation_status' => 'active',
         ]);
 
+        $this->notify->postCreated($community, $post, $user);
+
         return sendSuccess('Post created', [
             'post' => [
                 'id'           => $post->uuid,
@@ -705,6 +724,9 @@ class CustomerCommunityService
         }
 
         $post->delete();
+        if (! $isAuthor) {
+            $this->notify->postRemoved($community, $post, $user);
+        }
 
         return sendSuccess('Post deleted', ['ok' => true]);
     }
@@ -828,6 +850,9 @@ class CustomerCommunityService
         }
 
         $message->delete();
+        if (! $isAuthor) {
+            $this->notify->chatMessageRemoved($community, $message, $user);
+        }
 
         // Reported only after the row is actually gone, because the client
         // leaves the message on screen unless the server confirms removal.
@@ -877,6 +902,8 @@ class CustomerCommunityService
             'recipient_id'     => null,
             'body'             => $clean,
         ]);
+
+        $this->notify->chatMessage($community, $message, $user);
 
         return sendSuccess('Message sent', [
             'message' => [

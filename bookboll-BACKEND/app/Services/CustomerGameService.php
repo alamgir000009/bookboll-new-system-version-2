@@ -325,6 +325,10 @@ class CustomerGameService
                     $this->recordOwnSpotFee($host, $game, $charge, $currency, ! $needsPayment);
                 }
 
+                if (! $needsPayment && $community) {
+                    app(CommunityNotifier::class)->eventPosted($community, $game, $host);
+                }
+
                 if ($needsPayment) {
                     $checkout = $this->startHostCheckout($host, $game, $booking ? [$booking->id] : [], $charge, $currency);
 
@@ -667,6 +671,7 @@ class CustomerGameService
                 return $denied;
             }
 
+            $newlyAttached = (int) $game->community_id !== (int) $community->id;
             $game->community_id = $community->id;
         }
 
@@ -675,6 +680,11 @@ class CustomerGameService
         }
 
         $game->save();
+
+        // Only a LIVE event newly put on this community's page is news to its members.
+        if (! empty($newlyAttached) && $game->published_at && isset($community)) {
+            app(CommunityNotifier::class)->eventPosted($community, $game, $host);
+        }
 
         return sendSuccess('Event updated', ['game' => $this->mapGame($game)]);
     }
@@ -1420,6 +1430,10 @@ class CustomerGameService
         }
 
         $game->forceFill(['published_at' => now()])->save();
+
+        if ($game->community_id && ($community = Community::find($game->community_id))) {
+            app(CommunityNotifier::class)->eventPosted($community, $game, $host);
+        }
 
         Log::info('Hosted game published after payment', [
             'uuid'       => $game->uuid,
@@ -2398,6 +2412,10 @@ class CustomerGameService
                 }
 
                 $this->awardHostBonus($host);
+
+                if ($community) {
+                    app(CommunityNotifier::class)->eventPosted($community, $tournament, $host);
+                }
 
                 return sendSuccess('Tournament published', [
                     'tournament'       => $this->mapGame($tournament),
