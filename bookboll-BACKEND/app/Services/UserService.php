@@ -1955,6 +1955,11 @@ class UserService
             'device_info'  => 'nullable|string|max:255',
         ]);
 
+        // Which OneSignal app issued this id — taken from the `from` header the
+        // apps already send, never from the body: a client must not be able to
+        // file its device under an app whose credentials cannot reach it.
+        $app = OnesignalSubscription::appFromSurface($request->header('from'));
+
         try {
             DB::beginTransaction();
 
@@ -1965,6 +1970,7 @@ class UserService
             if ($existingSubscription) {
                 $existingSubscription->update([
                     'is_active'   => true,
+                    'app'         => $app,
                     'device_type' => $formData['device_type'] ?? $existingSubscription->device_type,
                     'device_info' => $formData['device_info'] ?? $existingSubscription->device_info,
                 ]);
@@ -1975,12 +1981,13 @@ class UserService
                     ->first();
 
                 if ($otherUserSubscription) {
-                    $otherUserSubscription->update(['user_id' => $user->id, 'is_active' => true]);
+                    $otherUserSubscription->update(['user_id' => $user->id, 'app' => $app, 'is_active' => true]);
                     $subscription = $otherUserSubscription;
                 } else {
                     $subscription = OnesignalSubscription::create([
                         'user_id'      => $user->id,
                         'onesignal_id' => $formData['onesignal_id'],
+                        'app'          => $app,
                         'device_type'  => $formData['device_type'] ?? null,
                         'device_info'  => $formData['device_info'] ?? null,
                         'is_active'    => true,

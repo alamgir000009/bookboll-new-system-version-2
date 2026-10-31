@@ -41,9 +41,26 @@ return [
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
     ],
 
+    /*
+    | Two OneSignal apps: the admin (business) app and the customer app. Apple
+    | binds an APNs configuration to one bundle id, so each mobile app needs its
+    | own OneSignal app, and a push only reaches a device through the app that
+    | registered it. The legacy top-level keys stay as aliases of `admin` for any
+    | code or deployment still reading them.
+    */
     'onesignal' => [
-        'app_id'     => env('ONESIGNAL_APP_ID'),
+        'app_id'       => env('ONESIGNAL_APP_ID'),
         'rest_api_key' => env('ONESIGNAL_REST_API_KEY'),
+        'apps' => [
+            'admin' => [
+                'app_id'       => env('ONESIGNAL_APP_ID'),
+                'rest_api_key' => env('ONESIGNAL_REST_API_KEY'),
+            ],
+            'customer' => [
+                'app_id'       => env('ONESIGNAL_CUSTOMER_APP_ID'),
+                'rest_api_key' => env('ONESIGNAL_CUSTOMER_REST_API_KEY'),
+            ],
+        ],
     ],
 
     'turnstile' => [
