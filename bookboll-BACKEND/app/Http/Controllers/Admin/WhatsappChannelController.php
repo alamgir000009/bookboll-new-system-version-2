@@ -83,6 +83,7 @@ class WhatsappChannelController extends Controller
             'language'   => 'nullable|string|max:16',
             'category'   => 'nullable|string|max:32',
             'headerText' => 'nullable|string|max:120',
+            'headerImageUrl' => 'nullable|url|max:2048',
             'footerText' => 'nullable|string|max:120',
             'examples'   => 'nullable|array',
         ]);

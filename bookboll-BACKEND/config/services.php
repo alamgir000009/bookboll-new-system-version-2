@@ -76,6 +76,8 @@ return [
         'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
         'verify_token' => env('WHATSAPP_VERIFY_TOKEN'),
         'app_secret'   => env('META_APP_SECRET'),
+        // The Meta APP id — template header images are uploaded against the app.
+        'app_id'       => env('META_APP_ID'),
     ],
 
 ];

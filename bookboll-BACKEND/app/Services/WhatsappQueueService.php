@@ -150,7 +150,7 @@ class WhatsappQueueService
             }
 
             $out = $this->whatsapp->sendCampaign($sender, [
-                'template'    => ['name' => $row->template_name, 'language' => $row->template_language],
+                'template'    => ['name' => $row->template_name, 'language' => $row->template_language, 'headerImageUrl' => $payload['headerImageUrl'] ?? ''],
                 'bodyText'    => $payload['bodyText'] ?? '',
                 'campaignId'  => $campaignId,
                 'recipients'  => $payload['recipients'] ?? [],

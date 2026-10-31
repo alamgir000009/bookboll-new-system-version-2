@@ -250,6 +250,9 @@ class WhatsappService
                 'bodyText'       => $bodyText,
                 'varCount'       => self::variableCount($bodyText),
                 'headerText'     => ($headComp['format'] ?? '') === 'TEXT' ? ($headComp['text'] ?? '') : '',
+                // IMAGE templates need an image on every send; the composer asks for one.
+                'headerFormat'   => strtoupper((string) ($headComp['format'] ?? '')),
+                'headerImage'    => ($headComp['format'] ?? '') === 'IMAGE' ? (string) (($headComp['example']['header_handle'] ?? [])[0] ?? '') : '',
                 'footerText'     => $footComp['text'] ?? '',
                 'rejectedReason' => (! empty($t['rejected_reason']) && $t['rejected_reason'] !== 'NONE') ? $t['rejected_reason'] : '',
             ];
@@ -280,8 +283,19 @@ class WhatsappService
         $headerText = mb_substr(trim((string) ($input['headerText'] ?? '')), 0, 60);
         $footerText = mb_substr(trim((string) ($input['footerText'] ?? '')), 0, 60);
 
-        $components = [];
-        if ($headerText !== '') {
+        $components     = [];
+        $headerImageUrl = trim((string) ($input['headerImageUrl'] ?? ''));
+        if ($headerImageUrl !== '') {
+            // An image header. Meta will not take a URL here — the bytes go through
+            // its resumable upload API first and the returned handle is the example
+            // reviewers see. One header per template, so the image wins over text.
+            try {
+                $handle = $this->uploadHeaderMedia($sender['token'], $headerImageUrl);
+            } catch (\Throwable $e) {
+                return ['ok' => false, 'error' => 'Could not upload the header image to Meta: '.$e->getMessage()];
+            }
+            $components[] = ['type' => 'HEADER', 'format' => 'IMAGE', 'example' => ['header_handle' => [$handle]]];
+        } elseif ($headerText !== '') {
             $components[] = ['type' => 'HEADER', 'format' => 'TEXT', 'text' => $headerText];
         }
 
@@ -341,6 +355,9 @@ class WhatsappService
         }
 
         $template  = $input['template'] ?? ['name' => 'hello_world', 'language' => 'en_US'];
+        if (! empty($input['headerImageUrl'])) {
+            $template['headerImageUrl'] = $input['headerImageUrl'];
+        }
         $variables = array_map('strval', (array) ($input['variables'] ?? []));
 
         try {
@@ -406,6 +423,9 @@ class WhatsappService
         $template = $input['template'] ?? null;
         if (empty($template['name'])) {
             return ['ok' => false, 'error' => 'Template is required for campaigns.'];
+        }
+        if (! empty($input['headerImageUrl'])) {
+            $template['headerImageUrl'] = $input['headerImageUrl'];
         }
 
         $all        = array_values((array) ($input['recipients'] ?? []));
@@ -571,6 +591,53 @@ class WhatsappService
      * A Graph API call. Throws with Meta's own message on failure so the dashboard
      * can show the provider what Meta actually said.
      */
+    /**
+     * Push an image through Meta's resumable upload API and return the handle a
+     * template's IMAGE header example needs. Two calls: open a session sized to
+     * the file, then send the bytes. Needs the Meta APP id (not the WABA) —
+     * `META_APP_ID` — because upload sessions belong to the app.
+     */
+    protected function uploadHeaderMedia(string $token, string $url): string
+    {
+        $appId = (string) config('services.whatsapp.app_id', '');
+        if ($appId === '') {
+            throw new \RuntimeException('META_APP_ID is not configured on the server.');
+        }
+        if (! preg_match('~^https://~i', $url)) {
+            throw new \RuntimeException('The header image must be a public https URL.');
+        }
+
+        $file = Http::timeout(20)->get($url);
+        if (! $file->successful()) {
+            throw new \RuntimeException('The header image could not be downloaded ('.$file->status().').');
+        }
+        $bytes = $file->body();
+        $type  = strtolower(explode(';', (string) $file->header('Content-Type'))[0] ?: 'image/jpeg');
+        if (! in_array($type, ['image/jpeg', 'image/png'], true)) {
+            throw new \RuntimeException('WhatsApp header images must be JPEG or PNG.');
+        }
+        if (strlen($bytes) > 5 * 1024 * 1024) {
+            throw new \RuntimeException('WhatsApp header images must be 5 MB or smaller.');
+        }
+
+        $base    = rtrim(config('services.whatsapp.graph_url', 'https://graph.facebook.com/v25.0'), '/');
+        $session = Http::withToken($token)->acceptJson()->timeout(20)
+            ->post("{$base}/{$appId}/uploads?".http_build_query(['file_length' => strlen($bytes), 'file_type' => $type]));
+        if (! $session->successful() || empty($session->json('id'))) {
+            throw new \RuntimeException($session->json('error.message') ?? 'Meta did not open an upload session.');
+        }
+
+        $upload = Http::withHeaders(['Authorization' => 'OAuth '.$token, 'file_offset' => '0'])
+            ->withBody($bytes, $type)->timeout(60)
+            ->post("{$base}/".$session->json('id'));
+        $handle = $upload->json('h');
+        if (! $upload->successful() || ! is_string($handle) || $handle === '') {
+            throw new \RuntimeException($upload->json('error.message') ?? 'Meta did not return an upload handle.');
+        }
+
+        return $handle;
+    }
+
     protected function graph(string $token, string $method, string $path, array $query = [], ?array $json = null): array
     {
         // One hung connection must fail that call, not the whole request.
@@ -604,11 +671,21 @@ class WhatsappService
             ],
         ];
 
+        $components = [];
+        // An IMAGE-header template is rejected by Meta without this parameter on
+        // every message; the URL must be public https (Meta fetches it).
+        $image = trim((string) ($template['headerImageUrl'] ?? ''));
+        if ($image !== '') {
+            $components[] = ['type' => 'header', 'parameters' => [['type' => 'image', 'image' => ['link' => $image]]]];
+        }
         if ($variables) {
-            $payload['template']['components'] = [[
+            $components[] = [
                 'type'       => 'body',
                 'parameters' => array_map(fn ($v) => ['type' => 'text', 'text' => (string) $v], $variables),
-            ]];
+            ];
+        }
+        if ($components) {
+            $payload['template']['components'] = $components;
         }
 
         return $payload;
