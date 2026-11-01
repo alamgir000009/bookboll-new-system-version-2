@@ -1537,9 +1537,22 @@ class BookingService
             });
         }
 
+        // The calendar loads `venue:id,name`, which carries neither
+        // currency_override nor country_id, so the loaded relation cannot resolve
+        // a currency. Read the full venues once here instead of letting the
+        // mapper look each one up per booking.
+        $calendarCurrencies = $venueIds
+            ? Venue::whereIn('id', $venueIds)->get()
+                ->mapWithKeys(fn (Venue $v) => [(int) $v->id => $this->venueCurrency($v)])
+                ->all()
+            : [];
+
         $bookings = $bookingQuery->orderBy('date')->orderBy('start_time')
             ->get()
-            ->map(fn(Booking $b) => $this->mapDashboardBooking($b))
+            ->map(fn(Booking $b) => $this->mapDashboardBooking(
+                $b,
+                $calendarCurrencies[(int) $b->venue_id] ?? null
+            ))
             ->values();
 
         $locationHours = $this->calendarLocationHours($venueIds);
@@ -4723,13 +4736,15 @@ class BookingService
         return collect($rows)->map(function (Booking $b) use ($venues) {
             $venue = $b->relationLoaded('venue') ? $b->venue : ($venues[$b->venue_id] ?? null);
 
-            return array_merge($this->mapDashboardBooking($b), [
+            $currency = $venue ? $this->venueCurrency($venue) : '';
+
+            return array_merge($this->mapDashboardBooking($b, $currency), [
                 'customer_name'  => $b->user?->name,
                 'customer_email' => $b->user?->email,
                 'customer_phone' => $b->user?->phone,
                 'listing_name'   => $b->listing?->name,
                 'location_name'  => $venue?->name,
-                'currency'       => $venue ? $this->venueCurrency($venue) : '',
+                'currency'       => $currency,
                 'city_id'        => $venue?->city_id ? (string) $venue->city_id : null,
                 'country_id'     => $venue && $this->venueCountryId($venue) ? (string) $this->venueCountryId($venue) : null,
             ]);
@@ -4753,7 +4768,11 @@ class BookingService
         }
 
         $lookups = $this->dashboardLookups();
-        $mapped  = $this->mapDashboardBooking($booking);
+
+        // One resolution for the booking and its payments, so a row can never
+        // disagree with the total it belongs to.
+        $payCur = $booking->venue ? $this->venueCurrency($booking->venue) : null;
+        $mapped = $this->mapDashboardBooking($booking, $payCur ?: null);
 
         $customer = $booking->user ? [
             'id'              => (string) $booking->user->id,
@@ -4769,7 +4788,6 @@ class BookingService
         $listing  = $this->mapDashboardListing($booking->listing);
         $location = $this->mapDashboardLocation($booking->venue);
 
-        $payCur   = $booking->venue ? $this->venueCurrency($booking->venue) : null;
         $payments = $booking->payments->map(fn(Payment $p) => $this->mapDashboardPayment($p, $payCur))->values();
 
         $auditLogs = AuditLog::query()
@@ -5404,7 +5422,13 @@ class BookingService
         return compact('locations', 'listings', 'customers', 'cities', 'countries');
     }
 
-    protected function mapDashboardBooking(Booking $b): array
+    /**
+     * @param ?string $currency The booking's currency when the caller already
+     *                          resolved it. Left null it is resolved here, which
+     *                          costs a venue lookup — pass it from any path that
+     *                          maps more than one booking.
+     */
+    protected function mapDashboardBooking(Booking $b, ?string $currency = null): array
     {
         $b->setAppends([]);
         $date = $b->date;
@@ -5456,6 +5480,11 @@ class BookingService
             'discount'       => (float) ($b->discount_amount ?? 0),
             'amount_paid'    => $amountPaid,
             'notes'          => $b->notes ?: '',
+            // Every amount above is in this currency. It was absent here, so the
+            // single-booking responses (CRM, create, update, collect) returned
+            // totals with nothing to format them with — the list endpoint merged
+            // its own currency in afterwards and so looked correct by contrast.
+            'currency'       => $currency ?? $this->bookingCurrency($b),
             'booking_status' => $b->status,
             'payment_status' => $paymentStatus,
             'payment_method' => $this->toDashboardPaymentMethod($b->payment_method),
