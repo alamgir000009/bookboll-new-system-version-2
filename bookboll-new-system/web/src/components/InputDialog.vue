@@ -74,22 +74,22 @@ function cancel() { resolveInput(null) }
   z-index: 4500; padding: 20px;
 }
 .idlg-panel {
-  background: var(--surface, #ffffff); border-radius: 14px; padding: 22px;
+  background: var(--surface, #ffffff); border: 1px solid var(--border, #e2e8f0); border-radius: 14px; padding: 22px;
   width: 100%; max-width: 440px;
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
 }
 .idlg-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.idlg-title { font-size: 16px; font-weight: 700; color: #0f172a; }
+.idlg-title { font-size: 16px; font-weight: 700; color: var(--text, #0f172a); }
 .idlg-close { color: var(--text-light, #94a3b8); border: none; background: none; cursor: pointer; padding: 2px; border-radius: 6px; }
-.idlg-close:hover { color: #0f172a; background: #f1f5f9; }
+.idlg-close:hover { color: var(--text, #0f172a); background: var(--bg, #f1f5f9); }
 .idlg-message { font-size: 13px; color: var(--text-muted, #64748b); line-height: 1.5; margin: 0 0 14px; }
-.idlg-label { display: block; font-size: 13px; font-weight: 500; color: #334155; margin-bottom: 6px; }
+.idlg-label { display: block; font-size: 13px; font-weight: 500; color: var(--text, #334155); margin-bottom: 6px; }
 .idlg-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .idlg-btn { padding: 9px 18px; border-radius: 9px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
-.idlg-cancel { background: var(--surface, #ffffff); border-color: var(--border, #e2e8f0); color: #334155; }
-.idlg-cancel:hover { background: #f8fafc; }
-.idlg-submit { background: #0f766e; color: #fff; }
-.idlg-submit:hover { background: #0d635c; }
+.idlg-cancel { background: var(--surface, #ffffff); border-color: var(--border, #e2e8f0); color: var(--text, #334155); }
+.idlg-cancel:hover { background: var(--bg, #f8fafc); }
+.idlg-submit { background: var(--primary, #0f766e); color: #fff; }
+.idlg-submit:hover { filter: brightness(0.92); }
 
 .idlg-fade-enter-active, .idlg-fade-leave-active { transition: opacity 0.18s ease; }
 .idlg-fade-enter-from, .idlg-fade-leave-to { opacity: 0; }

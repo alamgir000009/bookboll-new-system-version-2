@@ -47,6 +47,9 @@ const open = computed(() => !!confirmState.value)
 }
 .cd-panel {
   background: var(--surface, #ffffff);
+  /* A border, not just a shadow: on a dark canvas the shadow alone leaves the
+     panel edgeless. */
+  border: 1px solid var(--border, #e2e8f0);
   border-radius: 16px;
   padding: 26px 24px 20px;
   width: 100%; max-width: 420px;
@@ -58,9 +61,11 @@ const open = computed(() => !!confirmState.value)
   display: flex; align-items: center; justify-content: center;
   margin: 0 auto 14px;
 }
-.cd-icon-danger  { background: #fef2f2; color: #dc2626; }
-.cd-icon-neutral { background: #ecfeff; color: #0891b2; }
-.cd-title { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+/* Themed, so the tint and the glyph both follow light/dark instead of printing
+   a white disc on a dark panel. */
+.cd-icon-danger  { background: var(--danger-bg, #fef2f2); color: var(--danger-ink, #dc2626); }
+.cd-icon-neutral { background: var(--info-bg, #ecfeff); color: var(--info-ink, #0891b2); }
+.cd-title { font-size: 17px; font-weight: 700; color: var(--text, #0f172a); margin-bottom: 6px; }
 .cd-message { font-size: 13.5px; color: var(--text-muted, #64748b); line-height: 1.5; margin-bottom: 22px; }
 .cd-actions { display: flex; gap: 10px; }
 /* Three-choice variant: stacked, extra (primary) → confirm → cancel */
@@ -73,10 +78,10 @@ const open = computed(() => !!confirmState.value)
   font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid transparent;
   transition: all 0.15s;
 }
-.cd-cancel { background: var(--surface, #ffffff); border-color: var(--border, #e2e8f0); color: #334155; }
-.cd-cancel:hover { background: #f8fafc; }
-.cd-confirm { background: #0f766e; color: #fff; }
-.cd-confirm:hover { background: #0d635c; }
+.cd-cancel { background: var(--surface, #ffffff); border-color: var(--border, #e2e8f0); color: var(--text, #334155); }
+.cd-cancel:hover { background: var(--bg, #f8fafc); }
+.cd-confirm { background: var(--primary, #0f766e); color: #fff; }
+.cd-confirm:hover { filter: brightness(0.92); }
 .cd-confirm-danger { background: #dc2626; color: #fff; }
 .cd-confirm-danger:hover { background: #b91c1c; }
 
