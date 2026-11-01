@@ -2,6 +2,7 @@
 import ExportDialog from '../components/ExportDialog.vue'
 import AdminAppDownloadButton from '../components/AdminAppDownloadButton.vue'
 import { ref, onMounted, computed, watch } from 'vue'
+import { bookingRefLabel } from '../lib/bookingRef.js'
 import {
   fetchBookingsDashboard, fetchBookingsForExport, cancelDashboardBooking, firstError,
 } from '../lib/bookings.js'
@@ -589,7 +590,7 @@ async function exportCSV(useFilters) {
                 :action-label="can(CAP.MANAGE_BOOKINGS) ? 'New Booking' : ''" @action="showNewBooking = true" />
             </td></tr>
             <tr v-for="b in paginated" :key="b.id" class="row-clickable" @click="viewingId=b.id">
-              <td><span class="mono">#{{ b.id.slice(0,6).toUpperCase() }}</span></td>
+              <td><span class="mono">{{ bookingRefLabel(b) }}</span></td>
               <td>
                 <div class="record-date">{{ fmtDateTime(b.created_at) }}</div>
               </td>

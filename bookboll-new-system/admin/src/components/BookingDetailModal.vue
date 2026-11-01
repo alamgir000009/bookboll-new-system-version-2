@@ -6,6 +6,7 @@ import WhatsappIcon from './WhatsappIcon.vue'
 import CustomerHistoryModal from './CustomerHistoryModal.vue'
 import { openCustomer } from '../lib/customerModal.js'
 import { slotConflicts, fmt12 } from '../lib/slots.js'
+import { bookingRefLabel } from '../lib/bookingRef.js'
 import { dayWindows, slotsForWindows, slotInWindows } from '../lib/specialDays.js'
 import { notifyBookingChanged, notifyPaymentReceipt } from '../customer/notificationDispatch.js'
 import { useCurrentUser } from '../lib/currentUser.js'
@@ -343,10 +344,8 @@ const linkCopied = ref(false)
 let payQrTimer = null
 const payLinkOverride = ref('')
 
-/** Stable display reference for any booking row (defined before the watch that uses it). */
-function makeRef(b) {
-  return b ? `#BKN_${new Date(b.created_at).getFullYear()}_${b.id.slice(0, 2).toUpperCase()}${b.id.slice(-3).toUpperCase()}` : ''
-}
+/** The booking's own reference — see lib/bookingRef.js. */
+const makeRef = (b) => (b ? bookingRefLabel(b) : '')
 
 /**
  * Load OTHER bookings' PENDING payments for context, properly scoped:
@@ -377,7 +376,7 @@ async function loadOtherPending(cur, rows = []) {
       currency: p.currency || '',
       payment_type: p.payment_type,
       booking_date: p.booking_date,
-      ref: makeRef({ id: String(p.booking_id || ''), created_at: p.created_at }),
+      ref: makeRef({ id: String(p.booking_id || ''), booking_id: p.reference || '' }),
       venue: p.venue || '—',
       listingName: p.listingName || '',
     }

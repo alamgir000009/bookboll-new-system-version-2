@@ -1,5 +1,6 @@
 <script setup>
 import ExportDialog from '../components/ExportDialog.vue'
+import { bookingRefLabel } from '../lib/bookingRef.js'
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchExportPages } from '../lib/exportPages.js'
@@ -216,7 +217,7 @@ const markedByName = (id) => adminUsers.value.find(u => u.id === id)?.full_name 
 const paymentRef = (p) => {
   if (p.source_type === 'subscription' && p.subscription_id)
     return `#SUB-${p.subscription_id.slice(0, 6).toUpperCase()}`
-  return p.booking_id ? `#${p.booking_id.slice(0, 6).toUpperCase()}` : '—'
+  return p.booking_id ? bookingRefLabel(bookingRef(p.booking_id) || { id: p.booking_id }) : '—'
 }
 
 const subCustomerName = (payment) => {

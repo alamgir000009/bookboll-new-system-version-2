@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { fetchCustomerCrm } from '../lib/customers.js'
+import { bookingRefLabel } from '../lib/bookingRef.js'
 import { useCurrentUser } from '../lib/currentUser.js'
 import { useJurisdiction } from '../lib/jurisdiction.js'
 import { fmt12 } from '../lib/slots'
@@ -46,10 +47,7 @@ function listingName(id)  { return listings.value.find(l => l.id === id)?.name  
 function locationName(id) { return locations.value.find(l => l.id === id)?.name || '—' }
 function currency(locId)  { return locations.value.find(l => l.id === locId)?.currency_override || '' }
 
-function bookingRef(b) {
-  const id = String(b.id || '')
-  return `#BKN_${new Date(b.created_at).getFullYear()}_${id.slice(0,2).toUpperCase()}${id.slice(-3).toUpperCase()}`
-}
+const bookingRef = (b) => bookingRefLabel(b)
 
 function fmtDate(d) {
   if (!d) return '—'
