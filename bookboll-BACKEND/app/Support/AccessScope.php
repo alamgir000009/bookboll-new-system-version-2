@@ -128,7 +128,7 @@ class AccessScope
     }
 
     /**
-     * Venue ids explicitly pinned to this user, from either source.
+     * Venue ids explicitly pinned to this user, from any source.
      *
      * @return int[]
      */
@@ -142,7 +142,31 @@ class AccessScope
 
         $pivot = DB::table('user_venue')->where('user_id', $user->id)->pluck('venue_id')->all();
 
-        return array_values(array_unique(array_merge($ids, array_map('intval', $pivot))));
+        // Third source, and for a business member the only one: moving an account
+        // into a business nulls assigned_location_ids and detaches user_venue, so
+        // the pin now lives on the membership row. A membership scoped to `all` is
+        // not a pin — it is the whole business — and must contribute nothing here,
+        // or an unpinned member would be narrowed to an empty set. Conversely,
+        // ignoring a scoped membership's location_ids would widen that member from
+        // their venues to the entire business.
+        $fromMembership = [];
+        $membership = \App\Models\BusinessMembership::query()
+            ->where('user_id', $user->id)
+            ->where('status', \App\Models\BusinessMembership::STATUS_ACTIVE)
+            ->first();
+
+        if ($membership && $membership->scope !== 'all') {
+            $fromMembership = array_map(
+                'intval',
+                array_values(array_filter((array) ($membership->location_ids ?? [])))
+            );
+        }
+
+        return array_values(array_unique(array_merge(
+            $ids,
+            array_map('intval', $pivot),
+            $fromMembership
+        )));
     }
 
     /**
@@ -349,9 +373,28 @@ class AccessScope
         $pins = self::pinnedVenueIds($user);
 
         // ── Provider side: everything their business owns, then any pins ──
-        $ownerId = self::ownerUserId($user);
-        if ($ownerId !== null) {
-            $owned = Venue::where('owner_user_id', $ownerId)->pluck('id')->map(fn ($i) => (int) $i)->all();
+        //
+        // A venue reaches its business two ways: the legacy owner key, and
+        // venues.business_id — which is the ONLY link for a business created
+        // owner-less (BusinessIdentityService writes owner_id as null, so the
+        // owner key resolves to nothing for every member of it). Reading both
+        // keeps pre-business providers working while owner_user_id is retired
+        // per-area; without the business branch a member of such a business
+        // signed in to an empty dashboard.
+        $ownerId    = self::ownerUserId($user);
+        $businessId = self::businessId($user);
+
+        if ($ownerId !== null || $businessId !== null) {
+            $owned = Venue::query()
+                ->where(function ($q) use ($ownerId, $businessId) {
+                    if ($ownerId !== null) {
+                        $q->orWhere('owner_user_id', $ownerId);
+                    }
+                    if ($businessId !== null) {
+                        $q->orWhere('business_id', $businessId);
+                    }
+                })
+                ->pluck('id')->map(fn ($i) => (int) $i)->all();
 
             if (self::pinsApply($user) && $pins) {
                 return array_values(array_intersect($owned, $pins));

@@ -134,9 +134,18 @@ class BusinessAssignmentService
     {
         $ownerId = $business->owner_id;
 
+        // Both links, for the same reason AccessScope reads both: a business
+        // created through BusinessIdentityService has owner_id null and owns its
+        // venues by business_id alone. Keying on the owner only, this returned
+        // nothing for such a business — so its venue picker came up empty and
+        // every selected-scope assignment was refused as "not belonging".
         return Venue::query()
-            ->when($ownerId, fn ($q) => $q->where('owner_user_id', $ownerId))
-            ->when(! $ownerId, fn ($q) => $q->whereRaw('1 = 0'))
+            ->where(function ($q) use ($business, $ownerId) {
+                if ($ownerId) {
+                    $q->orWhere('owner_user_id', $ownerId);
+                }
+                $q->orWhere('business_id', $business->id);
+            })
             ->orderBy('name')
             ->get(['id', 'name'])
             ->map(fn (Venue $v) => ['id' => (string) $v->id, 'name' => $v->name ?: ''])
@@ -238,7 +247,14 @@ class BusinessAssignmentService
         }
 
         if ($data['scope'] === 'selected') {
-            $allowed = collect($this->assignableVenues($business))->pluck('id')->map('intval')->all();
+            // Not ->map('intval'): Collection::map hands the callback ($value,
+            // $key), and intval's second parameter is the NUMERIC BASE. Every
+            // element after the first was parsed in the base of its own index —
+            // index 1 is an invalid base and yields 0, index 2 reads the id as
+            // binary — so a business with more than one venue had a corrupt
+            // allow-list and refused its own venues.
+            $allowed = collect($this->assignableVenues($business))
+                ->pluck('id')->map(fn ($id) => (int) $id)->all();
             $foreign = array_diff(array_map('intval', $data['location_ids'] ?? []), $allowed);
             if ($foreign) {
                 $blockers[] = 'Some selected venues do not belong to this business.';
@@ -373,7 +389,15 @@ class BusinessAssignmentService
             // The move. Platform access goes first so nothing can be retained
             // by an additive merge, then the single business membership is
             // attached.
-            $target->syncRoles([]);
+            //
+            // The membership row records the role, but Spatie is what every gate
+            // actually reads — hasAnyRole, getAllPermissions, Capabilities and
+            // AccessScope all go through it, and nothing authorises off
+            // business_memberships.role. Syncing to exactly the granted role is
+            // still not additive, so the comment above holds; clearing to []
+            // instead left the account with NO role, which the dashboard's own
+            // role gate then turned away after the password had verified.
+            $target->syncRoles([$preview->role]);
             $target->forceFill([
                 'owner_user_id'         => $business->owner_id,
                 'assigned_country_ids'  => null,

@@ -23,7 +23,13 @@ use Spatie\Permission\Models\Role;
 uses(RefreshDatabase::class);
 
 beforeEach(function () {
-    foreach (['super_admin', 'admin', 'provider_admin', 'platform_staff', 'customer'] as $r) {
+    // Every assignable role has to exist: the move now syncs the account to the
+    // role it grants, so a missing Spatie row would throw rather than silently
+    // leave the account roleless the way clearing to [] did.
+    foreach (array_merge(
+        ['super_admin', 'admin', 'provider_admin', 'platform_staff', 'customer'],
+        BusinessMembership::ASSIGNABLE_ROLES
+    ) as $r) {
         Role::findOrCreate($r, 'web');
     }
 });
@@ -120,7 +126,12 @@ it('strips platform access atomically and signs the account out', function () {
     expect($res->json('data.membership.role'))->toBe('staff');
 
     $target->refresh();
-    expect($target->getRoleNames()->all())->toBe([])
+    // The platform role is gone and the granted one is in its place — not an
+    // additive merge, and not the empty set. Clearing to [] left the account
+    // with no role at all, which still authenticated and was then turned away
+    // by the dashboard's role gate.
+    expect($target->getRoleNames()->all())->toBe(['staff'])
+        ->and($target->hasRole('platform_staff'))->toBeFalse()
         ->and($target->assigned_country_ids)->toBeNull()
         ->and($target->assigned_location_ids)->toBeNull()
         ->and($target->custom_permissions)->toBeNull()
@@ -446,4 +457,113 @@ it('narrows the list on the server so a big team is still searchable', function 
 
     expect($names)->toContain('Needle Person')
         ->and($names)->not->toContain('Haystack One');
+});
+
+/**
+ * What the move leaves behind has to be a WORKING account, not merely a row.
+ *
+ * The first version of this flow cleared every role and recorded the granted one
+ * on the membership only. Nothing authorises off business_memberships.role, so
+ * the account verified its password and was then refused by the dashboard's role
+ * gate; the venue scope, which resolved a provider's venues through
+ * venues.owner_user_id, came back empty too because a business created through
+ * BusinessIdentityService has owner_id null. Both halves are asserted here: the
+ * gate the dashboard applies, and the venues the account can actually reach.
+ */
+it('leaves a moved member able to sign in and see their business venues', function () {
+    $actor = admin();
+    $b = ownedBusiness();
+    $target = User::factory()->create(['status' => User::ACTIVE]);
+    $target->assignRole('platform_staff');
+
+    // The business owns its venues by business_id — the only link it has, since
+    // its owner_id is null. business_id is not fillable, hence forceFill.
+    $mine = App\Models\Venue::create(['name' => 'Court A']);
+    $mine->forceFill(['business_id' => $b->id])->save();
+    $theirs = App\Models\Venue::create(['name' => 'Someone Else']);
+
+    $token = previewMove($actor, $b, $target->fresh(), ['role' => 'facility_admin'])['preview_token'];
+    $this->actingAs($actor)->postJson("/api/admin/businesses/{$b->id}/assignments", [
+        'preview_token' => $token, 'idempotency_key' => 'k-'.uniqid(),
+    ])->assertOk();
+
+    $target->refresh();
+
+    expect($target->getRoleNames()->all())->toBe(['facility_admin'])
+        // The gate the admin dashboard puts every sign-in through.
+        ->and($target->hasAnyRole(array_merge(
+            App\Support\Capabilities::platformRoles(),
+            App\Support\Capabilities::providerRoles()
+        )))->toBeTrue()
+        // A role with no capabilities behind it is just as unusable.
+        ->and($target->capabilities())->not->toBeEmpty()
+        // Resolved through the business, not the (null) owner key.
+        ->and(App\Support\AccessScope::businessId($target))->toBe($b->id)
+        ->and(App\Support\AccessScope::allowedVenueIds($target))->toBe([$mine->id])
+        ->and(App\Support\AccessScope::canTouchVenue($target, $theirs->id))->toBeFalse();
+});
+
+it('narrows a member scoped to specific venues instead of handing them the business', function () {
+    $actor = admin();
+    $b = ownedBusiness();
+    $target = User::factory()->create(['status' => User::ACTIVE]);
+    $target->assignRole('platform_staff');
+
+    $pinned = App\Models\Venue::create(['name' => 'Pinned Court']);
+    $other = App\Models\Venue::create(['name' => 'Other Court']);
+    foreach ([$pinned, $other] as $v) {
+        $v->forceFill(['business_id' => $b->id])->save();
+    }
+
+    $token = previewMove($actor, $b, $target->fresh(), [
+        'role' => 'facility_admin', 'scope' => 'selected', 'location_ids' => [$pinned->id],
+    ])['preview_token'];
+
+    $this->actingAs($actor)->postJson("/api/admin/businesses/{$b->id}/assignments", [
+        'preview_token' => $token, 'idempotency_key' => 'k-'.uniqid(),
+    ])->assertOk();
+
+    $target->refresh();
+
+    // The move nulls assigned_location_ids and detaches user_venue, so the pin
+    // only survives on the membership row. Missing it would widen this member
+    // from one venue to the whole business.
+    expect(App\Support\AccessScope::allowedVenueIds($target))->toBe([$pinned->id])
+        ->and(App\Support\AccessScope::canTouchVenue($target, $other->id))->toBeFalse();
+});
+
+it('backfills a role onto members a past move left roleless, and only those', function () {
+    $b = ownedBusiness();
+
+    $broken = User::factory()->create(['status' => User::ACTIVE]);
+    $kept = User::factory()->create(['status' => User::ACTIVE]);
+    $kept->assignRole('provider_viewer');
+
+    foreach ([[$broken, 'facility_admin'], [$kept, 'staff']] as [$u, $role]) {
+        BusinessMembership::create([
+            'business_id' => $b->id, 'user_id' => $u->id, 'role' => $role,
+            'scope' => 'all', 'status' => BusinessMembership::STATUS_ACTIVE, 'version' => 1,
+        ]);
+    }
+
+    // An owner membership maps to the Spatie role that runs a business.
+    $owner = User::factory()->create(['status' => User::ACTIVE]);
+    BusinessMembership::create([
+        'business_id' => $b->id, 'user_id' => $owner->id, 'role' => BusinessMembership::ROLE_OWNER,
+        'scope' => 'all', 'status' => BusinessMembership::STATUS_ACTIVE, 'version' => 1,
+    ]);
+
+    $this->artisan('business:backfill-member-roles')->assertSuccessful();
+    expect($broken->fresh()->getRoleNames()->all())->toBe([]);   // dry run writes nothing
+
+    $this->artisan('business:backfill-member-roles --apply')->assertSuccessful();
+
+    expect($broken->fresh()->getRoleNames()->all())->toBe(['facility_admin'])
+        ->and($owner->fresh()->getRoleNames()->all())->toBe(['provider_admin'])
+        // Already had a role: a second pass must not re-role it from the membership.
+        ->and($kept->fresh()->getRoleNames()->all())->toBe(['provider_viewer']);
+
+    // Idempotent: nothing left to do, and nothing changed.
+    $this->artisan('business:backfill-member-roles --apply')->assertSuccessful();
+    expect($broken->fresh()->getRoleNames()->all())->toBe(['facility_admin']);
 });
