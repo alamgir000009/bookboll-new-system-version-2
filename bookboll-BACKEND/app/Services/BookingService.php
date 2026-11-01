@@ -5338,6 +5338,9 @@ class BookingService
                 return [
                     'id'            => (string) $p->id,
                     'booking_id'    => $b ? (string) $b->id : null,
+                    // The human reference, so the row is labelled the way the
+                    // booking is everywhere else rather than by its row id.
+                    'reference'     => $b?->booking_id,
                     'customer_id'   => $b && $b->user_id ? (string) $b->user_id : null,
                     'amount'        => (float) $p->amount,
                     'currency'      => $currency,

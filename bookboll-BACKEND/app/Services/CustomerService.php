@@ -1276,6 +1276,9 @@ class CustomerService
 
         return [
             'id'             => (string) $b->id,
+            // The reference staff and customers actually quote (BKN_YYYY_MM_NNNNN).
+            // Without it the dashboard invented one from the row id.
+            'booking_id'     => $b->booking_id,
             'customer_id'    => $b->user_id ? (string) $b->user_id : null,
             'listing_id'     => $b->listing_id ? (string) $b->listing_id : null,
             'location_id'    => $b->venue_id ? (string) $b->venue_id : null,
