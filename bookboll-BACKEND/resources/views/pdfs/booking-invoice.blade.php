@@ -208,9 +208,8 @@
                         <div style="font-weight: bold; margin-bottom: 5px;">Booking #</div>
                         <div style="line-height: 1.4;">
                             #{{ $booking->booking_id }}<br>
-                            {{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}<br>
-                            {{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} -
-                            {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}
+                            {{ \App\Support\BookingDate::labelOrUnknown($booking->date) }}<br>
+                            {{ \App\Support\BookingDate::rangeOrUnknown($booking->start_time, $booking->end_time) }}
                         </div>
                     </td>
                 </tr>
@@ -254,7 +253,7 @@
                             <table>
                                 <tr>
                                     <td>Date:</td>
-                                    <td>{{ Carbon\Carbon::parse($booking->date)->format('F d, Y') }}</td>
+                                    <td>{{ \App\Support\BookingDate::labelOrUnknown($booking->date) }}</td>
                                 </tr>
                             </table>
                         </div>
@@ -262,7 +261,7 @@
                             <table>
                                 <tr>
                                     <td>Time:</td>
-                                    <td>{{ \Carbon\Carbon::parse($booking->start_time)->format('h:i A') }} - {{ \Carbon\Carbon::parse($booking->end_time)->format('h:i A') }}</td>
+                                    <td>{{ \App\Support\BookingDate::rangeOrUnknown($booking->start_time, $booking->end_time) }}</td>
                                 </tr>
                             </table>
                         </div>

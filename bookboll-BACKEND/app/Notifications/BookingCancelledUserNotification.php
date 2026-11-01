@@ -1,9 +1,9 @@
 <?php
 namespace App\Notifications;
 
-use BookingStatus;
-use Carbon\Carbon;
 use App\Models\Booking;
+use App\Support\BookingDate;
+use BookingStatus;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
@@ -28,8 +28,8 @@ class BookingCancelledUserNotification extends Notification
             ->subject('Your Booking Has Been Cancelled')
             ->greeting('Hi ' . $booking->user->name . ',')
             ->line('We regret to inform you that your booking for ' . $booking->listing->name . ' at ' . $booking->venue->name . ' has been cancelled.')
-            ->line('Date: ' . $booking->date)
-            ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
+            ->line('Date: ' . BookingDate::labelOrUnknown($booking->date))
+            ->line('Time: ' . BookingDate::rangeOrUnknown($booking->start_time, $booking->end_time))
             ->line('Cancel Reason: ' . ($booking->cancel_reason ?? 'N/A'));
 
         if ($booking->venue->maps_url) {
@@ -46,12 +46,18 @@ class BookingCancelledUserNotification extends Notification
     public function toArray($notifiable)
     {
         return [
-            'booking_id'   => $this->booking->id,
-            'venue_name'   => $this->booking->venue->name,
-            'listing_name' => $this->booking->listing->name,
-            'status'       => BookingStatus::CANCELLED,
-            'cancelled_by' => auth()->id(),
-            'cancelled_at' => now(),
+            'booking_id'     => $this->booking->id,
+            'booking_number' => $this->booking->booking_id,
+            'venue_name'     => $this->booking->venue->name,
+            'listing_name'   => $this->booking->listing->name,
+            'status'         => BookingStatus::CANCELLED,
+            // The booking's own day, kept distinct from when it was cancelled.
+            'date'           => BookingDate::iso($this->booking->date),
+            'date_label'     => BookingDate::label($this->booking->date),
+            'start_time'     => $this->booking->start_time,
+            'end_time'       => $this->booking->end_time,
+            'cancelled_by'   => auth()->id(),
+            'cancelled_at'   => now(),
         ];
     }
 }

@@ -2,7 +2,7 @@
 namespace App\Notifications;
 
 use App\Models\Booking;
-use Carbon\Carbon;
+use App\Support\BookingDate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -31,8 +31,8 @@ class BookingCreatedAdminNotification extends Notification implements ShouldQueu
             ->line('Customer: ' . $booking->user->name)
             ->line('Venue: ' . $booking->venue->name)
             ->line('Listing: ' . $booking->listing->name)
-            ->line('Date: ' . $booking->date)
-            ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
+            ->line('Date: ' . BookingDate::labelOrUnknown($booking->date))
+            ->line('Time: ' . BookingDate::rangeOrUnknown($booking->start_time, $booking->end_time))
             ->line('Total: QAR' . number_format($booking->total_price ?? 0, 2));
 
         if ($booking->venue->maps_url) {
@@ -48,10 +48,15 @@ class BookingCreatedAdminNotification extends Notification implements ShouldQueu
     public function toArray()
     {
         return [
-            'booking_id'   => $this->booking->id,
-            'venue_name'   => $this->booking->venue->name,
-            'listing_name' => $this->booking->listing->name,
-            'total_price'  => $this->booking->total_price,
+            'booking_id'     => $this->booking->id,
+            'booking_number' => $this->booking->booking_id,
+            'venue_name'     => $this->booking->venue->name,
+            'listing_name'   => $this->booking->listing->name,
+            'total_price'    => $this->booking->total_price,
+            'date'           => BookingDate::iso($this->booking->date),
+            'date_label'     => BookingDate::label($this->booking->date),
+            'start_time'     => $this->booking->start_time,
+            'end_time'       => $this->booking->end_time,
         ];
     }
 }

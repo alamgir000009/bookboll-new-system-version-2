@@ -1,8 +1,8 @@
 <?php
 namespace App\Notifications;
 
-use Carbon\Carbon;
 use App\Models\Booking;
+use App\Support\BookingDate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
@@ -38,8 +38,8 @@ class BookingUpdatedUserNotification extends Notification
         $mail->line('**Updated Booking Details:**')
             ->line('Venue: ' . $booking->venue->name)
             ->line('Activity: ' . $booking->listing->name)
-            ->line('Date: ' . $booking->date)
-            ->line('Time: ' . Carbon::parse($booking->start_time)->format('h:i A') . ' - ' . Carbon::parse($booking->end_time)->format('h:i A'))
+            ->line('Date: ' . BookingDate::labelOrUnknown($booking->date))
+            ->line('Time: ' . BookingDate::rangeOrUnknown($booking->start_time, $booking->end_time))
             ->line('Total: QAR ' . number_format($booking->total_price, 2))
             ->line('Status: ' . ucfirst($booking->status));
 
@@ -72,9 +72,16 @@ class BookingUpdatedUserNotification extends Notification
     public function toArray($notifiable)
     {
         return [
-            'booking_id' => $this->booking->id,
-            'status'     => 'updated',
-            'changes'    => $this->changes,
+            'booking_id'     => $this->booking->id,
+            'booking_number' => $this->booking->booking_id,
+            'status'         => 'updated',
+            'changes'        => $this->changes,
+            // The date AFTER the update — a reschedule notification that showed
+            // the old one would be worse than showing none.
+            'date'           => BookingDate::iso($this->booking->date),
+            'date_label'     => BookingDate::label($this->booking->date),
+            'start_time'     => $this->booking->start_time,
+            'end_time'       => $this->booking->end_time,
         ];
     }
 }
