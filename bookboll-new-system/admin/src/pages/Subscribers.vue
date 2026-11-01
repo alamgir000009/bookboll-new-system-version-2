@@ -161,13 +161,15 @@ const sessionsForSub = (id) => {
 }
 function currencyForLocation(locationId) {
   const loc = locations.value.find(l => l.id === locationId)
-  if (!loc) return 'AED'
+  // Unknown stays unknown: callers print the amount bare rather than labelling
+  // money in a currency nobody was charged.
+  if (!loc) return ''
   if (loc.currency_override) return loc.currency_override
   const city = cities.value.find(c => cid(c.id) === cid(loc.city_id))
-  if (!city) return 'AED'
-  return countries.value.find(c => cid(c.id) === cid(city.country_id))?.currency_code || 'AED'
+  if (!city) return ''
+  return countries.value.find(c => cid(c.id) === cid(city.country_id))?.currency_code || ''
 }
-function fmtMoney(n, cur = 'AED') { return `${cur} ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
+function fmtMoney(n, cur = '') { return [cur, Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })].filter(Boolean).join(' ') }
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 function formatDays(mask) { return (mask || []).map(d => DAY_NAMES[d]).join(', ') }
 
@@ -247,7 +249,7 @@ const subUpfront = computed(() => {
 })
 const subIsOneTime = computed(() => subPlan.value?.interval === 'one_time')
 const subTrialIsSession = computed(() => Number(subPlan.value?.trial_sessions) > 0)
-const subCur = computed(() => programById(subForm.value.program_id)?.currency || 'AED')
+const subCur = computed(() => programById(subForm.value.program_id)?.currency || '')
 function openNewSub(programId = '') {
   subForm.value = { ...defaultSub(), program_id: programId }
   subTriedSave.value = false
@@ -607,13 +609,13 @@ function bulkExportSelected() {
 
 function subCurrency(s) {
   const prog = programById(s?.program_id)
-  return prog ? (prog.currency || currencyForLocation(prog.location_id)) : 'AED'
+  return prog ? (prog.currency || currencyForLocation(prog.location_id)) : ''
 }
 const subSummaryCurrency = computed(() => {
   const first = filteredSortedSubs.value[0]
   if (first) return subCurrency(first)
   const anyProg = providerOwnPrograms.value[0]
-  return anyProg ? (anyProg.currency || currencyForLocation(anyProg.location_id)) : 'AED'
+  return anyProg ? (anyProg.currency || currencyForLocation(anyProg.location_id)) : ''
 })
 const subTotals = computed(() => {
   const list = filteredSortedSubs.value

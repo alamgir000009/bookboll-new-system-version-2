@@ -624,8 +624,10 @@ function openPreview(item) {
 }
 
 // --- withdrawal actions ---
-function fmtMoney(n, c = 'AED') {
-  return `${c} ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+// No default code: an amount whose currency is unknown prints bare rather than
+// claiming to be dirhams.
+function fmtMoney(n, c = '') {
+  return [c, Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })].filter(Boolean).join(' ')
 }
 function fmtDate(d) {
   if (!d) return '—'
@@ -928,7 +930,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
             <div class="approve-meta">
               <span class="meta-pill">{{ item.sport_category }}</span>
               <span v-if="item._type === 'listing'">{{ item.base_price }}/hr &middot; Cap {{ item.capacity }}</span>
-              <span v-else>{{ item.currency || 'AED' }} {{ item.monthly_price }}/mo &middot; {{ item.free_trial_days || 14 }}d trial</span>
+              <span v-else>{{ item.currency || '' }} {{ item.monthly_price }}/mo &middot; {{ item.free_trial_days || 14 }}d trial</span>
             </div>
 
             <div class="approve-provider-row">
@@ -1058,7 +1060,7 @@ function livePhotos(item) { return previewPhotos(item).filter(u => !brokenPhotos
           <div class="approve-icon withdrawal-icon"><Banknote :size="20" /></div>
           <div class="approve-body">
             <div class="approve-title-row">
-              <span class="approve-title">{{ fmtMoney(w.amount, w.currency || 'AED') }}</span>
+              <span class="approve-title">{{ fmtMoney(w.amount, w.currency || '') }}</span>
               <span class="type-badge type-withdrawal">Withdrawal</span>
               <span class="escrow-chip" :class="wdEscrowOk(w) ? 'ok' : 'warn'" :title="wdEscrowOk(w) ? 'The amount is reserved in the wallet escrow' : 'Wallet escrow does not cover this amount — investigate before paying'">
                 <Check v-if="wdEscrowOk(w)" :size="11" /><AlertTriangle v-else :size="11" />

@@ -168,14 +168,16 @@ function money(n) { return `${Number(n || 0).toLocaleString('en-US', { maximumFr
 // wrong; every money KPI groups by currency instead.
 const locationCurrency = computed(() => {
   const cityCountry = new Map(cities.value.map(ci => [ci.id, ci.country_id]))
-  const ccy = new Map(countries.value.map(co => [co.id, co.currency_code || 'AED']))
+  // No last-resort code: a venue with no resolvable country groups under '' and
+  // prints its amounts bare, rather than labelling them a currency nobody charged.
+  const ccy = new Map(countries.value.map(co => [co.id, co.currency_code || '']))
   const map = new Map()
   for (const l of locations.value) {
-    map.set(l.id, l.currency_override || ccy.get(cityCountry.get(l.city_id)) || 'AED')
+    map.set(l.id, l.currency_override || ccy.get(cityCountry.get(l.city_id)) || '')
   }
   return map
 })
-function bookingCurrency(b) { return b?.currency || locationCurrency.value.get(b?.location_id) || 'AED' }
+function bookingCurrency(b) { return b?.currency || locationCurrency.value.get(b?.location_id) || '' }
 
 // Sum a numeric field grouped by currency → [{ currency, amount }] desc by amount.
 function sumByCurrency(list, valueFn) {
@@ -493,7 +495,7 @@ const membershipRevenueRows = computed(() => {
     rows.push({
       date: (pmt.paid_at || pmt.created_at || '').slice(0, 10),
       amount: Number(pmt.amount) || 0,
-      currency: pmt.currency || 'AED',
+      currency: pmt.currency || '',
       location_id: prog?.location_id || null,
       program_id: sub.program_id,
     })
@@ -529,7 +531,7 @@ const chartCurrencies = computed(() => {
   for (const r of membershipRevenueInView.value) if (r.amount) set.add(r.currency)
   return [...set]
 })
-const chartCurrency = ref('AED')
+const chartCurrency = ref('')   // replaced by the first real currency the data has
 watch(chartCurrencies, (list) => { if (list.length && !list.includes(chartCurrency.value)) chartCurrency.value = list[0] }, { immediate: true })
 
 // TRUE multi-source revenue: venue + event booking totals PLUS membership billing.
@@ -568,7 +570,7 @@ const memRevCurrencies = computed(() => {
   for (const r of membershipRevenueRows.value) acc.set(r.currency, (acc.get(r.currency) || 0) + r.amount)
   return [...acc.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c)
 })
-const memRevCurrency = ref('AED')
+const memRevCurrency = ref('')   // replaced by the first real currency the data has
 watch(memRevCurrencies, (list) => { if (list.length && !list.includes(memRevCurrency.value)) memRevCurrency.value = list[0] }, { immediate: true })
 const bookingsTrend = computed(() => bucketize(chartData('bookings'), b => b.booking_date, () => 1, bucketsFor('bookings')))
 // New customers = first booking (within the current scope+filters) per customer.
@@ -786,7 +788,7 @@ const businessKpis = computed(() => {
     { label: 'My Revenue',        value: revenue.value, sub: revenue.sub,   icon: DollarSign, color: 'var(--info-ink)', bg: 'var(--info-bg)' },
     { label: 'My Bookings',       value: filteredBookings.value.length,  icon: BookOpen,   color: 'var(--info-ink)', bg: 'var(--info-bg)' },
     { label: 'Active Listings',   value: myListings.filter(l => l.status === 'active').length, icon: MapPin, color: 'var(--purple-ink)', bg: 'var(--purple-bg)' },
-    { label: 'Wallet Available',  value: `${myWallet.value?.currency || 'AED'} ${money(myWallet.value?.available_balance)}`, icon: WalletIcon, color: 'var(--positive-ink)', bg: 'var(--positive-bg)' },
+    { label: 'Wallet Available',  value: [myWallet.value?.currency, money(myWallet.value?.available_balance)].filter(Boolean).join(' '), icon: WalletIcon, color: 'var(--positive-ink)', bg: 'var(--positive-bg)' },
   ]
 })
 
@@ -799,7 +801,7 @@ const businessKpis = computed(() => {
 const hasMemberships = computed(() => viewPrograms.value.length > 0)
 const membershipCurrency = computed(() => {
   const anyProg = programs.value.find(p => p.owner_user_id === currentOwnerUserId.value)
-  return anyProg?.currency || myWallet.value?.currency || 'AED'
+  return anyProg?.currency || myWallet.value?.currency || ''
 })
 const membershipKpis = computed(() => {
   const list = subscriptions.value

@@ -392,7 +392,7 @@ function subStatusValue(sub) {
 function currencyForLoc(locId) {
   const loc = locations.value.find(l => l.id === locId)
   const city = cities.value.find(c => c.id === loc?.city_id)
-  return countries.value.find(c => c.id === city?.country_id)?.currency_code || 'AED'
+  return countries.value.find(c => c.id === city?.country_id)?.currency_code || ''
 }
 // { customerId: { 'AED': 1200, 'SAR': 800 } }
 const spendByCustomer = computed(() => {

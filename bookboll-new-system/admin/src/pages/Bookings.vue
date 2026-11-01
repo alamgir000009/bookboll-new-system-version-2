@@ -124,7 +124,7 @@ const filterMethod   = ref([])
 const filterCurrency = ref([])
 // The server resolves currency from the venue (override → city → country) and puts
 // it on the row, so the page no longer needs the venue/city/country lists to show it.
-const currencyOf = (b) => b?.currency || 'AED'
+const currencyOf = (b) => b?.currency || ''
 const currencyOptions = computed(() => currencyOpts.value)
 // These are the values bookings.payment_method actually stores. The list inherited
 // from the Supabase build used a different vocabulary ('online', 'cash', 'card'…),

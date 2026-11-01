@@ -1418,7 +1418,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
                Bookboll to take a cut of, so this one pays a flat fee to publish. -->
           <span v-if="ownSpot">
             A free event at your own spot pays a one-off
-            <b>{{ ownSpotMinFeeCurrency }} {{ Number(ownSpotMinFee).toFixed(2) }}</b> fee to publish —
+            <b>{{ [ownSpotMinFeeCurrency, Number(ownSpotMinFee).toFixed(2)].filter(Boolean).join(' ') }}</b> fee to publish —
             it keeps the Events feed from filling up with throwaway posts. Charge a price per person
             instead and you pay the usual {{ seatPct }}% of seats, with nothing flat on top.
           </span>
@@ -1645,7 +1645,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
             <div class="hg-choice-tags">
               <span><Check :size="12" /> No court to book — your place, your time</span>
               <span><EyeOff :size="12" /> The exact address can stay private</span>
-              <span class="hg-choice-fee"><CreditCard :size="12" /> Free events pay a {{ ownSpotMinFeeCurrency }} {{ ownSpotMinFee }} fee to publish</span>
+              <span class="hg-choice-fee"><CreditCard :size="12" /> Free events pay a {{ [ownSpotMinFeeCurrency, ownSpotMinFee].filter(Boolean).join(' ') }} fee to publish</span>
             </div>
           </button>
         </div>
@@ -1691,7 +1691,7 @@ function goToPublished() { const p = publishedPath.value; published.value = null
               <CreditCard :size="14" />
               <span>
                 This event is free, so there's no court and no seat money for Bookboll to take a share of —
-                publishing it costs a one-off <b>{{ ownSpotMinFeeCurrency }} {{ Number(ownSpotMinFee).toFixed(2) }}</b>,
+                publishing it costs a one-off <b>{{ [ownSpotMinFeeCurrency, Number(ownSpotMinFee).toFixed(2)].filter(Boolean).join(' ') }}</b>,
                 paid at the last step. Go back and set a price per person and you pay the usual
                 {{ seatPct }}% of seats instead.
               </span>

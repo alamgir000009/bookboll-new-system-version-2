@@ -473,7 +473,7 @@ async function openUsage(c) {
 function closeUsage() { usageCode.value = null }
 const usageTotalDiscount = computed(() => usageRows.value.reduce((s, r) => s + Number(r.discount_amount || 0), 0))
 const usageTotalOrders = computed(() => usageRows.value.reduce((s, r) => s + Number(r.order_amount || 0), 0))
-const usageCurrency = computed(() => usageRows.value[0]?.currency || 'AED')
+const usageCurrency = computed(() => usageRows.value[0]?.currency || '')
 function audienceLabel(a) { return AUDIENCE_LABEL[a] || 'Everyone' }
 function fmtDateTime(d) { return d ? new Date(d).toLocaleString() : '—' }
 

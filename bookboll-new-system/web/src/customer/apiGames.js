@@ -62,7 +62,9 @@ export async function gameConfig(listingId = null, community = false) {
   tournamentsEnabled.value = data.tournaments_enabled !== false
   hangoutLocationEnabled.value = data.hangout_enabled !== false
   ownSpotMinFee.value = Number(data.own_spot_min_fee ?? OWN_SPOT_MIN_FEE)
-  ownSpotMinFeeCurrency.value = String(data.own_spot_min_fee_currency || 'USD')
+  // No stand-in code: the publish fee is real money, and quoting it in a
+  // currency the server never named misleads the host.
+  ownSpotMinFeeCurrency.value = String(data.own_spot_min_fee_currency || '')
 
   _config[key] = {
     courtCommissionPct: Number(data.court_commission_pct ?? 15),

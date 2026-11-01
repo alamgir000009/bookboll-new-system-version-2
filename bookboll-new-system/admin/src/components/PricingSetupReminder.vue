@@ -5,7 +5,9 @@ import { adminBrandVars } from '../lib/adminBrand.js'
 const props = defineProps({ features: { type:Array, default:() => [] }, basePrice:Number, currency:String })
 const emit = defineEmits(['setup','skip','close'])
 const base = computed(() => Number(props.basePrice) > 0 ? Number(props.basePrice) : 100)
-const money = value => `${props.currency || 'QAR'} ${Number(value.toFixed(2)).toLocaleString()}`
+// No stand-in code: with no resolvable currency the example prints bare rather
+// than quoting a figure in money nobody charges.
+const money = value => [props.currency, Number(value.toFixed(2)).toLocaleString()].filter(Boolean).join(' ')
 </script>
 <template>
   <Teleport to="body"><div v-if="features.length" class="pricing-reminder-overlay" @click.self="emit('close')">

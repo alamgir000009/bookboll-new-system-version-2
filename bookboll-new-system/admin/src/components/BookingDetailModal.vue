@@ -182,7 +182,9 @@ function editIsBooked(slot) {
 
 const editTotal = computed(() => editSelectedSlot.value ? editResolvePrice(editSelectedSlot.value.start_time) : 0)
 
-const editCurrency = computed(() => editLocations.value.find(l => l.id === editVenueId.value)?.currency_override || 'AED')
+// No invented currency anywhere on this screen: an amount whose currency cannot
+// be resolved prints bare rather than claiming to be dirhams.
+const editCurrency = computed(() => editLocations.value.find(l => l.id === editVenueId.value)?.currency_override || '')
 
 async function openEdit() {
   editError.value = ''
@@ -306,7 +308,7 @@ async function saveEdit() {
         date: booking.value?.booking_date, start_time: booking.value?.start_time ? fmt12(booking.value.start_time) : '',
         end_time: booking.value?.end_time ? fmt12(booking.value.end_time) : '',
         code: String(booking.value?.id || '').slice(0, 8).toUpperCase(),
-        currency: location.value?.currency_override || 'AED',
+        currency: location.value?.currency_override || '',
       },
     })
   } catch { /* non-blocking */ }
@@ -372,7 +374,7 @@ async function loadOtherPending(cur, rows = []) {
       id: p.id,
       booking_id: p.booking_id,
       amount: Number(p.amount || 0),
-      currency: p.currency || 'AED',
+      currency: p.currency || '',
       payment_type: p.payment_type,
       booking_date: p.booking_date,
       ref: makeRef({ id: String(p.booking_id || ''), created_at: p.created_at }),
@@ -392,9 +394,10 @@ async function loadOtherPending(cur, rows = []) {
 /** "AED 210.00 · SAR 200.00" summary for a list of pending items. */
 function summarizeAmounts(items) {
   const byCur = {}
-  for (const it of items) byCur[it.currency] = (byCur[it.currency] || 0) + it.amount
+  for (const it of items) byCur[it.currency || ''] = (byCur[it.currency || ''] || 0) + it.amount
   return Object.entries(byCur)
-    .map(([c, a]) => `${c} ${a.toLocaleString(undefined, { minimumFractionDigits: 2 })}`)
+    // An unresolved currency contributes its own subtotal, printed bare.
+    .map(([c, a]) => [c, a.toLocaleString(undefined, { minimumFractionDigits: 2 })].filter(Boolean).join(' '))
     .join(' · ')
 }
 
@@ -541,7 +544,7 @@ const duration = computed(() => {
   return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h} hour${h > 1 ? 's' : ''}`) : `${m} min`
 })
 
-const currency = computed(() => location.value?.currency_override || 'AED')
+const currency = computed(() => location.value?.currency_override || '')
 
 const bookingRef = computed(() => makeRef(booking.value))
 
@@ -770,7 +773,7 @@ async function markPaid(pmtId) {
           listing: listing.value?.name, venue: location.value?.name, business_name: location.value?.name,
           date: booking.value?.booking_date, start_time: booking.value?.start_time ? fmt12(booking.value.start_time) : '',
           code: String(booking.value?.id || '').slice(0, 8).toUpperCase(),
-          amount: pmt?.amount, currency: pmt?.currency || location.value?.currency_override || 'AED',
+          amount: pmt?.amount, currency: pmt?.currency || location.value?.currency_override || '',
         },
       })
     }
@@ -1075,7 +1078,7 @@ function sendConfirmationEmail() {
                   <span class="bdm-pending-sub">{{ fmtDate(it.booking_date) }} · {{ it.ref }}</span>
                 </div>
                 <div class="bdm-pending-right">
-                  <span class="bdm-pending-amt">{{ it.currency }} {{ it.amount.toLocaleString(undefined, { minimumFractionDigits: 2 }) }}</span>
+                  <span class="bdm-pending-amt">{{ [it.currency, it.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })].filter(Boolean).join(' ') }}</span>
                   <span class="bdm-status-chip status-pending">pending</span>
                   <ChevronRight :size="16" class="bdm-pending-arrow" />
                 </div>
@@ -1096,7 +1099,7 @@ function sendConfirmationEmail() {
                     <span class="bdm-pending-sub">{{ fmtDate(it.booking_date) }} · {{ it.ref }}</span>
                   </div>
                   <div class="bdm-pending-right">
-                    <span class="bdm-pending-amt">{{ it.currency }} {{ it.amount.toLocaleString(undefined, { minimumFractionDigits: 2 }) }}</span>
+                    <span class="bdm-pending-amt">{{ [it.currency, it.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })].filter(Boolean).join(' ') }}</span>
                     <span class="bdm-status-chip status-pending">pending</span>
                     <ChevronRight :size="16" class="bdm-pending-arrow" />
                   </div>

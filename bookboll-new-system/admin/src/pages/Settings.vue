@@ -26,7 +26,7 @@ const loading = ref(false)
 const savingAll = ref(false)
 const savedAll = ref(false)
 
-const platform = ref({ name: 'Bookboll', tagline: 'Book your game', currency: 'AED' })
+const platform = ref({ name: 'Bookboll', tagline: 'Book your game', currency: '' })
 const notifications = ref({
   newBooking: true,
   paymentFailed: true,
@@ -86,7 +86,7 @@ function platformRows() {
   return [
     { key: 'platform_name', value: String(platform.value.name || '').trim() || 'Bookboll' },
     { key: 'platform_tagline', value: String(platform.value.tagline || '').trim() },
-    { key: 'platform_default_currency', value: String(platform.value.currency || '').trim().toUpperCase() || 'AED' },
+    { key: 'platform_default_currency', value: String(platform.value.currency || '').trim().toUpperCase() },
   ]
 }
 

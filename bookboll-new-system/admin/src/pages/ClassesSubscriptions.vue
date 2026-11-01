@@ -202,7 +202,7 @@ const locationName = (id) => locations.value.find(l => l.id === id)?.name || '�
 // a venue with no city, or lists that have not loaded yet.
 //
 // This used to return 'AED' in those cases, which was worse than useless: every
-// caller reads `currencyForLocation(...) || program.currency || 'AED'`, so the
+// caller reads `currencyForLocation(...) || program.currency || ''`, so the
 // hardcoded 'AED' always won and the program's OWN stored currency was never
 // reached. A PKR program with no location displayed as AED — and because the save
 // payload is built from the same expression, opening and saving it rewrote the
@@ -284,7 +284,7 @@ const pgTrialAccepted = ref(false)
 // Currency always follows the program's location → city → country. Keep the
 // form's currency in lock-step with the selected location so it can never drift.
 watch(() => pgForm.value.location_id, (locId) => {
-  if (locId) pgForm.value.currency = currencyForLocation(locId) || pgForm.value.currency || 'AED'
+  if (locId) pgForm.value.currency = currencyForLocation(locId) || pgForm.value.currency || ''
 })
 
 // ── MOAT: every program must offer an incentive — never "none" ────────────────
@@ -356,7 +356,7 @@ const trialAgreeLabel = computed(() =>
 const trialIsSession = computed(() => Number(pgForm.value.free_trial_sessions) > 0)
 // One-line "what the customer sees" preview for the program's billing + incentive.
 const planPreviewText = computed(() => {
-  const cur = pgForm.value.currency || 'AED'
+  const cur = pgForm.value.currency || ''
   const price = fmtMoney(pgForm.value.monthly_price, cur)
   if (!(Number(pgForm.value.monthly_price) > 0)) return ''
   // A one-off sign-up fee (if set) is charged once at joining, before the recurring plan.
@@ -547,7 +547,7 @@ function defaultProgram() {
     show_on_marketplace: true, show_on_provider_site: true,   // placement (both on by default)
     // Price starts blank so we can show a currency-aware "Suggested: X" hint instead of a
     // hardcoded number the provider might overlook. joining_fee is a one-off sign-up charge.
-    coach_name: '', monthly_price: '', joining_fee: 0, currency: 'AED', billing_interval: 'monthly',
+    coach_name: '', monthly_price: '', joining_fee: 0, currency: '', billing_interval: 'monthly',
     is_draft: false,   // becomes true only when saved via "Save draft"
     bonus_months: 0,
     discount_months: 0,
@@ -601,7 +601,7 @@ function applyTemplate(tpl) {
   // Start from a clean default so a second template click never leaves stale fields,
   // then overlay the template patch. Keep any location the provider already chose.
   pgForm.value = { ...defaultProgram(), ...tpl.patch }
-  if (loc) { pgForm.value.location_id = loc; pgForm.value.currency = cur || currencyForLocation(loc) || 'AED' }
+  if (loc) { pgForm.value.location_id = loc; pgForm.value.currency = cur || currencyForLocation(loc) || '' }
   if (owner) pgForm.value.owner_user_id = owner
   reseedOffer()   // pick a valid recommended trial/discount for the new plan
   pgActiveTemplate.value = tpl.key
@@ -622,7 +622,7 @@ async function openNewProgram(locationId = '') {
     pgForm.value.location_id = locationId
     const loc = locations.value.find(l => l.id === locationId)
     if (loc?.owner_user_id) pgForm.value.owner_user_id = loc.owner_user_id
-    pgForm.value.currency = currencyForLocation(locationId) || pgForm.value.currency || 'AED'
+    pgForm.value.currency = currencyForLocation(locationId) || pgForm.value.currency || ''
   }
   pgTrialAccepted.value = false
   pgTriedSave.value = false
@@ -643,7 +643,7 @@ function openEditProgram(p) {
     free_trial_sessions: Number(p.free_trial_sessions) || 0,
     joining_fee: Number(p.joining_fee) || 0,
     is_draft: p.is_draft === true,
-    currency: currencyForLocation(p.location_id) || p.currency || 'AED',
+    currency: currencyForLocation(p.location_id) || p.currency || '',
     day_of_week_mask: Array.isArray(p.day_of_week_mask) ? [...p.day_of_week_mask] : [],
     images: Array.isArray(p.images) ? [...p.images] : [],
     signup_form: asFields(p.signup_form),
@@ -690,7 +690,7 @@ async function openDuplicateProgram(p) {
     free_trial_sessions: Number(p.free_trial_sessions) || 0,
     joining_fee: Number(p.joining_fee) || 0,
     is_draft: false,   // a duplicate is a fresh program, never inherit draft state
-    currency: currencyForLocation(p.location_id) || p.currency || 'AED',
+    currency: currencyForLocation(p.location_id) || p.currency || '',
     day_of_week_mask: Array.isArray(p.day_of_week_mask) ? [...p.day_of_week_mask] : [],
     images: Array.isArray(p.images) ? [...p.images] : [],
     signup_form: asFields(p.signup_form),
@@ -789,7 +789,7 @@ async function saveDraft() {
     sport_category: pgForm.value.sport_category || '',
     coach_name: isGym ? '' : (pgForm.value.coach_name || ''),
     monthly_price: Number(pgForm.value.monthly_price) || 0,
-    currency: currencyForLocation(pgForm.value.location_id) || pgForm.value.currency || 'AED',
+    currency: currencyForLocation(pgForm.value.location_id) || pgForm.value.currency || '',
     billing_interval: pgForm.value.billing_interval || 'monthly',
     sessions_per_week: isGym ? 0 : (Number(pgForm.value.sessions_per_week) || 1),
     session_duration_minutes: isGym ? 0 : (Number(pgForm.value.session_duration_minutes) || 60),
@@ -989,7 +989,7 @@ async function saveProgram() {
     sport_category: pgForm.value.sport_category || '',
     coach_name: isGym ? '' : (pgForm.value.coach_name || ''),
     monthly_price: Number(pgForm.value.monthly_price) || 0,
-    currency: currencyForLocation(pgForm.value.location_id) || pgForm.value.currency || 'AED',
+    currency: currencyForLocation(pgForm.value.location_id) || pgForm.value.currency || '',
     billing_interval: interval,
     sessions_per_week: isGym ? 0 : (Number(pgForm.value.sessions_per_week) || 1),
     session_duration_minutes: isGym ? 0 : (Number(pgForm.value.session_duration_minutes) || 60),
@@ -1450,7 +1450,7 @@ const { page: pgPage, perPage: pgPerPage, totalPages: pgTotalPages, paginated: p
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 function formatDays(mask) { return (mask || []).map(d => DAY_NAMES[d]).join(', ') }
-function fmtMoney(n, cur = 'AED') { return `${cur} ${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
+function fmtMoney(n, cur = '') { return [cur, Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })].filter(Boolean).join(' ') }
 
 const BILLING_INTERVALS = [
   { value: 'weekly',    label: 'Weekly' },
@@ -1492,7 +1492,7 @@ function roundNice(n) {
 }
 const suggestedMonthlyPrice = computed(() => {
   const base = SUGGESTED_MONTHLY_AED[normMembershipCategory(pgForm.value.category)] || 300
-  const cur = pgForm.value.currency || 'AED'
+  const cur = pgForm.value.currency || ''
   const factor = CURRENCY_FACTOR[cur] != null ? CURRENCY_FACTOR[cur] : 1
   return roundNice(base * factor)
 })
@@ -1531,7 +1531,7 @@ watch(() => pgForm.value.program_type, (type) => {
 // Auto-set currency and owner from selected location
 watch(() => pgForm.value.location_id, (locId) => {
   if (!locId) return
-  pgForm.value.currency = currencyForLocation(locId) || pgForm.value.currency || 'AED'
+  pgForm.value.currency = currencyForLocation(locId) || pgForm.value.currency || ''
   const loc = locations.value.find(l => l.id === locId)
   if (loc?.owner_user_id && !pgEditing.value) {
     pgForm.value.owner_user_id = loc.owner_user_id

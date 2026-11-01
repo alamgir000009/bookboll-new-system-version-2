@@ -1324,7 +1324,7 @@ const payAcctForm = ref(defaultPayAcctForm())
 const payAcctEditing = ref(false)
 
 function defaultPayAcctForm() {
-  return { account_holder: '', bank_name: '', iban: '', swift: '', currency: 'AED' }
+  return { account_holder: '', bank_name: '', iban: '', swift: '', currency: '' }
 }
 
 async function checkProviderOnline(locationId) {
@@ -1379,7 +1379,7 @@ function openPayAcctManage() {
     bank_name: providerAccount.value.bank_name || '',
     iban: providerAccount.value.iban || '',
     swift: providerAccount.value.swift || '',
-    currency: providerAccount.value.currency || 'AED',
+    currency: providerAccount.value.currency || '',
   }
   payAcctModal.value = true
 }
@@ -1567,7 +1567,7 @@ function currencyForLocation(locationId) {
   if (loc?.currency_override) return loc.currency_override
   const city = cities.value.find(c => cid(c.id) === cid(loc?.city_id))
   const country = countries.value.find(c => cid(c.id) === cid(city?.country_id))
-  return country?.currency_code || 'AED'
+  return country?.currency_code || ''
 }
 
 /* section completeness */
@@ -3087,7 +3087,7 @@ const flatTR = createTouchReorder({ attr: 'data-tr-flat', start: onFlatDragStart
                 <span class="sl-cap-demo-label">What customers see</span>
                 <div class="sl-cap-slot" :class="{ 'is-hidden': form.show_slot_capacity === false }">
                   <div class="sl-cap-slot-time">6:00 PM<small>to 7:00 PM</small></div>
-                  <div class="sl-cap-slot-price">{{ currencyForLocation(form.location_id) || 'QAR' }} {{ Number(form.base_price) || 100 }}</div>
+                  <div class="sl-cap-slot-price">{{ [currencyForLocation(form.location_id), Number(form.base_price) || 100].filter(Boolean).join(' ') }}</div>
                   <div v-if="form.show_slot_capacity !== false" class="sl-cap-slot-left">
                     {{ Math.max(1, Number(form.max_bookings_per_slot) || 1) }} left
                   </div>

@@ -16,7 +16,7 @@ const props = defineProps({
   basePrice: { type: Number, default: 0 },
   slotDuration: { type: Number, default: 60 },
   pattern: { type: String, default: 'A' },
-  currency: { type: String, default: 'AED' },
+  currency: { type: String, default: '' },
   hours: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['update:groups', 'update:cells', 'update:pattern', 'below-base'])

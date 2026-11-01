@@ -34,7 +34,7 @@ const props = defineProps({
   basePrice: { type: Number, default: 0 },
   slotDuration: { type: Number, default: 60 },
   pattern: { type: String, default: 'A' },
-  currency: { type: String, default: 'AED' },
+  currency: { type: String, default: '' },
   /** The listing's own weekly hours: [{ day_of_week, is_open, periods }] */
   hours: { type: Array, default: () => [] },
   /** The venue's weekly hours, same shape. The server sells a slot only inside

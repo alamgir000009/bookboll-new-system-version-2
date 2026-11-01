@@ -143,7 +143,7 @@ function currencyForOwner(ownerId) {
   // last resort: provider's own country_id
   const pu = providers.value.find(u => String(u.id) === String(ownerId))
     || allBusinessOwners.value.find(u => u.id === ownerId)
-  return countries.value.find(c => c.id === pu?.country_id)?.currency_code || 'AED'
+  return countries.value.find(c => c.id === pu?.country_id)?.currency_code || ''
 }
 
 // Currency for a specific country (multi-country wallets each hold one currency).
@@ -831,7 +831,7 @@ async function loadAll() {
       const homeCountry = p.country_id || null
       if (!homeCountry) continue
       if (wallets.value.find(w => String(w.owner_user_id) === String(p.id))) continue
-      const currency = countries.value.find(c => cid(c.id) === cid(homeCountry))?.currency_code || currencyForOwner(p.id) || 'AED'
+      const currency = countries.value.find(c => cid(c.id) === cid(homeCountry))?.currency_code || currencyForOwner(p.id) || ''
       const created = await apiCreateWallet({ owner_user_id: p.id, country_id: homeCountry, currency })
       if (created.success && created.data?.wallet) wallets.value.push(created.data.wallet)
     }
@@ -1431,7 +1431,7 @@ async function submitWithdrawal() {
     country_id:     currentWallet.value.country_id || selectedCountryId.value,
     wallet_id:      currentWallet.value.id,
     amount:         amt,
-    currency:       currentWallet.value.currency || 'AED',
+    currency:       currentWallet.value.currency || '',
     payout_method:  'bank_transfer',
     payout_details: details,
     notes:          wdForm.value.notes.trim() || null,
@@ -1551,7 +1551,7 @@ async function seedPayment(type) {
       owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, wallet_id: w.id, type, direction: 'credit',
       amount: gross, provider_share: share, platform_fee: platform,
       source_label: 'Subscription (simulated)', description: 'Monthly subscription charge (online)',
-      status: 'on_hold', currency: w.currency || 'AED',
+      status: 'on_hold', currency: w.currency || '',
       available_on: avail.toISOString().slice(0, 10), hold_days_snapshot: holdDays,
     })
     await applyWalletDelta(w.id, { pending: share, earned: share })
@@ -1560,7 +1560,7 @@ async function seedPayment(type) {
       owner_user_id: selectedProvider.value, country_id: selectedCountryId.value, wallet_id: w.id, type, direction: 'credit',
       amount: gross, provider_share: share, platform_fee: platform,
       source_label: 'Online booking', description: 'Online booking payment',
-      status: 'completed', currency: w.currency || 'AED',
+      status: 'completed', currency: w.currency || '',
     })
     await applyWalletDelta(w.id, { available: share, earned: share })
   }
