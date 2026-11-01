@@ -5271,6 +5271,8 @@ class BookingService
 
     protected function mapDashboardOtherPending(Booking $current)
     {
+        $currencyByVenue = [];
+
         return Payment::query()
             ->where('status', PaymentStatus::PENDING)
             ->where('booking_id', '!=', $current->id)
@@ -5279,7 +5281,9 @@ class BookingService
             ->latest('id')
             ->limit(80)
             ->get()
-            ->map(function (Payment $p) {
+            // Resolved once per venue: eighty rows are usually a handful of venues,
+            // and bookingCurrency() loads the venue each time it is asked.
+            ->map(function (Payment $p) use (&$currencyByVenue) {
                 $b   = $p->booking;
                 $loc = $b?->venue;
                 $ownerId = $loc?->relationLoaded('users')
@@ -5296,12 +5300,29 @@ class BookingService
                     $type = 'remaining';
                 }
 
+                /*
+                 * The currency this money is actually in: the payment's own, then
+                 * the booking's stamped one, then the venue's (override → its
+                 * country's). Sent empty when none resolves — the dashboard prints
+                 * the amount bare rather than labelling it a currency nobody
+                 * charged. This used to be hardcoded '', so every row inherited the
+                 * client's AED fallback and a Lahore booking read as dirhams.
+                 */
+                $currency = (string) ($p->currency ?: ($b?->currency ?: ''));
+                if ($currency === '' && $b && $b->venue_id) {
+                    $key = (string) $b->venue_id;
+                    if (! array_key_exists($key, $currencyByVenue)) {
+                        $currencyByVenue[$key] = $this->bookingCurrency($b);
+                    }
+                    $currency = $currencyByVenue[$key];
+                }
+
                 return [
                     'id'            => (string) $p->id,
                     'booking_id'    => $b ? (string) $b->id : null,
                     'customer_id'   => $b && $b->user_id ? (string) $b->user_id : null,
                     'amount'        => (float) $p->amount,
-                    'currency'      => '',
+                    'currency'      => $currency,
                     'payment_type'  => $type,
                     'booking_date'  => $date,
                     'created_at'    => $b?->created_at?->toIso8601String() ?: $p->created_at?->toIso8601String(),
