@@ -308,7 +308,8 @@ async function saveEdit() {
         listing: listing.value?.name, venue: location.value?.name, business_name: location.value?.name,
         date: booking.value?.booking_date, start_time: booking.value?.start_time ? fmt12(booking.value.start_time) : '',
         end_time: booking.value?.end_time ? fmt12(booking.value.end_time) : '',
-        code: String(booking.value?.id || '').slice(0, 8).toUpperCase(),
+        // The booking's own reference, not a slice of the row id.
+        code: booking.value?.booking_id || String(booking.value?.id || ''),
         currency: location.value?.currency_override || '',
       },
     })
@@ -771,8 +772,12 @@ async function markPaid(pmtId) {
         booking: {
           listing: listing.value?.name, venue: location.value?.name, business_name: location.value?.name,
           date: booking.value?.booking_date, start_time: booking.value?.start_time ? fmt12(booking.value.start_time) : '',
-          code: String(booking.value?.id || '').slice(0, 8).toUpperCase(),
+          // The reference the customer can actually quote back, not a slice of
+          // the row id — see lib/bookingRef.js.
+          code: booking.value?.booking_id || String(booking.value?.id || ''),
           amount: pmt?.amount, currency: pmt?.currency || location.value?.currency_override || '',
+          // Capitalised for the reader: "Cash", "Wire transfer", "Online".
+          payment_method: (pmt?.method || markMethod.value) ? methodLabel(pmt?.method || markMethod.value) : '',
         },
       })
     }

@@ -456,6 +456,7 @@ async function save() {
 
   const dates      = allBookingDates.value
   const createdIds = []
+  const createdRefs = []   // the bookings' own references, for the confirmation email
 
   for (const date of dates) {
     const res = await createDashboardBooking({
@@ -485,6 +486,7 @@ async function save() {
     }
 
     createdIds.push(res.data?.booking?.id)
+    createdRefs.push(res.data?.booking?.booking_id || '')
   }
 
   // Fire-and-forget: send the configured booking confirmation to the customer (WhatsApp).
@@ -499,7 +501,7 @@ async function save() {
           date: new Date(dates[0] + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
           start_time: selectedSlot.value?.start_time ? fmt12(selectedSlot.value.start_time) : '',
           end_time: selectedSlot.value?.end_time ? fmt12(selectedSlot.value.end_time) : '',
-          code: String(createdIds[0]).slice(0, 8).toUpperCase(), amount: grandTotal.value,
+          code: createdRefs[0] || String(createdIds[0] || ''), amount: grandTotal.value,
           balance_due: isPrepaid ? 0 : grandTotal.value, currency: curr,
         },
       })

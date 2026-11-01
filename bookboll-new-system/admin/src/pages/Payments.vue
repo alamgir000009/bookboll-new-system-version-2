@@ -214,11 +214,19 @@ const normPaymentType = (t) => TYPE_NORM[t] || t
 const paymentKind = (p) => p.source_type === 'subscription' ? 'subscription' : bookingKind(bookingRef(p.booking_id) || {})
 const markedByName = (id) => adminUsers.value.find(u => u.id === id)?.full_name || '—'
 
+// The payment's OWN reference (PAY_…/DEP_…) — the string on the receipt, in the
+// audit trail and in Stripe's notes, so staff can search the one they were quoted.
+// Falls back to the related booking/subscription when a row predates it.
 const paymentRef = (p) => {
+  const own = String(p.payment_id || '').trim()
+  if (own) return `#${own}`
   if (p.source_type === 'subscription' && p.subscription_id)
     return `#SUB-${p.subscription_id.slice(0, 6).toUpperCase()}`
   return p.booking_id ? bookingRefLabel(bookingRef(p.booking_id) || { id: p.booking_id }) : '—'
 }
+/** The booking this payment belongs to, shown under its own reference. */
+const paymentBookingRef = (p) => (p.source_type === 'subscription' || !p.booking_id)
+  ? '' : bookingRefLabel(bookingRef(p.booking_id) || { id: p.booking_id })
 
 const subCustomerName = (payment) => {
   const sub = subscriptions.value.find(s => s.id === payment.subscription_id)
@@ -808,7 +816,10 @@ function openMarkPaid(payment) {
               <td colspan="11" class="empty">No payment records match the current filters</td>
             </tr>
             <tr v-for="p in paginatedPayments" :key="p.id" class="pay-row" :class="{ 'row-sub': p.source_type === 'subscription' }" @click="openDetail(p)">
-              <td><span class="mono">{{ paymentRef(p) }}</span></td>
+              <td>
+                <span class="mono">{{ paymentRef(p) }}</span>
+                <div v-if="paymentBookingRef(p)" class="cell-sub mono">{{ paymentBookingRef(p) }}</div>
+              </td>
               <td>
                 <span class="source-chip" :class="p.source_type === 'subscription' ? 'sub' : 'booking'">
                   {{ p.source_type === 'subscription' ? 'Subscription' : 'Booking' }}
@@ -1113,4 +1124,5 @@ function openMarkPaid(payment) {
 }
 .kpi-multi div { line-height: 1.25; }
 .kpi-multi div:not(:first-child) { font-size: 15px; color: var(--text-muted, #64748b); }
+.cell-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
 </style>

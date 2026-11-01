@@ -155,6 +155,9 @@ function bookingData(customer, booking) {
     date: booking?.date || '', start_time: booking?.start_time || '', end_time: booking?.end_time || '',
     booking_code: booking?.code || '', amount: fmtMoney(amount), balance_due: fmtMoney(balanceDue),
     currency: booking?.currency || '', booking_link: booking?.link || (siteOrigin() + '/my-bookings'),
+    // The receipt template prints "Method: [payment_method]". It was never
+    // supplied here, so every receipt went out with the line blank.
+    payment_method: booking?.payment_method || '',
   }
 }
 
@@ -172,7 +175,7 @@ export function notifyPaymentReceipt({ ownerId, customer, booking } = {}) {
   sendCustomerNotification('payment_receipt', { ownerId, phone: customer?.phone, email: customer?.email, customerId: customer?.id, data: bookingData(customer, booking) })
 }
 /** Build a booking-confirmation payload from a createCustomerBookings(Multi) context. */
-export function bookingConfirmationFrom({ listing, location, customer, curr, dates, selectionByDate, createdIds = [] }) {
+export function bookingConfirmationFrom({ listing, location, customer, curr, dates, selectionByDate, createdIds = [], createdRefs = [] }) {
   const d0 = (dates || [])[0]
   const s0 = d0 ? ((selectionByDate?.[d0] || [])[0]) : null
   return {
@@ -182,7 +185,7 @@ export function bookingConfirmationFrom({ listing, location, customer, curr, dat
       listing: listing?.name || '', venue: location?.name || '', business_name: location?.name || '',
       date: d0 ? new Date(d0 + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '',
       start_time: s0?.start_time ? fmt12(s0.start_time) : '', end_time: s0?.end_time ? fmt12(s0.end_time) : '',
-      code: (createdIds[0] || '').toString().slice(0, 8).toUpperCase(), currency: curr || '', link: siteOrigin() + '/my-bookings',
+      code: createdRefs[0] || String(createdIds[0] || ''), currency: curr || '', link: siteOrigin() + '/my-bookings',
     },
   }
 }

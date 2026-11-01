@@ -381,7 +381,7 @@ async function doCancel() {
         booking: {
           listing: listingName(b), venue: locationName(b), business_name: locationName(b),
           date: b.booking_date, start_time: fmt12(b.start_time), end_time: fmt12(b.end_time),
-          code: (b.id || '').toString().slice(0, 8).toUpperCase(), currency: currencyOf(b),
+          code: b.booking_id || String(b.id || ''), currency: currencyOf(b),
         },
       })
     } catch { /* never let a notification break the cancel */ }
