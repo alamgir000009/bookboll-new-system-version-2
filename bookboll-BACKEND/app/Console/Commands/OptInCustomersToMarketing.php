@@ -8,9 +8,11 @@ use Illuminate\Console\Command;
 /**
  * Opt every customer in to a marketing channel, in one go.
  *
- * The consent flags default to OFF, so a base imported before the flags existed
- * shows every customer as "not opted in" and campaigns reach nobody. This flips
- * them on for customer accounts only — never staff — and stamps
+ * The consent columns default to OFF in the database, so a base imported before
+ * the flags existed shows every customer as "not opted in" and campaigns reach
+ * nobody. (Accounts created since are opted in on creation — see
+ * User::booted().) This flips the flags on for customer accounts only — never
+ * staff — and stamps
  * marketing_updated_at so the change is visible. Customers can switch any
  * channel back off from their account page at any time.
  *

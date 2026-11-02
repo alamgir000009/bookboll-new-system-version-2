@@ -21,6 +21,28 @@ class User extends Authenticatable
 
     protected static function booted(): void
     {
+        // A new account is opted IN to every marketing channel.
+        //
+        // The columns default to false at the database level, so without this a
+        // fresh signup — public register, social login, OTP, a guest booking, an
+        // import, a customer added from the dashboard — showed as "not opted in"
+        // and campaigns never reached them; customers:opt-in-marketing had to be
+        // re-run to catch up. Only flags the caller left unset are touched, so an
+        // explicit false (a dashboard form with the box unticked) still wins, and
+        // the customer can switch any channel off from their account page.
+        static::creating(function (User $user) {
+            $defaulted = false;
+            foreach (['marketing_email', 'marketing_sms', 'marketing_whatsapp'] as $flag) {
+                if (! array_key_exists($flag, $user->getAttributes())) {
+                    $user->{$flag} = true;
+                    $defaulted = true;
+                }
+            }
+            if ($defaulted && empty($user->marketing_updated_at)) {
+                $user->marketing_updated_at = now();
+            }
+        });
+
         // Delete this account's uploaded files along with the account.
         //
         // The uploads table cascades on the foreign key, but a database-level

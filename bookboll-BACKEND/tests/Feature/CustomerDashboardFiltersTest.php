@@ -67,8 +67,12 @@ beforeEach(function () {
     $bronze = (object) ['id' => $tier('bronze'), 'name' => DB::table('loyalty_tiers')->where('slug', 'bronze')->value('name') ?? 'Bronze'];
     $this->goldName = $gold->name;
 
-    $mk = function (string $email, array $attrs = []) {
-        $u = User::factory()->create(array_merge(['email' => $email, 'status' => User::ACTIVE], $attrs));
+    // A new account is opted in to every channel by default (User::booted()), so
+    // the consent each customer holds is stated outright: the filter assertions
+    // below depend on Sara and Noor being opted OUT everywhere.
+    $optedOut = ['marketing_email' => false, 'marketing_sms' => false, 'marketing_whatsapp' => false];
+    $mk = function (string $email, array $attrs = []) use ($optedOut) {
+        $u = User::factory()->create(array_merge(['email' => $email, 'status' => User::ACTIVE], $optedOut, $attrs));
         $u->assignRole('customer');
 
         return $u;
