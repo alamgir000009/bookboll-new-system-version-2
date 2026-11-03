@@ -154,7 +154,9 @@ class CustomerService
 
         $formData = $request->validate([
             'name'                         => 'nullable|string|max:100',
-            'email'                        => 'required|email|unique:users,email',
+            // Not unique: a known email is handled below by linking the existing
+            // account to the caller's business rather than refusing the request.
+            'email'                        => 'required|email',
             'phone'                        => 'nullable|string|min:6|max:20',
             'password'                     => 'nullable|min:8',
             'status'                       => 'sometimes|in:' . $this->customerModel::ACTIVE . ',' . $this->customerModel::INACTIVE . ',' . $this->customerModel::BLOCKED,
@@ -175,28 +177,20 @@ class CustomerService
         try {
             DB::beginTransaction();
 
-            $existingUser = $this->customerModel->where('email', $formData['email'])->first();
+            $existingUser = $this->findByEmail($formData['email']);
             if ($existingUser) {
-                if ($existingUser->hasRole('customer')) {
-                    return sendError('Customer with this email already exists');
-                } else {
-                    $existingUser->assignRole('customer');
-                    $user = $existingUser;
+                // One account per person on the marketplace. A second business typing
+                // in the same email used to get "already exists" and no way to reach
+                // the customer; now the existing account is linked to the caller's
+                // business and handed back untouched — it is the customer's account,
+                // not the business's, so no password, profile or preference change
+                // and no welcome email.
+                return $this->adoptExistingCustomer($request, $existingUser, function (User $user) {
+                    $user->load(['roles', 'preferences']);
+                    $user->makeHidden('roles');
 
-                    if (! $user->preferences) {
-                        Preference::create([
-                            'user_id'         => $user->id,
-                            'notifications'   => [
-                                'booking_emails'   => true,
-                                'sms_reminders'    => false,
-                                'marketing_emails' => true,
-                            ],
-                            'favorite_sports' => [],
-                            'language'        => 'english',
-                            'currency'        => 'QAR',
-                        ]);
-                    }
-                }
+                    return ['user' => $user, 'roles' => $user->getRoleNames()];
+                });
             } else {
                 if (empty($formData['password'])) {
                     $formData['password'] = Str::random(12);
@@ -273,7 +267,7 @@ class CustomerService
             $user->makeHidden('roles');
             $roles = $user->getRoleNames();
 
-            return sendSuccess("Customer registered successfully", compact('user', 'roles'));
+            return sendSuccess("Customer registered successfully", compact('user', 'roles') + ['linked_existing' => false, 'already_linked' => false]);
 
         } catch (Exception $e) {
             DB::rollBack();
@@ -796,23 +790,41 @@ class CustomerService
             }
 
             $email = trim((string) ($data['email'] ?? ''));
+            if ($email !== '' && ($existing = $this->findByEmail($email))) {
+                // Same rule as createCustomer(): a known email means "link me to this
+                // person", not "make another one". See adoptExistingCustomer().
+                return $this->adoptExistingCustomer($request, $existing, function (User $user) {
+                    $user->load(['tags', 'preferences', 'customerLoyalty', 'loyaltyTier']);
+
+                    return ['customer' => $this->mapDashboardCustomer($user)];
+                });
+            }
             if ($email === '') {
                 $email = 'c-' . Str::uuid() . '@placeholder.local';
             }
 
-            $user = $this->customerModel->create([
-                'name'               => $data['full_name'] ?? $data['name'] ?? null,
-                'email'              => $email,
-                'phone'              => $data['phone'] ?? null,
-                'password'           => $data['password'],
-                'gender'             => ($data['gender'] ?? '') ?: null,
-                'country_id'         => ($data['country_id'] ?? '') ?: null,
-                'status'             => $data['status'] ?? User::ACTIVE,
-                'crm_tags'           => $data['tags'] ?? '',
-                'marketing_email'    => (bool) ($data['marketing_email'] ?? false),
-                'marketing_sms'      => (bool) ($data['marketing_sms'] ?? false),
-                'marketing_whatsapp' => (bool) ($data['marketing_whatsapp'] ?? false),
-            ]);
+            $attributes = [
+                'name'       => $data['full_name'] ?? $data['name'] ?? null,
+                'email'      => $email,
+                'phone'      => $data['phone'] ?? null,
+                'password'   => $data['password'],
+                'gender'     => ($data['gender'] ?? '') ?: null,
+                'country_id' => ($data['country_id'] ?? '') ?: null,
+                'status'     => $data['status'] ?? User::ACTIVE,
+                'crm_tags'   => $data['tags'] ?? '',
+            ];
+            // Consent flags go in only when the form sent them. The dashboard's add
+            // form does not, and `?? false` here was forcing every hand-added client
+            // to opted-out — overriding the opt-in-on-creation default in
+            // User::booted(), which only fills a flag that is absent. An explicit
+            // false from a form that offers the boxes still wins.
+            foreach (['marketing_email', 'marketing_sms', 'marketing_whatsapp'] as $flag) {
+                if (array_key_exists($flag, $data)) {
+                    $attributes[$flag] = (bool) $data[$flag];
+                }
+            }
+
+            $user = $this->customerModel->create($attributes);
 
             $user->assignRole('customer');
             $this->linkToCallerBusiness($request, $user);
@@ -824,7 +836,7 @@ class CustomerService
                 'notifications'   => [
                     'booking_emails'   => true,
                     'sms_reminders'    => false,
-                    'marketing_emails' => (bool) ($data['marketing_email'] ?? false),
+                    'marketing_emails' => (bool) $user->marketing_email,
                 ],
                 'favorite_sports' => [],
                 'language'        => 'english',
@@ -1059,6 +1071,79 @@ class CustomerService
     }
 
     /**
+     * Find an account by email, case-insensitively. Emails are typed by hand on the
+     * dashboard and in the app, so "Ali@x.com" and "ali@x.com" are the same person.
+     */
+    protected function findByEmail(string $email): ?User
+    {
+        $email = strtolower(trim($email));
+
+        return $email === '' ? null : $this->customerModel->whereRaw('LOWER(email) = ?', [$email])->first();
+    }
+
+    /**
+     * A business adds a customer whose account already exists.
+     *
+     * Called inside the caller's transaction; commits (or rolls back) it. The
+     * account is linked to the caller's business (business_customer, source 'added')
+     * and returned as-is: no new password, no profile overwrite, no welcome email —
+     * the account is the customer's, not the business's. A non-customer account
+     * (staff, say) gains the customer role so it can be booked for. A link that
+     * already exists changes nothing and comes back with the same success shape,
+     * so a client can treat both as "this person is in my clients".
+     *
+     * A global admin has no business to link to; for them an existing customer is
+     * still a duplicate, because nothing would happen.
+     *
+     * @param  callable(User): array  $payload  how the caller serialises the customer
+     */
+    protected function adoptExistingCustomer($request, User $user, callable $payload): \Illuminate\Http\JsonResponse
+    {
+        $ownerId     = AccessScope::ownerUserId($request?->user() ?? auth()->user());
+        $wasCustomer = $user->hasRole('customer');
+
+        if ($wasCustomer && $ownerId === null) {
+            DB::rollBack();
+
+            return sendError('Customer with this email already exists');
+        }
+
+        if (! $wasCustomer) {
+            $user->assignRole('customer');
+
+            if (! $user->preferences) {
+                Preference::create([
+                    'user_id'         => $user->id,
+                    'notifications'   => [
+                        'booking_emails'   => true,
+                        'sms_reminders'    => false,
+                        'marketing_emails' => true,
+                    ],
+                    'favorite_sports' => [],
+                    'language'        => 'english',
+                    'currency'        => 'QAR',
+                ]);
+            }
+        }
+
+        $alreadyLinked = $ownerId !== null && BusinessCustomer::query()
+            ->where('owner_user_id', $ownerId)
+            ->where('user_id', $user->id)
+            ->exists();
+
+        if (! $alreadyLinked) {
+            $this->linkToCallerBusiness($request, $user);
+        }
+
+        DB::commit();
+
+        return sendSuccess(
+            $alreadyLinked ? 'Customer is already in your clients' : 'Existing customer added to your clients',
+            $payload($user->fresh()) + ['linked_existing' => true, 'already_linked' => $alreadyLinked]
+        );
+    }
+
+    /**
      * Record that this customer belongs to the caller's business.
      *
      * Without this a client added by hand has no booking and no subscription, so the
@@ -1077,9 +1162,11 @@ class CustomerService
 
     protected function validateDashboard(Request $request, $ignoreId = null, bool $partial = false)
     {
-        $emailRule = $partial
-            ? 'sometimes|nullable|email|unique:users,email' . ($ignoreId ? ',' . $ignoreId : '')
-            : 'nullable|email|unique:users,email' . ($ignoreId ? ',' . $ignoreId : '');
+        // On create a known email is not a validation failure: storeDashboard()
+        // links the existing account to the caller's business instead. On update
+        // the email still must not collide with another account.
+        $emailRule = ($partial ? 'sometimes|' : '') . 'nullable|email'
+            . ($ignoreId ? '|unique:users,email,' . $ignoreId : '');
 
         // Gender is stored lowercase and validated against lowercase values, but
         // clients have sent it capitalised ("Male") and were refused with
