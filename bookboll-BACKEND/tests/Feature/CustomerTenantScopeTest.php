@@ -127,6 +127,24 @@ it('scopes the lightweight picker list the same way', function () {
         ->toBe(['booked-at-a@test.local', 'subscribed-to-a@test.local']);
 });
 
+it('accepts per_page as well as records_per_page on the picker list', function () {
+    // The admin mobile app sends per_page; the dashboard sends records_per_page.
+    // Both must size the page, and the cap keeps one request from pulling the base.
+    $super = $this->super;
+
+    $byRecords = $this->actingAs($super)->getJson('/api/admin/customers/list?records_per_page=1')->json('data.customers');
+    expect($byRecords['per_page'])->toBe(1)->and($byRecords['data'])->toHaveCount(1);
+
+    $byPerPage = $this->actingAs($super)->getJson('/api/admin/customers/list?per_page=2')->json('data.customers');
+    expect($byPerPage['per_page'])->toBe(2)->and($byPerPage['data'])->toHaveCount(2);
+
+    $capped = $this->actingAs($super)->getJson('/api/admin/customers/list?per_page=9999')->json('data.customers');
+    expect($capped['per_page'])->toBe(250);
+
+    $default = $this->actingAs($super)->getJson('/api/admin/customers/list')->json('data.customers');
+    expect($default['per_page'])->toBe(15);
+});
+
 it('scopes the dashboard roster the same way', function () {
     expect(customersSeenBy($this, $this->provA, '/api/admin/customers/dashboard?records_per_page=50'))
         ->toBe(['booked-at-a@test.local', 'subscribed-to-a@test.local']);

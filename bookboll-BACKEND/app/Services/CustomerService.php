@@ -82,7 +82,10 @@ class CustomerService
 
     public function listOptimized($request)
     {
-        $perPage = $request->records_per_page ?? 15;
+        // The admin mobile app sends per_page; the dashboard sends records_per_page.
+        // Accept both, and clamp like dashboard() so a client cannot ask for the
+        // whole base in one page.
+        $perPage = min(max((int) ($request->input('records_per_page') ?? $request->input('per_page') ?? 15), 1), 250);
         $search  = trim($request->search ?? '');
 
         $query = $this->scopedCustomerQuery($request)
