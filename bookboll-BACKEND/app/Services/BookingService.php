@@ -4145,7 +4145,23 @@ class BookingService
         }
     }
 
-    public function sendBookingNotification(Booking $booking, string $eventType)
+    /**
+     * Push a booking event to the venue's staff — minus whoever caused it.
+     *
+     * The recipient list is "everyone who can see this venue", and the staff
+     * member who just created / updated / cancelled the booking from the admin
+     * app is on it. They were being told about their own action a second after
+     * doing it. Nothing in the pipeline knew who the actor was, so drop the
+     * authenticated user here, where every event passes through.
+     *
+     * Webhooks (Stripe) and console commands (auto-cancel) have no
+     * authenticated user, so nobody is excluded there — correct, since no
+     * staff member caused those. A customer booking from the customer app is
+     * excluded too, which is harmless: customers are never staff recipients.
+     *
+     * @param  int|null  $actorUserId  Override the actor (defaults to auth()->id()).
+     */
+    public function sendBookingNotification(Booking $booking, string $eventType, ?int $actorUserId = null)
     {
         try {
             if (! $booking->venue_id) {
@@ -4154,11 +4170,20 @@ class BookingService
 
             $recipientIds = venueNotificationRecipientIds($booking->venue_id);
 
+            $actorUserId = $actorUserId ?? (auth()->check() ? (int) auth()->id() : null);
+            if ($actorUserId) {
+                $recipientIds = array_values(array_filter(
+                    $recipientIds,
+                    fn ($id) => (int) $id !== $actorUserId
+                ));
+            }
+
             if (empty($recipientIds)) {
                 Log::info('No recipients found for booking notification', [
-                    'booking_id' => $booking->id,
-                    'venue_id'   => $booking->venue_id,
-                    'event_type' => $eventType,
+                    'booking_id'    => $booking->id,
+                    'venue_id'      => $booking->venue_id,
+                    'event_type'    => $eventType,
+                    'actor_user_id' => $actorUserId,
                 ]);
                 return;
             }
