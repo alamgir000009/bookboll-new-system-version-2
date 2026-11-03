@@ -1088,12 +1088,26 @@ class ListingService
 
         $listings = $query->paginate($recordsPerPage);
 
-        $listings->getCollection()->transform(function ($listing) {
+        // A price without a currency is just a number; the app refuses to guess
+        // one (see utils/money.js). Resolved once per venue, not per listing.
+        $currencyByVenue = [];
+        $currencyFor = function ($venueId) use (&$currencyByVenue) {
+            $key = (string) $venueId;
+            if (! array_key_exists($key, $currencyByVenue)) {
+                $currencyByVenue[$key] = Booking::currencyForVenue($venueId);
+            }
+            return $currencyByVenue[$key];
+        };
+
+        $listings->getCollection()->transform(function ($listing) use ($currencyFor) {
+            $currency = $currencyFor($listing->venue_id);
+
             return [
                 'id'                      => $listing->id,
                 'name'                    => $listing->name,
                 'description'             => $listing->description,
                 'base_price'              => $listing->base_price,
+                'currency'                => $currency,
                 'slot_duration'           => $listing->slot_duration,
                 'duration'                => getFormattedDuration($listing->slotDurationMinutes()),
                 'capacity'                => $listing->capacity,
@@ -1110,6 +1124,7 @@ class ListingService
                     'id'          => $listing->venue?->id,
                     'name'        => $listing->venue?->name,
                     'address'     => $listing->venue?->address,
+                    'currency'    => $currency,
                     'maps_url'    => $listing->venue?->maps_url,
                     'description' => $listing->venue?->description,
                     'location'    => $this->formatVenueLocationPayload($listing->venue),
