@@ -274,7 +274,69 @@ class AccessScope
                         ->whereRaw('LOWER(class_subscriptions.customer_email) = LOWER(users.email)');
                 });
             }
+
+            // ── Attached to no business at all ──
+            // A marketplace signup who has not booked anywhere, joined nothing and
+            // was added by nobody belongs to no one yet, so every business may see
+            // them (product decision, 2026-11-03). The moment any business gains a
+            // relationship with them — a booking, a subscription, an explicit add —
+            // they leave this branch and are visible only through that relationship.
+            $q->orWhere(fn ($o) => self::unattachedCustomer($o));
         });
+    }
+
+    /**
+     * Narrow to customers with no relationship to ANY business: no business_customer
+     * row, no booking at any venue, no programme subscription, and not typed in by a
+     * provider-side account. The complement of the four branches above, taken over
+     * the whole marketplace instead of one caller's scope.
+     */
+    public static function unattachedCustomer($q)
+    {
+        return $q
+            // Customers only. customerIdsInScope() starts from User::query(), and
+            // without this the branch would hand every staff and admin account —
+            // none of which has a booking or a pivot row — to every business.
+            ->whereExists(function ($sub) {
+                $sub->selectRaw('1')->from('model_has_roles')
+                    ->join('roles', 'roles.id', '=', 'model_has_roles.role_id')
+                    ->whereColumn('model_has_roles.model_id', 'users.id')
+                    ->where('model_has_roles.model_type', User::class)
+                    ->where('roles.name', 'customer');
+            })
+            ->whereNotExists(function ($sub) {
+                $sub->selectRaw('1')->from('business_customer')
+                    ->whereColumn('business_customer.user_id', 'users.id');
+            })
+            ->whereNotExists(function ($sub) {
+                $sub->selectRaw('1')->from('bookings')
+                    ->whereColumn('bookings.user_id', 'users.id');
+            })
+            ->whereNotExists(function ($sub) {
+                $sub->selectRaw('1')->from('class_subscriptions')
+                    ->whereNotNull('class_subscriptions.customer_email')
+                    ->where('class_subscriptions.customer_email', '!=', '')
+                    ->whereRaw('LOWER(class_subscriptions.customer_email) = LOWER(users.email)');
+            })
+            // created_by is the pre-pivot fallback for "this business added them":
+            // a creator who is a provider owner or a member of one claims the row.
+            ->where(function ($c) {
+                $c->whereNull('users.created_by')
+                    ->orWhereNotExists(function ($sub) {
+                        $sub->selectRaw('1')->from('users as creators')
+                            ->whereColumn('creators.id', 'users.created_by')
+                            ->where(function ($p) {
+                                $p->whereNotNull('creators.owner_user_id')
+                                    ->orWhereExists(function ($r) {
+                                        $r->selectRaw('1')->from('model_has_roles')
+                                            ->join('roles', 'roles.id', '=', 'model_has_roles.role_id')
+                                            ->whereColumn('model_has_roles.model_id', 'creators.id')
+                                            ->where('model_has_roles.model_type', User::class)
+                                            ->where('roles.name', 'provider_admin');
+                                    });
+                            });
+                    });
+            });
     }
 
     /**

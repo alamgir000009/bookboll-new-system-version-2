@@ -99,19 +99,45 @@ function customersSeenBy($test, User $actor, string $url): array
 
 /* ─────────────── the list is scoped to the caller's business ─────────────── */
 
-it('shows a provider its own bookers and programme members', function () {
+/*
+ * 'no-relationship@test.local' is attached to no business — a marketplace signup
+ * who has booked nowhere. Such customers are visible to EVERY business (product
+ * decision, 2026-11-03), so they appear in each provider's list below; what one
+ * business has a relationship with still never shows to another.
+ */
+
+it('shows a provider its own bookers, programme members and unattached signups', function () {
     expect(customersSeenBy($this, $this->provA, '/api/admin/customers?records_per_page=50'))
-        ->toBe(['booked-at-a@test.local', 'subscribed-to-a@test.local']);
+        ->toBe(['booked-at-a@test.local', 'no-relationship@test.local', 'subscribed-to-a@test.local']);
 });
 
 it('does not show one provider another provider\'s customers', function () {
     expect(customersSeenBy($this, $this->provB, '/api/admin/customers?records_per_page=50'))
-        ->toBe(['booked-at-b@test.local']);
+        ->toBe(['booked-at-b@test.local', 'no-relationship@test.local']);
 });
 
-it('shows nobody to a provider that owns no venue and no programme', function () {
+it('shows only unattached signups to a provider that owns no venue and no programme', function () {
     expect(customersSeenBy($this, $this->provC, '/api/admin/customers?records_per_page=50'))
-        ->toBe([]);
+        ->toBe(['no-relationship@test.local']);
+});
+
+it('hides an unattached signup from other businesses once one business adds them', function () {
+    $stranger = User::where('email', 'no-relationship@test.local')->firstOrFail();
+    BusinessCustomer::link($this->provA->id, $stranger->id);
+
+    expect(customersSeenBy($this, $this->provB, '/api/admin/customers?records_per_page=50'))
+        ->toBe(['booked-at-b@test.local'])
+        ->and(customersSeenBy($this, $this->provA, '/api/admin/customers?records_per_page=50'))
+        ->toContain('no-relationship@test.local');
+});
+
+it('hides an unattached signup from other businesses once they book somewhere', function () {
+    $stranger = User::where('email', 'no-relationship@test.local')->firstOrFail();
+    $venB     = Venue::where('name', 'Venue B')->firstOrFail();
+    Booking::create(['user_id' => $stranger->id, 'venue_id' => $venB->id, 'subtotal' => 10, 'total_price' => 10]);
+
+    expect(customersSeenBy($this, $this->provA, '/api/admin/customers?records_per_page=50'))
+        ->toBe(['booked-at-a@test.local', 'subscribed-to-a@test.local']);
 });
 
 it('still shows a super admin the whole marketplace', function () {
@@ -124,7 +150,7 @@ it('still shows a super admin the whole marketplace', function () {
 
 it('scopes the lightweight picker list the same way', function () {
     expect(customersSeenBy($this, $this->provA, '/api/admin/customers/list?records_per_page=50'))
-        ->toBe(['booked-at-a@test.local', 'subscribed-to-a@test.local']);
+        ->toBe(['booked-at-a@test.local', 'no-relationship@test.local', 'subscribed-to-a@test.local']);
 });
 
 it('accepts per_page as well as records_per_page on the picker list', function () {
@@ -147,7 +173,7 @@ it('accepts per_page as well as records_per_page on the picker list', function (
 
 it('scopes the dashboard roster the same way', function () {
     expect(customersSeenBy($this, $this->provA, '/api/admin/customers/dashboard?records_per_page=50'))
-        ->toBe(['booked-at-a@test.local', 'subscribed-to-a@test.local']);
+        ->toBe(['booked-at-a@test.local', 'no-relationship@test.local', 'subscribed-to-a@test.local']);
 });
 
 it('keeps a search inside the caller\'s own customers', function () {
@@ -239,20 +265,21 @@ it('derives the same customers as the list, per business', function () {
     // The marketing composer and the customer picker narrow by customerIdsInScope().
     // If that disagreed with the list, a provider could email someone the list hides.
     expect(AccessScope::customerIdsInScope($this->provA))
-        ->toEqualCanonicalizing([$this->booker->id, $this->member->id]);
+        ->toEqualCanonicalizing([$this->booker->id, $this->member->id, $this->stranger->id]);
 
     expect(AccessScope::customerIdsInScope($this->provB))
-        ->toEqualCanonicalizing([$this->rival->id]);
+        ->toEqualCanonicalizing([$this->rival->id, $this->stranger->id]);
 });
 
 it('leaves customerIdsInScope unrestricted (null) for a super admin', function () {
     expect(AccessScope::customerIdsInScope($this->super))->toBeNull();
 });
 
-it('puts nobody in scope for a provider that owns nothing', function () {
+it('puts only unattached signups in scope for a provider that owns nothing', function () {
     // scopedProgramIds() used to build an empty where() in this case, matching EVERY
-    // programme and pulling every subscriber's email into scope.
-    expect(AccessScope::customerIdsInScope($this->provC))->toBe([]);
+    // programme and pulling every subscriber's email into scope. Now it reaches the
+    // unattached signups and nobody else's customers.
+    expect(AccessScope::customerIdsInScope($this->provC))->toBe([$this->stranger->id]);
 });
 
 /* ─────────── a client the business adds by hand belongs to that business ─────────── */
@@ -317,7 +344,7 @@ it('lets a provider with no venues still see the clients it added', function () 
     ])->assertCreated();
 
     expect(customersSeenBy($this, $this->provC, '/api/admin/customers?records_per_page=50'))
-        ->toBe(['prelaunch@test.local']);
+        ->toBe(['no-relationship@test.local', 'prelaunch@test.local']);
 });
 
 it('links a client added through the register endpoint too', function () {
@@ -364,6 +391,8 @@ it('attributes a client added by staff to the owner, not the staff member', func
 
 it('does not link anything when a super admin adds a customer', function () {
     // A platform role has no business of its own, so there is nothing to attribute.
+    // Such a customer is attached to nobody, which is exactly the unattached case:
+    // every business may see them, and none owns them.
     $this->actingAs($this->super)->postJson('/api/admin/customers', [
         'full_name' => 'Platform Added',
         'email'     => 'platform-added@test.local',
@@ -374,5 +403,7 @@ it('does not link anything when a super admin adds a customer', function () {
 
     expect(BusinessCustomer::where('user_id', $client->id)->exists())->toBeFalse();
     expect(customersSeenBy($this, $this->provA, '/api/admin/customers?records_per_page=50'))
-        ->not->toContain('platform-added@test.local');
+        ->toContain('platform-added@test.local')
+        ->and(customersSeenBy($this, $this->provB, '/api/admin/customers?records_per_page=50'))
+        ->toContain('platform-added@test.local');
 });
