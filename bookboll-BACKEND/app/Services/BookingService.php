@@ -3567,24 +3567,33 @@ class BookingService
 
         $venues = ['data' => [], 'pagination' => null];
         if (! empty($data['venues'])) {
-            $query = Venue::with('schedules')->select('id', 'name')
+            // Address + city/state/country ride along so the mobile booking
+            // form can show WHERE a venue is, not just its name. Same `location`
+            // shape as the venue nested on a listing (ListingService).
+            $query = Venue::with(['schedules', 'country:id,name', 'state:id,name', 'city:id,name'])
+                ->select('id', 'name', 'address', 'country_id', 'state_id', 'city_id')
                 ->active()
                 ->orderBy('sort_order', 'ASC')
                 ->orderBy('name');
 
             $query = applyVenueFilter($query, 'id');
 
+            $venueRow = fn($venue) => [
+                'id'        => $venue->id,
+                'name'      => $venue->name,
+                'address'   => $venue->address,
+                'location'  => [
+                    'city'           => $venue->city?->name,
+                    'state'          => $venue->state?->name,
+                    'country'        => $venue->country?->name,
+                    'location_label' => $venue->location_label,
+                ],
+                'schedules' => $venue->schedules,
+            ];
+
             $result = $isPaginated
-                ? $query->paginate($recordsPerPage)->through(fn($venue) => [
-                    'id'        => $venue->id,
-                    'name'      => $venue->name,
-                    'schedules' => $venue->schedules,
-                ])
-                : $query->get()->map(fn($venue) => [
-                    'id'        => $venue->id,
-                    'name'      => $venue->name,
-                    'schedules' => $venue->schedules,
-                ]);
+                ? $query->paginate($recordsPerPage)->through($venueRow)
+                : $query->get()->map($venueRow);
 
             $venues = $formatResponse($result, $isPaginated);
         }

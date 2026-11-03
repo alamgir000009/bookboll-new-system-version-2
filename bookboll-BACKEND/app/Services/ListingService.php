@@ -1033,7 +1033,7 @@ class ListingService
 
         $query = $this->listingModel::with([
             'venue' => function ($query) {
-                $query->select('id', 'name', 'maps_url', 'description', 'country_id', 'state_id', 'city_id')
+                $query->select('id', 'name', 'address', 'maps_url', 'description', 'country_id', 'state_id', 'city_id')
                     ->with([
                         'country:id,name,iso2',
                         'state:id,name',
@@ -1109,6 +1109,7 @@ class ListingService
                 'venue'                   => [
                     'id'          => $listing->venue?->id,
                     'name'        => $listing->venue?->name,
+                    'address'     => $listing->venue?->address,
                     'maps_url'    => $listing->venue?->maps_url,
                     'description' => $listing->venue?->description,
                     'location'    => $this->formatVenueLocationPayload($listing->venue),
@@ -1149,7 +1150,7 @@ class ListingService
 
         $listing = $this->listingModel::with([
             'venue' => function ($query) {
-                $query->select('id', 'name', 'maps_url', 'description', 'country_id', 'state_id', 'city_id')
+                $query->select('id', 'name', 'address', 'maps_url', 'description', 'country_id', 'state_id', 'city_id')
                     ->with([
                         'country:id,name,iso2',
                         'state:id,name',
