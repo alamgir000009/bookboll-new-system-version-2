@@ -100,10 +100,11 @@ function customersSeenBy($test, User $actor, string $url): array
 /* ─────────────── the list is scoped to the caller's business ─────────────── */
 
 /*
- * 'no-relationship@test.local' is attached to no business — a marketplace signup
- * who has booked nowhere. Such customers are visible to EVERY business (product
- * decision, 2026-11-03), so they appear in each provider's list below; what one
- * business has a relationship with still never shows to another.
+ * 'no-relationship@test.local' is nobody's customer yet — a marketplace signup who
+ * has booked nowhere and joined nothing. Such customers are visible to EVERY
+ * business (product decision, 2026-11-03, "no claim"), so they appear in each
+ * provider's list below. Only a booking or a subscription takes them out of that
+ * pool; a business adding them by hand does not hide them from the others.
  */
 
 it('shows a provider its own bookers, programme members and unattached signups', function () {
@@ -121,23 +122,41 @@ it('shows only unattached signups to a provider that owns no venue and no progra
         ->toBe(['no-relationship@test.local']);
 });
 
-it('hides an unattached signup from other businesses once one business adds them', function () {
+it('keeps an unbooked signup visible to other businesses even after one business adds them', function () {
+    // "No claim": typing in an email marks the person as A's client but is not a
+    // relationship the customer took part in, so B still sees them.
     $stranger = User::where('email', 'no-relationship@test.local')->firstOrFail();
     BusinessCustomer::link($this->provA->id, $stranger->id);
 
     expect(customersSeenBy($this, $this->provB, '/api/admin/customers?records_per_page=50'))
-        ->toBe(['booked-at-b@test.local'])
+        ->toBe(['booked-at-b@test.local', 'no-relationship@test.local'])
         ->and(customersSeenBy($this, $this->provA, '/api/admin/customers?records_per_page=50'))
         ->toContain('no-relationship@test.local');
 });
 
-it('hides an unattached signup from other businesses once they book somewhere', function () {
+it('hides an unbooked signup from other businesses once they book somewhere', function () {
     $stranger = User::where('email', 'no-relationship@test.local')->firstOrFail();
     $venB     = Venue::where('name', 'Venue B')->firstOrFail();
     Booking::create(['user_id' => $stranger->id, 'venue_id' => $venB->id, 'subtotal' => 10, 'total_price' => 10]);
 
     expect(customersSeenBy($this, $this->provA, '/api/admin/customers?records_per_page=50'))
-        ->toBe(['booked-at-a@test.local', 'subscribed-to-a@test.local']);
+        ->toBe(['booked-at-a@test.local', 'subscribed-to-a@test.local'])
+        ->and(customersSeenBy($this, $this->provB, '/api/admin/customers?records_per_page=50'))
+        ->toContain('no-relationship@test.local');
+});
+
+it('keeps a hand-added client that later books elsewhere visible to the business that added them', function () {
+    // A's manual link survives the customer leaving the shared pool: the pivot
+    // branch, not the unbooked branch, carries them for A from then on.
+    $stranger = User::where('email', 'no-relationship@test.local')->firstOrFail();
+    BusinessCustomer::link($this->provA->id, $stranger->id);
+    $venB = Venue::where('name', 'Venue B')->firstOrFail();
+    Booking::create(['user_id' => $stranger->id, 'venue_id' => $venB->id, 'subtotal' => 10, 'total_price' => 10]);
+
+    expect(customersSeenBy($this, $this->provA, '/api/admin/customers?records_per_page=50'))
+        ->toContain('no-relationship@test.local')
+        ->and(customersSeenBy($this, $this->provC, '/api/admin/customers?records_per_page=50'))
+        ->toBe([]);
 });
 
 it('still shows a super admin the whole marketplace', function () {
@@ -318,17 +337,29 @@ it('records both the pivot row and created_by when a business adds a client', fu
         ->exists())->toBeTrue();
 });
 
-it('does not leak a hand-added client to another business', function () {
+it('stops sharing a hand-added client with other businesses once they book with the adder', function () {
+    // Until they book anywhere a hand-added client sits in the shared pool like any
+    // other unbooked signup ("no claim"). Their first booking at A's venue is the
+    // relationship that takes them out of it — from then on B neither lists them
+    // nor can open their profile.
     $this->actingAs($this->provA)->postJson('/api/admin/customers', [
         'full_name' => 'Walk In Client',
         'email'     => 'walkin@test.local',
         'status'    => 'active',
     ])->assertCreated();
 
-    expect(customersSeenBy($this, $this->provB, '/api/admin/customers?records_per_page=50'))
-        ->not->toContain('walkin@test.local');
-
     $client = User::where('email', 'walkin@test.local')->firstOrFail();
+    expect(customersSeenBy($this, $this->provB, '/api/admin/customers?records_per_page=50'))
+        ->toContain('walkin@test.local');
+
+    $venA = Venue::where('name', 'Venue A')->firstOrFail();
+    Booking::create(['user_id' => $client->id, 'venue_id' => $venA->id, 'subtotal' => 10, 'total_price' => 10]);
+
+    expect(customersSeenBy($this, $this->provB, '/api/admin/customers?records_per_page=50'))
+        ->not->toContain('walkin@test.local')
+        ->and(customersSeenBy($this, $this->provA, '/api/admin/customers?records_per_page=50'))
+        ->toContain('walkin@test.local');
+
     $this->actingAs($this->provB)
         ->getJson("/api/admin/customers/{$client->id}/profile")
         ->assertNotFound();
