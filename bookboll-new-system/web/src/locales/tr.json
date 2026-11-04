@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "Ana sayfa",
+    "venues": "Mekanlar",
+    "events": "Etkinlikler",
+    "memberships": "Üyelikler"
+  },
+  "account": {
+    "myProfile": "Profilim",
+    "myRewards": "Ödüllerim",
+    "myBookings": "Rezervasyonlarım",
+    "myEvents": "Etkinliklerim",
+    "settings": "Hesap ve fotoğraflar",
+    "signOut": "Çıkış yap",
+    "signIn": "Giriş yap"
+  },
+  "header": {
+    "setLocation": "Konum seç",
+    "changeLocation": "Konumu değiştir"
+  },
+  "footer": {
+    "poweredBy": "Bookboll tarafından sağlanır",
+    "adminLogin": "İşletme / yönetici girişi"
+  },
+  "common": {
+    "language": "Dil"
+  }
+}

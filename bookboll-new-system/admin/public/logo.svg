@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Bookboll">
+  <!-- Bookboll teal badge + white glyph — matches the in-app brand square
+       (adminBrand.js DEFAULT_ADMIN_PRIMARY #0f766e) and BrandMark.vue. -->
+  <defs>
+    <linearGradient id="bb" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f8f88"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="22" fill="url(#bb)"/>
+  <g transform="translate(15 15) scale(0.7)" fill="#ffffff">
+    <circle cx="37" cy="50" r="21"/>
+    <path d="M62 29 A21 21 0 0 1 62 71 Z"/>
+  </g>
+</svg>

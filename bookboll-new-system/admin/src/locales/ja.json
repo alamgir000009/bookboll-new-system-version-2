@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "ホーム",
+    "venues": "会場",
+    "events": "イベント",
+    "memberships": "メンバーシップ"
+  },
+  "account": {
+    "myProfile": "マイプロフィール",
+    "myRewards": "マイリワード",
+    "myBookings": "予約一覧",
+    "myEvents": "マイイベント",
+    "settings": "アカウントと写真",
+    "signOut": "ログアウト",
+    "signIn": "ログイン"
+  },
+  "header": {
+    "setLocation": "地域を選択",
+    "changeLocation": "地域を変更"
+  },
+  "footer": {
+    "poweredBy": "Powered by Bookboll",
+    "adminLogin": "ビジネス / 管理者ログイン"
+  },
+  "common": {
+    "language": "言語"
+  }
+}

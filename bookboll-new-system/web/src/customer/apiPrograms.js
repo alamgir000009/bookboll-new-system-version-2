@@ -1,0 +1,140 @@
+/**
+ * Laravel-backed programs / memberships for apps/web.
+ * Preserves shapes expected by CustomerPrograms, ProgramDetail, MyMemberships.
+ */
+import { apiFetch } from '../lib/api.js'
+import { redemptionFields } from '../lib/checkoutRewards.js'
+import { selectedCountry } from '../lib/customerSession.js'
+
+function formatErr(res, fallback) {
+  const errors = res?.errors
+  if (errors && typeof errors === 'object') {
+    for (const v of Object.values(errors)) {
+      const msg = Array.isArray(v) ? v[0] : v
+      if (msg) return String(msg)
+    }
+  }
+  return res?.message || fallback
+}
+
+function withBrand(query = {}, brandOwner = null) {
+  const q = { ...query }
+  if (brandOwner) q.brand_owner = brandOwner
+  return q
+}
+
+export async function apiLoadPrograms(cityId, brandOwner = null, isoOverride = '') {
+  // A city landing page is ABOUT a city, so it states that city's own country. Without
+  // the override this falls back to the visitor's picker, which on /classes/lahore
+  // meant asking for a Pakistani city inside Qatar.
+  const iso = isoOverride || selectedCountry.value?.iso_code || ''
+  if (!cityId && !brandOwner && !iso) return []
+  const q = {}
+  if (cityId) q.city_id = cityId
+  if (iso) q.country_iso = iso
+  const res = await apiFetch('/marketplace/programs', {
+    query: withBrand(q, brandOwner),
+  })
+  if (!res.success) return []
+  return res.data?.programs || []
+}
+
+export async function apiLoadProgram(id, brandOwner = null) {
+  if (!id) return null
+  const res = await apiFetch(`/marketplace/programs/${encodeURIComponent(id)}`, {
+    query: withBrand({}, brandOwner),
+  })
+  if (!res.success || !res.data?.program) return null
+  return {
+    program: res.data.program,
+    image: res.data.image || '',
+    photos: res.data.photos || [],
+    location: res.data.location || null,
+    openingHours: res.data.openingHours || null,
+    memberCount: res.data.memberCount || 0,
+    // Server-side answer to "does this viewer already hold this membership?",
+    // using the same rule that refuses a duplicate enrolment.
+    isMember: !!res.data.isMember,
+    mySubscriptionId: res.data.mySubscriptionId || null,
+  }
+}
+
+export async function apiEnrollInProgram(program, { answers = {}, discount = 0, promocode = null, rewards = null } = {}) {
+  if (!program?.id) return { error: 'Program not found.' }
+  let rewardFields
+  try { rewardFields = redemptionFields(rewards) } catch (error) { return { error: error.message } }
+  const res = await apiFetch(`/customer/programs/${encodeURIComponent(program.id)}/enroll`, {
+    method: 'POST',
+    body: {
+      answers: answers || {},
+      discount: Number(discount) || 0,
+      promocode,
+      ...rewardFields,
+    },
+  })
+  if (!res.success) return { error: formatErr(res, 'Could not complete sign-up.') }
+  // Paid memberships come back as a Stripe Checkout URL to redirect to.
+  if (res.data?.url) return { url: res.data.url, session_id: res.data.session_id }
+  return {
+    subscription: res.data?.subscription,
+    charged: !!res.data?.charged,
+    amount: res.data?.amount,
+    joiningFee: res.data?.joiningFee,
+    charged_amount: res.data?.charged_amount,
+    discountApplied: res.data?.discountApplied,
+    loyaltyApplied: res.data?.loyaltyApplied,
+    introUsed: !!res.data?.introUsed,
+    countryId: res.data?.countryId,
+    currency: res.data?.currency,
+  }
+}
+
+export async function apiLoadMySubscriptions(brandOwner = null) {
+  const res = await apiFetch('/customer/programs/mine', { query: withBrand({}, brandOwner) })
+  if (!res.success) return []
+  return res.data?.subscriptions || []
+}
+
+export async function apiCancelMySubscription(subId) {
+  if (!subId) return { error: 'Missing subscription.' }
+  const res = await apiFetch(`/customer/programs/subscriptions/${encodeURIComponent(subId)}/cancel`, {
+    method: 'POST',
+  })
+  if (!res.success) return { error: formatErr(res, 'Could not cancel.') }
+  return { error: null }
+}
+
+export async function apiHasUsedIntroOffer({ email, cardFp, ownerUserId } = {}) {
+  if (!ownerUserId) return false
+  const res = await apiFetch('/customer/programs/offers/check', {
+    method: 'POST',
+    body: {
+      owner_user_id: ownerUserId,
+      email: email || '',
+      card_fp: cardFp || '',
+    },
+  })
+  if (!res.success) return false
+  return !!res.data?.used
+}
+
+/** State of a Stripe Checkout return — 'processing' until the webhook lands. */
+export async function checkoutState(sessionId) {
+  const res = await apiFetch(`/customer/programs/checkout/${encodeURIComponent(sessionId)}`)
+  if (!res.success) return { status: 'error', error: formatErr(res, 'Could not confirm your sign-up.') }
+  return {
+    status: res.data?.status || 'processing',
+    subscription: res.data?.subscription || null,
+    trialEndsAt: res.data?.trial_ends_at || null,
+  }
+}
+
+export async function apiLoadMemberPassBundle() {
+  const res = await apiFetch('/customer/programs/passes')
+  if (!res.success) return { pass: null, memberships: [], legacyPasses: [] }
+  return {
+    pass: res.data?.pass || null,
+    memberships: res.data?.memberships || [],
+    legacyPasses: res.data?.legacyPasses || [],
+  }
+}

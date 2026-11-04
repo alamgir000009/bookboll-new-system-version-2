@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "홈",
+    "venues": "장소",
+    "events": "이벤트",
+    "memberships": "멤버십"
+  },
+  "account": {
+    "myProfile": "내 프로필",
+    "myRewards": "내 리워드",
+    "myBookings": "내 예약",
+    "myEvents": "내 이벤트",
+    "settings": "계정 및 사진",
+    "signOut": "로그아웃",
+    "signIn": "로그인"
+  },
+  "header": {
+    "setLocation": "위치 설정",
+    "changeLocation": "위치 변경"
+  },
+  "footer": {
+    "poweredBy": "Bookboll 제공",
+    "adminLogin": "비즈니스 / 관리자 로그인"
+  },
+  "common": {
+    "language": "언어"
+  }
+}

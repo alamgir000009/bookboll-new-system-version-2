@@ -1,0 +1,38 @@
+.fin-panel { padding:24px; border:1px solid var(--border); border-radius:14px; background:var(--surface, var(--bg-card, #fff)); min-width:0; }
+.fin-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:20px; }
+.fin-heading h2, .fin-heading h3 { margin:0 0 6px; font-size:18px; color:var(--text); }
+.fin-heading p, .fin-help { margin:0; color:var(--text-muted); font-size:13px; line-height:1.6; }
+.fin-eyebrow { font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--primary-ink); margin:0 0 8px; }
+.fin-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.fin-field { display:flex; flex-direction:column; gap:7px; min-width:0; font-size:12px; font-weight:600; }
+/* `.fin-field` is normally a <label>; where it wraps a composite control the
+   caption is its own element instead, and needs the same weight. */
+.fin-field-label { font-size:12px; font-weight:600; }
+.fin-field input, .fin-field select, .fin-field textarea { width:100%; min-width:0; min-height:42px; font:inherit; font-size:14px; font-weight:400; }
+.fin-wide { grid-column:1/-1; }
+.fin-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:18px; }
+.fin-notice { background:var(--info-bg); color:var(--info-ink); border:1px solid var(--border); border-radius:10px; padding:14px 16px; font-size:13px; line-height:1.6; }
+.fin-error { color:var(--danger-ink); background:var(--danger-bg, var(--surface)); padding:12px; border-radius:8px; font-size:13px; }
+.fin-success { color:var(--positive-ink); font-size:13px; }
+.fin-row { display:flex; justify-content:space-between; align-items:start; gap:20px; padding:16px 0; border-bottom:1px solid var(--border); font-size:14px; }
+.fin-row:last-child { border-bottom:0; }
+.fin-row strong { font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fin-row small { display:block; color:var(--text-muted); line-height:1.6; margin-top:4px; }
+.fin-choice { display:flex; gap:12px; align-items:flex-start; border:1px solid var(--border); border-radius:10px; padding:15px; margin:10px 0; cursor:pointer; }
+.fin-choice:has(input:checked) { background:var(--primary-soft); border-color:var(--primary); }
+.fin-choice input { width:18px!important; height:18px; min-height:0; flex:0 0 auto; margin-top:2px; }
+.fin-choice strong { display:block; font-size:14px; margin-bottom:4px; }
+.fin-choice small { color:var(--text-muted); font-size:12px; line-height:1.6; display:block; }
+.fin-review-list { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px 20px; font-size:13px; }
+.fin-review-list dt { color:var(--text-muted); }
+.fin-review-list dd { margin:0; text-align:end; overflow-wrap:anywhere; }
+.modal.fin-dialog { width:min(680px,calc(100vw - 24px)); max-width:680px; max-height:calc(100dvh - 32px); display:flex; flex-direction:column; overflow:hidden; }
+.modal.fin-dialog > .modal-header, .modal.fin-dialog > .modal-footer { flex-shrink:0; }
+.modal.fin-dialog > .modal-body { overflow-y:auto; min-height:0; }
+.modal.fin-dialog .fin-section { margin:12px 0; padding-top:12px; }
+.fin-section { margin:24px 0; padding-top:24px; border-top:1px solid var(--border); }
+.fin-checkbox { display:flex; align-items:flex-start; gap:10px; font-size:13px; line-height:1.6; margin-top:16px; }
+.fin-checkbox input { width:18px; height:18px; flex-shrink:0; margin-top:3px; }
+@media(max-width:600px) { .fin-panel{padding:18px 14px}.fin-form-grid{grid-template-columns:1fr}.fin-heading{flex-wrap:wrap}.fin-actions .btn{flex:1 1 auto;justify-content:center}.fin-row{gap:12px;font-size:13px}.fin-review-list{grid-template-columns:1fr;gap:5px}.fin-review-list dd{text-align:start;margin-bottom:10px} }
+@media(max-width:600px) { .modal.fin-dialog { width:100%; max-height:96dvh; }.modal.fin-dialog > .modal-footer { flex-direction:row;flex-wrap:wrap; }.modal.fin-dialog > .modal-footer .btn { flex:1 1 auto;width:auto; } }
+@media(max-width:600px) { .fin-field input,.fin-field select,.fin-field textarea {font-size:16px} }

@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "Trang chủ",
+    "venues": "Địa điểm",
+    "events": "Sự kiện",
+    "memberships": "Hội viên"
+  },
+  "account": {
+    "myProfile": "Hồ sơ của tôi",
+    "myRewards": "Phần thưởng của tôi",
+    "myBookings": "Đặt chỗ của tôi",
+    "myEvents": "Sự kiện của tôi",
+    "settings": "Tài khoản & ảnh",
+    "signOut": "Đăng xuất",
+    "signIn": "Đăng nhập"
+  },
+  "header": {
+    "setLocation": "Chọn vị trí",
+    "changeLocation": "Đổi vị trí"
+  },
+  "footer": {
+    "poweredBy": "được cung cấp bởi Bookboll",
+    "adminLogin": "Đăng nhập doanh nghiệp / quản trị"
+  },
+  "common": {
+    "language": "Ngôn ngữ"
+  }
+}

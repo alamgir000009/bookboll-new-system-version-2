@@ -1,0 +1,376 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --primary: #0f766e;
+  --primary-dark: #0d5e58;
+  --primary-light: #14b8a6;
+  /* Customer storefront brand colors. Defaults = the Bookboll teal pair; a provider's
+     white-label site overrides --brand / --brand-accent on <html> at runtime
+     (see lib/brand.js). Soft tints are derived per-use with color-mix(). */
+  --brand: #0f766e;
+  --brand-accent: #14b8a6;
+  --accent: #f59e0b;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --info: #3b82f6;
+  --bg: #f5f5f5;
+  --surface: #ffffff;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --text-light: #94a3b8;
+  --sidebar-bg: #0f172a;
+  --sidebar-text: #cbd5e1;
+  --sidebar-active: #14b8a6;
+  --shadow-sm: 0 1px 2px rgba(15,23,42,0.04);
+  --shadow: 0 1px 3px rgba(15,23,42,0.08), 0 1px 2px rgba(15,23,42,0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(15,23,42,0.08), 0 4px 6px -2px rgba(15,23,42,0.04);
+  --radius: 10px;
+  font-family: 'Inter', system-ui, sans-serif;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+html, body, #app { height: 100%; }
+
+body {
+  background: var(--bg);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5 { line-height: 1.2; font-weight: 600; color: var(--text); }
+
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+a { color: inherit; text-decoration: none; }
+
+/* Text-like fields only — radios & checkboxes keep their native sizing (else the blanket
+   width:100% + padding + border turns them into full-width boxes and breaks option pickers). */
+input:not([type="radio"]):not([type="checkbox"]), select, textarea {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, #ffffff);
+  color: var(--text);
+  width: 100%;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input[type="radio"], input[type="checkbox"] { accent-color: var(--primary); cursor: pointer; }
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(15,118,110,0.12);
+}
+
+/* Required-field validation indicators (used across all forms) */
+input.input-invalid, select.input-invalid, textarea.input-invalid,
+.input-invalid input, .input-invalid select, .input-invalid textarea {
+  border-color: #dc2626 !important;
+  background: var(--danger-bg, #fef2f2);
+}
+input.input-invalid:focus, select.input-invalid:focus, textarea.input-invalid:focus {
+  box-shadow: 0 0 0 3px rgba(220,38,38,0.14);
+}
+.field-error-text {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--danger-ink, #dc2626); margin-top: 5px; font-weight: 500;
+}
+.form-error-banner {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--danger-ink, #b91c1c); font-weight: 500;
+  background: var(--danger-bg, #fef2f2); border: 1px solid var(--danger-border, #fecaca); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 14px;
+}
+.req-star { color: var(--danger-ink, #dc2626); margin-left: 2px; }
+
+/* Reusable spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-dark); }
+
+.btn-secondary { background: var(--surface, #ffffff); color: var(--text); border-color: var(--border); }
+.btn-secondary:hover { background: var(--bg); border-color: var(--border-strong, #cbd5e1); }
+
+.btn-danger { background: var(--error); color: #fff; }
+.btn-danger:hover { background: #dc2626; }
+
+.btn-success { background: var(--success); color: #fff; }
+.btn-success:hover { background: #059669; }
+
+.btn-warning { background: #f59e0b; color: #fff; }
+.btn-warning:hover { background: #d97706; }
+.btn-warning:disabled { background: #fcd34d; cursor: not-allowed; }
+
+.btn-sm { padding: 6px 10px; font-size: 13px; }
+.btn-icon { padding: 8px; }
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.badge-success { background: var(--positive-bg, #d1fae5); color: var(--positive-ink, #065f46); }
+.badge-warning { background: var(--warning-bg, #fef3c7); color: var(--warning-ink, #92400e); }
+.badge-error { background: var(--danger-bg, #fee2e2); color: var(--danger-ink, #991b1b); }
+.badge-info { background: var(--info-bg, #dbeafe); color: var(--info-ink, #1e40af); }
+.badge-neutral { background: var(--bg, #f1f5f9); color: var(--text-secondary, #475569); }
+
+/* Premium lock — a small crown badge (icon only, so it stays compact on mobile).
+   The "Premium" text inside stays in the DOM for screen readers but is hidden;
+   a gold badge with a white crown (CSS mask) is shown instead. */
+.prem-lock {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; margin-left: 5px; gap: 0;
+  border-radius: 5px; flex-shrink: 0; vertical-align: middle;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  box-shadow: 0 1px 2px rgba(217,119,6,.3);
+  color: transparent; font-size: 0; line-height: 0;
+}
+.prem-lock::before {
+  content: ""; display: block; width: 10px; height: 10px; background-color: var(--surface, #ffffff);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 7l4 4 5-7 5 7 4-4-2 12H5L3 7z'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 7l4 4 5-7 5 7 4-4-2 12H5L3 7z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.table-wrap { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+th { font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); background: var(--bg); letter-spacing: 0.03em; }
+tbody tr { transition: background 0.1s; }
+tbody tr:hover { background: var(--surface-hover, #f8fafc); }
+
+.page { padding: 28px 32px; }
+.page-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }
+.page-title { font-size: 24px; font-weight: 700; }
+.page-subtitle { font-size: 14px; color: var(--text-muted); margin-top: 4px; }
+
+.grid { display: grid; gap: 16px; }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+
+/* !important so these utility grids still collapse even when a page redefines
+   .grid-2/.grid-3/.grid-4 in its own (higher-specificity) scoped styles. */
+@media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, 1fr) !important; } .grid-3 { grid-template-columns: repeat(2, 1fr) !important; } }
+@media (max-width: 700px) { .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr !important; } }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px; }
+.toolbar .search { flex: 1; min-width: 220px; position: relative; }
+.toolbar .search input { padding-left: 38px; }
+.toolbar .search > svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-light); }
+.filter-select { height: 38px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--text); background: var(--surface, #ffffff); cursor: pointer; min-width: 140px; }
+.filter-select:disabled { opacity: 0.45; cursor: default; }
+
+/* ── Shared filter bar (components/FilterBar.vue + page slot filters) ─────── */
+.lf-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lf-search-wrap { position: relative; flex: 0 1 380px; min-width: 220px; }
+.lf-search { width: 100%; position: relative; }
+.lf-search input { padding-right: 40px; }
+.lf-filter-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; gap: 3px; padding: 5px 7px; border: none; background: transparent; color: var(--text-muted); border-radius: 7px; cursor: pointer; }
+.lf-filter-btn:hover { background: var(--bg); color: var(--text); }
+.lf-filter-btn.on { color: var(--primary-ink); }
+.lf-filter-n { background: var(--primary); color: #fff; font-size: 10px; font-weight: 800; min-width: 16px; height: 16px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
+.lf-spacer { flex: 1 1 0; min-width: 0; }
+/* In flow under the bar, not floating over the rows it filters. FilterBar.vue
+   owns the head/body/foot spacing; this is only the shell. */
+.lf-panel { display: flex; flex-direction: column; margin-top: 10px; background: var(--surface, #ffffff); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.lf-selects { display: flex; gap: 10px; flex-wrap: wrap; }
+.lf-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 150px; min-width: 0; }
+.lf-field > label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.lf-field .filter-select { width: 100%; min-width: 0; }
+.lf-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.lf-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); width: 70px; flex-shrink: 0; padding-top: 7px; }
+.lf-chips { display: flex; flex-wrap: wrap; gap: 7px; flex: 1; }
+.lf-chips button { border: 1px solid var(--border); background: var(--surface, #ffffff); color: var(--text); font-weight: 600; font-size: 13px; padding: 6px 13px; border-radius: 999px; cursor: pointer; transition: all .12s; }
+.lf-chips button:hover { border-color: var(--primary); }
+.lf-chips button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+.lf-type-hint { font-size: 13px; color: var(--text-muted); font-style: italic; padding-top: 7px; }
+.lf-panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border); }
+.lf-clear { background: none; border: none; color: var(--error); font-weight: 700; font-size: 13px; cursor: pointer; padding: 2px; }
+.lf-clear:hover { text-decoration: underline; }
+
+.kpi { display: flex; flex-direction: column; gap: 8px; padding: 20px; }
+.kpi-top { display: flex; justify-content: space-between; align-items: center; }
+.kpi-label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+.kpi-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+.kpi-value { font-size: 26px; font-weight: 700; color: var(--text); }
+.kpi-delta { font-size: 12px; color: var(--success); font-weight: 500; }
+.kpi-delta.down { color: var(--error); }
+
+.form-group { margin-bottom: 16px; }
+.form-label { font-size: 13px; font-weight: 500; margin-bottom: 6px; display: block; color: var(--text); }
+
+.modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; animation: fadeIn 0.15s; }
+.modal { background: var(--surface, #ffffff); border-radius: 12px; max-width: 560px; width: 100%; max-height: 90vh; overflow-y: auto; animation: slideUp 0.2s; box-shadow: var(--shadow-lg); }
+.modal-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.modal-title { font-size: 18px; font-weight: 600; }
+.modal-body { padding: 24px; }
+.modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── Right-side slide-in drawer (shared by the Location & Listing forms) ────── */
+.bb-drawer-backdrop {
+  position: fixed; inset: 0; background: rgba(15,23,42,0.5);
+  display: flex; justify-content: flex-end; z-index: 3000;
+  animation: fadeIn 0.15s; backdrop-filter: blur(2px);
+}
+.bb-drawer {
+  width: 100%; max-width: 880px; height: 100%; background: var(--surface, #ffffff);
+  display: flex; flex-direction: column;
+  box-shadow: -8px 0 40px rgba(0,0,0,0.18);
+  animation: drawerSlideIn 0.24s cubic-bezier(.22,1,.36,1);
+}
+@keyframes drawerSlideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.bb-drawer-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 18px 24px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.bb-drawer-title { font-size: 18px; font-weight: 700; color: var(--text); }
+.bb-drawer-subtitle { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+.bb-drawer-close {
+  width: 34px; height: 34px; border-radius: 8px; border: none; background: var(--bg, #f1f5f9);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  color: var(--text-muted, #64748b); flex-shrink: 0; transition: background 0.15s;
+}
+.bb-drawer-close:hover { background: var(--border, #e2e8f0); color: var(--text); }
+.bb-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; background: var(--bg, #f8fafc); }
+.bb-drawer-footer {
+  padding: 14px 24px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  flex-shrink: 0; background: var(--surface, #ffffff);
+}
+@media (max-width: 920px) { .bb-drawer { max-width: 100%; } }
+
+.empty { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.tab { padding: 10px 16px; font-size: 14px; font-weight: 500; color: var(--text-muted); border-bottom: 2px solid transparent; cursor: pointer; transition: all 0.15s; }
+.tab.active { color: var(--primary-ink); border-bottom-color: var(--primary); }
+.tab:hover:not(.active) { color: var(--text); }
+
+/* ============================================================
+   Responsive — admin dashboard on tablet & phone
+   Shared classes (.page, table, .toolbar, .modal, .tabs, .grid…)
+   are used by nearly every admin page, so tuning them here makes
+   the whole dashboard mobile-friendly in one place.
+   ============================================================ */
+
+/* Tablet & down */
+@media (max-width: 768px) {
+  .page { padding: 18px 16px; }
+  .page-title { font-size: 21px; }
+  .page-header { margin-bottom: 18px; gap: 12px; }
+
+  /* Wide tables scroll horizontally (with momentum) instead of squishing. */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--border); border-radius: var(--radius); }
+  .table-wrap table { min-width: 600px; }
+  .card .table-wrap { border: none; }
+
+  /* Tab bars scroll rather than wrap into an awkward block. */
+  .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { white-space: nowrap; flex-shrink: 0; }
+}
+
+/* Phone */
+@media (max-width: 600px) {
+  .page { padding: 14px 12px; }
+  .page-title { font-size: 19px; }
+  .page-subtitle { font-size: 13px; }
+
+  /* Toolbar: search takes the row, filters share the next, comfortable to tap. */
+  .toolbar { gap: 8px; }
+  .toolbar .search { flex: 1 1 100%; min-width: 0; }
+  .filter-select { flex: 1 1 calc(50% - 8px); min-width: 0; height: 42px; font-size: 16px; }
+
+  th, td { padding: 9px 11px; font-size: 13px; }
+
+  /* Comfortable tap targets. */
+  .btn { padding: 11px 16px; }
+  .btn-sm { padding: 8px 12px; }
+  .btn-icon { padding: 9px; }
+
+  /* KPI cards a touch tighter. */
+  .kpi { padding: 16px; }
+  .kpi-value { font-size: 22px; }
+
+  /* 16px fields stop iOS from auto-zooming on focus. Selector must mirror the
+     base rule's :not() chain so its specificity actually wins for text inputs. */
+  input:not([type="radio"]):not([type="checkbox"]), select, textarea { font-size: 16px; }
+
+  /* Filter count bubble: keep at/above the 11px legibility floor on phones. */
+  .lf-filter-n { font-size: 11px; min-width: 17px; height: 17px; }
+
+  /* Modals become bottom sheets — the native-app pattern. */
+  .modal-backdrop { padding: 0; align-items: flex-end; }
+  .modal { max-width: 100%; max-height: 92vh; border-radius: 16px 16px 0 0; animation: sheetUp 0.24s cubic-bezier(.22,1,.36,1); }
+  .modal-header { padding: 16px 18px; }
+  .modal-body { padding: 18px; }
+  .modal-footer { padding: 14px 18px; gap: 8px; flex-direction: column-reverse; padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+  .modal-footer > .btn { width: 100%; justify-content: center; }
+
+  /* Right-side form drawers go full-screen with lighter padding. */
+  .bb-drawer-body { padding: 16px 14px; }
+  .bb-drawer-header { padding: 14px 16px 12px; }
+  .bb-drawer-footer { padding: 12px 14px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .bb-drawer-footer > .btn { flex: 1; justify-content: center; }
+
+  /* Collapse the admin's multi-column form/detail grids to a single column on phones.
+     These class names live in scoped page styles, but a global !important rule still
+     matches them (scoping only namespaces a component's OWN rules, not global ones).
+     The property is a no-op on non-grid elements, so it's safe to list broadly. */
+  /* NOTE: .sd-grid (Special Days month CALENDAR) must NOT be in this list —
+     collapsing it turns the month into a one-day-per-row list; it has its own
+     phone sizing in SpecialDays.vue that keeps all 7 columns. */
+  .preview-fields, .pv-wallet-row, .bn-geo, .bn-row2, .wl-colors, .wl-mock-cards,
+  .ly-rules-grid, .ly-tier-fields, .mod-facts, .pd-grid, .kyc-grid,
+  .req-grid, .req-wallet-stats, .ph-side, .perm-grid, .form-row, .type-toggle,
+  .scope-row, .custom-schedule-grid, .auth-row, .ob-colors, .ob-pv-cards, .em-config,
+  .sttm-toggle, .ft-pickers, .filter-ms-row, .usage-stats {
+    grid-template-columns: 1fr !important;
+  }
+  /* Inline two-pane "sidebar + content" grids (e.g. Settings, Embed) stack too. */
+  .grid[style*="240px"], .grid[style*="260px"], .grid[style*="280px"],
+  .grid[style*="300px"], .grid[style*="320px"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }

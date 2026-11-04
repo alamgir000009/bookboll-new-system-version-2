@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "Главная",
+    "venues": "Площадки",
+    "events": "События",
+    "memberships": "Подписки"
+  },
+  "account": {
+    "myProfile": "Мой профиль",
+    "myRewards": "Мои награды",
+    "myBookings": "Мои бронирования",
+    "myEvents": "Мои события",
+    "settings": "Аккаунт и фото",
+    "signOut": "Выйти",
+    "signIn": "Войти"
+  },
+  "header": {
+    "setLocation": "Выбрать место",
+    "changeLocation": "Изменить место"
+  },
+  "footer": {
+    "poweredBy": "при поддержке Bookboll",
+    "adminLogin": "Вход для бизнеса / админа"
+  },
+  "common": {
+    "language": "Язык"
+  }
+}

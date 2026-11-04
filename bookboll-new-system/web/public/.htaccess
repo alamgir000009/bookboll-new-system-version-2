@@ -1,0 +1,75 @@
+# apps/web — Apache/cPanel config for the SPA (bookboll.com + every white-label
+# subdomain *.bookboll.com). Copied verbatim into dist/ by Vite's publicDir.
+#
+# The wildcard vhost and the apex share ONE document root, so this single file
+# serves both. Brand resolution happens client-side from window.location.hostname
+# (see src/lib/brand.js -> detectBrandSlug), so Apache must do exactly two things:
+# hand every unknown path to index.html, and never cache index.html.
+
+# MultiViews makes Apache content-negotiate extensionless URLs — /venues would
+# match an asset named venues.js and never reach the SPA. Must stay off.
+Options -MultiViews
+DirectoryIndex index.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Force HTTPS, keeping the requested host so alamgir.bookboll.com stays itself.
+  # HTTP_HOST (not a literal domain) is what makes this wildcard-safe.
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  # SPA fallback: anything that isn't a real file or directory renders index.html
+  # with a 200 so vue-router can take over the path.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Missing hashed assets must 404, not silently return index.html — otherwise a
+# stale deploy shows a blank page with "Unexpected token '<'" in the console.
+<IfModule mod_rewrite.c>
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule ^assets/ - [L,R=404]
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/javascript          .js .mjs
+  AddType text/css                        .css
+  AddType image/svg+xml                   .svg
+  AddType application/manifest+json       .webmanifest
+  AddType application/json                .json
+  AddType font/woff2                      .woff2
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml
+  AddOutputFilterByType DEFLATE application/javascript application/json
+  AddOutputFilterByType DEFLATE image/svg+xml application/manifest+json
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Vite fingerprints everything in /assets, so it is safe to cache forever.
+  <FilesMatch "\.(js|mjs|css|woff2|png|jpg|jpeg|gif|webp|avif|svg|ico)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+
+  # index.html is the deploy pointer — caching it strands users on an old build
+  # whose asset hashes no longer exist on disk.
+  <FilesMatch "^(index\.html|_redirects)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+
+  <FilesMatch "^(robots\.txt|sitemap\.xml)$">
+    Header set Cache-Control "public, max-age=3600"
+  </FilesMatch>
+</IfModule>
+
+# Never expose build metadata or env files if one is uploaded by mistake.
+<FilesMatch "^(\.env.*|\.git.*|package(-lock)?\.json|vite\.config\.js)$">
+  Require all denied
+</FilesMatch>

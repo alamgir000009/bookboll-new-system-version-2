@@ -1,0 +1,28 @@
+{
+  "nav": {
+    "home": "Start",
+    "venues": "Locations",
+    "events": "Events",
+    "memberships": "Mitgliedschaften"
+  },
+  "account": {
+    "myProfile": "Mein Profil",
+    "myRewards": "Meine Prämien",
+    "myBookings": "Meine Buchungen",
+    "myEvents": "Meine Events",
+    "settings": "Konto & Fotos",
+    "signOut": "Abmelden",
+    "signIn": "Anmelden"
+  },
+  "header": {
+    "setLocation": "Standort wählen",
+    "changeLocation": "Standort ändern"
+  },
+  "footer": {
+    "poweredBy": "bereitgestellt von Bookboll",
+    "adminLogin": "Geschäfts- / Admin-Login"
+  },
+  "common": {
+    "language": "Sprache"
+  }
+}
