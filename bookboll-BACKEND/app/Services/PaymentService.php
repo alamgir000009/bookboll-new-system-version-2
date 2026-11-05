@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Support\AccessScope;
+use App\Support\MobileAppReturn;
 use App\Support\StripeMinimumCharge;
 use App\Support\TenantOrigins;
 use App\Models\Listing;
@@ -1995,6 +1996,9 @@ class PaymentService
                     // The storefront this booking was made on, so Stripe's return lands
                     // the customer back on the merchant's own site and not the marketplace.
                     'return_origin' => (string) TenantOrigins::storefrontOriginFromRequest(request()),
+                    // Set when the checkout started in the mobile app, so the return
+                    // reopens the app instead of the website — see MobileAppReturn.
+                    MobileAppReturn::METADATA_KEY => MobileAppReturn::targetFromRequest(request()),
                 ],
                 'line_items' => [[
                     'price_data' => [

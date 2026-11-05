@@ -712,6 +712,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::put('bookings/{id}/update', [BookingController::class, 'mobileUpdateBooking'])->name('bookings.mobileUpdate');
         Route::post('payments/create-payment-intent', [PaymentController::class, 'createPaymentIntent'])->name('payments.createPaymentIntent');
         Route::post('payments/create-checkout-session', [PaymentController::class, 'createCheckoutSession'])->name('payments.createCheckoutSession');
+        // Mobile app: confirm or abandon a Stripe Checkout it opened in the browser.
+        Route::get('payments/checkout-session/{sessionId}', [PaymentController::class, 'checkoutSessionState'])->name('payments.checkoutSessionState');
+        Route::post('payments/checkout-session/{sessionId}/abandon', [PaymentController::class, 'abandonCheckoutSession'])->name('payments.abandonCheckoutSession');
 
         Route::get('promocodes', [PromocodeController::class, 'customerIndex'])->name('promocodes.customer.index');
     });

@@ -9,6 +9,7 @@ use App\Services\BookingService;
 use App\Services\PaymentService;
 use App\Services\StripeService;
 use App\Support\Capabilities;
+use App\Support\MobileAppReturn;
 use App\Support\TenantOrigins;
 use Maatwebsite\Excel\Facades\Excel;
 use Exception;
@@ -348,6 +349,10 @@ class PaymentController extends Controller
             ]);
         }
 
+        if (MobileAppReturn::wantsApp($state['session'] ?? null)) {
+            return $this->renderAppReturn($state, 'cancelled');
+        }
+
         return redirect($this->storefrontUrl($state, '/payment/cancel'));
     }
 
@@ -378,6 +383,13 @@ class PaymentController extends Controller
         $bookingIds = $state['booking_ids'] ?? [];
         $source     = $state['source'] ?? 'customer';
 
+        // Started in the mobile app: reopen the app rather than the website. Checked
+        // before the hosted-game branch because a host on the phone belongs back in
+        // the app's hosting screen, not on bookboll.com/host-game.
+        if (MobileAppReturn::wantsApp($state['session'] ?? null)) {
+            return $this->renderAppReturn($state, 'success');
+        }
+
         // A host who just paid for their courts belongs back on the hosting page,
         // where the share link for the event they published is waiting.
         if ($source === \App\Services\CustomerGameService::CHECKOUT_SOURCE) {
@@ -402,6 +414,10 @@ class PaymentController extends Controller
     {
         $source  = $state['source'] ?? 'customer';
         $message = $state['message'] ?? 'Payment was not completed.';
+
+        if (MobileAppReturn::wantsApp($state['session'] ?? null)) {
+            return $this->renderAppReturn($state, 'cancelled');
+        }
 
         // The event was discarded with the payment, so send the host back to the
         // form rather than to a booking page that no longer means anything.
@@ -435,6 +451,185 @@ class PaymentController extends Controller
         $frontendUrl = config('app.frontend_url', 'https://bookboll.com');
 
         return redirect(rtrim($frontendUrl, '/') . '/payment/cancel');
+    }
+
+    /**
+     * Hand a customer who paid (or bailed out) in the mobile app back to the app.
+     *
+     * Stripe will only redirect to http(s), so the phone's browser lands here, and
+     * this page bounces it on to `bookboll://payment/return?...`. It is a page and
+     * not a 302 on purpose: Safari and Chrome both treat a custom-scheme navigation
+     * that no tap started with suspicion, so the automatic jump is paired with a
+     * button that always works, and with the website as the last-resort link. The
+     * app also polls the session itself when it regains focus, so even a customer
+     * who simply closes this tab ends up on the right screen.
+     */
+    protected function renderAppReturn(array $state, string $status)
+    {
+        $session = $state['session'] ?? null;
+        $source  = $state['source'] ?? 'customer';
+        $meta    = $session->metadata ?? null;
+        $isGame  = $source === \App\Services\CustomerGameService::CHECKOUT_SOURCE;
+
+        $query = [
+            'status'      => $status,
+            'flow'        => $isGame ? 'game' : 'booking',
+            'session_id'  => $session->id ?? null,
+            'booking_ids' => implode(',', array_map('intval', $state['booking_ids'] ?? [])),
+            'listing_id'  => $meta['listing_id'] ?? null,
+            'venue_id'    => $meta['venue_id'] ?? null,
+            'published'   => $isGame ? ($meta['hosted_game_uuid'] ?? null) : null,
+            'type'        => $isGame ? ($meta['game_type'] ?? null) : null,
+            'message'     => $status === 'cancelled' ? ($state['message'] ?? null) : null,
+        ];
+
+        // Where this return would have gone on the web — offered as a fallback link.
+        $websiteUrl = $isGame
+            ? $this->hostReturnUrl($state, $status === 'success'
+                ? ['published' => $query['published'] ?? '', 'type' => $query['type'] ?? 'game']
+                : ['payment' => 'cancelled'])
+            : $this->storefrontUrl($state, $status === 'success'
+                ? '/thank-you?booking_ids='.$query['booking_ids']
+                : '/payment/cancel');
+
+        return response()->view('payment-app-return', [
+            'status'     => $status,
+            'appUrl'     => MobileAppReturn::url($query),
+            'intentUrl'  => MobileAppReturn::androidIntentUrl($query, $websiteUrl),
+            'websiteUrl' => $websiteUrl,
+        ]);
+    }
+
+    /**
+     * GET /api/customer/payments/checkout-session/{sessionId}
+     *
+     * The mobile app's view of a Stripe Checkout it started: has it been paid, is
+     * it still open, or is it gone. Reading the state also drives fulfilment (see
+     * StripeService::getSessionReturnState), so the app does not have to wait on
+     * the webhook. When the payment has landed the bookings come back too, in the
+     * same shape as /customer/bookings/by-ids, so the thank-you screen is one call.
+     */
+    public function checkoutSessionState(string $sessionId)
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return sendError('Unauthorized', [], 401);
+        }
+
+        try {
+            $state = $this->stripeService->getSessionReturnState($sessionId);
+        } catch (Exception $e) {
+            Log::error('Checkout session state error: '.$e->getMessage(), [
+                'session_id' => $sessionId,
+                'user_id'    => $user->id,
+            ]);
+
+            return sendError('Unable to verify payment status.', [], 500);
+        }
+
+        if (! $this->checkoutSessionBelongsTo($state, $user)) {
+            return sendError('Checkout session not found.', [], 404);
+        }
+
+        return sendSuccess('Checkout session state', $this->checkoutSessionPayload($state, $user));
+    }
+
+    /**
+     * POST /api/customer/payments/checkout-session/{sessionId}/abandon
+     *
+     * The customer closed the payment page without paying and chose not to
+     * continue. Expire the Stripe session and release the pending bookings now,
+     * instead of leaving them to the auto-cancel sweep. Idempotent, and never
+     * destructive to a session that has in fact been paid: the state is read first
+     * and a paid session is reported as completed instead.
+     */
+    public function abandonCheckoutSession(string $sessionId)
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return sendError('Unauthorized', [], 401);
+        }
+
+        try {
+            $state = $this->stripeService->getSessionReturnState($sessionId);
+
+            if (! $this->checkoutSessionBelongsTo($state, $user)) {
+                return sendError('Checkout session not found.', [], 404);
+            }
+
+            if ($state['status'] !== 'completed' && $state['status'] !== 'processing') {
+                $state = $this->stripeService->abandonCheckoutSession($sessionId);
+            }
+        } catch (Exception $e) {
+            Log::error('Abandon checkout session error: '.$e->getMessage(), [
+                'session_id' => $sessionId,
+                'user_id'    => $user->id,
+            ]);
+
+            return sendError('Could not cancel the payment session.', [], 500);
+        }
+
+        return sendSuccess('Checkout session updated', $this->checkoutSessionPayload($state, $user));
+    }
+
+    /** Only the customer who opened a checkout may read or abandon it. */
+    protected function checkoutSessionBelongsTo(array $state, $user): bool
+    {
+        $meta   = $state['session']->metadata ?? null;
+        $userId = (int) ($meta['user_id'] ?? 0);
+
+        if ($userId > 0) {
+            return $userId === (int) $user->id;
+        }
+
+        $bookingIds = array_filter(array_map('intval', $state['booking_ids'] ?? []));
+        if (empty($bookingIds)) {
+            return false;
+        }
+
+        return Booking::whereIn('id', $bookingIds)->where('user_id', $user->id)->exists();
+    }
+
+    /** @return array<string, mixed> */
+    protected function checkoutSessionPayload(array $state, $user): array
+    {
+        $session    = $state['session'] ?? null;
+        $meta       = $session->metadata ?? null;
+        $bookingIds = array_values(array_filter(array_map('intval', $state['booking_ids'] ?? [])));
+        $bookings   = collect();
+
+        if ($state['status'] === 'completed' && ! empty($bookingIds)) {
+            $bookings = Booking::with([
+                'venue:id,name,address,maps_url',
+                'listing:id,name',
+                'payments',
+                'addOns',
+                'latestInvoice',
+            ])
+                ->whereIn('id', $bookingIds)
+                ->where('user_id', $user->id)
+                ->orderBy('date')
+                ->orderBy('start_time')
+                ->get();
+        }
+
+        // Stripe's own lifecycle, separate from our fulfilment status: an `open`
+        // session can still be paid, so the app may offer "continue payment" with
+        // the same URL rather than making the customer start over.
+        $checkoutStatus = $session->status ?? null;
+
+        return [
+            'status'          => $state['status'],
+            'checkout_status' => $checkoutStatus,
+            'source'          => $state['source'] ?? 'customer',
+            'message'         => $state['message'] ?? null,
+            'booking_ids'     => $bookingIds,
+            'listing_id'      => isset($meta['listing_id']) && $meta['listing_id'] !== '' ? (int) $meta['listing_id'] : null,
+            'venue_id'        => isset($meta['venue_id']) && $meta['venue_id'] !== '' ? (int) $meta['venue_id'] : null,
+            'payment_type'    => $meta['payment_type'] ?? null,
+            'url'             => $checkoutStatus === 'open' && $state['status'] !== 'completed' ? ($session->url ?? null) : null,
+            'bookings'        => $bookings,
+        ];
     }
 
     public function getPaymentMethods()

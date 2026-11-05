@@ -59,6 +59,12 @@ return [
     // Where a provider's custom domain must CNAME to before it goes live.
     'domain_cname_target' => env('DOMAIN_CNAME_TARGET', 'sites.bookboll.com'),
 
+    // The customer mobile app's URL scheme and Android application id. A Stripe
+    // Checkout started in the app is sent back to `{scheme}://payment/return`
+    // instead of the website — see App\Support\MobileAppReturn.
+    'mobile_app_scheme' => env('MOBILE_APP_SCHEME', 'bookboll'),
+    'mobile_app_android_package' => env('MOBILE_APP_ANDROID_PACKAGE', 'com.bookboll.app'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

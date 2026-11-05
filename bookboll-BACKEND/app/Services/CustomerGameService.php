@@ -17,6 +17,7 @@ use App\Models\User;
 use Nnjeim\World\Models\Country;
 use App\Models\StripeSession;
 use App\Models\Venue;
+use App\Support\MobileAppReturn;
 use App\Support\TenantOrigins;
 use App\Notifications\HostedEvents\EventCancelledNotification;
 use App\Notifications\HostedEvents\EventJoinConfirmedNotification;
@@ -1344,6 +1345,8 @@ class CustomerGameService
                 'due_now'          => (string) $amount,
                 // The storefront the host started on — see PaymentController::storefrontUrl().
                 'return_origin'    => (string) TenantOrigins::storefrontOriginFromRequest(request()),
+                // Set when the host is in the mobile app — see MobileAppReturn.
+                MobileAppReturn::METADATA_KEY => MobileAppReturn::targetFromRequest(request()),
             ],
             'line_items' => [[
                 'price_data' => [
