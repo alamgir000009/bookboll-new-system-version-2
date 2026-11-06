@@ -557,8 +557,11 @@ async function reverseGeocode(lat, lng) {
       countryKnown: !!matchedCountry,
       cityMatched: !!matchedCity,
     }
-    if (!form.value.address && data.display_name) {
-      form.value.address = data.display_name.split(',').slice(0, 3).join(',').trim()
+    // The address follows the pin. This form has no address input, so whatever
+    // is in the field came from an earlier pin — keeping it after the pin moved
+    // left venues in Qatar labelled "Dubai Emirate, United Arab Emirates".
+    if (data.display_name) {
+      form.value.address = data.display_name.split(',').slice(0, 3).map(v => v.trim()).join(', ')
     }
   } catch { /* keep coords even if reverse geocode fails */ }
 }
