@@ -23,6 +23,9 @@ Route::post('/stripe/bookboll-webhook', [StripeWebhookController::class, 'handle
 Route::get('/payment/success/{session_id}', [PaymentController::class, 'paymentSuccess'])->name('payment.success');
 Route::get('/payment/status/{session_id}', [PaymentController::class, 'paymentStatus'])->name('payment.status');
 Route::get('/payment/cancel', [PaymentController::class, 'cancelPayment'])->name('payment.cancel');
+// Generic "reopen the mobile app here" hop for flows whose Stripe return does not
+// pass through paymentSuccess (memberships) — see PaymentController::appRedirect.
+Route::get('/payment/app-redirect', [PaymentController::class, 'appRedirect'])->name('payment.app-redirect');
 
 Route::prefix('admin')->middleware(['auth', 'checkRoles:super_admin'])->group(function () {
     Route::get('/dashboard-000009', Dashboard::class)->name('dashboard');

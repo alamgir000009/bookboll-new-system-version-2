@@ -501,6 +501,51 @@ class PaymentController extends Controller
     }
 
     /**
+     * GET /payment/app-redirect?to=memberships/{uuid}&checkout={session|cancelled}
+     *
+     * Reopens the mobile app at an app screen after a Stripe Checkout whose return
+     * does not go through paymentSuccess() — membership subscriptions, whose
+     * success_url is normally the storefront program page. Only app paths on the
+     * allow-list below are accepted, so this can never be used to bounce a browser
+     * to an arbitrary scheme or path.
+     */
+    public function appRedirect(Request $request)
+    {
+        $to       = trim((string) $request->query('to', ''));
+        $checkout = trim((string) $request->query('checkout', ''));
+
+        $allowed = [
+            '#^memberships/[A-Za-z0-9\-]{1,64}$#',
+        ];
+        $ok = false;
+        foreach ($allowed as $pattern) {
+            if (preg_match($pattern, $to)) {
+                $ok = true;
+                break;
+            }
+        }
+        if (! $ok || ! preg_match('#^(cancelled|cs_[A-Za-z0-9_]{1,120})$#', $checkout)) {
+            return redirect(rtrim((string) config('app.frontend_url', 'https://bookboll.com'), '/'));
+        }
+
+        $status = $checkout === 'cancelled' ? 'cancelled' : 'success';
+        $query  = ['checkout' => $checkout];
+
+        // The same destination on the website, offered as the fallback link.
+        $websitePath = str_starts_with($to, 'memberships/')
+            ? '/programs/'.substr($to, strlen('memberships/')).'?checkout='.$checkout
+            : '/';
+        $websiteUrl = rtrim((string) config('app.frontend_url', 'https://bookboll.com'), '/').$websitePath;
+
+        return response()->view('payment-app-return', [
+            'status'     => $status,
+            'appUrl'     => MobileAppReturn::url($query, $to),
+            'intentUrl'  => MobileAppReturn::androidIntentUrl($query, $websiteUrl, $to),
+            'websiteUrl' => $websiteUrl,
+        ]);
+    }
+
+    /**
      * GET /api/customer/payments/checkout-session/{sessionId}
      *
      * The mobile app's view of a Stripe Checkout it started: has it been paid, is

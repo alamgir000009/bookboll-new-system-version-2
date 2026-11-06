@@ -8,6 +8,7 @@ use App\Models\LoyaltyPoint;
 use App\Models\LoyaltyProgram;
 use App\Models\Payment;
 use App\Models\User;
+use App\Support\MobileAppReturn;
 use App\Support\TenantOrigins;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -193,8 +194,8 @@ class MembershipBillingService
             'customer'                  => $user->stripe_id,
             'client_reference_id'       => $sub->uuid,
             'payment_method_collection' => 'always',
-            'success_url'               => $this->storefront("/programs/{$program->uuid}?checkout={CHECKOUT_SESSION_ID}"),
-            'cancel_url'                => $this->storefront("/programs/{$program->uuid}?checkout=cancelled"),
+            'success_url'               => $this->checkoutReturnUrl($program, '{CHECKOUT_SESSION_ID}'),
+            'cancel_url'                => $this->checkoutReturnUrl($program, 'cancelled'),
             'metadata'                  => ['source' => 'membership', 'subscription_uuid' => $sub->uuid],
             'subscription_data'         => [
                 'metadata' => [
@@ -777,6 +778,27 @@ class MembershipBillingService
      * the program page and their session actually are. FRONTEND_URL is the fallback for
      * callers with no browser origin.
      */
+    /**
+     * Where Stripe sends the member afterwards.
+     *
+     * A browser goes straight back to the storefront's program page, which reads
+     * `?checkout=`. The mobile app cannot be a Stripe return URL (Stripe insists on
+     * http(s)), so its checkout bounces through /payment/app-redirect on this
+     * backend, which reopens the app at the same screen with the same query.
+     * `$checkout` is either Stripe's `{CHECKOUT_SESSION_ID}` placeholder or the
+     * literal `cancelled`; Stripe substitutes the placeholder wherever it appears.
+     */
+    protected function checkoutReturnUrl($program, string $checkout): string
+    {
+        if (MobileAppReturn::targetFromRequest(request()) === MobileAppReturn::TARGET_APP) {
+            return url('/payment/app-redirect')
+                .'?to='.rawurlencode("memberships/{$program->uuid}")
+                .'&checkout='.$checkout;
+        }
+
+        return $this->storefront("/programs/{$program->uuid}?checkout={$checkout}");
+    }
+
     protected function storefront(string $path): string
     {
         $base = TenantOrigins::storefrontOriginFromRequest(request())
