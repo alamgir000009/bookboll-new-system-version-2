@@ -104,6 +104,15 @@ class VenueController extends Controller
         return $this->venueService->dashboardShow($id);
     }
 
+    /**
+     * Expand a pasted Google Maps link (short share links included) into a
+     * coordinate the dashboard can drop its pin on.
+     */
+    public function resolveMapsLink(Request $request)
+    {
+        return $this->venueService->resolveMapsLink($request);
+    }
+
     public function dashboardStore(Request $request)
     {
         return $this->venueService->dashboardStore($request);

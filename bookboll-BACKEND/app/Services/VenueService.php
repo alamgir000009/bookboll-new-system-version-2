@@ -874,6 +874,26 @@ class VenueService
         return $request->validate($rules);
     }
 
+    /**
+     * Short Google Maps share links (maps.app.goo.gl/…) carry no coordinates;
+     * the browser cannot follow their redirect cross-origin, so it is done here.
+     */
+    public function resolveMapsLink($request)
+    {
+        $validated = $request->validate([
+            'url' => ['required', 'string', 'max:2048'],
+        ]);
+
+        $url = trim($validated['url']);
+        if (! \App\Support\GoogleMapsLink::isAllowedUrl($url)) {
+            return sendError('Paste a Google Maps link (google.com/maps or maps.app.goo.gl).', ['url' => ['Not a Google Maps link.']], 422);
+        }
+
+        $result = \App\Support\GoogleMapsLink::resolve($url);
+
+        return sendSuccess('Maps link resolved', $result, 200, false);
+    }
+
     protected function normalizeDashboardVenueAttrs(array $validated): array
     {
         $cityId = (int) $validated['city_id'];

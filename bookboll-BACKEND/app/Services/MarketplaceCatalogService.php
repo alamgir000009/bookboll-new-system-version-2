@@ -821,6 +821,7 @@ class MarketplaceCatalogService
             'city_name'          => $cityName,
             'city'               => $cityName,
             'country_id'         => $venue->country_id,
+            'country_name'       => $venue->country?->name,
             'state_id'           => $venue->state_id,
             'owner_user_id'      => $venue->owner_user_id,
             'latitude'           => $venue->latitude !== null ? (float) $venue->latitude : null,

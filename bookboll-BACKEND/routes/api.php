@@ -356,6 +356,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::get('venues/{id}/transfer-options', [VenueController::class, 'transferOptions'])->name('venues.transfer-options');
             Route::post('venues/{id}/transfer-preview', [VenueController::class, 'transferPreview'])->name('venues.transfer-preview');
             Route::post('venues/{id}/transfers', [VenueController::class, 'storeTransfer'])->name('venues.transfers.store');
+            // Expanding a pasted Google Maps link into a coordinate (short share
+            // links redirect, and the browser cannot read where to cross-origin).
+            Route::post('venues/resolve-maps-link', [VenueController::class, 'resolveMapsLink'])->name('venues.resolve-maps-link');
             Route::get('venues/dashboard', [VenueController::class, 'dashboard'])->name('venues.dashboard');
             Route::post('venues/dashboard', [VenueController::class, 'dashboardStore'])->name('venues.dashboard.store');
             Route::post('venues/dashboard/sort', [VenueController::class, 'dashboardSort'])->name('venues.dashboard.sort');
