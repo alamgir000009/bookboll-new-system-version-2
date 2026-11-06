@@ -202,9 +202,27 @@ class GoogleMapsLink
         return null;
     }
 
-    /** Best-effort lookup of a place name via OpenStreetMap Nominatim. */
+    /**
+     * Best-effort lookup of a place name: Google Geocoding when a server key is
+     * configured (services.google_maps.server_key), OpenStreetMap otherwise.
+     */
     protected static function geocodePlaceName(string $name): ?array
     {
+        $key = (string) config('services.google_maps.server_key');
+        if ($key !== '') {
+            try {
+                $response = Http::timeout(8)->get('https://maps.googleapis.com/maps/api/geocode/json', [
+                    'address' => $name, 'key' => $key, 'language' => 'en',
+                ]);
+                $loc = $response->ok() ? ($response->json()['results'][0]['geometry']['location'] ?? null) : null;
+                if ($loc && isset($loc['lat'], $loc['lng']) && self::valid((float) $loc['lat'], (float) $loc['lng'])) {
+                    return [round((float) $loc['lat'], 7), round((float) $loc['lng'], 7)];
+                }
+            } catch (\Throwable $e) {
+                Log::info('GoogleMapsLink: google geocode failed', ['name' => $name, 'error' => $e->getMessage()]);
+            }
+        }
+
         try {
             $response = Http::timeout(8)
                 ->withHeaders([

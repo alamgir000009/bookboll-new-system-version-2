@@ -10,8 +10,10 @@ import PhotoOrderEditor from './PhotoOrderEditor.vue'
  * source of truth for creating locations (no more duplicate quick-add form).
  *
  * Upgrades over the old inline modal:
- *   - Interactive Leaflet + OpenStreetMap picker (click map / drag pin) in
- *     addition to the "Detect my location" button.
+ *   - Interactive Google Maps picker (search a place / click map / drag pin)
+ *     in addition to the "Detect my location" button. Needs
+ *     VITE_GOOGLE_MAPS_API_KEY; without it the map area explains what is
+ *     missing and the typed coordinates + share link still work.
  *   - Google Maps share-link field that can auto-drop the pin from the link.
  *   - Address is optional.
  *   - Multiple images via drag-and-drop / file picker with client-side
@@ -36,8 +38,7 @@ import { VENUE_STEPS, venueIssue } from '../lib/creationFlow.js'
 import { adminBrandVars } from '../lib/adminBrand.js'
 import { fmtRange12 } from '../lib/slots.js'
 import { useEditorDialog } from '../lib/editorDialog.js'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { loadGoogleMaps, hasGoogleMapsKey, placeFromGeocoderResult, GOOGLE_MAPS_MAP_ID } from '../lib/googleMaps.js'
 import {
   X, MapPin, LocateFixed, Check, Clock, DollarSign, Building2,
   Upload, Trash2, Star, TriangleAlert, Loader, Image as ImageIcon, Map as MapIcon, ChevronDown,
@@ -414,33 +415,55 @@ async function offerLocationDraft() {
 
 // Re-fit the map whenever we return to the details tab (it was display:none).
 watch(tab, async (t) => {
-  if (t === 'map') { await nextTick(); if (mapInst) mapInst.invalidateSize(); else initMap() }
+  if (t === 'map') { await nextTick(); if (mapInst) refreshMap(); else initMap() }
 })
 
-// ── Leaflet map picker ──
+// ── Google Maps picker ──
 const mapEl = ref(null)
+const searchEl = ref(null)     // host for the Places autocomplete element
+const mapStatus = ref('idle')  // idle | loading | ready | nokey | error
+let gmaps = null               // google.maps namespace once loaded
 let mapInst = null
 let markerInst = null
+let searchInst = null
 
-function pinIcon() {
-  return L.divIcon({
-    className: 'bb-pin',
-    html: '<svg viewBox="0 0 24 24" width="34" height="34" fill="#0891b2" stroke="#fff" stroke-width="1.5"><path d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7z"/><circle cx="12" cy="9" r="2.5" fill="#fff" stroke="none"/></svg>',
-    iconSize: [34, 34],
-    iconAnchor: [17, 34],
-  })
+function latLngOf(p) {
+  if (!p) return null
+  const lat = typeof p.lat === 'function' ? p.lat() : p.lat
+  const lng = typeof p.lng === 'function' ? p.lng() : p.lng
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null
+}
+function pinElement() {
+  const { PinElement } = gmaps.marker
+  return new PinElement({ background: '#0891b2', borderColor: '#ffffff', glyphColor: '#ffffff', scale: 1.15 }).element
 }
 function addMarker(lat, lng) {
-  markerInst = L.marker([lat, lng], { draggable: true, icon: pinIcon() }).addTo(mapInst)
-  markerInst.on('dragend', () => { const p = markerInst.getLatLng(); setPoint(p.lat, p.lng, true) })
+  if (!mapInst || !gmaps?.marker) return
+  markerInst = new gmaps.marker.AdvancedMarkerElement({
+    map: mapInst, position: { lat, lng }, gmpDraggable: true, content: pinElement(), title: 'Venue location',
+  })
+  markerInst.addListener('dragend', () => {
+    const p = latLngOf(markerInst.position)
+    if (p) setPoint(p.lat, p.lng, true)
+  })
+}
+function removeMarker() {
+  if (markerInst) { markerInst.map = null; markerInst = null }
+}
+/** Centre the map on a point, zooming in to at least `zoom` (never out). */
+function centerMap(lat, lng, zoom) {
+  if (!mapInst) return
+  mapInst.setCenter({ lat, lng })
+  mapInst.setZoom(Math.max(mapInst.getZoom() || 0, zoom))
 }
 function setPoint(lat, lng, reverse = false) {
   markDirty()   // map clicks/drags fire no input event, so mark explicitly
   form.value.latitude = parseFloat(Number(lat).toFixed(7))
   form.value.longitude = parseFloat(Number(lng).toFixed(7))
-  if (!mapInst) return
-  if (!markerInst) addMarker(lat, lng)
-  else markerInst.setLatLng([lat, lng])
+  if (mapInst) {
+    if (!markerInst) addMarker(lat, lng)
+    else markerInst.position = { lat, lng }
+  }
   if (reverse) reverseGeocode(lat, lng)
 }
 /* ── Typing the coordinates in by hand ────────────────────────────────────────
@@ -465,8 +488,7 @@ const coordsInvalid = computed(() => {
 function applyTypedCoords() {
   if (coordsInvalid.value) return
   if (!hasMapPin.value) {
-    markerInst?.remove()
-    markerInst = null
+    removeMarker()
     return
   }
   const lat = Number(form.value.latitude)
@@ -475,30 +497,72 @@ function applyTypedCoords() {
   // No reverse geocode: someone who typed an exact coordinate did not ask for
   // their address field to be rewritten underneath them.
   setPoint(lat, lng)
-  if (mapInst) mapInst.setView([lat, lng], Math.max(mapInst.getZoom() || 0, 15))
+  centerMap(lat, lng, 15)
 }
 
-function initMap() {
-  if (!mapEl.value) return
-  if (mapInst) { mapInst.invalidateSize(); return }
-  const hasPoint = hasMapPin.value
-  const lat = hasPoint ? Number(form.value.latitude) : 25.2048
-  const lng = hasPoint ? Number(form.value.longitude) : 55.2708
-  mapInst = L.map(mapEl.value, { zoomControl: true }).setView([lat, lng], hasPoint ? 14 : 5)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap contributors',
-  }).addTo(mapInst)
-  if (hasPoint) addMarker(lat, lng)
-  mapInst.on('click', (e) => setPoint(e.latlng.lat, e.latlng.lng, true))
-  setTimeout(() => mapInst && mapInst.invalidateSize(), 250)
+async function initMap() {
+  if (!mapEl.value || mapInst || mapStatus.value === 'loading') return
+  if (!hasGoogleMapsKey()) { mapStatus.value = 'nokey'; return }
+  mapStatus.value = 'loading'
+  try {
+    gmaps = await loadGoogleMaps()
+    const [{ Map }] = await Promise.all([
+      gmaps.importLibrary('maps'), gmaps.importLibrary('marker'), gmaps.importLibrary('places'), gmaps.importLibrary('geocoding'),
+    ])
+    if (!mapEl.value || !props.open) { mapStatus.value = 'idle'; return }   // modal closed while loading
+    const hasPoint = hasMapPin.value
+    const lat = hasPoint ? Number(form.value.latitude) : 25.2048
+    const lng = hasPoint ? Number(form.value.longitude) : 55.2708
+    mapInst = new Map(mapEl.value, {
+      center: { lat, lng }, zoom: hasPoint ? 15 : 5, mapId: GOOGLE_MAPS_MAP_ID,
+      mapTypeControl: false, streetViewControl: false, fullscreenControl: true, clickableIcons: false, gestureHandling: 'greedy',
+    })
+    if (hasPoint) addMarker(lat, lng)
+    mapInst.addListener('click', (e) => { const p = latLngOf(e.latLng); if (p) setPoint(p.lat, p.lng, true) })
+    initSearch()
+    mapStatus.value = 'ready'
+  } catch (e) {
+    console.error('Google Maps failed to load', e)
+    mapStatus.value = 'error'
+  }
+}
+/* Places search box above the map. Google's PlaceAutocompleteElement is the
+   only autocomplete available to new API keys, so that is what we use; it
+   fires `gmp-select` (current) or `gmp-placeselect` (older builds). */
+function initSearch() {
+  if (searchInst || !searchEl.value || !gmaps?.places?.PlaceAutocompleteElement) return
+  searchInst = new gmaps.places.PlaceAutocompleteElement()
+  searchInst.setAttribute('placeholder', 'Search for the venue or an address…')
+  searchEl.value.replaceChildren(searchInst)
+  const onPick = async (place) => {
+    try {
+      await place.fetchFields({ fields: ['location', 'formattedAddress'] })
+      const p = latLngOf(place.location)
+      if (!p) return
+      if (place.formattedAddress) form.value.address = place.formattedAddress
+      placePin(p.lat, p.lng)
+    } catch (e) { console.error('Place lookup failed', e) }
+  }
+  searchInst.addEventListener('gmp-select', (e) => { if (e.placePrediction) onPick(e.placePrediction.toPlace()) })
+  searchInst.addEventListener('gmp-placeselect', (e) => { if (e.place) onPick(e.place) })
+}
+/* The map tab is display:none until opened; Google draws a blank canvas for a
+   hidden container, so nudge it and re-centre on the pin when it comes back. */
+function refreshMap() {
+  if (!mapInst || !gmaps) return
+  gmaps.event.trigger(mapInst, 'resize')
+  if (hasMapPin.value) mapInst.setCenter({ lat: Number(form.value.latitude), lng: Number(form.value.longitude) })
 }
 function destroyMap() {
-  if (mapInst) { mapInst.remove(); mapInst = null; markerInst = null }
+  removeMarker()
+  if (searchInst) { searchInst.remove(); searchInst = null }
+  if (mapInst) { gmaps?.event?.clearInstanceListeners(mapInst); mapInst = null }
+  if (mapEl.value) mapEl.value.replaceChildren()
+  if (mapStatus.value !== 'nokey') mapStatus.value = 'idle'
 }
 onBeforeUnmount(destroyMap)
 
-// ── Reverse geocode (OpenStreetMap Nominatim) → auto-fill country/city/address ──
+// ── Reverse geocode (Google Geocoder; OpenStreetMap when Google is unavailable) → auto-fill country/city/address ──
 const geoStatus = ref('idle')   // idle | detecting | done | error
 /* Where the pin actually landed, so the form can say so next to the country/city
    pickers. A provider based in one country adding a venue in another used to
@@ -514,17 +578,36 @@ const pinMismatch = computed(() => {
   if (!form.value.city_id) return `The pin is in ${p.cityName ? p.cityName + ', ' : ''}${p.countryName}. Pick the city so the venue is listed in the right place.`
   return ''
 })
+/** { countryName, countryIso, cityCandidates, formattedAddress } for a point. */
+async function lookupPlace(lat, lng) {
+  if (gmaps?.Geocoder) {
+    const geocoder = new gmaps.Geocoder()
+    const { results } = await geocoder.geocode({ location: { lat, lng }, language: 'en' })
+    // Prefer a result that carries a locality; the first hit is often a street
+    // number whose components still include the city, so it works either way.
+    const best = (results || []).find(r => (r.address_components || []).some(c => c.types.includes('locality'))) || results?.[0]
+    return best ? placeFromGeocoderResult(best) : null
+  }
+  const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14&addressdetails=1`, {
+    headers: { 'Accept-Language': 'en' },
+  })
+  const data = await res.json()
+  const addr = data.address || {}
+  return {
+    countryName: addr.country || '',
+    countryIso: (addr.country_code || '').toUpperCase(),
+    cityCandidates: [addr.city, addr.town, addr.municipality, addr.village, addr.city_district, addr.county, addr.state_district, addr.state, addr.region]
+      .map(v => String(v || '').trim()).filter(Boolean),
+    formattedAddress: data.display_name ? String(data.display_name).split(',').slice(0, 3).join(',').trim() : '',
+  }
+}
 async function reverseGeocode(lat, lng) {
   try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14&addressdetails=1`, {
-      headers: { 'Accept-Language': 'en' },
-    })
-    const data = await res.json()
-    const addr = data.address || {}
-    const iso = (addr.country_code || '').toUpperCase()
+    const place = await lookupPlace(lat, lng)
+    if (!place) return
+    const iso = place.countryIso
     const matchedCountry = countries.value.find(c => c.iso_code === iso)
-    const cityCandidates = [addr.city, addr.town, addr.municipality, addr.village, addr.city_district, addr.county, addr.state_district, addr.state, addr.region]
-      .map(v => String(v || '').trim()).filter(Boolean)
+    const cityCandidates = place.cityCandidates
     let matchedCity = null
     if (matchedCountry) {
       const countryChanged = String(selectedCountryId.value || '') !== String(matchedCountry.id)
@@ -544,21 +627,21 @@ async function reverseGeocode(lat, lng) {
           inCountry.find(c => n.includes(norm(c.name)) || norm(c.name).includes(n))
         if (matchedCity) break
       }
-      if (!matchedCity && data.display_name) {
-        const parts = String(data.display_name).split(',').map(norm)
+      if (!matchedCity && place.formattedAddress) {
+        const parts = String(place.formattedAddress).split(',').map(norm)
         matchedCity = inCountry.find(c => parts.includes(norm(c.name)))
       }
       if (matchedCity) form.value.city_id = String(matchedCity.id)
     }
     pinPlace.value = {
-      countryName: addr.country || iso || 'an unknown country',
+      countryName: place.countryName || iso || 'an unknown country',
       countryIso: iso,
       cityName: matchedCity?.name || cityCandidates[0] || '',
       countryKnown: !!matchedCountry,
       cityMatched: !!matchedCity,
     }
-    if (!form.value.address && data.display_name) {
-      form.value.address = data.display_name.split(',').slice(0, 3).join(',').trim()
+    if (!form.value.address && place.formattedAddress) {
+      form.value.address = place.formattedAddress
     }
   } catch { /* keep coords even if reverse geocode fails */ }
 }
@@ -571,7 +654,7 @@ function detectGeoLocation() {
       geoStatus.value = 'done'
       const { latitude, longitude } = pos.coords
       setPoint(latitude, longitude, true)
-      if (mapInst) mapInst.setView([latitude, longitude], 15)
+      centerMap(latitude, longitude, 15)
     },
     () => { geoStatus.value = 'error' },
     { timeout: 10000 }
@@ -609,7 +692,7 @@ function looksLikeMapsLink(url) {
 }
 function placePin(lat, lng) {
   setPoint(lat, lng, true)
-  if (mapInst) mapInst.setView([lat, lng], 16)
+  centerMap(lat, lng, 16)
 }
 async function applyMapsLink(force = false) {
   const url = (form.value.google_maps_url || '').trim()
@@ -891,14 +974,20 @@ async function applyScheduleToSelected() {
           <!-- Map picker -->
           <div class="form-group" style="margin-top:14px;">
             <label class="form-label"><MapIcon :size="13" style="vertical-align:-2px;" /> Pin the location on the map</label>
+            <div ref="searchEl" class="map-search" :hidden="mapStatus !== 'ready'"></div>
             <div class="map-toolbar">
-              <span class="map-hint">Tap the map or drag the pin to your venue.</span>
+              <span class="map-hint">Search above, tap the map or drag the pin to your venue.</span>
               <button class="btn btn-secondary btn-sm" :disabled="geoStatus === 'detecting'" @click="detectGeoLocation">
                 <LocateFixed :size="13" />
                 {{ geoStatus === 'detecting' ? 'Detecting…' : 'Use my location' }}
               </button>
             </div>
-            <div ref="mapEl" class="bb-map"></div>
+            <div class="bb-map-wrap">
+              <div ref="mapEl" class="bb-map"></div>
+              <div v-if="mapStatus === 'loading'" class="bb-map-overlay"><Loader :size="18" class="spin" /> Loading Google Maps…</div>
+              <div v-else-if="mapStatus === 'nokey'" class="bb-map-overlay"><TriangleAlert :size="18" /> Google Maps is not configured for this admin (VITE_GOOGLE_MAPS_API_KEY). Use "Use my location", paste a Google Maps link below, or type the coordinates.</div>
+              <div v-else-if="mapStatus === 'error'" class="bb-map-overlay"><TriangleAlert :size="18" /> Google Maps could not load. Check the API key and its restrictions, then reopen this form.</div>
+            </div>
             <div v-if="geoStatus === 'error'" class="geo-error" style="margin-top:6px;">Location access denied or unavailable — pin it manually on the map.</div>
 
             <!-- Editable coordinates, bound to the same fields the map writes: drag
@@ -1082,7 +1171,11 @@ async function applyScheduleToSelected() {
 
 .map-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
 .map-hint { font-size:12px; color:var(--text-muted); }
-.bb-map { height:240px; width:100%; border-radius:10px; border:1px solid var(--border); overflow:hidden; z-index:0; }
+.bb-map-wrap { position:relative; }
+.bb-map { height:240px; width:100%; border-radius:10px; border:1px solid var(--border); overflow:hidden; z-index:0; background:var(--bg-subtle, #f1f5f9); }
+.bb-map-overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:8px; padding:16px; text-align:center; font-size:13px; color:var(--text-muted); background:var(--bg-subtle, #f1f5f9); border-radius:10px; }
+.map-search { margin-bottom:8px; }
+.map-search gmp-place-autocomplete { display:block; width:100%; }
 
 .manual-coordinates { margin-top: 10px; padding: 4px 0; }
 .manual-coordinates summary { min-height: 44px; align-content: center; font-size: 13px; color: var(--primary-ink); cursor: pointer; }

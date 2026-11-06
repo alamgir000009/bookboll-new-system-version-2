@@ -69,6 +69,12 @@ return [
         'enabled' => env('TURNSTILE_ENABLED'),
     ],
 
+    // Server-side Google Maps key (Geocoding API) used to turn a place name from a
+    // pasted Maps link into coordinates. Optional: OpenStreetMap is used without it.
+    'google_maps' => [
+        'server_key' => env('GOOGLE_MAPS_SERVER_KEY'),
+    ],
+
     'google' => [
         // One OAuth client serves every tenant storefront. The browser never sees it:
         // the broker (App\Services\OAuthBrokerService) runs the whole code exchange
