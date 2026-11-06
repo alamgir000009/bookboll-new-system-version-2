@@ -29,6 +29,15 @@ export async function updateVenue(id, body) {
   return apiFetch(`/admin/venues/dashboard/${id}`, { method: 'PUT', body })
 }
 
+/**
+ * Expand a pasted Google Maps link into coordinates. Short share links
+ * (maps.app.goo.gl/…) only redirect to the long URL that holds them, and the
+ * browser cannot read that redirect cross-origin — so the server follows it.
+ */
+export async function resolveMapsLink(url) {
+  return apiFetch('/admin/venues/resolve-maps-link', { method: 'POST', body: { url } })
+}
+
 export async function patchVenue(id, body) {
   return apiFetch(`/admin/venues/dashboard/${id}`, { method: 'PATCH', body })
 }

@@ -22,7 +22,7 @@ import PhotoOrderEditor from './PhotoOrderEditor.vue'
  */
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import {
-  fetchVenueDashboard, createVenue, updateVenue, applyVenueHoursToListings, firstError,
+  fetchVenueDashboard, createVenue, updateVenue, applyVenueHoursToListings, resolveMapsLink, firstError,
 } from '../lib/venues.js'
 import { fetchGeographyCountries, fetchGeographyCities } from '../lib/geography.js'
 import { useCurrentUser } from '../lib/currentUser.js'
@@ -329,6 +329,8 @@ watch(() => props.open, async (v) => {
   triedSave.value = false
   geoStatus.value = 'idle'
   mapsLinkStatus.value = ''
+  lastResolvedLink = ''
+  pinPlace.value = null
   imgError.value = ''
   tab.value = 'details'
   commercialDirty.value=false
@@ -498,26 +500,62 @@ onBeforeUnmount(destroyMap)
 
 // ── Reverse geocode (OpenStreetMap Nominatim) → auto-fill country/city/address ──
 const geoStatus = ref('idle')   // idle | detecting | done | error
+/* Where the pin actually landed, so the form can say so next to the country/city
+   pickers. A provider based in one country adding a venue in another used to
+   get silent "UAE" venues: the pin was right but the city (and so the country
+   the venue is filed under) never followed it. */
+const pinPlace = ref(null)      // { countryName, countryIso, cityName, countryKnown, cityMatched }
+const pinMismatch = computed(() => {
+  const p = pinPlace.value
+  if (!p || !p.countryIso) return ''
+  if (!p.countryKnown) return `The pin is in ${p.countryName}, which is not an active Bookboll country yet. Choose the country and city this venue should be listed under.`
+  const selected = countries.value.find(c => String(c.id) === String(selectedCountryId.value))
+  if (selected && selected.iso_code && selected.iso_code !== p.countryIso) return `The pin is in ${p.countryName}, but this venue is set to ${selected.name}. Check the country and city.`
+  if (!form.value.city_id) return `The pin is in ${p.cityName ? p.cityName + ', ' : ''}${p.countryName}. Pick the city so the venue is listed in the right place.`
+  return ''
+})
 async function reverseGeocode(lat, lng) {
   try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=12&addressdetails=1`, {
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14&addressdetails=1`, {
       headers: { 'Accept-Language': 'en' },
     })
     const data = await res.json()
     const addr = data.address || {}
     const iso = (addr.country_code || '').toUpperCase()
     const matchedCountry = countries.value.find(c => c.iso_code === iso)
+    const cityCandidates = [addr.city, addr.town, addr.municipality, addr.village, addr.city_district, addr.county, addr.state_district, addr.state, addr.region]
+      .map(v => String(v || '').trim()).filter(Boolean)
+    let matchedCity = null
     if (matchedCountry) {
-      // A provider's country is fixed to their business — don't let a dropped pin change it.
-      selectedCountryId.value = matchedCountry.id
-      const activeCountryId = selectedCountryId.value
-      await ensureCities(activeCountryId)
-      const cityNameRaw = addr.city || addr.town || addr.village || addr.county || ''
-      const matchedCity = cities.value.find(c =>
-        String(c.country_id) === String(activeCountryId) &&
-        (c.name.toLowerCase() === cityNameRaw.toLowerCase() || cityNameRaw.toLowerCase().includes(c.name.toLowerCase()))
-      )
-      if (matchedCity) form.value.city_id = matchedCity.id
+      const countryChanged = String(selectedCountryId.value || '') !== String(matchedCountry.id)
+      selectedCountryId.value = String(matchedCountry.id)
+      await ensureCities(matchedCountry.id)
+      const inCountry = cities.value.filter(c => String(c.country_id) === String(matchedCountry.id))
+      // A city kept from the previous country would silently file the venue there.
+      if (countryChanged) {
+        const current = inCountry.find(c => String(c.id) === String(form.value.city_id))
+        if (!current) form.value.city_id = ''
+      }
+      const norm = (v) => String(v || '').toLowerCase().replace(/\s+(city|district|governorate|emirate|municipality)$/i, '').trim()
+      for (const raw of cityCandidates) {
+        const n = norm(raw)
+        matchedCity =
+          inCountry.find(c => norm(c.name) === n) ||
+          inCountry.find(c => n.includes(norm(c.name)) || norm(c.name).includes(n))
+        if (matchedCity) break
+      }
+      if (!matchedCity && data.display_name) {
+        const parts = String(data.display_name).split(',').map(norm)
+        matchedCity = inCountry.find(c => parts.includes(norm(c.name)))
+      }
+      if (matchedCity) form.value.city_id = String(matchedCity.id)
+    }
+    pinPlace.value = {
+      countryName: addr.country || iso || 'an unknown country',
+      countryIso: iso,
+      cityName: matchedCity?.name || cityCandidates[0] || '',
+      countryKnown: !!matchedCountry,
+      cityMatched: !!matchedCity,
     }
     if (!form.value.address && data.display_name) {
       form.value.address = data.display_name.split(',').slice(0, 3).join(',').trim()
@@ -540,21 +578,59 @@ function detectGeoLocation() {
   )
 }
 
-// ── Google Maps share-link → try to extract coordinates ──
-const mapsLinkStatus = ref('')   // '' | 'ok' | 'nocoords'
-function applyMapsLink() {
-  const url = (form.value.google_maps_url || '').trim()
-  if (!url) { mapsLinkStatus.value = ''; return }
-  const m =
-    url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) ||
-    url.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) ||
-    url.match(/[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)/) ||
-    url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
-  if (m) {
+// ── Google Maps share-link → coordinates ──
+// '' | 'resolving' | 'ok' | 'approx' | 'nocoords' | 'notmaps' | 'error'
+const mapsLinkStatus = ref('')
+let lastResolvedLink = ''   // blur + "Locate" click both fire; resolve a link once
+const NUM = '(-?\\d{1,3}(?:\\.\\d+)?)'
+/** Coordinates that are right there in the URL — no network needed. */
+function coordsFromMapsUrl(url) {
+  let decoded = url
+  try { decoded = decodeURIComponent(url) } catch { /* keep raw */ }
+  const tries = [
+    new RegExp(`!3d${NUM}!4d${NUM}`),
+    new RegExp(`[?&](?:q|query|ll|center|destination|daddr|saddr|sll)=${NUM}\\s*,\\s*${NUM}(?:[&\\s]|$)`, 'i'),
+    new RegExp(`/(?:place|search|dir)/${NUM}\\s*,\\s*${NUM}(?:[/?]|$)`, 'i'),
+    new RegExp(`@${NUM},${NUM}`),
+  ]
+  for (const re of tries) {
+    const m = decoded.match(re)
+    if (!m) continue
     const lat = parseFloat(m[1]); const lng = parseFloat(m[2])
-    setPoint(lat, lng, true)
-    if (mapInst) mapInst.setView([lat, lng], 15)
-    mapsLinkStatus.value = 'ok'
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0)) return { lat, lng }
+  }
+  return null
+}
+function looksLikeMapsLink(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return /(^|\.)(maps\.app\.goo\.gl|goo\.gl|g\.co)$/.test(host) || /(^|\.)google\.[a-z.]+$/.test(host)
+  } catch { return false }
+}
+function placePin(lat, lng) {
+  setPoint(lat, lng, true)
+  if (mapInst) mapInst.setView([lat, lng], 16)
+}
+async function applyMapsLink(force = false) {
+  const url = (form.value.google_maps_url || '').trim()
+  if (!url) { mapsLinkStatus.value = ''; lastResolvedLink = ''; return }
+  if (!force && url === lastResolvedLink) return
+  lastResolvedLink = url
+  if (!looksLikeMapsLink(url)) { mapsLinkStatus.value = 'notmaps'; return }
+
+  const direct = coordsFromMapsUrl(url)
+  if (direct) { placePin(direct.lat, direct.lng); mapsLinkStatus.value = 'ok'; return }
+
+  // Short share links (maps.app.goo.gl/…) only redirect to the long URL that
+  // holds the coordinates; the server follows that redirect for us.
+  mapsLinkStatus.value = 'resolving'
+  const res = await resolveMapsLink(url)
+  if (url !== (form.value.google_maps_url || '').trim()) return   // they pasted another link meanwhile
+  if (!res.success) { mapsLinkStatus.value = 'error'; return }
+  const d = res.data || {}
+  if (d.latitude != null && d.longitude != null) {
+    placePin(Number(d.latitude), Number(d.longitude))
+    mapsLinkStatus.value = d.source === 'geocoded' ? 'approx' : 'ok'
   } else {
     mapsLinkStatus.value = 'nocoords'
   }
@@ -605,6 +681,9 @@ async function save(andClose = true) {
       ...(editingExisting.value ? {} : { owner_user_id: form.value.owner_user_id || null }),
       name: form.value.name,
       city_id: form.value.city_id || null,
+      // The venue is filed under its CITY's country. Said explicitly so a stale
+      // venues.country_id (from a venue moved between countries) gets corrected.
+      country_id: cities.value.find(c => String(c.id) === String(form.value.city_id))?.country_id || selectedCountryId.value || null,
       // These columns are NOT NULL in the DB — store '' (not null) when empty.
       address: form.value.address || '',
       phone: form.value.phone || '',
@@ -855,19 +934,24 @@ async function applyScheduleToSelected() {
               Latitude must be between −90 and 90, longitude between −180 and 180 — and both are needed, not one.
             </div>
             <div v-else-if="hasMapPin" class="geo-success" style="margin-top:6px;">
-              <Check :size="13" />Map pin added
+              <Check :size="13" />Map pin added<template v-if="pinPlace?.countryIso"> · {{ pinPlace.cityName ? pinPlace.cityName + ', ' : '' }}{{ pinPlace.countryName }}</template>
             </div>
+            <div v-if="pinMismatch" class="form-hint" style="margin-top:6px;color:var(--warning-ink);">{{ pinMismatch }}</div>
           </div>
 
           <!-- Google Maps link -->
           <div class="form-group" style="margin-top:14px;">
             <label for="venue-maps-link" class="form-label">Google Maps link <span class="opt-tag">optional</span></label>
             <div class="maps-link-row">
-              <input id="venue-maps-link" type="url" v-model="form.google_maps_url" placeholder="Paste a Google Maps link…" @blur="applyMapsLink" />
-              <button class="btn btn-secondary btn-sm" @click="applyMapsLink" :disabled="!form.google_maps_url">Locate</button>
+              <input id="venue-maps-link" type="url" v-model="form.google_maps_url" placeholder="Paste a Google Maps link…" @blur="applyMapsLink()" @keyup.enter.prevent="applyMapsLink(true)" />
+              <button type="button" class="btn btn-secondary btn-sm" @click="applyMapsLink(true)" :disabled="!form.google_maps_url || mapsLinkStatus === 'resolving'">{{ mapsLinkStatus === 'resolving' ? 'Locating…' : 'Locate' }}</button>
             </div>
-            <div v-if="mapsLinkStatus === 'ok'" class="form-hint" style="color:var(--positive-ink);">Pin moved to the link's coordinates.</div>
-            <div v-else-if="mapsLinkStatus === 'nocoords'" class="form-hint" style="color:var(--warning-ink);">Link saved, but it has no coordinates to read — pin it on the map above.</div>
+            <div v-if="mapsLinkStatus === 'resolving'" class="form-hint">Reading the location from the link…</div>
+            <div v-else-if="mapsLinkStatus === 'ok'" class="form-hint" style="color:var(--positive-ink);">Pin moved to the link's location.</div>
+            <div v-else-if="mapsLinkStatus === 'approx'" class="form-hint" style="color:var(--warning-ink);">The link only names a place, so the pin was placed by looking that name up — check it on the map above.</div>
+            <div v-else-if="mapsLinkStatus === 'nocoords'" class="form-hint" style="color:var(--warning-ink);">Link saved, but no location could be read from it — tap the map above to place the pin.</div>
+            <div v-else-if="mapsLinkStatus === 'notmaps'" class="form-hint" style="color:var(--warning-ink);">This doesn't look like a Google Maps link. Open the place in Google Maps, tap Share and paste the link here.</div>
+            <div v-else-if="mapsLinkStatus === 'error'" class="form-hint" style="color:var(--warning-ink);">Couldn't read the link right now. Tap the map above to place the pin, or try Locate again.</div>
             <div v-else class="form-hint">Customers use this link for directions. Without a link, we use your map pin.</div>
           </div>
 

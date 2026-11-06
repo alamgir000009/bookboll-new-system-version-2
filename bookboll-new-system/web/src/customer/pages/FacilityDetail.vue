@@ -81,7 +81,7 @@ useSeo(() => {
     type: 'place',
     jsonLd: sportsActivityLocationLd({
       name: loc.name, description: loc.description, image: data.value?.photo,
-      address: loc.address, city, country: selectedCountry.value?.name,
+      address: loc.address, city, country: loc.country_name || selectedCountry.value?.name,
       lat: loc.latitude, lng: loc.longitude, priceRange: '$$',
       url: `https://bookboll.com${canonicalPath}`,
     }),
